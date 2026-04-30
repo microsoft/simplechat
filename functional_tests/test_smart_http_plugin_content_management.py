@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Functional test for Smart HTTP Plugin content size management.
-Version: 0.228.006
+Version: 0.239.150
 Implemented in: 0.228.003
 Updated in: 0.228.005 (added PDF URL support testing)
 Updated in: 0.228.006 (added agent citation support testing)
+Updated in: 0.239.150 (removed unreachable duplicate exception handler)
 
 This test ensures that the Smart HTTP Plugin properly handles large web content
 and prevents token limit exceeded errors by intelligently truncating content.
@@ -138,10 +139,6 @@ def test_smart_http_plugin():
             except Exception as e:
                 print(f"⚠️ Citation test failed: {e}")
                 return True  # Don't fail the test for citation issues
-                    
-            except Exception as e:
-                print(f"⚠️ PDF detection test failed: {e}")
-                return False
         
         # Run async tests
         async def run_all_tests():

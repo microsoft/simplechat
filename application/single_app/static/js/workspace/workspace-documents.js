@@ -29,6 +29,12 @@ const docMetadataForm = document.getElementById("doc-metadata-form");
 const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
 const clearSelectionBtn = document.getElementById("clear-selection-btn");
+const documentDeleteModalElement = document.getElementById("documentDeleteModal");
+const documentDeleteModal = documentDeleteModalElement ? new bootstrap.Modal(documentDeleteModalElement) : null;
+const documentDeleteModalTitle = document.getElementById("documentDeleteModalLabel");
+const documentDeleteModalBody = document.getElementById("documentDeleteModalBody");
+const documentDeleteCurrentBtn = document.getElementById("documentDeleteCurrentBtn");
+const documentDeleteAllBtn = document.getElementById("documentDeleteAllBtn");
 
 // Selection mode variables
 let selectionModeActive = false;
@@ -82,6 +88,172 @@ function isColorLight(hexColor) {
 
     const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
     return luminance > 0.5;
+}
+
+function getDocumentDeleteModalContent(documentCount) {
+    if (documentCount === 1) {
+        return {
+            title: "Delete Document",
+            body: `
+                <p class="mb-2">Choose how to delete this document revision.</p>
+                <p class="mb-2"><strong>Delete Current Version</strong> removes the visible revision and keeps older revisions for later comparison.</p>
+                <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for this document.</p>
+            `,
+        };
+    }
+
+    return {
+        title: "Delete Selected Documents",
+        body: `
+            <p class="mb-2">Choose how to delete ${documentCount} selected current document revision(s).</p>
+            <p class="mb-2"><strong>Delete Current Version</strong> removes only the visible revision for each selected document and keeps older revisions.</p>
+            <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for each selected document.</p>
+        `,
+    };
+}
+
+function showDocumentDeleteFeedback(message, variant = "danger") {
+    if (typeof window.showToast === "function") {
+        window.showToast(message, variant);
+        return;
+    }
+
+    let container = document.getElementById("documentDeleteFeedbackContainer");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "documentDeleteFeedbackContainer";
+        container.className = "toast-container position-fixed top-0 end-0 p-3";
+        document.body.appendChild(container);
+    }
+
+    if (window.bootstrap && typeof window.bootstrap.Toast === "function") {
+        const toastElement = document.createElement("div");
+        toastElement.className = `toast align-items-center text-white bg-${variant} border-0`;
+        toastElement.setAttribute("role", "alert");
+        toastElement.setAttribute("aria-live", "assertive");
+        toastElement.setAttribute("aria-atomic", "true");
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "d-flex";
+
+        const body = document.createElement("div");
+        body.className = "toast-body";
+        body.textContent = message;
+
+        const closeButton = document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className = "btn-close btn-close-white me-2 m-auto";
+        closeButton.setAttribute("data-bs-dismiss", "toast");
+        closeButton.setAttribute("aria-label", "Close");
+
+        wrapper.appendChild(body);
+        wrapper.appendChild(closeButton);
+        toastElement.appendChild(wrapper);
+        container.appendChild(toastElement);
+
+        const toast = new window.bootstrap.Toast(toastElement);
+        toast.show();
+        toastElement.addEventListener("hidden.bs.toast", () => {
+            toastElement.remove();
+        });
+        return;
+    }
+
+    const alertElement = document.createElement("div");
+    alertElement.className = `alert alert-${variant} alert-dismissible fade show mb-2`;
+    alertElement.setAttribute("role", "alert");
+
+    const body = document.createElement("span");
+    body.textContent = message;
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "btn-close";
+    closeButton.setAttribute("data-bs-dismiss", "alert");
+    closeButton.setAttribute("aria-label", "Close");
+
+    alertElement.appendChild(body);
+    alertElement.appendChild(closeButton);
+    container.appendChild(alertElement);
+}
+
+function isDocumentDeleteModalReady() {
+    return Boolean(
+        documentDeleteModal &&
+        documentDeleteModalElement &&
+        documentDeleteModalElement.isConnected &&
+        documentDeleteModalBody &&
+        documentDeleteModalBody.isConnected &&
+        documentDeleteCurrentBtn &&
+        documentDeleteCurrentBtn.isConnected &&
+        documentDeleteAllBtn &&
+        documentDeleteAllBtn.isConnected
+    );
+}
+
+function promptDocumentDeleteMode(documentCount = 1) {
+    if (!isDocumentDeleteModalReady()) {
+        showDocumentDeleteFeedback("Delete confirmation dialog is unavailable. Refresh the page and try again.");
+        return Promise.resolve(null);
+    }
+
+    const modalContent = getDocumentDeleteModalContent(documentCount);
+    if (documentDeleteModalTitle) {
+        documentDeleteModalTitle.textContent = modalContent.title;
+    }
+    documentDeleteModalBody.innerHTML = modalContent.body;
+
+    return new Promise((resolve) => {
+        let settled = false;
+
+        const cleanup = () => {
+            documentDeleteModalElement.removeEventListener("hidden.bs.modal", handleHidden);
+            documentDeleteCurrentBtn.removeEventListener("click", handleCurrentOnly);
+            documentDeleteAllBtn.removeEventListener("click", handleAllVersions);
+        };
+
+        const finalize = (value) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            resolve(value);
+        };
+
+        const handleHidden = () => finalize(null);
+        const handleCurrentOnly = () => {
+            documentDeleteModal.hide();
+            finalize("current_only");
+        };
+        const handleAllVersions = () => {
+            documentDeleteModal.hide();
+            finalize("all_versions");
+        };
+
+        documentDeleteModalElement.addEventListener("hidden.bs.modal", handleHidden);
+        documentDeleteCurrentBtn.addEventListener("click", handleCurrentOnly);
+        documentDeleteAllBtn.addEventListener("click", handleAllVersions);
+        documentDeleteModal.show();
+    });
+}
+
+async function requestDocumentDeletion(documentId, deleteMode) {
+    const query = new URLSearchParams({ delete_mode: deleteMode });
+    const response = await fetch(`/api/documents/${documentId}?${query.toString()}`, { method: "DELETE" });
+
+    let responseData = {};
+    try {
+        responseData = await response.json();
+    } catch (error) {
+        responseData = {};
+    }
+
+    if (!response.ok) {
+        throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
+    }
+
+    return responseData;
 }
 
 // ------------- Event Listeners -------------
@@ -1252,59 +1424,37 @@ window.onExtractMetadata = function (docId, event) {
 };
 
 
-window.deleteDocument = function(documentId, event) {
-    if (!confirm("Are you sure you want to delete this document? This action cannot be undone.")) return;
-
-    const deleteBtn = event ? event.target.closest('button') : null;
-    if (deleteBtn) {
-        deleteBtn.disabled = true;
-        deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+window.deleteDocument = async function(documentId, event) {
+    const deleteMode = await promptDocumentDeleteMode(1);
+    if (!deleteMode) {
+        return;
     }
 
-    // Stop polling if active for this document
+    const deleteTrigger = event ? event.target.closest('a, button') : null;
+    const originalDeleteTriggerHtml = deleteTrigger ? deleteTrigger.innerHTML : null;
+    if (deleteTrigger) {
+        deleteTrigger.classList.add('disabled');
+        deleteTrigger.setAttribute('aria-disabled', 'true');
+        deleteTrigger.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+    }
+
     if (activePolls.has(documentId)) {
-        // Find the interval ID associated with this poll to clear it (more robust approach needed if storing interval IDs)
-        // For now, just remove from the active set; the poll will eventually fail or stop when elements disappear
         activePolls.delete(documentId);
-        // Ideally, you'd store intervalId with the docId in a map to clear it here.
     }
 
-
-    fetch(`/api/documents/${documentId}`, { method: "DELETE" })
-        .then(response => {
-            if (!response.ok) {
-                return response.json().then(data => Promise.reject(data)).catch(() => Promise.reject({ error: `Server responded with status ${response.status}` }));
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log("Document deleted successfully:", data);
-            const docRow = document.getElementById(`doc-row-${documentId}`);
-            const detailsRow = document.getElementById(`details-row-${documentId}`);
-            const statusRow = document.getElementById(`status-row-${documentId}`);
-            if (docRow) docRow.remove();
-            if (detailsRow) detailsRow.remove();
-            if (statusRow) statusRow.remove();
-
-             // Refresh if the table body becomes empty OR to update pagination total count
-             if (documentsTableBody && documentsTableBody.childElementCount === 0) {
-                 fetchUserDocuments(); // Refresh to show 'No documents' message and correct pagination
-             } else {
-                  // Maybe just decrement total count locally and re-render pagination?
-                  // For simplicity, a full refresh might be acceptable unless dealing with huge lists/slow API
-                  fetchUserDocuments(); // Refresh to update pagination potentially
-             }
-
-        })
-        .catch(error => {
-            console.error("Error deleting document:", error);
-            alert("Error deleting document: " + (error.error || error.message || "Unknown error"));
-            // Re-enable button only if it still exists
-            if (deleteBtn && document.body.contains(deleteBtn)) {
-                 deleteBtn.disabled = false;
-                 deleteBtn.innerHTML = '<i class="bi bi-trash-fill"></i>';
-            }
-        });
+    try {
+        const responseData = await requestDocumentDeletion(documentId, deleteMode);
+        console.log("Document deleted successfully:", responseData);
+        fetchUserDocuments();
+    } catch (error) {
+        console.error("Error deleting document:", error);
+        alert("Error deleting document: " + (error.error || error.message || "Unknown error"));
+        if (deleteTrigger && document.body.contains(deleteTrigger)) {
+            deleteTrigger.classList.remove('disabled');
+            deleteTrigger.removeAttribute('aria-disabled');
+            deleteTrigger.innerHTML = originalDeleteTriggerHtml;
+        }
+    }
 }
 
 window.removeSelfFromDocument = function(documentId, event) {
@@ -1468,64 +1618,43 @@ function updateBulkActionButtons() {
 }
 
 // Delete selected documents
-window.deleteSelectedDocuments = function() {
+window.deleteSelectedDocuments = async function() {
     if (selectedDocuments.size === 0) return;
-    
-    if (!confirm(`Are you sure you want to delete ${selectedDocuments.size} document(s)? This action cannot be undone.`)) {
+
+    const deleteMode = await promptDocumentDeleteMode(selectedDocuments.size);
+    if (!deleteMode) {
         return;
     }
-    
+
     const documentIds = Array.from(selectedDocuments);
-    let completed = 0;
-    let failed = 0;
-    
-    // Process each document deletion sequentially
-    documentIds.forEach(docId => {
-        fetch(`/api/documents/${docId}`, { method: "DELETE" })
-            .then(response => {
-                if (response.ok) {
-                    completed++;
-                    const docRow = document.getElementById(`doc-row-${docId}`);
-                    const detailsRow = document.getElementById(`details-row-${docId}`);
-                    const statusRow = document.getElementById(`status-row-${docId}`);
-                    if (docRow) docRow.remove();
-                    if (detailsRow) detailsRow.remove();
-                    if (statusRow) statusRow.remove();
-                } else {
-                    failed++;
-                }
-                
-                // Update status when all operations complete
-                if (completed + failed === documentIds.length) {
-                    if (failed > 0) {
-                        alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
-                    } else {
-                        alert(`Successfully deleted ${completed} document(s).`);
-                    }
-                    
-                    // Refresh the documents list
-                    fetchUserDocuments();
-                    
-                    // Exit selection mode
-                    window.toggleSelectionMode();
-                }
-            })
-            .catch(error => {
-                failed++;
-                console.error("Error deleting document:", error);
-                
-                // Update status when all operations complete
-                if (completed + failed === documentIds.length) {
-                    alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
-                    
-                    // Refresh the documents list
-                    fetchUserDocuments();
-                    
-                    // Exit selection mode
-                    window.toggleSelectionMode();
-                }
-            });
-    });
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.disabled = true;
+        deleteSelectedBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Deleting...`;
+    }
+
+    documentIds.forEach((docId) => activePolls.delete(docId));
+
+    const results = await Promise.allSettled(documentIds.map((docId) => requestDocumentDeletion(docId, deleteMode)));
+    const completed = results.filter((result) => result.status === 'fulfilled').length;
+    const failed = results.filter((result) => result.status === 'rejected').length;
+
+    if (failed > 0) {
+        alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
+    }
+
+    if (selectionModeActive) {
+        window.toggleSelectionMode();
+    } else {
+        selectedDocuments.clear();
+        updateBulkActionButtons();
+    }
+
+    fetchUserDocuments();
+
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.disabled = false;
+        deleteSelectedBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Selected';
+    }
 };
 
 // Remove self from selected shared documents

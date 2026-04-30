@@ -1,11 +1,14 @@
-# Copyright (c) Microsoft. All rights reserved.
+# math_plugin.py
 
 from typing import Annotated
-from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+
+from semantic_kernel.core_plugins.math_plugin import MathPlugin as SKMathPlugin
 from semantic_kernel.functions.kernel_function_decorator import kernel_function
 
+from semantic_kernel_plugins.plugin_invocation_logger import auto_wrap_plugin_functions
 
-class MathPlugin:
+
+class MathPlugin(SKMathPlugin):
     """Description: MathPlugin provides a set of functions to make Math calculations.
 
     Usage:
@@ -16,40 +19,11 @@ class MathPlugin:
         {{math.Subtract}} => Returns the difference of input and amount (provided in the KernelArguments)
     """
 
-    def _parse_number(self, val: int | float | str) -> float:
-        """Helper to parse a value as a float (supports int, float, str)."""
-        if isinstance(val, (int, float)):
-            return float(val)
-        try:
-            return float(val)
-        except Exception as ex:
-            raise ValueError(f"Cannot convert {val!r} to float for math operation") from ex
-
-    @kernel_function(name="Add")
-    def add(
-        self,
-        input: Annotated[int | float | str, "The first number to add"],
-        amount: Annotated[int | float | str, "The second number to add"],
-    ) -> Annotated[float, "The result"]:
-        """Returns the addition result of the values provided (supports float and int)."""
-        x = self._parse_number(input)
-        y = self._parse_number(amount)
-        return x + y
-
-    @kernel_function(name="Subtract")
-    @plugin_function_logger("MathPlugin")
-    def subtract(
-        self,
-        input: Annotated[int | float | str, "The number to subtract from"],
-        amount: Annotated[int | float | str, "The number to subtract"],
-    ) -> Annotated[float, "The result"]:
-        """Returns the difference of numbers provided (supports float and int)."""
-        x = self._parse_number(input)
-        y = self._parse_number(amount)
-        return x - y
+    def __init__(self):
+        super().__init__()
+        auto_wrap_plugin_functions(self, self.__class__.__name__)
 
     @kernel_function(name="Multiply")
-    @plugin_function_logger("MathPlugin")
     def multiply(
         self,
         input: Annotated[int | float | str, "The first number to multiply"],
@@ -61,7 +35,6 @@ class MathPlugin:
         return x * y
 
     @kernel_function(name="Divide")
-    @plugin_function_logger("MathPlugin")
     def divide(
         self,
         input: Annotated[int | float | str, "The numerator"],
@@ -75,7 +48,6 @@ class MathPlugin:
         return x / y
 
     @kernel_function(name="Power")
-    @plugin_function_logger("MathPlugin")
     def power(
         self,
         input: Annotated[int | float | str, "The base number"],
@@ -87,7 +59,6 @@ class MathPlugin:
         return x**y
 
     @kernel_function(name="SquareRoot")
-    @plugin_function_logger("MathPlugin")
     def square_root(
         self,
         input: Annotated[int | float | str, "The number to calculate the square root of"],
@@ -99,7 +70,6 @@ class MathPlugin:
         return x**0.5
     
     @kernel_function(name="Modulus")
-    @plugin_function_logger("MathPlugin")
     def modulus(
         self,
         input: Annotated[int | float | str, "The dividend"],

@@ -4,7 +4,6 @@ OpenAPI Plugin Factory
 Factory class for creating OpenAPI plugins from different sources:
 - Stored content in user settings (preferred)
 - Uploaded files (deprecated)
-- URLs (deprecated)
 - File paths (deprecated)
 """
 
@@ -64,8 +63,6 @@ class OpenApiPluginFactory:
             raise ValueError("openapi_spec_content is required for content source type")
         elif source_type == 'file':
             openapi_spec_path = cls._get_uploaded_file_path(config)
-        elif source_type == 'url':
-            openapi_spec_path = cls._get_downloaded_file_path(config)
         elif source_type == 'path':
             openapi_spec_path = cls._get_local_file_path(config)
         else:
@@ -95,22 +92,6 @@ class OpenApiPluginFactory:
         return file_path
     
     @classmethod
-    def _get_downloaded_file_path(cls, config: Dict[str, Any]) -> str:
-        """Get file path for downloaded OpenAPI spec from URL."""
-        file_id = config.get('openapi_file_id')
-        if not file_id:
-            raise ValueError("openapi_file_id is required for URL source type")
-        
-        # Construct path to downloaded file
-        file_path = os.path.join(cls.UPLOADED_FILES_DIR, f"{file_id}.yaml")
-        if not os.path.exists(file_path):
-            # Try JSON extension
-            file_path = os.path.join(cls.UPLOADED_FILES_DIR, f"{file_id}.json")
-            if not os.path.exists(file_path):
-                raise FileNotFoundError(f"Downloaded file not found: {file_id}")
-        
-        return file_path
-    
     @classmethod
     def _get_local_file_path(cls, config: Dict[str, Any]) -> str:
         """Get file path for local OpenAPI spec."""

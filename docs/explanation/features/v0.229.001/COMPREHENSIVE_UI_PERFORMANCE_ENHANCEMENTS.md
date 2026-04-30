@@ -910,7 +910,7 @@ class CitationGenerator:
                 from datetime import datetime
                 date_obj = datetime.fromisoformat(creation_date.replace('Z', '+00:00'))
                 citation_parts.append(f"({date_obj.year})")
-            except:
+            except Exception as ex:
                 pass
         
         citation_parts.append(f"Retrieved from {url}")

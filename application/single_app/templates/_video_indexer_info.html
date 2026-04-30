@@ -12,12 +12,12 @@
             <div class="modal-body">
                 <div class="alert alert-info">
                     <i class="bi bi-info-circle me-2"></i>
-                    <strong>What is Azure AI Video Indexer?</strong> Azure AI Video Indexer is a cloud application, part of Azure Applied AI Services, built on Azure AI services (such as Face, Translator, Speech, and Vision). It enables you to extract insights from your videos using managed identity authentication.
+                    <strong>What is Azure AI Video Indexer?</strong> Azure AI Video Indexer is part of Azure Applied AI Services. In Simple Chat, uploaded videos are processed through the Azure Resource Manager Video Indexer flow using managed identity rather than legacy account API keys.
                 </div>
 
                 <div class="alert alert-warning">
                     <i class="bi bi-exclamation-triangle me-2"></i>
-                    <strong>Important:</strong> This application uses <strong>Managed Identity authentication</strong> for Video Indexer. API keys are not supported.
+                    <strong>Important:</strong> Simple Chat uses the <strong>App Service system-assigned managed identity</strong> at runtime. Azure Video Indexer may also ask you to select a <strong>user-assigned managed identity</strong> when you create the Video Indexer resource for its own storage/media integration. Those are different identities with different jobs.
                 </div>
 
                 <!-- Current Configuration Display -->
@@ -28,8 +28,18 @@
                     <div class="card-body">
                         <div class="row">
                             <div class="col-md-6 mb-3">
+                                <strong>Cloud / Endpoint Mode:</strong><br>
+                                <code id="modal-cloud-mode">Not configured</code>
+                            </div>
+                            <div class="col-md-6 mb-3">
                                 <strong>Video File Support Enabled:</strong>
                                 <span id="modal-video-enabled" class="badge bg-secondary">No</span>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <strong>Account Name:</strong><br>
+                                <code id="modal-account-name">Not configured</code>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <strong>Video Indexer Endpoint:</strong><br>
@@ -83,10 +93,14 @@
                                 <li>Create a resource group (or select an existing one) and select a <strong>Region</strong></li>
                                 <li>Enter an account name in the <strong>Resource name</strong> field</li>
                                 <li>Connect the account to a <strong>Storage account</strong> (must be Standard StorageV2)</li>
-                                <li>Select or create a <strong>User-assigned managed identity</strong></li>
+                                <li>If prompted, select or create a <strong>User-assigned managed identity</strong> for the Video Indexer resource itself</li>
                                 <li>Agree to the terms and conditions and select <strong>Review + create</strong></li>
                                 <li>When validation completes, select <strong>Create</strong></li>
                             </ol>
+                        </div>
+
+                        <div class="alert alert-secondary">
+                            <strong>Identity note:</strong> The user-assigned managed identity selected during Video Indexer resource creation is not the same identity that Simple Chat uses to call Video Indexer. Simple Chat still uses the App Service system-assigned managed identity described below.
                         </div>
 
                         <div class="alert alert-warning">
@@ -126,6 +140,10 @@
                                 <li>Select your App Service from the list</li>
                                 <li>Click <strong>Select</strong>, then <strong>Review + assign</strong></li>
                             </ol>
+                        </div>
+
+                        <div class="alert alert-warning mb-4">
+                            <strong>Managed identity only:</strong> Do not look for a Video Indexer API key in the Admin Settings page. The current setup depends on the App Service managed identity having <strong>Contributor</strong> on the Video Indexer resource.
                         </div>
 
                         <div class="mb-4">
@@ -169,10 +187,16 @@
                                 </thead>
                                 <tbody>
                                     <tr>
-                                        <td><strong>API Endpoint</strong></td>
-                                        <td>Azure Video Indexer API endpoint</td>
+                                        <td><strong>Cloud / Endpoint Mode</strong></td>
+                                        <td>Select Azure Public, Azure Government, or Custom Endpoint in Admin Settings</td>
+                                        <td><code>Azure Public / Commercial</code></td>
+                                        <td><span class="badge bg-danger">Required</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Effective API Endpoint</strong></td>
+                                        <td>Derived from the selected cloud mode unless you choose Custom Endpoint</td>
                                         <td><code>https://api.videoindexer.ai</code></td>
-                                        <td><span class="badge bg-secondary">Default</span></td>
+                                        <td><span class="badge bg-secondary">Derived</span></td>
                                     </tr>
                                     <tr>
                                         <td><strong>Resource Group</strong></td>
@@ -230,12 +254,17 @@
                     <div class="card-body">
                         <div class="alert alert-info mb-3">
                             <h6><i class="bi bi-shield-check me-2"></i>Authentication Method</h6>
-                            <p class="mb-0">This application uses <strong>Managed Identity authentication</strong> which provides secure, passwordless access to Azure Video Indexer. Managed Identity must be enabled on your App Service and granted the <code>Contributor</code> role on your Video Indexer resource.</p>
+                            <p class="mb-0">Simple Chat uses <strong>managed identity authentication</strong> for Azure Video Indexer. The App Service system-assigned managed identity must be enabled and granted the <code>Contributor</code> role on your Video Indexer resource.</p>
                         </div>
 
                         <div class="alert alert-warning mb-3">
                             <h6><i class="bi bi-key me-2"></i>API Keys Not Supported</h6>
-                            <p class="mb-0">API key authentication is <strong>not supported</strong> for Azure Portal-created Video Indexer accounts. If you're using an older account from videoindexer.ai, you'll need to migrate to a managed identity-based ARM account for production use.</p>
+                            <p class="mb-0">API key authentication is <strong>not used</strong> by the current Simple Chat Video Indexer flow. If you still have legacy Video Indexer keys from older account types, keep them out of this configuration path.</p>
+                        </div>
+
+                        <div class="alert alert-info mb-3">
+                            <h6><i class="bi bi-cloud me-2"></i>Cloud Selection</h6>
+                            <p class="mb-0">The Admin Settings page now lets you choose Azure Public, Azure Government, or Custom Endpoint mode. Keep this aligned with your deployment environment. If the application is running with <code>AZURE_ENVIRONMENT=usgovernment</code>, select Azure Government unless you intentionally override the endpoint.</p>
                         </div>
 
                         <div class="alert alert-secondary mb-0">
@@ -245,7 +274,7 @@
                                 <li>Azure Resource Manager (ARM) Video Indexer account created via Azure Portal</li>
                                 <li>System-Assigned Managed Identity enabled on your App Service</li>
                                 <li>Contributor role assigned to the App Service identity on the Video Indexer resource</li>
-                                <li>All required configuration values (resource group, subscription ID, account name, location, account ID)</li>
+                                <li>Cloud mode aligned with your Azure environment and all required configuration values (resource group, subscription ID, account name, location, account ID)</li>
                             </ul>
                         </div>
                     </div>
@@ -384,6 +413,7 @@
 <script>
 function updateVideoIndexerModalInfo() {
     const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
+    const cloudMode = document.getElementById('video_indexer_cloud')?.selectedOptions?.[0]?.textContent?.trim() || 'Not configured';
     const videoEndpoint = document.getElementById('video_indexer_endpoint')?.value?.trim() || '';
     const accountId = document.getElementById('video_indexer_account_id')?.value?.trim() || '';
     const location = document.getElementById('video_indexer_location')?.value?.trim() || '';
@@ -396,6 +426,7 @@ function updateVideoIndexerModalInfo() {
     document.getElementById('modal-video-enabled').className = videoEnabled ? 'badge bg-success' : 'badge bg-secondary';
 
     // Update configuration display
+    document.getElementById('modal-cloud-mode').textContent = cloudMode;
     document.getElementById('modal-video-endpoint').textContent = videoEndpoint || 'https://api.videoindexer.ai';
     document.getElementById('modal-resource-group').textContent = resourceGroup || 'Not configured';
     document.getElementById('modal-subscription-id').textContent = subscriptionId || 'Not configured';

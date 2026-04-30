@@ -1,0 +1,180 @@
+.editor-toolbar a.fa::before {
+    font-family: "bootstrap-icons" !important;
+    font-style: normal;
+    font-weight: 400 !important;
+    display: inline-block;
+    line-height: 30px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.editor-toolbar a.fa-bold::before {
+    content: "\f5f0";
+}
+
+.editor-toolbar a.fa-italic::before {
+    content: "\f5f4";
+}
+
+.editor-toolbar a.fa-strikethrough::before {
+    content: "\f5f5";
+}
+
+.editor-toolbar a.fa-header::before,
+.editor-toolbar a.fa-header-x::before {
+    content: "\f5f1";
+}
+
+.editor-toolbar a.fa-quote-left::before {
+    content: "\f190";
+}
+
+.editor-toolbar a.fa-list-ul::before {
+    content: "\f478";
+}
+
+.editor-toolbar a.fa-list-ol::before {
+    content: "\f475";
+}
+
+.editor-toolbar a.fa-link::before {
+    content: "\f470";
+}
+
+.editor-toolbar a.fa-picture-o::before {
+    content: "\f42a";
+}
+
+.editor-toolbar a.fa-table::before {
+    content: "\f5aa";
+}
+
+.editor-toolbar a.fa-minus::before {
+    content: "\f426";
+}
+
+.editor-toolbar a.fa-eye::before {
+    content: "\f341";
+}
+
+.editor-toolbar a.fa-columns::before {
+    content: "\f460";
+}
+
+.editor-toolbar a.fa-arrows-alt::before {
+    content: "\f14d";
+}
+
+.editor-toolbar a.fa-question-circle::before {
+    content: "\f505";
+}
+
+[data-bs-theme="dark"] .editor-toolbar {
+    opacity: 1;
+    background: #1f2937;
+    border-color: var(--bs-border-color);
+}
+
+[data-bs-theme="dark"] .editor-toolbar a {
+    color: var(--bs-body-color) !important;
+}
+
+[data-bs-theme="dark"] .editor-toolbar a.active,
+[data-bs-theme="dark"] .editor-toolbar a:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+[data-bs-theme="dark"] .editor-toolbar i.separator {
+    border-left-color: rgba(255, 255, 255, 0.14);
+    border-right-color: transparent;
+}
+
+[data-bs-theme="dark"] .editor-toolbar.fullscreen,
+[data-bs-theme="dark"] .CodeMirror-fullscreen,
+[data-bs-theme="dark"] .editor-preview-full {
+    background: #111827;
+}
+
+[data-bs-theme="dark"] .editor-toolbar.fullscreen::before {
+    background: linear-gradient(to right, #1f2937 0%, rgba(31, 41, 55, 0) 100%);
+}
+
+[data-bs-theme="dark"] .editor-toolbar.fullscreen::after {
+    background: linear-gradient(to right, rgba(31, 41, 55, 0) 0%, #1f2937 100%);
+}
+
+[data-bs-theme="dark"] .CodeMirror,
+[data-bs-theme="dark"] .editor-preview,
+[data-bs-theme="dark"] .editor-preview-side {
+    background: #111827;
+    color: #e5e7eb;
+    border-color: var(--bs-border-color);
+}
+
+[data-bs-theme="dark"] .CodeMirror-gutters {
+    background: #0f172a;
+    border-right-color: var(--bs-border-color);
+}
+
+[data-bs-theme="dark"] .CodeMirror-linenumber,
+[data-bs-theme="dark"] .editor-statusbar {
+    color: #94a3b8;
+}
+
+[data-bs-theme="dark"] .editor-statusbar {
+    background: #1f2937;
+    border-color: var(--bs-border-color);
+}
+
+[data-bs-theme="dark"] .CodeMirror-cursor {
+    border-left-color: #f8fafc;
+}
+
+[data-bs-theme="dark"] .CodeMirror-selected,
+[data-bs-theme="dark"] .CodeMirror-focused .CodeMirror-selected,
+[data-bs-theme="dark"] .CodeMirror-line::selection,
+[data-bs-theme="dark"] .CodeMirror-line > span::selection,
+[data-bs-theme="dark"] .CodeMirror-line > span > span::selection,
+[data-bs-theme="dark"] .CodeMirror-line::-moz-selection,
+[data-bs-theme="dark"] .CodeMirror-line > span::-moz-selection,
+[data-bs-theme="dark"] .CodeMirror-line > span > span::-moz-selection {
+    background: rgba(59, 130, 246, 0.32);
+}
+
+[data-bs-theme="dark"] .CodeMirror-activeline-background {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+[data-bs-theme="dark"] .CodeMirror-placeholder,
+[data-bs-theme="dark"] .cm-s-default .cm-meta,
+[data-bs-theme="dark"] .cm-s-default .cm-qualifier,
+[data-bs-theme="dark"] .cm-s-default .cm-comment,
+[data-bs-theme="dark"] .cm-s-default .cm-hr {
+    color: #94a3b8;
+}
+
+[data-bs-theme="dark"] .cm-s-default .cm-header,
+[data-bs-theme="dark"] .cm-s-default .cm-def,
+[data-bs-theme="dark"] .cm-s-default .cm-attribute,
+[data-bs-theme="dark"] .cm-s-default .cm-link {
+    color: #93c5fd;
+}
+
+[data-bs-theme="dark"] .cm-s-default .cm-string,
+[data-bs-theme="dark"] .cm-s-default .cm-string-2,
+[data-bs-theme="dark"] .cm-s-default .cm-number {
+    color: #fca5a5;
+}
+
+[data-bs-theme="dark"] .cm-s-default .cm-quote,
+[data-bs-theme="dark"] .cm-s-default .cm-tag {
+    color: #86efac;
+}
+
+[data-bs-theme="dark"] .cm-s-default .cm-keyword,
+[data-bs-theme="dark"] .cm-s-default .cm-builtin,
+[data-bs-theme="dark"] .cm-s-default .cm-variable-2,
+[data-bs-theme="dark"] .cm-s-default .cm-variable-3 {
+    color: #c4b5fd;
+}

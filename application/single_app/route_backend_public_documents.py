@@ -207,18 +207,17 @@ def register_route_backend_public_documents(app):
 
         where = ' AND '.join(conds)
 
-        # count
-        count_q = f'SELECT VALUE COUNT(1) FROM c WHERE {where}'
-        total = list(cosmos_public_documents_container.query_items(
-            query=count_q, parameters=params, enable_cross_partition_query=True
-        ))
-        total_count = total[0] if total else 0
-
-        # data
-        data_q = f'SELECT * FROM c WHERE {where} ORDER BY c.{sort_by} {sort_order} OFFSET {offset} LIMIT {page_size}'
-        docs = list(cosmos_public_documents_container.query_items(
+        data_q = f'SELECT * FROM c WHERE {where}'
+        matching_docs = list(cosmos_public_documents_container.query_items(
             query=data_q, parameters=params, enable_cross_partition_query=True
         ))
+        current_docs = sort_documents(
+            select_current_documents(matching_docs),
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        total_count = len(current_docs)
+        docs = current_docs[offset:offset + page_size]
 
         # legacy
         legacy_q = 'SELECT VALUE COUNT(1) FROM c WHERE c.public_workspace_id = @ws AND NOT IS_DEFINED(c.percentage_complete)'
@@ -284,8 +283,7 @@ def register_route_backend_public_documents(app):
             enable_cross_partition_query=True
         ))
 
-        # Limit results to page_size
-        docs = docs[:page_size]
+        docs = sort_documents(select_current_documents(docs))[:page_size]
 
         return jsonify({
             'documents': docs,
@@ -404,14 +402,21 @@ def register_route_backend_public_documents(app):
         role = get_user_role_in_public_workspace(ws_doc, user_id) if ws_doc else None
         if role not in ['Owner','Admin','DocumentManager']:
             return jsonify({'error':'Access denied'}), 403
+        delete_mode = request.args.get('delete_mode', 'all_versions')
+        if delete_mode not in {'all_versions', 'current_only'}:
+            return jsonify({'error': 'Invalid delete mode'}), 400
         try:
-            delete_document(user_id=user_id, document_id=doc_id, public_workspace_id=active_ws)
-            delete_document_chunks(document_id=doc_id, public_workspace_id=active_ws)
+            delete_result = delete_document_revision(
+                user_id=user_id,
+                document_id=doc_id,
+                delete_mode=delete_mode,
+                public_workspace_id=active_ws,
+            )
             
             # Invalidate public workspace search cache since document was deleted
             invalidate_public_workspace_search_cache(active_ws)
             
-            return jsonify({'message':'Deleted'}), 200
+            return jsonify({'message':'Deleted', **delete_result}), 200
         except Exception as e:
             return jsonify({'error':str(e)}), 500
 

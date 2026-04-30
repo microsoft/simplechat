@@ -1,7 +1,8 @@
 ---
 applyTo: '**'
 ---
-After a code change, update the version 
+After a code change, update the version. 
+If updating in /docs, do not increment the version.
 
 Example
 Before Code Changes

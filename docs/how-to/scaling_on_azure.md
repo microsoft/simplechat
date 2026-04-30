@@ -1,6 +1,45 @@
-# How to Scale Simple Chat on Azure
+---
+layout: showcase-page
+title: "Scale Simple Chat on Azure"
+permalink: /how-to/scaling_on_azure/
+menubar: docs_menu
+accent: orange
+eyebrow: "How-To Guide"
+description: "Use this guide when a working deployment needs more throughput, higher availability, or cleaner scaling rules across App Service, Cosmos DB, Search, and AI services."
+hero_icons: ["bi-graph-up-arrow", "bi-server", "bi-speedometer2"]
+hero_pills: ["App Service and data scale", "Search and AI throughput", "Monitor before you overprovision"]
+hero_links: [{ label: "Scaling overview", url: "/application_scaling/", style: "primary" }, { label: "Admin overview", url: "/admin_configuration/", style: "secondary" }]
+---
 
-When your Simple Chat deployment grows in users, data, or usage, you'll need to scale the underlying Azure resources. This guide provides specific steps for scaling each component to maintain performance and availability.
+Scaling Simple Chat is about coordinating several Azure services, not just adding more web instances. Use this guide when you already have a functioning deployment and need to expand capacity without breaking session behavior, retrieval performance, or downstream service quotas.
+
+<section class="latest-release-card-grid">
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-server"></i></div>
+            <h2>Scale App Service deliberately</h2>
+            <p>Vertical and horizontal scaling solve different problems, and scale-out requires session strategy to be correct before you add instances.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-database"></i></div>
+            <h2>Track Cosmos RU pressure</h2>
+            <p>Most data-tier trouble shows up as throttling, query latency, or hot containers before it shows up as a full outage.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-search"></i></div>
+            <h2>Protect retrieval quality</h2>
+            <p>Search replicas, partitions, and index performance all influence how grounded chat behaves at higher load.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-cpu"></i></div>
+            <h2>Mind downstream AI quotas</h2>
+            <p>Azure OpenAI and other AI services have their own TPM, RPM, and service limits, so app scaling alone does not solve throughput bottlenecks.</p>
+      </article>
+</section>
+
+<div class="latest-release-note-panel">
+      <h2>Redis comes before App Service scale-out</h2>
+      <p>If you plan to run more than one web instance, configure shared session storage first. Without it, scale-out can create authentication and session consistency problems that look like random app instability.</p>
+</div>
 
 ## When to Scale
 

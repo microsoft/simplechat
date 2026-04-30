@@ -1,10 +1,47 @@
-# explanation/architecture.md
 ---
-layout: libdoc/page
-title: Architecture
+layout: showcase-page
+title: "Architecture"
+permalink: /explanation/architecture/
+menubar: docs_menu
+accent: slate
+eyebrow: "Explanation"
+description: "Understand the major platform layers in Simple Chat and how data, AI services, identity, and operations interact."
+hero_icons: ["bi-diagram-3", "bi-hdd-network", "bi-cpu"]
+hero_pills: ["Application, data, and AI layers", "Security and scale concerns", "Azure-native service composition"]
+hero_links: [{ label: "Explanation index", url: "/explanation/", style: "primary" }, { label: "Design principles", url: "/explanation/design_principles/", style: "secondary" }]
 order: 110
 category: Explanation
 ---
+
+Architecture matters here because Simple Chat is not just a chat frontend. It is a coordinated application layer over identity, search, storage, retrieval, and optional AI services.
+
+<section class="latest-release-card-grid">
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-window-stack"></i></div>
+        <h2>Application tier</h2>
+        <p>Azure App Service hosts the Flask application, owns the request flow, and orchestrates conversations, uploads, configuration, and service integration.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-database"></i></div>
+        <h2>Data plane</h2>
+        <p>Cosmos DB stores application metadata and history while Azure AI Search stores the retrieval layer that grounded chat depends on.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-stars"></i></div>
+        <h2>AI services</h2>
+        <p>Azure OpenAI, Document Intelligence, Speech, Video Indexer, and Content Safety can be combined based on which feature packs the deployment enables.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-shield-check"></i></div>
+        <h2>Security and operations</h2>
+        <p>Identity, private networking, monitoring, autoscale, and role separation are first-order parts of the design rather than optional polish.</p>
+    </article>
+</section>
+
+<div class="latest-release-note-panel">
+    <h2>How to read this page</h2>
+    <p>Start with the high-level diagram, then move into the component and data-flow sections. That order mirrors how most production questions appear: first where a responsibility lives, then how requests and documents move across the system.</p>
+</div>
 
 
 This document explains the overall architecture, design principles, and key concepts behind Simple Chat. Understanding these foundations will help you make informed decisions about deployment, configuration, and usage.

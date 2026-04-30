@@ -1,6 +1,45 @@
-# How to Use Managed Identity
+---
+layout: showcase-page
+title: "Use Managed Identity"
+permalink: /how-to/use_managed_identity/
+menubar: docs_menu
+accent: teal
+eyebrow: "How-To Guide"
+description: "Use Azure Managed Identity to move Simple Chat away from stored API keys and toward resource-to-resource authentication with RBAC."
+hero_icons: ["bi-shield-lock", "bi-key", "bi-person-badge"]
+hero_pills: ["RBAC over stored secrets", "Service-by-service role assignment", "Validate then remove keys"]
+hero_links: [{ label: "Admin configuration", url: "/reference/admin_configuration/", style: "primary" }, { label: "Speech MI manual setup", url: "/how-to/azure_speech_managed_identity_manul_setup/", style: "secondary" }]
+---
 
-This guide shows you how to configure Simple Chat to use Azure Managed Identity instead of API keys for secure authentication to Azure services. Using Managed Identity eliminates the need to store secrets in your application configuration.
+Managed identity works best when you treat it as an incremental migration. Enable the identity, assign the right RBAC roles, switch each service configuration over deliberately, and only then remove the old keys.
+
+<section class="latest-release-card-grid">
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-person-badge"></i></div>
+            <h2>Enable the App Service identity</h2>
+            <p>Everything starts with turning on system-assigned or user-assigned managed identity and confirming the principal exists before you assign roles.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-shield-check"></i></div>
+            <h2>Grant RBAC per service</h2>
+            <p>Azure OpenAI, Search, Cosmos DB, Storage, Speech, and other services each need the correct role assignment at the right scope.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-sliders"></i></div>
+            <h2>Switch the app configuration</h2>
+            <p>Use Admin Settings or application settings to move each dependency from keys or connection strings to managed-identity authentication.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-trash3"></i></div>
+            <h2>Remove secrets last</h2>
+            <p>Do not delete old credentials until you have validated the new path with connection tests and real workflows.</p>
+      </article>
+</section>
+
+<div class="latest-release-note-panel">
+      <h2>Not every service behaves the same way</h2>
+      <p>Most services can move cleanly to managed identity, but Cosmos DB and Speech usually deserve extra attention because RBAC scope and endpoint details matter more there than they do with simpler key-based setups.</p>
+</div>
 
 ## What is Managed Identity?
 

@@ -145,7 +145,7 @@ def test_image_response_validation():
                     else:
                         generated_image_url = image_data['url']
                         is_valid = generated_image_url and generated_image_url != 'null'
-            except:
+            except Exception as ex:
                 is_valid = False
             
             if is_valid == expected:

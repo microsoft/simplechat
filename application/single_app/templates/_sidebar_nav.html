@@ -1,5 +1,9 @@
 {# Sidebar Navigation Partial #}
-<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
+<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
+
+  <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
+    <i class="bi bi-grip-vertical"></i>
+  </div>
   
   <!-- Collapse/Expand button -->
   <button type="button" id="sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary position-absolute d-none d-sm-block"
@@ -164,6 +168,42 @@
     </div>
     {% endif %}
 
+    <!-- Support Menu Section - Only show when a signed-in app user can access at least one support destination -->
+    {% set support_menu_role_allowed = session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+    {% if support_menu_role_allowed and app_settings.enable_support_menu %}
+    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+    {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
+    {% if show_support_latest_features or show_support_send_feedback %}
+    <div class="overflow-auto">
+      <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <span class="nav-text">{{ app_settings.support_menu_name or 'Support' }}</span>
+        <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+      </div>
+      <div id="support-menu-links-section">
+        <ul class="nav flex-column mb-2">
+          {% if show_support_latest_features %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('support_latest_features') }}">
+              <i class="bi bi-lightning-charge me-2" style="font-size: 0.8em;"></i>
+              <span class="nav-text">Latest Features</span>
+              <span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
+            </a>
+          </li>
+          {% endif %}
+          {% if show_support_send_feedback %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('support_send_feedback') }}">
+              <i class="bi bi-envelope-paper me-2" style="font-size: 0.8em;"></i>
+              <span class="nav-text">Send Feedback</span>
+            </a>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+    {% endif %}
+
     <!-- External Links Section - Only show when logged in and enabled -->
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) and app_settings.enable_external_links and app_settings.external_links %}
     <div class="overflow-auto">
@@ -231,6 +271,93 @@
       <div id="admin-settings-section">
         <ul class="nav flex-column mb-2">
           <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="latest-features">
+              <i class="bi bi-lightning-charge me-2"></i><span class="nav-text">Latest Features</span><span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="latest-features-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-release-notifications-card">
+                  <i class="bi bi-megaphone me-2" style="font-size: 0.8em;"></i><span class="nav-text">Registration Badge</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-guided-tutorials-card">
+                  <i class="bi bi-signpost-split me-2" style="font-size: 0.8em;"></i><span class="nav-text">Guided Tutorials</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-background-chat-card">
+                  <i class="bi bi-bell me-2" style="font-size: 0.8em;"></i><span class="nav-text">Background Chat</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-model-selection-card">
+                  <i class="bi bi-cpu me-2" style="font-size: 0.8em;"></i><span class="nav-text">GPT Selection</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-tabular-card">
+                  <i class="bi bi-table me-2" style="font-size: 0.8em;"></i><span class="nav-text">Tabular Analysis</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-citation-improvements-card">
+                  <i class="bi bi-journal-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Citation Improvements</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-document-versioning-card">
+                  <i class="bi bi-files me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Versioning</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-export-card">
+                  <i class="bi bi-file-earmark-arrow-down me-2" style="font-size: 0.8em;"></i><span class="nav-text">Summaries and Export</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-agent-ops-card">
+                  <i class="bi bi-grid me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agent Operations</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-thoughts-card">
+                  <i class="bi bi-stars me-2" style="font-size: 0.8em;"></i><span class="nav-text">AI Transparency</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-fact-memory-card">
+                  <i class="bi bi-journal-bookmark me-2" style="font-size: 0.8em;"></i><span class="nav-text">Fact Memory</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-deployment-card">
+                  <i class="bi bi-hdd-rack me-2" style="font-size: 0.8em;"></i><span class="nav-text">Deployment</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-redis-card">
+                  <i class="bi bi-key me-2" style="font-size: 0.8em;"></i><span class="nav-text">Redis and Key Vault</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-send-feedback-card">
+                  <i class="bi bi-envelope-paper me-2" style="font-size: 0.8em;"></i><span class="nav-text">Send Feedback</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-support-menu-card">
+                  <i class="bi bi-life-preserver me-2" style="font-size: 0.8em;"></i><span class="nav-text">Support Menu</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-previous-release-card">
+                  <i class="bi bi-clock-history me-2" style="font-size: 0.8em;"></i><span class="nav-text">Previous Release</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="general">
               <i class="bi bi-gear me-2"></i><span class="nav-text">General</span>
             </a>
@@ -253,6 +380,11 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="classification-banner-section">
                   <i class="bi bi-shield-exclamation me-2" style="font-size: 0.8em;"></i><span class="nav-text">Classification Banner</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="support-menu-section">
+                  <i class="bi bi-life-preserver me-2" style="font-size: 0.8em;"></i><span class="nav-text">Support</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -285,6 +417,11 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="gpt-config">
                   <i class="bi bi-chat-square-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">GPT Configuration</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="processing-thoughts-section">
+                  <i class="bi bi-stars me-2" style="font-size: 0.8em;"></i><span class="nav-text">Processing Thoughts</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -486,6 +623,28 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="multimedia-support-section">
                   <i class="bi bi-play-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Multimedia Support</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="send-feedback">
+              <i class="bi bi-envelope-paper me-2"></i><span class="nav-text">Send Feedback</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="send-feedback-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-overview-card">
+                  <i class="bi bi-info-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Overview</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-bug-card">
+                  <i class="bi bi-bug me-2" style="font-size: 0.8em;"></i><span class="nav-text">Report a Bug</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-feature-card">
+                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Request a Feature</span>
                 </a>
               </li>
             </ul>
@@ -783,6 +942,19 @@
           externalLinksCaret.style.transform = externalLinksCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
         });
       }
+
+      // Collapsible Support Menu Section
+      var supportMenuToggle = document.getElementById('support-menu-toggle');
+      var supportMenuSection = document.getElementById('support-menu-links-section');
+      var supportMenuCaret = document.getElementById('support-menu-caret');
+      var supportMenuCollapsed = false;
+      if (supportMenuToggle && supportMenuSection && supportMenuCaret) {
+        supportMenuToggle.addEventListener('click', function() {
+          supportMenuCollapsed = !supportMenuCollapsed;
+          supportMenuSection.style.display = supportMenuCollapsed ? 'none' : '';
+          supportMenuCaret.style.transform = supportMenuCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
     });
 
     // Sidebar Toggle Functionality
@@ -850,8 +1022,8 @@
       
       /* Fixed user account section */
       #sidebar-user-account {
-        width: 260px;
-        min-width: 220px;
+        width: var(--sidebar-width, 260px);
+        min-width: var(--sidebar-min-width, 220px);
         transition: inherit;
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);

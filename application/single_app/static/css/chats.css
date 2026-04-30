@@ -20,6 +20,13 @@
   z-index: 1050 !important; /* Ensure it's above other elements */
 }
 
+.chat-searchable-select .dropdown-menu.show {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  z-index: 1050 !important;
+}
+
 /* Handle dropdown positioning at the edge of viewport */
 #document-dropdown.dropup .dropdown-menu {
   bottom: 100% !important;
@@ -37,6 +44,216 @@
   position: absolute;
   left: 0 !important; /* Keep it aligned to the left of its container */
   right: auto !important; /* Prevent right positioning */
+}
+
+.chat-searchable-select {
+  min-width: 120px;
+}
+
+.chat-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.chat-toolbar-actions,
+.chat-toolbar-controls,
+.chat-toolbar-toggles,
+.chat-toolbar-selectors {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.chat-toolbar-actions {
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
+.chat-toolbar-controls {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  align-items: flex-end;
+  margin-left: auto;
+}
+
+.chat-toolbar-toggles {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.chat-toolbar-selectors {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.chat-toolbar-selector {
+  flex: 0 1 200px;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.chat-toolbar-selector .chat-searchable-select {
+  width: 100%;
+  min-width: 0;
+}
+
+#prompt-selection-container.chat-toolbar-selector {
+  max-width: 300px;
+}
+
+#model-select-container.chat-toolbar-selector,
+#agent-select-container.chat-toolbar-selector {
+  max-width: 230px;
+}
+
+.chat-searchable-select .dropdown-menu {
+  min-width: 100%;
+  max-width: 360px;
+  max-height: 60vh;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.chat-searchable-select-button {
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 1.5rem;
+}
+
+.chat-searchable-select-text {
+  display: inline-block;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-searchable-select-search,
+.chat-dropdown-search {
+  padding: 0 0.25rem;
+}
+
+.chat-searchable-select-items {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.chat-searchable-select-items .dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+}
+
+.chat-searchable-select-items .dropdown-item.active {
+  background-color: #e9ecef;
+  color: #212529;
+}
+
+.chat-searchable-select-items .dropdown-item:hover {
+  background-color: #f8f9fa;
+}
+
+.chat-searchable-select-items .dropdown-item.disabled {
+  color: #6c757d;
+  cursor: default;
+}
+
+.chat-searchable-select-items .dropdown-item.disabled:hover {
+  background-color: transparent;
+}
+
+#scope-dropdown-menu,
+#tags-dropdown-menu {
+  overflow: hidden !important;
+}
+
+@media (max-width: 1200px) {
+  .chat-toolbar {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .chat-toolbar-actions {
+    flex: 1 1 100%;
+  }
+
+  .chat-toolbar-controls {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+
+  .chat-toolbar-selectors {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .chat-toolbar-toggles {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-toolbar {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .chat-toolbar-controls {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+
+  .chat-toolbar-selectors {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+
+  .chat-toolbar-toggles {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .chat-toolbar-selector {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
+  }
+}
+
+#scope-dropdown-items {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+#tags-dropdown-items {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+#scope-dropdown-items .dropdown-item,
+#tags-dropdown-items .dropdown-item {
+  width: 100%;
+  text-align: left;
 }
 
 /* Document dropdown items must be explicitly displayed */
@@ -241,6 +458,170 @@
   background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeAPTBAPAXJmw1AAAAAElFTkSuQmCC');
   cursor: col-resize;
 }
+
+  /* Tutorial button positioning */
+  #chat-tutorial-launch {
+    z-index: 1099;
+    pointer-events: none; /* allow toast clicks; inner button restores events */
+    top: 80px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+  }
+
+  #chat-tutorial-launch.is-ready {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+
+  #chat-tutorial-btn {
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    border-radius: 999px;
+    padding: 0.5rem 0.75rem;
+    transition: gap 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  #chat-tutorial-btn:hover,
+  #chat-tutorial-btn:focus-visible {
+    gap: 0.5rem;
+    padding-right: 1rem;
+    box-shadow: 0 0.35rem 0.9rem rgba(13, 110, 253, 0.28) !important;
+  }
+
+  #chat-tutorial-btn .tutorial-btn-label {
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-width 0.2s ease, opacity 0.2s ease;
+    font-weight: 600;
+  }
+
+  #chat-tutorial-btn:hover .tutorial-btn-label,
+  #chat-tutorial-btn:focus-visible .tutorial-btn-label {
+    max-width: 120px;
+    opacity: 1;
+  }
+
+  .chat-tutorial-tooltip {
+    --bs-tooltip-zindex: 1115;
+  }
+
+  .conversation-dropdown.tutorial-force-visible {
+    opacity: 1 !important;
+  }
+
+  .tutorial-force-popup {
+    z-index: 1104 !important;
+  }
+
+  .tutorial-force-backdrop {
+    z-index: 1103 !important;
+  }
+
+  .tutorial-conversation-popup {
+    min-width: 220px;
+    pointer-events: none;
+  }
+
+  .tutorial-message-popup {
+    min-width: 240px;
+    pointer-events: none;
+  }
+
+  .tutorial-message-examples {
+    margin: 1rem 0 1.5rem;
+    padding: 1rem;
+    border: 1px dashed var(--bs-border-color);
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--bs-body-bg) 92%, var(--bs-primary) 8%);
+  }
+
+  .tutorial-message-examples .tutorial-example-caption {
+    letter-spacing: 0.01em;
+  }
+
+  .tutorial-message-examples .message:last-child {
+    margin-bottom: 0;
+  }
+
+  .tutorial-advanced-search-popup {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 18px 40px 36px;
+    box-sizing: border-box;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 1104;
+  }
+
+  .tutorial-advanced-search-popup .modal-dialog {
+    width: min(1280px, calc(100vw - 80px));
+    max-width: 100%;
+    margin: 0 auto;
+  }
+
+  .tutorial-advanced-search-popup .modal-content {
+    background-color: var(--bs-body-bg);
+    opacity: 1;
+    box-shadow: var(--bs-box-shadow-lg);
+    overflow: hidden;
+  }
+
+  .tutorial-advanced-search-popup .modal-dialog-scrollable .modal-content {
+    max-height: calc(100vh - 36px);
+  }
+
+  .tutorial-advanced-search-popup .modal-dialog-scrollable .modal-body {
+    overflow-x: hidden;
+  }
+
+  .tutorial-popup-target-highlight {
+    position: relative;
+    z-index: 1103;
+    border-radius: 10px;
+    box-shadow: 0 0 0 3px var(--bs-primary);
+  }
+
+  /* Tutorial overlay styles */
+  .chat-tutorial-layer {
+    position: fixed;
+    z-index: 1100;
+    pointer-events: auto;
+    overflow: visible;
+  }
+
+  .chat-tutorial-highlight {
+    position: absolute;
+    border-radius: 12px;
+    box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 9999px rgba(0, 0, 0, 0.55);
+    transition: all 0.2s ease;
+    pointer-events: none;
+  }
+
+  .chat-tutorial-card {
+    position: absolute;
+    max-width: 360px;
+    z-index: 1101;
+    pointer-events: auto;
+  }
+
+  .chat-tutorial-card .tutorial-actions .btn {
+    min-width: 80px;
+  }
+
+  .chat-tutorial-card .badge-step {
+    font-size: 0.75rem;
+  }
 /* Style when docked - CLEAN SIMPLE IMPLEMENTATION */
 body.layout-docked #left-pane {
   position: fixed !important;
@@ -453,6 +834,25 @@ body.layout-split .gutter {
   /* Light grey background for hover and active */
   color: #212529;
   /* Dark grey text for better contrast */
+}
+
+.conversation-title-row {
+  min-width: 0;
+}
+
+.conversation-unread-dot {
+  width: 0.625rem;
+  height: 0.625rem;
+  min-width: 0.625rem;
+  border-radius: 999px;
+  background-color: #198754;
+  box-shadow: 0 0 0 2px rgba(25, 135, 84, 0.15);
+  flex-shrink: 0;
+}
+
+[data-bs-theme="dark"] .conversation-unread-dot {
+  background-color: #39d98a;
+  box-shadow: 0 0 0 2px rgba(57, 217, 138, 0.2);
 }
 
 .message-footer {
@@ -770,6 +1170,12 @@ a.citation-link:hover {
   justify-content: center;
 }
 
+.search-btn,
+.file-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* Hide the text initially */
 .search-btn .search-btn-text {
   opacity: 0;
@@ -928,6 +1334,7 @@ a.citation-link:hover {
   background-color: #f1f0f0; /* Lighter grey for AI */
   color: black;
   border-bottom-left-radius: 0;
+  min-width: min(320px, 90%);
 }
 
 /* File message bubble styling */
@@ -1046,7 +1453,8 @@ a.citation-link:hover {
 .message-content {
   display: flex;
   align-items: flex-end;
-  overflow: visible; /* Allow dropdown menus to appear outside content */
+  overflow: visible; /* Keep scrolling on the conversation pane; nested message scrollbars cause width jitter during TTS highlighting. */
+  min-width: 0;
 }
 
 .message-content.flex-row-reverse {
@@ -1258,8 +1666,7 @@ ol {
   align-items: flex-end;
 }
 #prompt-selection-container {
-  /* Prevent the container from growing vertically */
-  align-self: flex-end; /* Align item itself to bottom */
+  align-self: auto;
 }
 #prompt-select {
   /* Adjust max-width as needed */
@@ -1658,15 +2065,14 @@ mark.search-highlight {
 /* Word-by-word highlighting for TTS */
 .tts-word {
     display: inline;
-    transition: background-color 0.2s ease, color 0.2s ease;
+    transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .tts-word.tts-current-word {
-    background-color: rgba(var(--bs-primary-rgb), 0.3);
+    background-color: rgba(var(--bs-primary-rgb), 0.18);
     color: var(--bs-primary);
-    font-weight: 500;
     border-radius: 2px;
-    padding: 0 2px;
+    box-shadow: inset 0 -0.2em 0 rgba(var(--bs-primary-rgb), 0.22);
 }
 
 @keyframes tts-avatar-pulse {
@@ -1676,4 +2082,160 @@ mark.search-highlight {
     100% {
         transform: scale(1.05);
     }
+}
+
+/* =============================================
+   Processing Thoughts
+   ============================================= */
+
+/* Loading indicator thought text */
+.thought-live-text {
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+/* Toggle button in message footer */
+.thoughts-toggle-btn {
+    font-size: 0.9rem;
+    color: #6c757d;
+    padding: 0 0.25rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    transition: color 0.15s ease-in-out;
+}
+
+.thoughts-toggle-btn:hover {
+    color: #ffc107;
+}
+
+/* Collapsible container inside message bubble */
+.thoughts-container {
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+}
+
+/* Timeline wrapper */
+.thoughts-list {
+    position: relative;
+    padding-left: 1.25rem;
+}
+
+/* Vertical timeline line */
+.thoughts-list::before {
+    content: '';
+    position: absolute;
+    left: 0.5rem;
+    top: 0.25rem;
+    bottom: 0.25rem;
+    width: 2px;
+    background: linear-gradient(to bottom, #0d6efd, #6ea8fe);
+    border-radius: 1px;
+}
+
+/* Individual thought step */
+.thought-step {
+    display: flex;
+    align-items: flex-start;
+    padding-left: 0.75rem;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+    position: relative;
+}
+
+/* Timeline node dot */
+.thought-step::before {
+    content: '';
+    position: absolute;
+    left: -1rem;
+    top: 0.55rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #0d6efd;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px #0d6efd;
+    z-index: 1;
+}
+
+/* Last thought step gets a slightly different dot */
+.thought-step:last-child::before {
+    background-color: #198754;
+    box-shadow: 0 0 0 1px #198754;
+}
+
+.thought-step i {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+/* Streaming cursor thought badge pulse animation */
+.animate-pulse {
+    animation: thought-pulse 1.5s ease-in-out infinite;
+}
+
+/* Streaming thought display (before content arrives) */
+.streaming-thought-display {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0;
+}
+
+/* Light mode: use darker, more readable colors */
+.streaming-thought-display .badge {
+    background-color: rgba(13, 110, 253, 0.08) !important;
+    color: #0a58ca !important;
+    border-color: rgba(13, 110, 253, 0.25) !important;
+}
+
+/* Dark mode: lighter accent colors */
+[data-bs-theme="dark"] .streaming-thought-display .badge {
+    background-color: rgba(13, 202, 240, 0.15) !important;
+    color: #6edff6 !important;
+    border-color: rgba(13, 202, 240, 0.3) !important;
+}
+
+@keyframes thought-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Dark mode overrides */
+[data-bs-theme="dark"] .thoughts-toggle-btn {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .thoughts-toggle-btn:hover {
+    color: #ffc107;
+}
+
+[data-bs-theme="dark"] .thought-step {
+    /* Dark mode dot border matches dark background */
+}
+
+[data-bs-theme="dark"] .thought-step::before {
+    border-color: #212529;
+    background-color: #6ea8fe;
+    box-shadow: 0 0 0 1px #6ea8fe;
+}
+
+[data-bs-theme="dark"] .thought-step:last-child::before {
+    background-color: #75b798;
+    box-shadow: 0 0 0 1px #75b798;
+}
+
+[data-bs-theme="dark"] .thoughts-list::before {
+    background: linear-gradient(to bottom, #6ea8fe, #9ec5fe);
+}
+
+[data-bs-theme="dark"] .thoughts-container {
+    border-top-color: #495057 !important;
 }

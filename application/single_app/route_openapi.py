@@ -2,19 +2,17 @@
 """
 OpenAPI Plugin Routes
 
-This module provides routes for managing OpenAPI plugin file uploads and URL validation.
+This module provides routes for managing OpenAPI plugin file uploads.
 """
 
 import os
 import tempfile
 import uuid
 from flask import request, jsonify, current_app
-from werkzeug.utils import secure_filename
 from functions_authentication import login_required, user_required
 from openapi_security import openapi_validator
 from openapi_auth_analyzer import analyze_openapi_authentication, get_authentication_help_text
 from swagger_wrapper import swagger_route, get_auth_security
-from functions_security import is_valid_storage_name
 from functions_debug import debug_print
 
 def register_openapi_routes(app):
@@ -134,214 +132,6 @@ def register_openapi_routes(app):
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during upload'
-            }), 500
-    
-    @app.route('/api/openapi/validate-url', methods=['POST'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @user_required
-    def validate_openapi_url():
-        """
-        Validate and download an OpenAPI specification from a URL.
-        
-        Expected JSON data:
-        - url: The URL to the OpenAPI specification
-        
-        Returns:
-        - success: Boolean indicating if validation was successful
-        - file_id: The unique file ID for the stored specification
-        - api_info: Basic information about the OpenAPI spec
-        - error: Error message if validation failed
-        """
-        try:
-            data = request.get_json()
-            if not data or 'url' not in data:
-                return jsonify({
-                    'success': False,
-                    'error': 'URL is required'
-                }), 400
-            
-            url = data['url'].strip()
-            if not url:
-                return jsonify({
-                    'success': False,
-                    'error': 'URL cannot be empty'
-                }), 400
-            
-            # Validate URL and fetch content
-            valid, spec, error = openapi_validator.validate_url_content(url)
-            
-            if not valid:
-                return jsonify({
-                    'success': False,
-                    'error': f'Validation failed: {error}'
-                }), 400
-            
-            # Generate filename from URL or spec title
-            info = spec.get('info', {})
-            title = info.get('title', 'openapi_spec')
-            # Sanitize title for filename
-            title = secure_filename(title) or 'openapi_spec'
-            safe_filename = f"{title}.yaml"
-            
-            # Create secure storage directory
-            upload_dir = os.path.join(current_app.instance_path, 'openapi_specs')
-            os.makedirs(upload_dir, exist_ok=True)
-            
-            # Generate unique filename to prevent conflicts
-            unique_id = str(uuid.uuid4())[:8]
-            base_name, ext = os.path.splitext(safe_filename)
-            stored_filename = f"{base_name}_{unique_id}{ext}"
-            if not is_valid_storage_name(stored_filename):
-                return jsonify({
-                    'success': False,
-                    'error': 'Invalid storage filename'
-                }), 400
-            storage_path = os.path.join(upload_dir, stored_filename)
-            
-            # Save spec to file
-            import yaml
-            with open(storage_path, 'w', encoding='utf-8') as f:
-                yaml.dump(spec, f, default_flow_style=False, allow_unicode=True)
-            
-            # Extract basic spec information
-            api_info = {
-                'title': info.get('title', 'Unknown API'),
-                'description': info.get('description', ''),
-                'version': info.get('version', ''),
-                'openapi_version': spec.get('openapi', ''),
-                'servers': spec.get('servers', []),
-                'paths_count': len(spec.get('paths', {})),
-                'components_count': len(spec.get('components', {})),
-                'source_url': url
-            }
-            
-            # Analyze authentication schemes
-            auth_analysis = analyze_openapi_authentication(spec)
-            
-            return jsonify({
-                'success': True,
-                'file_id': stored_filename,
-                'api_info': api_info,
-                'spec_content': spec,  # Include the spec content for frontend processing
-                'authentication': auth_analysis
-            })
-            
-        except Exception as e:
-            debug_print(f"Error validating OpenAPI URL: {str(e)}")
-            return jsonify({
-                'success': False,
-                'error': 'Internal server error during validation'
-            }), 500
-    
-    @app.route('/api/openapi/download-from-url', methods=['POST'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @user_required
-    def download_openapi_from_url():
-        """
-        Download and store an OpenAPI specification from a URL.
-        
-        Expected JSON data:
-        - url: The URL to the OpenAPI specification
-        - filename: Optional custom filename (will be sanitized)
-        
-        Returns:
-        - success: Boolean indicating if download was successful
-        - filename: The secure filename used for storage
-        - storage_path: Path where the file was stored
-        - spec_info: Basic information about the OpenAPI spec
-        - error: Error message if download failed
-        """
-        try:
-            data = request.get_json()
-            if not data or 'url' not in data:
-                return jsonify({
-                    'success': False,
-                    'error': 'URL is required'
-                }), 400
-            
-            url = data['url'].strip()
-            custom_filename = data.get('filename', '').strip()
-            
-            if not url:
-                return jsonify({
-                    'success': False,
-                    'error': 'URL cannot be empty'
-                }), 400
-            
-            # Validate URL and fetch content
-            valid, spec, error = openapi_validator.validate_url_content(url)
-            
-            if not valid:
-                return jsonify({
-                    'success': False,
-                    'error': f'Validation failed: {error}'
-                }), 400
-            
-            # Determine filename
-            if custom_filename:
-                # Validate custom filename
-                filename_valid, filename_error = openapi_validator.validate_filename(custom_filename)
-                if not filename_valid:
-                    return jsonify({
-                        'success': False,
-                        'error': f'Invalid custom filename: {filename_error}'
-                    }), 400
-                safe_filename = openapi_validator.create_safe_filename(custom_filename)
-            else:
-                # Generate filename from URL or spec title
-                info = spec.get('info', {})
-                title = info.get('title', 'openapi_spec')
-                # Sanitize title for filename
-                title = secure_filename(title) or 'openapi_spec'
-                safe_filename = f"{title}.yaml"
-            
-            # Create secure storage directory
-            upload_dir = os.path.join(current_app.instance_path, 'openapi_specs')
-            os.makedirs(upload_dir, exist_ok=True)
-            
-            # Generate unique filename to prevent conflicts
-            unique_id = str(uuid.uuid4())[:8]
-            base_name, ext = os.path.splitext(safe_filename)
-            stored_filename = f"{base_name}_{unique_id}{ext}"
-            if not is_valid_storage_name(stored_filename):
-                return jsonify({
-                    'success': False,
-                    'error': 'Invalid storage filename'
-                }), 400
-            storage_path = os.path.join(upload_dir, stored_filename)
-            
-            # Save spec to file
-            import yaml
-            with open(storage_path, 'w', encoding='utf-8') as f:
-                yaml.dump(spec, f, default_flow_style=False, allow_unicode=True)
-            
-            # Extract basic spec information
-            info = spec.get('info', {})
-            spec_info = {
-                'title': info.get('title', 'Unknown API'),
-                'description': info.get('description', ''),
-                'version': info.get('version', ''),
-                'openapi_version': spec.get('openapi', ''),
-                'servers': spec.get('servers', []),
-                'paths_count': len(spec.get('paths', {})),
-                'components_count': len(spec.get('components', {})),
-                'source_url': url
-            }
-            
-            return jsonify({
-                'success': True,
-                'filename': stored_filename,
-                'storage_path': storage_path,
-                'spec_info': spec_info
-            })
-            
-        except Exception as e:
-            debug_print(f"Error downloading OpenAPI spec from URL: {str(e)}")
-            return jsonify({
-                'success': False,
-                'error': 'Internal server error during download'
             }), 500
     
     @app.route('/api/openapi/list-uploaded', methods=['GET'])

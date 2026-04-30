@@ -1,10 +1,59 @@
-# Simple Chat - Admin Configuration
+---
+layout: showcase-page
+title: Admin Configuration
+permalink: /admin_configuration/
+menubar: docs_menu
+accent: violet
+eyebrow: Central Control Surface
+description: Admin Settings turns a raw deployment into an operating environment by centralizing branding, model routing, workspace policy, safety controls, scale features, and logging.
+hero_icons:
+  - bi-gear
+  - bi-sliders2-vertical
+  - bi-shield-check
+hero_pills:
+  - Guided setup walkthrough included
+  - Model and workspace configuration in one UI
+  - Logging, safety, and scale controls available
+hero_links:
+  - label: Getting started guide
+    url: /setup_instructions/
+    style: primary
+  - label: Manual setup reference
+    url: /setup_instructions_manual/
+    style: secondary
+---
 
-[Return to Main](../README.md)
+Once the application is running and you sign in with the Admin role, the Admin Settings page becomes the main place to configure the product without editing environment variables directly.
 
-Once the application is running and you log in as a user assigned the Admin role, you can access the **Admin Settings** page. This UI provides a centralized location to configure most application features and service connections.
+<section class="latest-release-card-grid">
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-brush"></i></div>
+    <h2>General</h2>
+    <p>Brand the app, tune appearance, manage landing-page content, and control global behavior such as file limits and system prompts.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-cpu"></i></div>
+    <h2>Models and retrieval</h2>
+    <p>Configure GPT, embeddings, image generation, Azure AI Search, Document Intelligence, and enhanced citations from the same settings surface.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-people"></i></div>
+    <h2>Workspaces and agents</h2>
+    <p>Enable personal, group, and public workspaces, define classification behavior, and manage agent and action capabilities.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-speedometer"></i></div>
+    <h2>Safety, scale, and logging</h2>
+    <p>Turn on Content Safety, Redis, Front Door, Application Insights logging, and other controls that matter once the deployment grows up.</p>
+  </article>
+</section>
 
-![alt text](./images/admin_settings_page.png)
+<div class="latest-release-note-panel">
+  <h2>Best starting point</h2>
+  <p>The Setup Walkthrough is the fastest way to move a fresh environment from partially configured to usable. It guides admins through the critical dependencies in the right order and skips steps that do not apply.</p>
+</div>
+
+![Admin Settings page](./images/admin_settings_page.png)
 
 ## Setup Walkthrough
 
@@ -36,7 +85,7 @@ The walkthrough covers these key configuration areas in order:
 6. **Azure AI Search** (Required if workspaces enabled) - Configure search indexing
 7. **Document Intelligence** (Required if workspaces enabled) - Configure document processing
 8. **Video Support** (Optional, workspace-dependent) - Configure video file processing
-9. **Audio Support** (Optional, workspace-dependent) - Configure audio file processing
+9. **Shared Speech Service** (Optional) - Configure the shared Speech resource used for audio uploads, voice input, and voice responses
 10. **Content Safety** (Optional) - Configure content filtering
 11. **User Feedback & Archiving** (Optional) - Enable feedback and conversation archiving
 12. **Enhanced Features** (Optional) - Enhanced citations and image generation
@@ -131,12 +180,14 @@ Key configuration sections include:
   - Support for Direct or APIM routing
   - Test connection
 - **Multimedia Support** (Video/Audio uploads):
-  - **Video Files**: Configure Azure Video Indexer using Managed Identity authentication
-    - Resource Group, Subscription ID, Account Name, Location, Account ID
-    - API Endpoint, ARM API Version, Timeout
-  - **Audio Files**: Configure Speech Service
-    - Endpoint, Location/Region, Locale
-    - Key/Managed Identity authentication
+  - **Video Files**: Configure Azure Video Indexer with the App Service system-assigned managed identity
+    - Cloud / Endpoint Mode, Resource Group, Subscription ID, Account Name, Location, Account ID
+    - Effective API Endpoint, ARM API Version, Timeout
+    - Video Indexer API keys are not used by the current setup flow
+  - **Shared Speech Service**: One Speech resource powers audio uploads, speech-to-text input, and text-to-speech
+    - Endpoint, Location/Region, Locale, Authentication Type
+    - Key authentication uses the Speech key
+    - Managed identity uses the custom-domain Speech endpoint; voice responses also require the Speech Resource ID
 
 ### 7. Agents
 - **Agents Configuration**:
@@ -189,7 +240,7 @@ The Admin Settings page supports two navigation layouts:
 - **APIM vs Direct**: When using Azure API Management (APIM), you'll need to manually specify model names as automatic model fetching is not available
 - **Managed Identity**: When using Managed Identity authentication, ensure your Service Principal has the appropriate roles assigned:
   - **Azure OpenAI**: Cognitive Services OpenAI User role
-  - **Speech Service**: Cognitive Services Speech Contributor role (requires custom domain name on endpoint)
-  - **Video Indexer**: Appropriate Video Indexer roles for your account
+  - **Speech Service**: Start with `Cognitive Services Speech User`; add `Cognitive Services Speech Contributor` if transcription operations still require it. Managed identity also requires the custom-domain Speech endpoint, and text-to-speech needs the Speech Resource ID.
+  - **Video Indexer**: Grant the App Service system-assigned managed identity `Contributor` on the Video Indexer resource. If Azure asks for a user-assigned managed identity during Video Indexer resource creation, that identity is for the Video Indexer resource itself, not for Simple Chat runtime calls.
 - **Dependencies**: The walkthrough will alert you if required services aren't configured when you enable dependent features (e.g., workspaces require embeddings, AI Search, and Document Intelligence)
 - **Required vs Optional**: The walkthrough clearly indicates which settings are required vs optional based on your configuration choices

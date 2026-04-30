@@ -7,8 +7,8 @@
    <link rel="stylesheet" href="/static/css/simplemde.min.css" />
 
   <style>
-    /* Force fixed layout so columns don't expand when content changes */
-    #documents-table, #prompts-table, #agents-table { /* Apply to all tables */
+    /* Keep fixed layout for document and prompt tables only. */
+    #documents-table, #prompts-table {
       table-layout: fixed;
       width: 100%;
     }
@@ -93,24 +93,25 @@
     /* --- Agents Table Styles --- */
     #agents-table th:nth-child(1), /* Display Name */
     #agents-table td:nth-child(1) {
-        width: 25%; /* Agent name column */
+      width: 28%;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: ellipsis;
-        min-width: 120px;
+      min-width: 140px;
     }
     #agents-table th:nth-child(2), /* Description */
     #agents-table td:nth-child(2) {
-        width: 55%; /* Description column - largest */
+      width: 47%;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: ellipsis;
-        min-width: 200px;
+      max-width: 0;
     }
     #agents-table th:nth-child(3), /* Actions */
     #agents-table td:nth-child(3) {
-        width: 20%; /* Actions column */
-        min-width: 120px;
+      width: 25%;
+      min-width: 160px;
+      white-space: nowrap;
     }
 
     /* Style for the classification badge */
@@ -272,6 +273,166 @@
         overflow-y: auto;
     }
 
+    #workspace-tutorial-launch {
+      z-index: 1099;
+      pointer-events: none;
+      top: 80px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-8px);
+      transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+    }
+
+    #workspace-tutorial-launch.is-ready {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+
+    #workspace-tutorial-btn {
+      pointer-events: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      border-radius: 999px;
+      padding: 0.5rem 0.75rem;
+      transition: gap 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    #workspace-tutorial-btn:hover,
+    #workspace-tutorial-btn:focus-visible {
+      gap: 0.5rem;
+      padding-right: 1rem;
+      box-shadow: 0 0.35rem 0.9rem rgba(13, 110, 253, 0.28) !important;
+    }
+
+    #workspace-tutorial-btn .tutorial-btn-label {
+      max-width: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-width 0.2s ease, opacity 0.2s ease;
+      font-weight: 600;
+    }
+
+    #workspace-tutorial-btn:hover .tutorial-btn-label,
+    #workspace-tutorial-btn:focus-visible .tutorial-btn-label {
+      max-width: 120px;
+      opacity: 1;
+    }
+
+    .chat-tutorial-tooltip {
+      --bs-tooltip-zindex: 1115;
+    }
+
+    .workspace-tutorial-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 1100;
+        pointer-events: auto;
+        overflow: visible;
+    }
+
+    .workspace-tutorial-highlight {
+        position: fixed;
+        border-radius: 12px;
+        box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 9999px rgba(0, 0, 0, 0.55);
+        transition: all 0.2s ease;
+        pointer-events: none;
+    }
+
+    .workspace-tutorial-card {
+        position: fixed;
+        max-width: 360px;
+      z-index: 1105;
+    }
+
+    .workspace-tutorial-actions .btn {
+        min-width: 80px;
+    }
+
+    .workspace-tutorial-surface {
+      position: fixed;
+      inset: 0;
+    }
+
+    .workspace-tutorial-surface .workspace-tutorial-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.12);
+    }
+
+    .workspace-tutorial-surface .workspace-tutorial-modal-dialog {
+      position: absolute;
+      z-index: 1;
+    }
+
+    .workspace-tutorial-surface .modal-content,
+    .workspace-tutorial-menu-clone .dropdown-menu {
+      background: var(--bs-body-bg, #fff);
+      opacity: 1;
+    }
+
+    .workspace-tutorial-surface .modal-content {
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.22);
+    }
+
+    .workspace-tutorial-target-highlight {
+      position: relative;
+      z-index: 2;
+      border-radius: 0.75rem !important;
+      background: var(--bs-body-bg, #fff) !important;
+      box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 6px rgba(13, 110, 253, 0.18), 0 0.75rem 1.5rem rgba(0, 0, 0, 0.18);
+    }
+
+    .workspace-tutorial-static-field {
+      background: var(--bs-body-bg, #fff);
+      color: var(--bs-body-color, #212529);
+      min-height: calc(1.5em + 0.75rem + 2px);
+      display: flex;
+      align-items: center;
+    }
+
+    .workspace-tutorial-static-field.is-textarea {
+      display: block;
+      min-height: 120px;
+      white-space: pre-wrap;
+    }
+
+    .workspace-tutorial-static-field.is-select {
+      position: relative;
+      padding-right: 2.25rem;
+    }
+
+    .workspace-tutorial-static-field.is-select::after {
+      content: "";
+      position: absolute;
+      right: 0.9rem;
+      top: 50%;
+      width: 0.7rem;
+      height: 0.7rem;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: translateY(-65%) rotate(45deg);
+      opacity: 0.7;
+    }
+
+    .workspace-tutorial-static-field.is-color {
+      width: 3rem;
+      min-width: 3rem;
+      min-height: 2.5rem;
+      padding: 0.25rem;
+    }
+
+    .workspace-tutorial-static-color-swatch {
+      width: 100%;
+      height: 100%;
+      border-radius: 0.375rem;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+    }
+
   </style>
 {% endblock %}
 
@@ -333,34 +494,55 @@
         </button>
       </li>
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-      <li class="nav-item" role="presentation">
-        <button
-          class="nav-link"
-          id="agents-tab-btn"
-          data-bs-toggle="tab"
-          data-bs-target="#agents-tab"
-          type="button"
-          role="tab"
-          aria-controls="agents-tab"
-          aria-selected="false"
-        >
-          Your Agents
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button
-          class="nav-link"
-          id="plugins-tab-btn"
-          data-bs-toggle="tab"
-          data-bs-target="#plugins-tab"
-          type="button"
-          role="tab"
-          aria-controls="plugins-tab"
-          aria-selected="false"
-        >
-          Your Actions
-        </button>
-      </li>
+        {% if settings.allow_user_agents %}
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="agents-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#agents-tab"
+              type="button"
+              role="tab"
+              aria-controls="agents-tab"
+              aria-selected="false"
+            >
+              Your Agents
+            </button>
+          </li>
+      
+          {% if settings.allow_user_plugins %}
+            <li class="nav-item" role="presentation">
+              <button
+                class="nav-link"
+                id="plugins-tab-btn"
+                data-bs-toggle="tab"
+                data-bs-target="#plugins-tab"
+                type="button"
+                role="tab"
+                aria-controls="plugins-tab"
+                aria-selected="false"
+              >
+                Your Actions
+              </button>
+            </li>
+          {% endif %}
+        {% endif %}
+      {% endif %}
+      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="endpoints-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#endpoints-tab"
+            type="button"
+            role="tab"
+            aria-controls="endpoints-tab"
+            aria-selected="false"
+          >
+            Your Endpoints
+          </button>
+        </li>
       {% endif %}
     </ul>
 
@@ -669,7 +851,6 @@
         </div> <!-- End Card -->
       </div>
       <!-- End PROMPTS TAB -->
-      {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
       <!-- ============= AGENTS TAB ============= -->
       <div
         class="tab-pane fade"
@@ -688,21 +869,32 @@
                   </button>
                   <button class="btn btn-success btn-sm" id="create-agent-btn" type="button">New Agent</button>
                 </div>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Agents view mode">
+                  <input type="radio" class="btn-check" name="agents-view-mode" id="agents-view-list" autocomplete="off" checked>
+                  <label class="btn btn-outline-secondary" for="agents-view-list"><i class="bi bi-list-ul"></i></label>
+                  <input type="radio" class="btn-check" name="agents-view-mode" id="agents-view-grid" autocomplete="off">
+                  <label class="btn btn-outline-secondary" for="agents-view-grid"><i class="bi bi-grid-3x3-gap"></i></label>
+                </div>
               </div>
               <div class="mb-3">
                 <input type="search" class="form-control" id="agents-search" placeholder="Search agents by name or description...">
               </div>
-              <table class="table table-striped" id="agents-table">
-                <thead><tr><th>Display Name</th><th>Description</th><th>Actions</th></tr></thead>
-                <tbody id="agents-table-body">
-                  <tr class="table-loading-row">
-                    <td colspan="3">
-                      <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                      Loading agents...
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <!-- List View -->
+              <div id="agents-list-view">
+                <table class="table table-striped item-list-table" id="agents-table">
+                  <thead><tr><th>Display Name</th><th>Description</th><th>Actions</th></tr></thead>
+                  <tbody id="agents-table-body">
+                    <tr class="table-loading-row">
+                      <td colspan="3">
+                        <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                        Loading agents...
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <!-- Grid View -->
+              <div id="agents-grid-view" class="row g-3 d-none"></div>
             </div>
             <div id="workspace-agents-error"></div>
           </div>
@@ -713,7 +905,7 @@
         {% endif %}
       </div>
       <!-- End AGENTS TAB -->
-      {% endif %}
+      
 
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
       <!-- ============= ACTIONS TAB ============= -->
@@ -730,29 +922,108 @@
             <div class="card p-3 my-3">
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <button class="btn btn-success btn-sm" id="create-plugin-btn">New Action</button>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Actions view mode">
+                  <input type="radio" class="btn-check" name="plugins-view-mode" id="plugins-view-list" autocomplete="off" checked>
+                  <label class="btn btn-outline-secondary" for="plugins-view-list"><i class="bi bi-list-ul"></i></label>
+                  <input type="radio" class="btn-check" name="plugins-view-mode" id="plugins-view-grid" autocomplete="off">
+                  <label class="btn btn-outline-secondary" for="plugins-view-grid"><i class="bi bi-grid-3x3-gap"></i></label>
+                </div>
               </div>
               <div class="mb-3">
                 <input type="search" class="form-control" id="plugins-search" placeholder="Search actions by name or description...">
               </div>
-              <table class="table table-striped" id="plugins-table">
-                <thead><tr><th>Display Name</th><th>Description</th><th style="width: 140px;">Actions</th></tr></thead>
-                <tbody id="plugins-table-body">
-                  <!-- Populated by JS -->
-                </tbody>
-              </table>
+              <!-- List View -->
+              <div id="plugins-list-view">
+                <table class="table table-striped item-list-table" id="plugins-table">
+                  <thead><tr><th>Display Name</th><th>Description</th><th>Actions</th></tr></thead>
+                  <tbody id="plugins-table-body">
+                    <!-- Populated by JS -->
+                  </tbody>
+                </table>
+              </div>
+              <!-- Grid View -->
+              <div id="plugins-grid-view" class="row g-3 d-none"></div>
             </div>
           </template>
-          </div>
         {% else %}
           <div class="alert alert-warning text-center my-4">
             Custom User Actions are currently disabled. Please ask your admin to enable actions for your workspace.
           </div>
         {% endif %}
+      </div>
+      <!-- End ACTIONS TAB -->
+
+      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+      <!-- ============= ENDPOINTS TAB ============= -->
+      <div
+        class="tab-pane fade"
+        id="endpoints-tab"
+        role="tabpanel"
+        aria-labelledby="endpoints-tab-btn"
+      >
+        <div class="tab-pane-inner">
+          <!-- Workspace Model Endpoints -->
+          <div class="card p-3 my-3" id="workspace-multi-endpoint-configuration">
+            <h6 class="mb-2"><i class="bi bi-hdd-network me-2"></i>Workspace Model Endpoints</h6>
+            <p class="text-muted small mb-2">Manage personal model endpoints used by your workspace agents. Global endpoints are managed by admins.</p>
+            <div class="form-check form-switch mb-3 d-flex align-items-center d-none">
+              <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %} disabled />
+              <label class="form-check-label" for="enable_multi_model_endpoints">Multi-endpoint management is controlled by your admin</label>
+            </div>
+            <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Your Endpoints</h6>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+                  <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+                </button>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Provider</th>
+                      <th>Selected Models</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="model-endpoints-tbody">
+                    <!-- Populated by JS -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <input type="hidden" id="model_endpoints_json" />
+          </div>
+        </div>
+      </div>
+      <!-- End ENDPOINTS TAB -->
+      {% endif %}
       {% endif %}
     </div>
     <!-- End Tab Content -->
   </div>
   <!--</div>-->
+
+  {% include '_multiendpoint_modal.html' %}
+  <!-- Shared Item View Modal (read-only details for agents/actions) -->
+  <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="item-view-modal-label">Details</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <!-- Populated dynamically by view-utils.js -->
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal for Creating/Editing Prompts (Keep As Is) -->
   <div
@@ -761,9 +1032,13 @@
     tabindex="-1"
     aria-labelledby="promptModalLabel"
     aria-hidden="true"
+    autocomplete="off"
+    data-lpignore="true"
+    data-1p-ignore="true"
+    data-bwignore="true"
   >
     <div class="modal-dialog modal-xl" style="max-width: 80%">
-      <form id="prompt-form">
+      <form id="prompt-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         <div class="modal-content">
           <div class="modal-header">
             <h5 class="modal-title" id="promptModalLabel">Create Prompt</h5>
@@ -815,9 +1090,13 @@
     tabindex="-1"
     aria-labelledby="docMetadataModalLabel"
     aria-hidden="true"
+    autocomplete="off"
+    data-lpignore="true"
+    data-1p-ignore="true"
+    data-bwignore="true"
   >
     <div class="modal-dialog">
-      <form id="doc-metadata-form">
+      <form id="doc-metadata-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         <div class="modal-content">
           <div class="modal-header">
             <h5 class="modal-title" id="docMetadataModalLabel">
@@ -928,7 +1207,7 @@
   </div>
 
 <!-- Bulk Tag Assignment Modal -->
-<div class="modal fade" id="bulkTagModal" tabindex="-1" aria-labelledby="bulkTagModalLabel" aria-hidden="true">
+<div class="modal fade" id="bulkTagModal" tabindex="-1" aria-labelledby="bulkTagModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
@@ -988,7 +1267,7 @@
 </div>
 
 <!-- Tag Management Modal (Shared by both bulk and individual) -->
-<div class="modal fade" id="tagManagementModal" tabindex="-1" aria-labelledby="tagManagementModalLabel" aria-hidden="true">
+<div class="modal fade" id="tagManagementModal" tabindex="-1" aria-labelledby="tagManagementModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
@@ -1081,7 +1360,7 @@
 </div>
 
 <!-- Tag Selection Modal (for selecting from existing tags) -->
-<div class="modal fade" id="tagSelectionModal" tabindex="-1" aria-labelledby="tagSelectionModalLabel" aria-hidden="true">
+<div class="modal fade" id="tagSelectionModal" tabindex="-1" aria-labelledby="tagSelectionModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
@@ -1112,9 +1391,9 @@
 </div>
 
 <!-- Share Document Modal -->
-<div class="modal fade" id="shareDocumentModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="shareDocumentModal" tabindex="-1" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
-    <form id="shareDocumentForm">
+    <form id="shareDocumentForm" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">Share Document</h5>
@@ -1224,6 +1503,46 @@
     </form>
   </div>
 </div>
+
+{% if user_settings.get('settings', {}).get('showTutorialButtons', True) %}
+<div id="workspace-tutorial-launch" class="position-fixed top-0 end-0 p-3 is-ready">
+  <button
+      id="workspace-tutorial-btn"
+      class="btn btn-primary btn-sm shadow"
+      type="button"
+      aria-label="Open workspace walkthrough"
+      data-bs-toggle="tooltip"
+      data-bs-trigger="hover"
+      data-bs-custom-class="chat-tutorial-tooltip"
+      data-bs-placement="left"
+      data-bs-offset="0,132"
+      title="Let us walk you through getting the most out of your workspace"
+  >
+      <i class="bi bi-question-circle"></i>
+      <span class="tutorial-btn-label">Workspace Tutorial</span>
+  </button>
+</div>
+{% endif %}
+<div class="modal fade" id="documentDeleteModal" tabindex="-1" aria-labelledby="documentDeleteModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="documentDeleteModalLabel">Delete Document</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="documentDeleteModalBody">
+        <p class="mb-0">Choose how you want to delete this document revision.</p>
+      </div>
+      <div class="modal-footer d-flex flex-wrap justify-content-between gap-2">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <div class="d-flex flex-wrap gap-2">
+          <button type="button" class="btn btn-outline-danger" id="documentDeleteCurrentBtn">Delete Current Version</button>
+          <button type="button" class="btn btn-danger" id="documentDeleteAllBtn">Delete All Versions</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- Approve Shared Document Modal -->
 <div class="modal fade" id="approveSharedModal" tabindex="-1" aria-labelledby="approveSharedModalLabel" aria-hidden="true">
   <div class="modal-dialog">
@@ -1253,13 +1572,22 @@
     <script type="module" src="/static/js/workspace/workspace_agents.js"></script>
     <script type="module" src="/static/js/workspace/workspace_plugins.js"></script>
   {% endif %}
+  <script>
+    window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
+    window.modelEndpointScope = 'user';
+      window.workspaceModelEndpoints = {{ personal_model_endpoints|default([], true)|tojson|safe }};
+      window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson|safe }};
+  </script>
+  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
+  {% endif %}
   <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
    LOCAL VERSION BELOW -->
    <script src="/static/js/simplemde/simplemde.min.js"></script>
 
   <script>
     // Pass settings/flags needed by JS
-    window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+    window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }
@@ -1273,8 +1601,68 @@
     // Pass current user ID for ownership checks
     window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
 
+    function applyWorkspaceAutofillMetadata(root) {
+      if (!root) {
+        return;
+      }
+
+      if (!root.hasAttribute("autocomplete")) {
+        root.setAttribute("autocomplete", "off");
+      }
+
+      if (!root.hasAttribute("data-lpignore")) {
+        root.setAttribute("data-lpignore", "true");
+      }
+
+      if (!root.hasAttribute("data-1p-ignore")) {
+        root.setAttribute("data-1p-ignore", "true");
+      }
+
+      if (!root.hasAttribute("data-bwignore")) {
+        root.setAttribute("data-bwignore", "true");
+      }
+
+      root.querySelectorAll("input, select, textarea").forEach((field) => {
+        const autocompleteValue = field.getAttribute("type") === "password" ? "new-password" : "off";
+
+        if (!field.hasAttribute("autocomplete")) {
+          field.setAttribute("autocomplete", autocompleteValue);
+        }
+
+        if (!field.hasAttribute("data-lpignore")) {
+          field.setAttribute("data-lpignore", "true");
+        }
+
+        if (!field.hasAttribute("data-1p-ignore")) {
+          field.setAttribute("data-1p-ignore", "true");
+        }
+
+        if (!field.hasAttribute("data-bwignore")) {
+          field.setAttribute("data-bwignore", "true");
+        }
+      });
+    }
+
+    function setupWorkspaceAutofillMetadata() {
+      [
+        document.getElementById("workspaceTabContent"),
+        document.getElementById("promptModal"),
+        document.getElementById("docMetadataModal"),
+        document.getElementById("documentDeleteModal"),
+        document.getElementById("bulkTagModal"),
+        document.getElementById("tagManagementModal"),
+        document.getElementById("tagSelectionModal"),
+        document.getElementById("shareDocumentModal"),
+        document.getElementById("modelEndpointModal"),
+        document.getElementById("agentModal"),
+        document.getElementById("plugin-modal")
+      ].forEach(applyWorkspaceAutofillMetadata);
+    }
+
     // --- Filter toggle button logic ---
     document.addEventListener("DOMContentLoaded", function() {
+      setupWorkspaceAutofillMetadata();
+
       // Documents tab
       var docsToggleBtn = document.getElementById("docs-filters-toggle-btn");
       var docsCollapse = document.getElementById("docs-filters-collapse");
@@ -1368,5 +1756,6 @@
   <script src="{{ url_for('static', filename='js/workspace_sidebar_nav.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-tutorial.js') }}"></script>
 
 {% endblock %}

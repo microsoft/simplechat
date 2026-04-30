@@ -24,12 +24,7 @@ def register_route_backend_users(app):
         if not token:
             return jsonify({"error": "Could not acquire access token"}), 401
 
-        if AZURE_ENVIRONMENT == "usgovernment":
-            user_endpoint = "https://graph.microsoft.us/v1.0/users"
-        elif AZURE_ENVIRONMENT == "custom":
-            user_endpoint = CUSTOM_GRAPH_URL_VALUE
-        else:
-            user_endpoint = "https://graph.microsoft.com/v1.0/users"
+        user_endpoint = get_graph_endpoint("/users")
             
         headers = {
             "Authorization": f"Bearer {token}",
@@ -151,6 +146,7 @@ def register_route_backend_users(app):
                     'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 
                     'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 
                     'navLayout', 'profileImage', 'enable_agents', 'streamingEnabled', 'reasoningEffortSettings',
+                    'preferredModelId', 'dismissedMultiEndpointNotice',
                     # Public directory and workspace settings
                     'publicDirectorySavedLists', 'publicDirectorySettings', 'activePublicWorkspaceOid',
                     # Chat UI settings
@@ -159,6 +155,8 @@ def register_route_backend_users(app):
                     'microphonePermissionState',
                     # Text-to-speech settings
                     'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
+                    # Tutorial visibility settings
+                    'showTutorialButtons',
                     # Metrics and other settings
                     'metrics', 'lastUpdated'
                 } # Add others as needed

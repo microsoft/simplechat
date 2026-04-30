@@ -85,10 +85,10 @@ def test_document_metrics_queries():
                 # Try different date formats
                 try:
                     dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                except:
+                except Exception as ex:
                     try:
                         dt = datetime.strptime(last_updated, '%Y-%m-%d')
-                    except:
+                    except Exception as ex:
                         dt = datetime.strptime(last_updated, '%Y-%m-%dT%H:%M:%S')
             else:
                 dt = last_updated

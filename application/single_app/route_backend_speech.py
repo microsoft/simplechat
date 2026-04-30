@@ -6,6 +6,7 @@ from config import *
 from functions_authentication import login_required, get_current_user_id
 from functions_settings import get_settings
 from functions_debug import debug_print
+from swagger_wrapper import swagger_route, get_auth_security
 import azure.cognitiveservices.speech as speechsdk
 import os
 import tempfile
@@ -21,6 +22,7 @@ def register_route_backend_speech(app):
     """Register speech-to-text routes"""
     
     @app.route('/api/speech/transcribe-chat', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     def transcribe_chat_audio():
         """

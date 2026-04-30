@@ -50,6 +50,7 @@ from route_frontend_group_workspaces import *
 from route_frontend_public_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
+from route_frontend_support import *
 from route_frontend_notifications import *
 
 from route_backend_chats import *
@@ -75,6 +76,7 @@ from route_backend_public_documents import *
 from route_backend_public_prompts import *
 from route_backend_user_agreement import register_route_backend_user_agreement
 from route_backend_conversation_export import register_route_backend_conversation_export
+from route_backend_thoughts import register_route_backend_thoughts
 from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
 from route_enhanced_citations import register_enhanced_citations_routes
@@ -102,7 +104,7 @@ app.config['SECRET_KEY'] = SECRET_KEY
 
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':
-    app.config['SESSION_FILE_DIR'] = SESSION_FILE_DIR if 'SESSION_FILE_DIR' in globals() else os.environ.get('SESSION_FILE_DIR', '/app/flask_session')
+    app.config['SESSION_FILE_DIR'] = globals().get('SESSION_FILE_DIR', os.environ.get('SESSION_FILE_DIR', '/app/flask_session'))
     try:
         os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
     except Exception as e:
@@ -141,8 +143,29 @@ from redis import Redis
 from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
+from background_tasks import start_background_task_threads
 
 from route_external_health import *
+
+_app_init_lock = threading.Lock()
+_app_initialized = False
+_background_tasks_lock = threading.Lock()
+_background_tasks_started = False
+
+
+def is_running_under_gunicorn():
+    """Return True when the current process is a Gunicorn worker."""
+    server_software = os.environ.get('SERVER_SOFTWARE', '')
+    return 'gunicorn' in server_software.lower() or bool(os.environ.get('GUNICORN_CMD_ARGS'))
+
+
+def should_start_background_tasks():
+    """Enable background loops unless the runtime explicitly disables them."""
+    env_value = os.environ.get('SIMPLECHAT_RUN_BACKGROUND_TASKS')
+    if env_value is not None:
+        return env_value.strip().lower() not in ('0', 'false', 'no', 'off')
+
+    return True
 
 # =================== Session Configuration ===================
 def configure_sessions(settings):
@@ -160,7 +183,7 @@ def configure_sessions(settings):
                 redis_client = None
                 try:
                     if redis_auth_type == 'managed_identity':
-                        print("Redis enabled using Managed Identity")
+                        log_event("Redis enabled using Managed Identity", level=logging.INFO)
                         from config import get_redis_cache_infrastructure_endpoint
                         credential = DefaultAzureCredential()
                         redis_hostname = redis_url.split('.')[0]
@@ -175,9 +198,25 @@ def configure_sessions(settings):
                             socket_connect_timeout=5,
                             socket_timeout=5
                         )
+                    elif redis_auth_type == 'key_vault':
+                        log_event("Redis enabled using Key Vault Secret", level=logging.INFO)
+                        from functions_keyvault import retrieve_secret_direct
+                        redis_key_secret_name = settings.get('redis_key', '').strip()
+                        redis_password = retrieve_secret_direct(redis_key_secret_name)
+                        if redis_password:
+                            redis_password = redis_password.strip()
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=redis_password,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
                     else:
                         redis_key = settings.get('redis_key', '').strip()
-                        print("Redis enabled using Access Key")
+                        log_event("Redis enabled using Access Key", level=logging.INFO)
                         redis_client = Redis(
                             host=redis_url,
                             port=6380,
@@ -190,7 +229,7 @@ def configure_sessions(settings):
                     
                     # Test the connection
                     redis_client.ping()
-                    print("✅ Redis connection successful")
+                    log_event("✅ Redis connection successful", level=logging.INFO)
                     app.config['SESSION_TYPE'] = 'redis'
                     app.config['SESSION_REDIS'] = redis_client
                     
@@ -212,207 +251,299 @@ def configure_sessions(settings):
     Session(app)
 
 # =================== Helper Functions ===================
-@app.before_first_request
-def before_first_request():
-    print("Initializing application...")
-    settings = get_settings(use_cosmos=True)
-    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
-    app_settings_cache.update_settings_cache(settings)
-    sanitized_settings = sanitize_settings_for_logging(settings)
-    debug_print(f"DEBUG:Application settings: {sanitized_settings}")
-    sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
-    debug_print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {sanitized_settings_cache}")
+def start_background_tasks():
+    """Start background loops once per process when enabled for the current runtime."""
+    global _background_tasks_started
 
-    initialize_clients(settings)
-    ensure_custom_logo_file_exists(app, settings)
-    # Enable Application Insights logging globally if configured
-    print("Setting up Application Insights logging...")
-    setup_appinsights_logging(settings)
-    logging.basicConfig(level=logging.DEBUG)
-    print("Application initialized.")
-    ensure_default_global_agent_exists()
+    with _background_tasks_lock:
+        if _background_tasks_started:
+            return
 
-    # Background task to check for expired logging timers
-    def check_logging_timers():
-        """Background task that checks for expired logging timers and disables logging accordingly"""
-        while True:
-            try:
-                settings = get_settings()
-                current_time = datetime.now()
-                settings_changed = False
-                
-                # Check debug logging timer
-                if (settings.get('enable_debug_logging', False) and 
-                    settings.get('debug_logging_timer_enabled', False) and 
-                    settings.get('debug_logging_turnoff_time')):
-                    
-                    turnoff_time = settings.get('debug_logging_turnoff_time')
-                    if isinstance(turnoff_time, str):
-                        try:
-                            turnoff_time = datetime.fromisoformat(turnoff_time)
-                        except:
-                            turnoff_time = None
-                    
-                    if turnoff_time and current_time >= turnoff_time:
-                        debug_print(f"logging timer expired at {turnoff_time}. Disabling debug logging.")
-                        settings['enable_debug_logging'] = False
-                        settings['debug_logging_timer_enabled'] = False
-                        settings['debug_logging_turnoff_time'] = None
-                        settings_changed = True
-                
-                # Check file processing logs timer
-                if (settings.get('enable_file_processing_logs', False) and 
-                    settings.get('file_processing_logs_timer_enabled', False) and 
-                    settings.get('file_processing_logs_turnoff_time')):
-                    
-                    turnoff_time = settings.get('file_processing_logs_turnoff_time')
-                    if isinstance(turnoff_time, str):
-                        try:
-                            turnoff_time = datetime.fromisoformat(turnoff_time)
-                        except:
-                            turnoff_time = None
-                    
-                    if turnoff_time and current_time >= turnoff_time:
-                        print(f"File processing logs timer expired at {turnoff_time}. Disabling file processing logs.")
-                        settings['enable_file_processing_logs'] = False
-                        settings['file_processing_logs_timer_enabled'] = False
-                        settings['file_processing_logs_turnoff_time'] = None
-                        settings_changed = True
-                
-                # Save settings if any changes were made
-                if settings_changed:
-                    update_settings(settings)
-                    print("Logging settings updated due to timer expiration.")
-                
-            except Exception as e:
-                print(f"Error in logging timer check: {e}")
-                log_event(f"Error in logging timer check: {e}", level=logging.ERROR)
-            
-            # Check every 60 seconds
-            time.sleep(60)
+        if not should_start_background_tasks():
+            print("Background tasks disabled for this web process.")
+            _background_tasks_started = True
+            return
+        start_background_task_threads()
+        _background_tasks_started = True
 
-    # Start the background timer check thread
-    timer_thread = threading.Thread(target=check_logging_timers, daemon=True)
-    timer_thread.start()
-    print("Logging timer background task started.")
 
-    # Background task to check for expired approval requests
-    def check_expired_approvals():
-        """Background task that checks for expired approval requests and auto-denies them"""
-        while True:
-            try:
-                from functions_approvals import auto_deny_expired_approvals
-                denied_count = auto_deny_expired_approvals()
-                if denied_count > 0:
-                    print(f"Auto-denied {denied_count} expired approval request(s).")
-            except Exception as e:
-                print(f"Error in approval expiration check: {e}")
-                log_event(f"Error in approval expiration check: {e}", level=logging.ERROR)
-            
-            # Check every 6 hours (21600 seconds)
-            time.sleep(21600)
+def initialize_application(force=False):
+    """Initialize caches, clients, sessions, and optional background services once per process."""
+    global _app_initialized
 
-    # Start the approval expiration check thread
-    approval_thread = threading.Thread(target=check_expired_approvals, daemon=True)
-    approval_thread.start()
-    print("Approval expiration background task started.")
+    with _app_init_lock:
+        if _app_initialized and not force:
+            return
 
-    # Background task to check retention policy execution time
-    def check_retention_policy():
-        """Background task that executes retention policy at scheduled time"""
-        while True:
-            try:
-                settings = get_settings()
-                
-                # Check if any retention policy is enabled
-                personal_enabled = settings.get('enable_retention_policy_personal', False)
-                group_enabled = settings.get('enable_retention_policy_group', False)
-                public_enabled = settings.get('enable_retention_policy_public', False)
-                
-                if personal_enabled or group_enabled or public_enabled:
-                    current_time = datetime.now(timezone.utc)
-                    
-                    # Check if next scheduled run time has passed
-                    next_run = settings.get('retention_policy_next_run')
-                    should_run = False
-                    
-                    if next_run:
-                        try:
-                            next_run_dt = datetime.fromisoformat(next_run)
-                            # Run if we've passed the scheduled time
-                            if current_time >= next_run_dt:
-                                should_run = True
-                        except Exception as parse_error:
-                            print(f"Error parsing next_run timestamp: {parse_error}")
-                            # If we can't parse, fall back to checking last_run
-                            last_run = settings.get('retention_policy_last_run')
-                            if last_run:
-                                try:
-                                    last_run_dt = datetime.fromisoformat(last_run)
-                                    # Run if last run was more than 23 hours ago
-                                    if (current_time - last_run_dt).total_seconds() > (23 * 3600):
-                                        should_run = True
-                                except:
-                                    should_run = True
-                            else:
-                                should_run = True
-                    else:
-                        # No next_run set, check last_run instead
-                        last_run = settings.get('retention_policy_last_run')
-                        if last_run:
-                            try:
-                                last_run_dt = datetime.fromisoformat(last_run)
-                                # Run if last run was more than 23 hours ago
-                                if (current_time - last_run_dt).total_seconds() > (23 * 3600):
-                                    should_run = True
-                            except:
-                                should_run = True
-                        else:
-                            # Never run before, execute now
-                            should_run = True
-                    
-                    if should_run:
-                        print(f"Executing scheduled retention policy at {current_time.isoformat()}")
-                        from functions_retention_policy import execute_retention_policy
-                        results = execute_retention_policy(manual_execution=False)
-                        
-                        if results.get('success'):
-                            print(f"Retention policy execution completed: "
-                                 f"{results['personal']['conversations']} personal conversations, "
-                                 f"{results['personal']['documents']} personal documents, "
-                                 f"{results['group']['conversations']} group conversations, "
-                                 f"{results['group']['documents']} group documents, "
-                                 f"{results['public']['conversations']} public conversations, "
-                                 f"{results['public']['documents']} public documents deleted.")
-                        else:
-                            print(f"Retention policy execution failed: {results.get('errors')}")
-                
-            except Exception as e:
-                print(f"Error in retention policy check: {e}")
-                log_event(f"Error in retention policy check: {e}", level=logging.ERROR)
-            
-            # Check every 5 minutes for more responsive scheduling
-            time.sleep(300)
+        print("Initializing application...")
+        settings = get_settings(use_cosmos=True)
+        redis_hostname = settings.get('redis_url', '').strip().split('.')[0]
+        app_settings_cache.configure_app_cache(
+            settings,
+            get_redis_cache_infrastructure_endpoint(redis_hostname)
+        )
+        app_settings_cache.update_settings_cache(settings)
+        sanitized_settings = sanitize_settings_for_logging(settings)
+        debug_print(f"DEBUG:Application settings: {sanitized_settings}")
+        sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
+        debug_print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {sanitized_settings_cache}")
 
-    # Start the retention policy check thread
-    retention_thread = threading.Thread(target=check_retention_policy, daemon=True)
-    retention_thread.start()
-    print("Retention policy background task started.")
+        initialize_clients(settings)
+        ensure_custom_logo_file_exists(app, settings)
+        print("Setting up Application Insights logging...")
+        setup_appinsights_logging(settings)
+        logging.basicConfig(level=logging.DEBUG)
+        ensure_default_global_agent_exists()
 
-    # Initialize Semantic Kernel and plugins
-    enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
-    per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
-    if enable_semantic_kernel and not per_user_semantic_kernel:
-        print("Semantic Kernel is enabled. Initializing...")
-        initialize_semantic_kernel()
+        start_background_tasks()
 
-    # Unified session setup
-    configure_sessions(settings)
+        enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
+        per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
+        if enable_semantic_kernel and not per_user_semantic_kernel:
+            print("Semantic Kernel is enabled. Initializing...")
+            initialize_semantic_kernel()
+
+        configure_sessions(settings)
+        _app_initialized = True
+        print("Application initialized.")
+
+
+@app.before_request
+def ensure_application_initialized():
+    initialize_application()
+
+
+def get_idle_timeout_settings(settings=None):
+    """
+    Resolve and normalize idle timeout settings used for warning and logout enforcement.
+
+    Args:
+        settings (dict, optional): Settings dictionary to use. If None, uses request-scoped settings.
+
+    Returns:
+        tuple[int, int]: A tuple of (idle_timeout_minutes, idle_warning_minutes)
+                         after parsing, fallback handling, and boundary normalization.
+
+    Raises:
+        None: Invalid values are handled via fallback defaults and warning logs.
+    """
+    if settings is None:
+        settings = get_request_settings()
+
+    timeout_raw = settings.get('idle_timeout_minutes', 30)
+    warning_raw = settings.get('idle_warning_minutes', 28)
+
+    try:
+        timeout_minutes = int(timeout_raw)
+    except (TypeError, ValueError):
+        timeout_minutes = 30
+        log_event(
+            "Invalid idle timeout value detected; using default.",
+            extra={
+                "setting": "idle_timeout_minutes",
+                "raw_value": str(timeout_raw),
+                "fallback_value": 30
+            },
+            level=logging.WARNING
+        )
+
+    try:
+        warning_minutes = int(warning_raw)
+    except (TypeError, ValueError):
+        warning_minutes = 28
+        log_event(
+            "Invalid idle warning value detected; using default.",
+            extra={
+                "setting": "idle_warning_minutes",
+                "raw_value": str(warning_raw),
+                "fallback_value": 28
+            },
+            level=logging.WARNING
+        )
+
+    normalized_timeout = max(10, timeout_minutes)
+    if normalized_timeout != timeout_minutes:
+        log_event(
+            "Idle timeout value normalized to minimum allowed value.",
+            extra={
+                "setting": "idle_timeout_minutes",
+                "original_value": timeout_minutes,
+                "normalized_value": normalized_timeout
+            },
+            level=logging.WARNING
+        )
+    timeout_minutes = normalized_timeout
+
+    normalized_warning = max(0, warning_minutes)
+    if normalized_warning != warning_minutes:
+        log_event(
+            "Idle warning value normalized to minimum allowed value.",
+            extra={
+                "setting": "idle_warning_minutes",
+                "original_value": warning_minutes,
+                "normalized_value": normalized_warning
+            },
+            level=logging.WARNING
+        )
+    warning_minutes = normalized_warning
+
+    if warning_minutes > timeout_minutes:
+        previous_warning_minutes = warning_minutes
+        warning_minutes = timeout_minutes
+        log_event(
+            "Idle warning value adjusted to not exceed idle timeout.",
+            extra={
+                "idle_timeout_minutes": timeout_minutes,
+                "original_idle_warning_minutes": previous_warning_minutes,
+                "adjusted_idle_warning_minutes": warning_minutes
+            },
+            level=logging.WARNING
+        )
+
+    return timeout_minutes, warning_minutes
+
+
+def is_idle_timeout_enabled(settings=None):
+    """
+    Determine whether idle-timeout enforcement is enabled.
+
+    Args:
+        settings (dict, optional): Settings dictionary to use. If None, uses request-scoped settings.
+
+    Returns:
+        bool: True when idle-timeout enforcement should run; otherwise False.
+
+    Raises:
+        None: Unexpected values are coerced to boolean-compatible behavior.
+    """
+    if settings is None:
+        settings = get_request_settings()
+
+    enabled_raw = settings.get('enable_idle_timeout', False)
+
+    if isinstance(enabled_raw, str):
+        return enabled_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+    return bool(enabled_raw)
+
+
+settings_source_counters = {}
+settings_source_counters_lock = threading.Lock()
+settings_source_last_observed = None
+settings_source_last_non_cache_log_epoch = 0
+settings_source_non_cache_log_interval_seconds = 60
+
+
+def record_request_settings_source(source):
+    """
+    Record and log the source used to resolve request settings.
+
+    Args:
+        source (str): Settings source label (for example: cache, cosmos_fallback, cosmos_forced).
+
+    Returns:
+        None: Updates in-memory counters and request context diagnostics.
+
+    Raises:
+        None: Counter updates and diagnostics are handled internally.
+    """
+    normalized_source = source or 'unknown'
+    now_epoch = int(time.time())
+
+    global settings_source_last_observed
+    global settings_source_last_non_cache_log_epoch
+
+    with settings_source_counters_lock:
+        settings_source_counters[normalized_source] = settings_source_counters.get(normalized_source, 0) + 1
+        cache_hits = settings_source_counters.get('cache', 0)
+        cosmos_fallback_hits = settings_source_counters.get('cosmos_fallback', 0)
+        cosmos_forced_hits = settings_source_counters.get('cosmos_forced', 0)
+        unknown_hits = settings_source_counters.get('unknown', 0)
+
+        previous_source = settings_source_last_observed
+        source_changed = normalized_source != previous_source
+        settings_source_last_observed = normalized_source
+
+        non_cache_log_window_elapsed = (
+            now_epoch - settings_source_last_non_cache_log_epoch
+        ) >= settings_source_non_cache_log_interval_seconds
+
+        should_log_non_cache_info = (
+            normalized_source != 'cache'
+            and (source_changed or non_cache_log_window_elapsed)
+        )
+
+        if should_log_non_cache_info:
+            settings_source_last_non_cache_log_epoch = now_epoch
+
+    g.request_settings_source = normalized_source
+    debug_print(
+        f"[SETTINGS SOURCE] path={request.path} source={normalized_source}",
+        category="SETTINGS",
+        cache_hits=cache_hits,
+        cosmos_fallback_hits=cosmos_fallback_hits,
+        cosmos_forced_hits=cosmos_forced_hits,
+        unknown_hits=unknown_hits
+    )
+
+    if should_log_non_cache_info:
+        log_event(
+            "Request settings source is non-cache.",
+            extra={
+                "path": request.path,
+                "settings_source": normalized_source,
+                "source_changed": source_changed,
+                "non_cache_log_window_elapsed": non_cache_log_window_elapsed,
+                "cache_hits": cache_hits,
+                "cosmos_fallback_hits": cosmos_fallback_hits,
+                "cosmos_forced_hits": cosmos_forced_hits,
+                "unknown_hits": unknown_hits
+            },
+            level=logging.INFO
+        )
+
+
+def get_request_settings():
+    """
+    Get request-scoped settings, resolving and caching them when needed.
+
+    Args:
+        None
+
+    Returns:
+        dict: Request settings dictionary cached on Flask `g` for the current request.
+
+    Raises:
+        None: Unexpected resolver response shapes are logged and handled with safe fallbacks.
+    """
+    request_settings = getattr(g, 'request_settings', None)
+    if request_settings is None:
+        settings_result = get_settings(include_source=True)
+        if isinstance(settings_result, tuple) and len(settings_result) == 2:
+            request_settings, settings_source = settings_result
+        else:
+            request_settings = settings_result
+            settings_source = 'unknown'
+            log_event(
+                "Unexpected settings response shape in get_request_settings.",
+                extra={
+                    "path": request.path,
+                    "response_type": type(settings_result).__name__
+                },
+                level=logging.WARNING
+            )
+
+        request_settings = request_settings or {}
+        g.request_settings = request_settings
+        record_request_settings_source(settings_source)
+    return request_settings
 
 @app.context_processor
 def inject_settings():
-    settings = get_settings()
+    settings = get_request_settings()
     public_settings = sanitize_settings_for_user(settings)
+    idle_timeout_enabled = is_idle_timeout_enabled(settings)
+    idle_timeout_minutes, idle_warning_minutes = get_idle_timeout_settings(settings)
     # Inject per-user settings if logged in
     user_settings = {}
     try:
@@ -424,7 +555,13 @@ def inject_settings():
         print(f"Error injecting user settings: {e}")
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
-    return dict(app_settings=public_settings, user_settings=user_settings)
+    return dict(
+        app_settings=public_settings,
+        user_settings=user_settings,
+        idle_timeout_enabled=idle_timeout_enabled,
+        idle_timeout_minutes=idle_timeout_minutes,
+        idle_warning_minutes=idle_warning_minutes
+    )
 
 @app.template_filter('to_datetime')
 def to_datetime_filter(value):
@@ -447,6 +584,121 @@ def reload_kernel_if_needed():
         initialize_semantic_kernel()
         """
         setattr(builtins, "kernel_reload_needed", False)
+
+
+def _is_idle_timeout_exempt(path):
+    """
+    Check whether a request path is exempt from idle-timeout processing.
+
+    Args:
+        path (str): Request path to evaluate.
+
+    Returns:
+        bool: True if the path is exempt from idle-timeout checks; otherwise False.
+
+    Raises:
+        None
+    """
+    if path in IDLE_TIMEOUT_EXEMPT_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in IDLE_TIMEOUT_EXEMPT_PREFIXES)
+
+@app.before_request
+def enforce_idle_session_timeout():
+    """
+    Enforce server-side idle session timeout for authenticated requests.
+
+    Args:
+        None
+
+    Returns:
+        Response | None: A redirect/401 response when timeout is exceeded; otherwise None.
+
+    Raises:
+        None: Runtime issues in timeout evaluation are logged and request processing continues safely.
+    """
+    if 'user' not in session:
+        return None
+
+    if request.method == 'OPTIONS' or _is_idle_timeout_exempt(request.path):
+        return None
+
+    now_epoch = int(time.time())
+    request_settings = get_request_settings()
+    if not is_idle_timeout_enabled(request_settings):
+        disabled_refresh_interval_seconds = 60
+        last_activity_epoch = session.get('last_activity_epoch')
+        should_refresh_last_activity = False
+
+        if last_activity_epoch is None:
+            should_refresh_last_activity = True
+        else:
+            try:
+                parsed_last_activity_epoch = int(float(last_activity_epoch))
+                if (
+                    parsed_last_activity_epoch > now_epoch
+                    or (now_epoch - parsed_last_activity_epoch) >= disabled_refresh_interval_seconds
+                ):
+                    should_refresh_last_activity = True
+            except (TypeError, ValueError):
+                should_refresh_last_activity = True
+
+        if should_refresh_last_activity:
+            session['last_activity_epoch'] = now_epoch
+            session.modified = True
+        return None
+
+    idle_timeout_minutes, _ = get_idle_timeout_settings(request_settings)
+    last_activity_epoch = session.get('last_activity_epoch')
+    has_valid_last_activity_epoch = False
+    max_allowed_future_skew_seconds = 60
+
+    if last_activity_epoch is not None:
+        try:
+            parsed_last_activity_epoch = int(float(last_activity_epoch))
+            if parsed_last_activity_epoch <= (now_epoch + max_allowed_future_skew_seconds):
+                has_valid_last_activity_epoch = True
+            else:
+                log_event(
+                    "Idle timeout last_activity_epoch is in the future; resetting timestamp.",
+                    extra={
+                        "path": request.path,
+                        "parsed_last_activity_epoch": parsed_last_activity_epoch,
+                        "now_epoch": now_epoch,
+                        "max_allowed_future_skew_seconds": max_allowed_future_skew_seconds
+                    },
+                    level=logging.WARNING
+                )
+            idle_seconds = now_epoch - parsed_last_activity_epoch
+            if idle_seconds >= (idle_timeout_minutes * 60):
+                user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
+                session.clear()
+
+                log_event(
+                    f"Session expired due to {idle_timeout_minutes} minute inactivity timeout for user {user_id or 'unknown'}.",
+                    level=logging.INFO
+                )
+
+                if request.path.startswith('/api/'):
+                    return jsonify({
+                        'error': 'Session expired',
+                        'message': 'Your session expired due to inactivity. Please sign in again.',
+                        'requires_reauth': True
+                    }), 401
+
+                return redirect(url_for('local_logout'))
+        except Exception as e:
+            log_event(f"Idle timeout evaluation failed: {e}", level=logging.WARNING)
+
+    if request.path.startswith('/api/'):
+        if not has_valid_last_activity_epoch:
+            session['last_activity_epoch'] = now_epoch
+            session.modified = True
+        return None
+
+    session['last_activity_epoch'] = now_epoch
+    session.modified = True
+    return None
 
 @app.after_request
 def add_security_headers(response):
@@ -486,6 +738,16 @@ def markdown_filter(text):
 
 # Add the filter to the Jinja environment
 app.jinja_env.filters['markdown'] = markdown_filter
+
+# Register a custom Jinja filter for nl2br (newline to <br>)
+def nl2br_filter(value):
+    """Escape HTML then convert newline characters to <br> tags."""
+    from markupsafe import escape, Markup
+    if not value:
+        return Markup('')
+    return Markup(str(escape(value)).replace('\n', '<br>\n'))
+
+app.jinja_env.filters['nl2br'] = nl2br_filter
 
 # =================== Default Routes =====================
 @app.route('/')
@@ -529,6 +791,30 @@ def serve_js_modules(filename):
 @swagger_route(security=get_auth_security())
 def acceptable_use_policy():
     return render_template('acceptable_use_policy.html')
+
+@app.route('/api/session/heartbeat', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+def session_heartbeat():
+    """
+    Refresh the authenticated session activity timestamp used by idle-timeout enforcement.
+
+    Args:
+        None
+
+    Returns:
+        tuple[Response, int]: JSON response containing refresh confirmation and timeout metadata.
+
+    Raises:
+        None
+    """
+    session['last_activity_epoch'] = int(time.time())
+    session.modified = True
+    idle_timeout_minutes, _ = get_idle_timeout_settings(get_request_settings())
+    return jsonify({
+        'message': 'Session refreshed',
+        'idle_timeout_minutes': idle_timeout_minutes
+    }), 200
 
 @app.route('/api/semantic-kernel/plugins')
 @swagger_route(security=get_auth_security())
@@ -577,6 +863,9 @@ register_route_frontend_safety(app)
 
 # ------------------- Feedback Routes -------------------
 register_route_frontend_feedback(app)
+
+# ------------------- Support Routes --------------------
+register_route_frontend_support(app)
 
 # ------------------- Notifications Routes --------------
 register_route_frontend_notifications(app)
@@ -641,16 +930,27 @@ register_route_backend_public_prompts(app)
 # ------------------- API User Agreement Routes ----------
 register_route_backend_user_agreement(app)
 
+# ------------------- API Thoughts Routes ----------------
+register_route_backend_thoughts(app)
+
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
 
 if __name__ == '__main__':
-    settings = get_settings(use_cosmos=True)
-    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
-    app_settings_cache.update_settings_cache(settings)
-    initialize_clients(settings)
-
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
+    use_gunicorn = os.environ.get("SIMPLECHAT_USE_GUNICORN", "0").strip().lower() in ('1', 'true', 'yes', 'on')
+
+    if use_gunicorn and not debug_mode:
+        gunicorn_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gunicorn.conf.py')
+        print(f"Starting Gunicorn using {gunicorn_config_path}")
+        os.execvp(sys.executable, [sys.executable, '-m', 'gunicorn', '-c', gunicorn_config_path, 'app:app'])
+
+    if use_gunicorn and debug_mode:
+        print("⚠️  WARNING: Both Gunicorn and Flask debug mode are enabled, which is not supported. Please disable one of them, app will not run until resolved.")
+        log_event("WARNING: Running with both Gunicorn and Flask debug mode is not supported. Please disable one of them, app will not run until resolved.", level=logging.WARNING)
+        exit(1)
+
+    initialize_application(force=True)
 
     if debug_mode:
         # Local development with HTTPS

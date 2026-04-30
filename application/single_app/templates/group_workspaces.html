@@ -233,14 +233,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </button>
         <div class="dropdown-menu w-100" id="group-dropdown-menu">
           <div class="px-2 group-search-container d-none">
-            <input type="text" class="form-control form-control-sm mb-2" placeholder="Search groups..." id="group-search-input">
+            <input type="text" class="form-control form-control-sm mb-2" placeholder="Search groups..." id="group-search-input" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
           </div>
           <div class="dropdown-items-container" id="group-dropdown-items" style="max-height: 300px; overflow-y: auto;">
             <!-- Groups will be populated here -->
           </div>
         </div>
         <!-- Hidden select element for compatibility -->
-        <select class="d-none" id="group-select"></select>
+        <select class="d-none" id="group-select" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true"></select>
       </div>
     </div>
     <div class="col-sm-6">
@@ -292,39 +292,59 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Group Prompts
       </button>
     </li>
-    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="group-agents-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#group-agents-tab"
-        type="button"
-        role="tab"
-        aria-controls="group-agents-tab"
-        aria-selected="false"
-      >
-        Group Agents
-      </button>
-    </li>
-    {% endif %}
-    {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="group-plugins-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#group-plugins-tab"
-        type="button"
-        role="tab"
-        aria-controls="group-plugins-tab"
-        aria-selected="false"
-      >
-        Group Actions
-      </button>
-    </li>
+    {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+      {% if settings.allow_group_agents %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="group-agents-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#group-agents-tab"
+            type="button"
+            role="tab"
+            aria-controls="group-agents-tab"
+            aria-selected="false"
+          >
+            Group Agents
+          </button>
+        </li>
+    
+        {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="group-plugins-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#group-plugins-tab"
+              type="button"
+              role="tab"
+              aria-controls="group-plugins-tab"
+              aria-selected="false"
+            >
+              Group Actions
+            </button>
+          </li>
+        {% endif %}
+      {% endif %}
+      {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="group-endpoints-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#group-endpoints-tab"
+            type="button"
+            role="tab"
+            aria-controls="group-endpoints-tab"
+            aria-selected="false"
+          >
+            Group Endpoints
+          </button>
+        </li>
+      {% endif %}
     {% endif %}
   </ul>
+    
 
   <!-- Tab Panes -->
   <div class="tab-content" id="groupWorkspaceTabContent">
@@ -637,17 +657,15 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <!-- Shown when user can't manage prompts -->
         <div
           id="group-prompts-role-warning"
-          class="alert alert-warning"
-          style="display: none"
+          class="alert alert-warning d-none"
         >
           You do not have permission to manage group prompts.
         </div>
 
         <!-- Button to open modal -->
         <div
-          class="mb-3"
           id="create-group-prompt-section"
-          style="display: none"
+          class="mb-3 d-none"
         >
           <button id="create-group-prompt-btn" class="btn btn-success btn-sm">
             New Prompt
@@ -742,7 +760,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </div>
     <!-- End GROUP PROMPTS TAB -->
 
-    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
     <!-- ============= GROUP AGENTS TAB ============= -->
     <div
       class="tab-pane fade"
@@ -763,38 +780,46 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <div id="group-agents-permission-warning" class="alert alert-warning d-none">
           You do not have permission to manage group agents.
         </div>
-        <div class="mb-3">
+        <div class="d-flex align-items-center gap-2 mb-3">
           <input
             type="search"
             class="form-control"
             id="group-agents-search"
             placeholder="Search group agents by name or description..."
           />
+          <div class="btn-group btn-group-sm" role="group" aria-label="View toggle">
+            <input type="radio" class="btn-check" name="groupAgentsViewToggle" id="groupAgents-view-list" value="list" autocomplete="off" checked>
+            <label class="btn btn-outline-secondary" for="groupAgents-view-list" title="List view"><i class="bi bi-list-ul"></i></label>
+            <input type="radio" class="btn-check" name="groupAgentsViewToggle" id="groupAgents-view-grid" value="grid" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="groupAgents-view-grid" title="Grid view"><i class="bi bi-grid-3x3-gap"></i></label>
+          </div>
         </div>
-        <table class="table table-striped" id="group-agents-table">
-          <thead>
-            <tr>
-              <th>Display Name</th>
-              <th>Description</th>
-              <th style="width: 160px;">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="group-agents-table-body">
-            <tr class="table-loading-row">
-              <td colspan="3">
-                <div class="spinner-border spinner-border-sm me-2" role="status">
-                  <span class="visually-hidden">Loading...</span>
-                </div>
-                Select a group to load agents.
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div id="group-agents-list-view">
+          <table class="table table-striped item-list-table" id="group-agents-table">
+            <thead>
+              <tr>
+                <th>Display Name</th>
+                <th>Description</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="group-agents-table-body">
+              <tr class="table-loading-row">
+                <td colspan="3">
+                  <div class="spinner-border spinner-border-sm me-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                  </div>
+                  Select a group to load agents.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="group-agents-grid-view" class="row g-3 d-none"></div>
       </div>
       <div id="group-agents-error"></div>
     </div>
     <!-- End GROUP AGENTS TAB -->
-    {% endif %}
 
     {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
     <!-- ============= GROUP ACTIONS TAB ============= -->
@@ -813,43 +838,187 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="d-flex justify-content-between align-items-center mb-2">
             <button class="btn btn-success btn-sm" id="create-group-plugin-btn">New Action</button>
           </div>
-          <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-3">
             <input
               type="search"
               class="form-control"
               id="group-plugins-search"
               placeholder="Search group actions by name or description..."
             />
+            <div class="btn-group btn-group-sm" role="group" aria-label="View toggle">
+              <input type="radio" class="btn-check" name="groupPluginsViewToggle" id="groupPlugins-view-list" value="list" autocomplete="off" checked>
+              <label class="btn btn-outline-secondary" for="groupPlugins-view-list" title="List view"><i class="bi bi-list-ul"></i></label>
+              <input type="radio" class="btn-check" name="groupPluginsViewToggle" id="groupPlugins-view-grid" value="grid" autocomplete="off">
+              <label class="btn btn-outline-secondary" for="groupPlugins-view-grid" title="Grid view"><i class="bi bi-grid-3x3-gap"></i></label>
+            </div>
           </div>
-          <table class="table table-striped" id="group-plugins-table">
-            <thead>
-              <tr>
-                <th>Display Name</th>
-                <th>Description</th>
-                <th style="width: 140px;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="group-plugins-table-body">
-              <tr class="table-loading-row">
-                <td colspan="3">
-                  <div class="spinner-border spinner-border-sm me-2" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                  </div>
-                  Select a group to load actions.
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div id="group-plugins-list-view">
+            <table class="table table-striped item-list-table" id="group-plugins-table">
+              <thead>
+                <tr>
+                  <th>Display Name</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="group-plugins-table-body">
+                <tr class="table-loading-row">
+                  <td colspan="3">
+                    <div class="spinner-border spinner-border-sm me-2" role="status">
+                      <span class="visually-hidden">Loading...</span>
+                    </div>
+                    Select a group to load actions.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="group-plugins-grid-view" class="row g-3 d-none"></div>
         </div>
       </template>
     </div>
     <!-- End GROUP ACTIONS TAB -->
     {% endif %}
 
+    {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+    <!-- ============= GROUP ENDPOINTS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-endpoints-tab"
+      role="tabpanel"
+      aria-labelledby="group-endpoints-tab-btn"
+    >
+      <!-- Group Model Endpoints -->
+      <div class="card p-3 my-3" id="group-multi-endpoint-configuration">
+        <h6 class="mb-2"><i class="bi bi-hdd-network me-2"></i>Group Model Endpoints</h6>
+        <p class="text-muted small mb-2">Manage model endpoints for this group. Global endpoints are managed by admins.</p>
+        <div class="form-check form-switch mb-3 d-flex align-items-center d-none">
+          <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %} disabled />
+          <label class="form-check-label" for="enable_multi_model_endpoints">Multi-endpoint management is controlled by your admin</label>
+        </div>
+        <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Group Endpoints</h6>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+              <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+            </button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Provider</th>
+                  <th>Selected Models</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="model-endpoints-tbody">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <input type="hidden" id="model_endpoints_json" />
+      </div>
+    </div>
+    <!-- End GROUP ENDPOINTS TAB -->
+    {% endif %}
+
+    {% if app_settings.enable_retention_policy_group %}
+    <!-- ============= GROUP SETTINGS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-settings-tab"
+      role="tabpanel"
+      aria-labelledby="group-settings-tab-btn"
+    >
+      <div class="card p-4 my-3">
+        <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
+        <p class="text-muted">Configure how long to keep conversations and documents in this group workspace. Items older than the specified period will be automatically deleted.</p>
+        
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Default:</strong> You can use the organization default or set a custom retention period. Choose "No automatic deletion" to keep items indefinitely.
+        </div>
+        
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="group-conversation-retention-days" class="form-label">Conversation Retention</label>
+            <select class="form-select" id="group-conversation-retention-days" name="conversation_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Conversations older than this will be automatically deleted.</small>
+          </div>
+          
+          <div class="col-md-6">
+            <label for="group-document-retention-days" class="form-label">Document Retention</label>
+            <select class="form-select" id="group-document-retention-days" name="document_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Documents older than this will be automatically deleted.</small>
+          </div>
+        </div>
+        
+        <div class="mt-3">
+          <button type="button" class="btn btn-primary" onclick="saveGroupRetentionSettings()">
+            <i class="bi bi-save me-1"></i>Save Retention Settings
+          </button>
+          <span id="group-retention-save-status" class="ms-3"></span>
+        </div>
+        
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="bi bi-exclamation-triangle me-2"></i>
+          <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
+        </div>
+      </div>
+    </div>
+    <!-- End GROUP SETTINGS TAB -->
+    {% endif %}
   </div>
   <!-- End Tab Content -->
 </div>
 <!-- End Container -->
+
+{% include '_multiendpoint_modal.html' %}
+<!-- Item View Modal (shared by agents & actions grid/list view buttons) -->
+<div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="item-view-modal-title">View Item</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="item-view-modal-body"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Loading Modal (Keep As Is - Used by Upload) -->
 <div
@@ -873,9 +1042,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 
 <!-- Modal for Group Prompt Create/Edit (Keep As Is) -->
-<div class="modal fade" id="groupPromptModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="groupPromptModal" tabindex="-1" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-xl" style="max-width: 80%">
-    <form id="group-prompt-form">
+    <form id="group-prompt-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="groupPromptModalLabel">
@@ -898,6 +1067,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
               type="text"
               class="form-control"
               id="group-prompt-name"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               required
             />
           </div>
@@ -909,6 +1082,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
               class="form-control"
               id="group-prompt-content"
               name="group_prompt_content"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               rows="10"
             ></textarea>
           </div>
@@ -934,9 +1111,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
   tabindex="-1"
   aria-labelledby="docMetadataModalLabel"
   aria-hidden="true"
+  autocomplete="off"
+  data-lpignore="true"
+  data-1p-ignore="true"
+  data-bwignore="true"
 >
   <div class="modal-dialog">
-    <form id="doc-metadata-form">
+    <form id="doc-metadata-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="docMetadataModalLabel">
@@ -958,7 +1139,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <label for="doc-classification" class="form-label"
               >Classification</label
             >
-            <select class="form-select" id="doc-classification">
+            <select class="form-select" id="doc-classification" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
               <option value="">-- Select Classification --</option>
               <option value="none">(No Classification)</option>
               {% for cat in settings.document_classification_categories %}
@@ -970,7 +1151,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <!-- Title -->
           <div class="mb-3">
             <label for="doc-title" class="form-label">Title</label
-            ><input type="text" class="form-control" id="doc-title" />
+            ><input type="text" class="form-control" id="doc-title" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
           </div>
           <!-- Abstract -->
           <div class="mb-3">
@@ -978,6 +1159,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
             ><textarea
               class="form-control"
               id="doc-abstract"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               rows="3"
             ></textarea>
           </div>
@@ -985,7 +1170,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="mb-3">
             <label for="doc-keywords" class="form-label"
               >Keywords (comma separated)</label
-            ><input type="text" class="form-control" id="doc-keywords" />
+            ><input type="text" class="form-control" id="doc-keywords" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
           </div>
           <!-- Publication Date -->
           <div class="mb-3">
@@ -995,6 +1180,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
               type="text"
               class="form-control"
               id="doc-publication-date"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               placeholder="e.g. 08/2005 or YYYY-MM-DD"
             />
           </div>
@@ -1002,7 +1191,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="mb-3">
             <label for="doc-authors" class="form-label"
               >Authors (comma separated)</label
-            ><input type="text" class="form-control" id="doc-authors" />
+            ><input type="text" class="form-control" id="doc-authors" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
           </div>
           <!-- Tags -->
           <div class="mb-3">
@@ -1040,9 +1229,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
 {% endif %}
 
 <!-- Group Share Document Modal -->
-<div class="modal fade" id="groupShareDocumentModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="groupShareDocumentModal" tabindex="-1" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
-    <form id="groupShareDocumentForm">
+    <form id="groupShareDocumentForm" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">Share Document with Groups</h5>
@@ -1079,6 +1268,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
               type="text"
               class="form-control"
               id="groupSearchTerm"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               placeholder="Enter group name..."
             />
             <button
@@ -1124,8 +1317,31 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </form>
   </div>
 </div>
+
+<!-- Group Document Delete Modal -->
+<div class="modal fade" id="groupDocumentDeleteModal" tabindex="-1" aria-labelledby="groupDocumentDeleteModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="groupDocumentDeleteModalLabel">Delete Group Document</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="groupDocumentDeleteModalBody">
+        <p class="mb-0">Choose how you want to delete this group document revision.</p>
+      </div>
+      <div class="modal-footer d-flex flex-wrap justify-content-between gap-2">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <div class="d-flex flex-wrap gap-2">
+          <button type="button" class="btn btn-outline-danger" id="groupDeleteCurrentBtn">Delete Current Version</button>
+          <button type="button" class="btn btn-danger" id="groupDeleteAllBtn">Delete All Versions</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Bulk Tag Assignment Modal (Group) -->
-<div class="modal fade" id="groupBulkTagModal" tabindex="-1" aria-labelledby="groupBulkTagModalLabel" aria-hidden="true">
+<div class="modal fade" id="groupBulkTagModal" tabindex="-1" aria-labelledby="groupBulkTagModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
@@ -1141,7 +1357,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
         <div class="mb-3">
           <label for="group-bulk-tag-action" class="form-label fw-bold">Action</label>
-          <select class="form-select" id="group-bulk-tag-action">
+          <select class="form-select" id="group-bulk-tag-action" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
             <option value="add_tags">Add Tags (append to existing)</option>
             <option value="remove_tags">Remove Tags (remove specific tags)</option>
             <option value="set_tags">Replace All Tags (overwrite existing)</option>
@@ -1176,7 +1392,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 
 <!-- Group Tag Management Modal -->
-<div class="modal fade" id="groupTagManagementModal" tabindex="-1" aria-labelledby="groupTagManagementModalLabel" aria-hidden="true">
+<div class="modal fade" id="groupTagManagementModal" tabindex="-1" aria-labelledby="groupTagManagementModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
@@ -1193,13 +1409,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </button>
             <div class="row g-2">
               <div class="col-md-6">
-                <input type="text" class="form-control" id="group-new-tag-name" placeholder="Tag name (lowercase, alphanumeric)" maxlength="50">
+                <input type="text" class="form-control" id="group-new-tag-name" placeholder="Tag name (lowercase, alphanumeric)" maxlength="50" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                 <div class="form-text">Use lowercase letters, numbers, hyphens, underscores</div>
               </div>
               <div class="col-md-4">
                 <div class="input-group">
                   <span class="input-group-text">Color</span>
-                  <input type="color" class="form-control form-control-color" id="group-new-tag-color" value="#0d6efd">
+                  <input type="color" class="form-control form-control-color" id="group-new-tag-color" value="#0d6efd" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                 </div>
               </div>
               <div class="col-md-2">
@@ -1240,7 +1456,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 
 <!-- Group Tag Selection Modal -->
-<div class="modal fade" id="groupTagSelectionModal" tabindex="-1" aria-labelledby="groupTagSelectionModalLabel" aria-hidden="true">
+<div class="modal fade" id="groupTagSelectionModal" tabindex="-1" aria-labelledby="groupTagSelectionModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
@@ -1266,7 +1482,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 
-{% endblock %} {% block scripts %}
+{% endblock %} 
+
+{% block scripts %}
 <!-- SimpleMDE CSS/JS (Keep As Is) -->
 <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
  LOCAL VERSION BELOW -->
@@ -1276,9 +1494,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script src="/static/js/workspace/group-documents-sharing.js"></script>
 <script src="/static/js/workspace_sidebar_nav.js"></script>
 
+<script>
+    window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
+    window.modelEndpointScope = 'group';
+  window.workspaceModelEndpoints = {{ group_model_endpoints|default([], true)|tojson|safe }};
+  window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson|safe }};
+</script>
+{% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+<script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
+{% endif %}
+
 <!-- Pass backend flags to JS -->
 <script>
-  window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+  window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }
@@ -1291,8 +1519,69 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
 <script>
   window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
+
+  function applyGroupWorkspaceAutofillMetadata(root) {
+    if (!root) {
+      return;
+    }
+
+    if (!root.hasAttribute("autocomplete")) {
+      root.setAttribute("autocomplete", "off");
+    }
+
+    if (!root.hasAttribute("data-lpignore")) {
+      root.setAttribute("data-lpignore", "true");
+    }
+
+    if (!root.hasAttribute("data-1p-ignore")) {
+      root.setAttribute("data-1p-ignore", "true");
+    }
+
+    if (!root.hasAttribute("data-bwignore")) {
+      root.setAttribute("data-bwignore", "true");
+    }
+
+    root.querySelectorAll("input, select, textarea").forEach((field) => {
+      const autocompleteValue = field.getAttribute("type") === "password" ? "new-password" : "off";
+
+      if (!field.hasAttribute("autocomplete")) {
+        field.setAttribute("autocomplete", autocompleteValue);
+      }
+
+      if (!field.hasAttribute("data-lpignore")) {
+        field.setAttribute("data-lpignore", "true");
+      }
+
+      if (!field.hasAttribute("data-1p-ignore")) {
+        field.setAttribute("data-1p-ignore", "true");
+      }
+
+      if (!field.hasAttribute("data-bwignore")) {
+        field.setAttribute("data-bwignore", "true");
+      }
+    });
+  }
+
+  function setupGroupWorkspaceAutofillMetadata() {
+    [
+      document.getElementById("group-dropdown"),
+      document.getElementById("groupWorkspaceTabContent"),
+      document.getElementById("groupPromptModal"),
+      document.getElementById("docMetadataModal"),
+      document.getElementById("groupShareDocumentModal"),
+      document.getElementById("groupBulkTagModal"),
+      document.getElementById("groupTagManagementModal"),
+      document.getElementById("groupTagSelectionModal"),
+      document.getElementById("modelEndpointModal"),
+      document.getElementById("agentModal"),
+      document.getElementById("plugin-modal")
+    ].forEach(applyGroupWorkspaceAutofillMetadata);
+  }
+
   // --- Filter toggle button logic ---
   document.addEventListener("DOMContentLoaded", function() {
+    setupGroupWorkspaceAutofillMetadata();
+
     // Group Documents tab
     var docsToggleBtn = document.getElementById("group-docs-filters-toggle-btn");
     var docsCollapse = document.getElementById("group-docs-filters-collapse");
@@ -1421,6 +1710,199 @@ app_settings.app_title }} {% endblock %} {% block head %}
   const groupTagSelectionModal = new bootstrap.Modal(
     document.getElementById("groupTagSelectionModal")
   );
+  const groupDocumentDeleteModalElement = document.getElementById(
+    "groupDocumentDeleteModal"
+  );
+  const groupDocumentDeleteModal = groupDocumentDeleteModalElement
+    ? new bootstrap.Modal(groupDocumentDeleteModalElement)
+    : null;
+  const groupDocumentDeleteModalTitle = document.getElementById(
+    "groupDocumentDeleteModalLabel"
+  );
+  const groupDocumentDeleteModalBody = document.getElementById(
+    "groupDocumentDeleteModalBody"
+  );
+  const groupDeleteCurrentBtn = document.getElementById(
+    "groupDeleteCurrentBtn"
+  );
+  const groupDeleteAllBtn = document.getElementById("groupDeleteAllBtn");
+
+  function getGroupDeleteModalContent(documentCount) {
+    if (documentCount === 1) {
+      return {
+        title: "Delete Group Document",
+        body: `
+          <p class="mb-2">Choose how to delete this group document revision.</p>
+          <p class="mb-2"><strong>Delete Current Version</strong> removes the visible revision and keeps older revisions for later comparison.</p>
+          <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for this document.</p>
+        `,
+      };
+    }
+
+    return {
+      title: "Delete Selected Group Documents",
+      body: `
+        <p class="mb-2">Choose how to delete ${documentCount} selected current group document revision(s).</p>
+        <p class="mb-2"><strong>Delete Current Version</strong> removes only the visible revision for each selected document and keeps older revisions.</p>
+        <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for each selected document.</p>
+      `,
+    };
+  }
+
+  function showGroupDocumentDeleteFeedback(message, variant = "danger") {
+    if (typeof window.showToast === "function") {
+      window.showToast(message, variant);
+      return;
+    }
+
+    let container = document.getElementById("groupDocumentDeleteFeedbackContainer");
+    if (!container) {
+      container = document.createElement("div");
+      container.id = "groupDocumentDeleteFeedbackContainer";
+      container.className = "toast-container position-fixed top-0 end-0 p-3";
+      document.body.appendChild(container);
+    }
+
+    if (window.bootstrap && typeof window.bootstrap.Toast === "function") {
+      const toastElement = document.createElement("div");
+      toastElement.className = `toast align-items-center text-white bg-${variant} border-0`;
+      toastElement.setAttribute("role", "alert");
+      toastElement.setAttribute("aria-live", "assertive");
+      toastElement.setAttribute("aria-atomic", "true");
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "d-flex";
+
+      const body = document.createElement("div");
+      body.className = "toast-body";
+      body.textContent = message;
+
+      const closeButton = document.createElement("button");
+      closeButton.type = "button";
+      closeButton.className = "btn-close btn-close-white me-2 m-auto";
+      closeButton.setAttribute("data-bs-dismiss", "toast");
+      closeButton.setAttribute("aria-label", "Close");
+
+      wrapper.appendChild(body);
+      wrapper.appendChild(closeButton);
+      toastElement.appendChild(wrapper);
+      container.appendChild(toastElement);
+
+      const toast = new window.bootstrap.Toast(toastElement);
+      toast.show();
+      toastElement.addEventListener("hidden.bs.toast", () => {
+        toastElement.remove();
+      });
+      return;
+    }
+
+    const alertElement = document.createElement("div");
+    alertElement.className = `alert alert-${variant} alert-dismissible fade show mb-2`;
+    alertElement.setAttribute("role", "alert");
+
+    const body = document.createElement("span");
+    body.textContent = message;
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "btn-close";
+    closeButton.setAttribute("data-bs-dismiss", "alert");
+    closeButton.setAttribute("aria-label", "Close");
+
+    alertElement.appendChild(body);
+    alertElement.appendChild(closeButton);
+    container.appendChild(alertElement);
+  }
+
+  function isGroupDocumentDeleteModalReady() {
+    return Boolean(
+      groupDocumentDeleteModal &&
+      groupDocumentDeleteModalElement &&
+      groupDocumentDeleteModalElement.isConnected &&
+      groupDocumentDeleteModalBody &&
+      groupDocumentDeleteModalBody.isConnected &&
+      groupDeleteCurrentBtn &&
+      groupDeleteCurrentBtn.isConnected &&
+      groupDeleteAllBtn &&
+      groupDeleteAllBtn.isConnected
+    );
+  }
+
+  function promptGroupDeleteMode(documentCount = 1) {
+    if (!isGroupDocumentDeleteModalReady()) {
+      showGroupDocumentDeleteFeedback("Delete confirmation dialog is unavailable. Refresh the page and try again.");
+      return Promise.resolve(null);
+    }
+
+    const modalContent = getGroupDeleteModalContent(documentCount);
+    if (groupDocumentDeleteModalTitle) {
+      groupDocumentDeleteModalTitle.textContent = modalContent.title;
+    }
+    groupDocumentDeleteModalBody.innerHTML = modalContent.body;
+
+    return new Promise((resolve) => {
+      let settled = false;
+
+      const cleanup = () => {
+        groupDocumentDeleteModalElement.removeEventListener(
+          "hidden.bs.modal",
+          handleHidden
+        );
+        groupDeleteCurrentBtn.removeEventListener("click", handleCurrentOnly);
+        groupDeleteAllBtn.removeEventListener("click", handleAllVersions);
+      };
+
+      const finalize = (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+
+      const handleHidden = () => finalize(null);
+      const handleCurrentOnly = () => {
+        groupDocumentDeleteModal.hide();
+        finalize("current_only");
+      };
+      const handleAllVersions = () => {
+        groupDocumentDeleteModal.hide();
+        finalize("all_versions");
+      };
+
+      groupDocumentDeleteModalElement.addEventListener(
+        "hidden.bs.modal",
+        handleHidden
+      );
+      groupDeleteCurrentBtn.addEventListener("click", handleCurrentOnly);
+      groupDeleteAllBtn.addEventListener("click", handleAllVersions);
+      groupDocumentDeleteModal.show();
+    });
+  }
+
+  async function requestGroupDocumentDeletion(documentId, deleteMode) {
+    const query = new URLSearchParams({ delete_mode: deleteMode });
+    const response = await fetch(
+      `/api/group_documents/${documentId}?${query.toString()}`,
+      { method: "DELETE" }
+    );
+
+    let responseData = {};
+    try {
+      responseData = await response.json();
+    } catch (error) {
+      responseData = {};
+    }
+
+    if (!response.ok) {
+      throw responseData.error
+        ? responseData
+        : { error: `Server responded with status ${response.status}` };
+    }
+
+    return responseData;
+  }
 
   // --- Editors ---
   const groupPromptContentEl = document.getElementById("group-prompt-content");
@@ -1862,7 +2344,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       .finally(() => {
         if (deleteBtn) {
           deleteBtn.disabled = false;
-          deleteBtn.innerHTML = `<i class="bi bi-trash"></i> Delete`;
+            deleteBtn.innerHTML = `<i class="bi bi-trash me-1"></i>Delete Selected`;
         }
       });
   }
@@ -2149,6 +2631,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <ul class="mb-0 mt-2 small">
                 ${detailsList}
               </ul>
+            </div>
+          </div>
+
+          <div class="modal fade" id="groupDocumentDeleteModal" tabindex="-1" aria-labelledby="groupDocumentDeleteModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+            <div class="modal-dialog">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title" id="groupDocumentDeleteModalLabel">Delete Group Document</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="groupDocumentDeleteModalBody">
+                  <p class="mb-0">Choose how you want to delete this group document revision.</p>
+                </div>
+                <div class="modal-footer d-flex flex-wrap justify-content-between gap-2">
+                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                  <div class="d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-outline-danger" id="groupDeleteCurrentBtn">Delete Current Version</button>
+                    <button type="button" class="btn btn-danger" id="groupDeleteAllBtn">Delete All Versions</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         `;
@@ -2566,39 +3069,43 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function fetchGroupDocuments() {
     if (!groupDocumentsTableBody || !activeGroupId) return; // Need table and active group
 
-    const placeholder = document.getElementById(
-      "group-legacy-update-prompt-placeholder"
-    );
-    if (placeholder) {
-      // remove old alert div if present
-      const old = placeholder.querySelector("#group-legacy-update-alert");
-      if (old) old.remove();
-    }
+    groupDocumentsTableBody.innerHTML = `
+      <tr class="table-loading-row">
+        <td colspan="4">
+          <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+          Loading group documents...
+        </td>
+      </tr>`;
+    if (groupDocsPaginationContainer) groupDocsPaginationContainer.innerHTML = "";
 
-    // Show loading state
-    groupDocumentsTableBody.innerHTML = `<tr class="table-loading-row"><td colspan="4"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Loading group documents...</td></tr>`;
-    if (groupDocsPaginationContainer)
-      groupDocsPaginationContainer.innerHTML = ""; // Clear pagination
-
-    // Build query parameters for group documents endpoint
     const params = new URLSearchParams({
       page: groupDocsCurrentPage,
       page_size: groupDocsPageSize,
-      // Crucially, the backend /api/group_documents needs to know WHICH group
-      // It gets this from the user's active group setting server-side.
-      // We add filters here:
     });
-    if (groupDocsSearchTerm) params.append("search", groupDocsSearchTerm);
-    if (groupDocsClassificationFilter)
+    if (groupDocsSearchTerm) {
+      params.append("search", groupDocsSearchTerm);
+    }
+    if (groupDocsClassificationFilter) {
       params.append("classification", groupDocsClassificationFilter);
-    if (groupDocsAuthorFilter) params.append("author", groupDocsAuthorFilter);
-    if (groupDocsKeywordsFilter)
+    }
+    if (groupDocsAuthorFilter) {
+      params.append("author", groupDocsAuthorFilter);
+    }
+    if (groupDocsKeywordsFilter) {
       params.append("keywords", groupDocsKeywordsFilter);
-    if (groupDocsAbstractFilter)
+    }
+    if (groupDocsAbstractFilter) {
       params.append("abstract", groupDocsAbstractFilter);
-    if (groupDocsTagsFilter) params.append("tags", groupDocsTagsFilter);
-    if (groupDocsSortBy !== '_ts') params.append("sort_by", groupDocsSortBy);
-    if (groupDocsSortOrder !== 'desc') params.append("sort_order", groupDocsSortOrder);
+    }
+    if (groupDocsTagsFilter) {
+      params.append("tags", groupDocsTagsFilter);
+    }
+    if (groupDocsSortBy !== "_ts") {
+      params.append("sort_by", groupDocsSortBy);
+    }
+    if (groupDocsSortOrder !== "desc") {
+      params.append("sort_order", groupDocsSortOrder);
+    }
 
     console.log("Fetching group documents with params:", params.toString());
 
@@ -2887,6 +3394,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     ? doc.keywords.join(", ")
                     : doc.keywords || "N/A"
                 )}</p>
+                <p class="mb-1"><strong>Tags:</strong> ${renderGroupTagBadges(doc.tags || [])}</p>
                 <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(
                   doc.abstract || "N/A"
                 )}</p>
@@ -3296,7 +3804,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.onExtractGroupMetadata = onExtractGroupMetadata; // Expose globally
 
   // --- Delete Group Document ---
-  function deleteGroupDocument(documentId, event) {
+  async function deleteGroupDocument(documentId, event) {
     // Renamed function
     // Permission check should happen server-side, but can add UI check too
     if (
@@ -3305,16 +3813,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
       alert("You do not have permission to delete documents in this group.");
       return;
     }
-    if (
-      !confirm(
-        "Are you sure you want to delete this group document? This action cannot be undone."
-      )
-    )
-      return;
 
-    const deleteBtn = event ? event.target.closest("button") : null;
+    const deleteMode = await promptGroupDeleteMode(1);
+    if (!deleteMode) {
+      return;
+    }
+
+    const deleteBtn = event ? event.target.closest("a, button") : null;
+    const originalDeleteBtnHtml = deleteBtn ? deleteBtn.innerHTML : null;
     if (deleteBtn) {
-      deleteBtn.disabled = true;
+      deleteBtn.classList.add("disabled");
+      deleteBtn.setAttribute("aria-disabled", "true");
       deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm"></span>`;
     }
 
@@ -3326,32 +3835,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Use the group DELETE endpoint. Pass group_id as query param IF backend requires it.
     // Assuming backend gets active_group_id from session/context.
     // If needed: `/api/group_documents/${documentId}?group_id=${activeGroupId}`
-    fetch(`/api/group_documents/${documentId}`, { method: "DELETE" })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((err) => Promise.reject(err))
-      )
+    requestGroupDocumentDeletion(documentId, deleteMode)
       .then((data) => {
         console.log("Group document deleted:", data);
-        const docRow = document.getElementById(`group-doc-row-${documentId}`);
-        const detailsRow = document.getElementById(
-          `group-details-row-${documentId}`
-        );
-        const statusRow = document.getElementById(
-          `group-status-row-${documentId}`
-        );
-        if (docRow) docRow.remove();
-        if (detailsRow) detailsRow.remove();
-        if (statusRow) statusRow.remove();
-        // Refresh to update pagination etc.
         fetchGroupDocuments();
       })
       .catch((error) => {
         alert("Error deleting document: " + (error.error || error.message));
         if (deleteBtn && document.body.contains(deleteBtn)) {
-          deleteBtn.disabled = false;
-          deleteBtn.innerHTML = '<i class="bi bi-trash-fill"></i>';
+          deleteBtn.classList.remove("disabled");
+          deleteBtn.removeAttribute("aria-disabled");
+          deleteBtn.innerHTML = originalDeleteBtnHtml;
         }
       });
   }
@@ -3622,6 +4116,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // — Fetch & render group prompts —
   function fetchGroupPrompts() {
+    if (!groupPromptsTableBody || !groupPromptsPagination) {
+      return;
+    }
+
     groupPromptsTableBody.innerHTML = `
       <tr class="table-loading-row">
         <td colspan="2">
@@ -3912,11 +4410,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const canManage = ["Owner", "Admin", "PromptManager"].includes(
       userRoleInActiveGroup
     );
-    // show/hide “New Prompt” button & edit/delete
-    document.getElementById("create-group-prompt-section").style.display =
-      canManage ? "block" : "none";
-    document.getElementById("group-prompts-role-warning").style.display =
-      canManage ? "none" : "block";
+    const createGroupPromptSection = document.getElementById(
+      "create-group-prompt-section"
+    );
+    const groupPromptsRoleWarning = document.getElementById(
+      "group-prompts-role-warning"
+    );
+
+    if (!createGroupPromptSection || !groupPromptsRoleWarning) {
+      return;
+    }
+
+    createGroupPromptSection.classList.toggle("d-none", !canManage);
+    groupPromptsRoleWarning.classList.toggle("d-none", canManage);
   }
 
   // — Expose & initial load —
@@ -4615,6 +5121,29 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return d.innerHTML;
   }
 
+  function renderGroupTagBadges(tags, maxDisplay = 3) {
+    if (!Array.isArray(tags) || tags.length === 0) {
+      return '<span class="text-muted small">No tags</span>';
+    }
+
+    let html = '';
+    const displayTags = tags.slice(0, maxDisplay);
+
+    displayTags.forEach(tagName => {
+      const tag = groupWorkspaceTags.find(t => t.name === tagName);
+      const color = tag && tag.color ? tag.color : '#6c757d';
+      const textClass = isGroupColorLight(color) ? 'text-dark' : 'text-light';
+
+      html += `<span class="tag-badge ${textClass}" style="background-color:${color};" title="${escapeGroupHtml(tagName)}">${escapeGroupHtml(tagName)}</span>`;
+    });
+
+    if (tags.length > maxDisplay) {
+      html += `<span class="badge bg-secondary">+${tags.length - maxDisplay}</span>`;
+    }
+
+    return html;
+  }
+
   // --- Tag Management Modal ---
   function showGroupTagManagementModal() {
     loadGroupWorkspaceTags().then(() => {
@@ -4875,4 +5404,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script type="module" src="/static/js/workspace/group_plugins.js"></script>
 {% endif %}
 {% endblock %}
+
+
 

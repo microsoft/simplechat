@@ -1,6 +1,45 @@
-# Admin Configuration Reference
+---
+layout: showcase-page
+title: "Admin Configuration Reference"
+permalink: /reference/admin_configuration/
+menubar: docs_menu
+accent: teal
+eyebrow: "Reference"
+description: "Use this operator guide to map each Admin Settings section to the Azure services, workspace policies, and runtime behaviors it controls."
+hero_icons: ["bi-sliders", "bi-shield-check", "bi-diagram-3"]
+hero_pills: ["Dependency-aware settings", "Workspace and safety controls", "Agents, actions, and citations"]
+hero_links: [{ label: "Admin overview", url: "/admin_configuration/", style: "primary" }, { label: "Managed identity setup", url: "/how-to/use_managed_identity/", style: "secondary" }]
+---
 
-This reference provides complete details about all administrative configuration options available in Simple Chat. The Admin Settings page provides a centralized location to configure application features and service connections.
+This page is the detailed companion to the main admin guide. Use it when you need to understand what a setting actually governs, which Azure dependency it relies on, and what downstream behavior changes when you turn it on.
+
+<section class="latest-release-card-grid">
+        <article class="latest-release-card">
+                <div class="latest-release-card-icon"><i class="bi bi-palette"></i></div>
+                <h2>Branding and model routing</h2>
+                <p>Start here when you are setting the application title, logo, GPT routing, embeddings, and optional image generation behavior.</p>
+        </article>
+        <article class="latest-release-card">
+                <div class="latest-release-card-icon"><i class="bi bi-folder2-open"></i></div>
+                <h2>Workspaces and ingestion</h2>
+                <p>These sections control personal, group, and public workspace availability, multimedia processing, metadata extraction, and classification behavior.</p>
+        </article>
+        <article class="latest-release-card">
+                <div class="latest-release-card-icon"><i class="bi bi-journal-richtext"></i></div>
+                <h2>Citations and retrieval</h2>
+                <p>Search, extraction, enhanced citations, and storage-backed preview features all sit behind separate settings with their own service requirements.</p>
+        </article>
+        <article class="latest-release-card">
+                <div class="latest-release-card-icon"><i class="bi bi-robot"></i></div>
+                <h2>Safety and automation</h2>
+                <p>Content safety, feedback, archiving, agents, and custom action integrations should be enabled deliberately because they affect governance as much as user experience.</p>
+        </article>
+</section>
+
+<div class="latest-release-note-panel">
+        <h2>Read the settings in dependency order</h2>
+        <p>Start with identity, branding, and model connectivity. Then enable workspaces, search, and extraction. After that, layer on citations, safety, and agents. That order mirrors how the application actually lights up features and makes troubleshooting much easier when a dependency is missing.</p>
+</div>
 
 ## Accessing Admin Settings
 
@@ -112,17 +151,23 @@ Control document workspace features and capabilities.
 #### Multimedia Support
 **Video Processing (Azure Video Indexer)**
 - **Enable/Disable**: Toggle video file support
+- **Cloud / Endpoint Mode**: Choose Azure Public, Azure Government, or Custom Endpoint
+- **Resource Group**: Azure resource group containing the Video Indexer resource
+- **Subscription ID**: Azure subscription GUID for the Video Indexer resource
+- **Account Name**: Video Indexer resource name
 - **Account ID**: Video Indexer account identifier
 - **Location**: Geographic location of Video Indexer account
-- **API Key**: Authentication key for Video Indexer
-- **API Endpoint**: Video Indexer service endpoint
+- **API Endpoint**: Derived from the selected cloud mode unless Custom Endpoint is selected
+- **Authentication Model**: App Service system-assigned managed identity with `Contributor` on the Video Indexer resource
 - **Timeout Settings**: Processing timeout limits
 
 **Audio Processing (Azure Speech Service)**
-- **Enable/Disable**: Toggle audio file support
+- **Shared Service**: The same Speech configuration is used for audio uploads, speech-to-text input, and text-to-speech
 - **Endpoint**: Speech service endpoint URL
 - **Region**: Azure region for Speech service
-- **API Key**: Authentication key for Speech service
+- **Locale**: Default transcription locale
+- **Authentication Type**: Key or Managed Identity
+- **Speech Resource ID**: Required for managed-identity text-to-speech
 
 #### Metadata Extraction
 - **Enable/Disable**: Toggle AI-powered metadata extraction
@@ -312,6 +357,8 @@ Guidelines:
 - ✅ Enable Content Safety for production deployments
 - ✅ Implement proper RBAC role assignments
 - ✅ Monitor access to admin settings
+- ✅ Use managed identity, not API keys, for Azure Video Indexer in the current Simple Chat setup
+- ✅ Use the Speech custom-domain endpoint for managed identity and add the Speech Resource ID when enabling managed-identity voice responses
 
 ### Performance
 - ✅ Test all service connections after configuration

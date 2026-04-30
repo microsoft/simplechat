@@ -47,9 +47,18 @@ class PluginHealthChecker:
                 errors.append(f"Plugin type '{plugin_type}' requires 'auth' field")
         
         elif plugin_type in ['sql_query', 'sql_schema']:
-            if 'database_type' not in manifest:
+            additional_fields = manifest.get('additionalFields', {})
+            if not isinstance(additional_fields, dict):
+                additional_fields = {}
+
+            database_type = manifest.get('database_type') or additional_fields.get('database_type')
+            connection_string = manifest.get('connection_string') or additional_fields.get('connection_string')
+            server = manifest.get('server') or additional_fields.get('server')
+            database = manifest.get('database') or additional_fields.get('database')
+
+            if not database_type:
                 errors.append(f"SQL plugin requires 'database_type' field")
-            if not manifest.get('connection_string') and not (manifest.get('server') and manifest.get('database')):
+            if not connection_string and not (server and database):
                 errors.append("SQL plugin requires either 'connection_string' or 'server' and 'database' fields")
         
         elif plugin_type == 'log_analytics':
@@ -120,7 +129,7 @@ class PluginHealthChecker:
                         getattr(attr, '__module__', '').startswith('semantic_kernel')
                     ):
                         kernel_functions.append(attr_name)
-                except:
+                except Exception as ex:
                     continue
             
             health_report['info']['kernel_functions'] = kernel_functions

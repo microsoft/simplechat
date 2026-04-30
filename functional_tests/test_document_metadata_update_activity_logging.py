@@ -220,7 +220,7 @@ def test_metadata_update_logging():
                 partition_key=test_user_id
             )
             print("✓ Test document deleted")
-        except:
+        except Exception as ex:
             print("⚠️  Test document already deleted or not found")
         
         # Delete all activity logs for test user
@@ -230,7 +230,7 @@ def test_metadata_update_logging():
                     item=log['id'],
                     partition_key=log['user_id']
                 )
-            except:
+            except Exception as ex:
                 pass
         print("✓ Activity logs cleaned up")
         

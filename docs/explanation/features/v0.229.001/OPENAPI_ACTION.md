@@ -12,7 +12,6 @@ This OpenAPI Semantic Kernel Action/Plugin allows you to expose any OpenAPI-comp
 - **Better error handling**: Validates inputs and provides clear error messages
 - **Multiple file formats**: Supports both YAML and JSON OpenAPI specifications
 - **Secure file uploads**: Comprehensive security validation for uploaded OpenAPI specs
-- **Multiple source types**: Supports file upload and URL download
 - **Web UI integration**: Full modal interface for configuration through the web application
 
 ## Installation
@@ -21,7 +20,6 @@ No additional dependencies beyond what's already in the project. The plugin uses
 - `yaml` for YAML parsing
 - `json` for JSON parsing
 - `semantic_kernel` for plugin functionality
-- `requests` for URL-based spec downloads
 - `re` for security pattern matching
 
 ## Configuration Methods
@@ -31,7 +29,6 @@ The OpenAPI plugin can be configured in three ways:
 ### 1. Through Web UI (Recommended)
 Use the plugin configuration modal in the web application to:
 - Upload OpenAPI specification files (with security validation)
-- Download specs from URLs (with security checks)
 - Configure authentication settings
 - Test and validate configurations before saving
 
@@ -49,8 +46,12 @@ from openapi_plugin_factory import OpenApiPluginFactory
 
 # Create from configuration
 plugin = OpenApiPluginFactory.create_from_config({
-    'openapi_source_type': 'file',  # or 'url'
-    'openapi_file_id': 'uploaded_file_id',
+    'openapi_spec_content': {
+        'openapi': '3.0.0',
+        'info': {'title': 'My API', 'version': '1.0.0'},
+        'paths': {}
+    },
+    'openapi_source_type': 'content',
     'base_url': 'https://api.example.com',
     'auth': {'type': 'bearer', 'token': 'your-token'}
 })
@@ -162,14 +163,6 @@ The OpenAPI plugin includes comprehensive security validation to prevent malicio
   - Code execution patterns (`eval()`, `exec()`, `import os`, etc.)
   - SQL injection attempts (`DROP TABLE`, `UNION SELECT`, etc.)
 
-### URL Security
-- **HTTPS enforcement**: Recommends secure connections
-- **Private network blocking**: Prevents access to:
-  - Localhost (`127.0.0.1`, `::1`)
-  - Private IP ranges (`10.x.x.x`, `192.168.x.x`, `172.16-31.x.x`)
-  - Link-local addresses (`169.254.x.x`)
-- **Content validation**: Downloaded content undergoes same security checks as uploads
-
 ### Structure Validation
 - **Nesting depth limits**: Prevents DoS attacks via deeply nested objects
 - **OpenAPI format validation**: Ensures valid OpenAPI 2.0/3.0 structure
@@ -209,9 +202,7 @@ The OpenAPI plugin includes comprehensive security validation to prevent malicio
 ### Web UI Configuration (Recommended)
 1. Open the plugin configuration modal
 2. Select "OpenAPI" as plugin type
-3. Choose your specification source:
-   - **Upload File**: Drag & drop or select your OpenAPI file
-   - **From URL**: Enter URL to your OpenAPI specification
+3. Upload your OpenAPI specification file
 4. Configure authentication settings
 5. Test and save configuration
 
@@ -221,8 +212,12 @@ The OpenAPI plugin includes comprehensive security validation to prevent malicio
 from openapi_plugin_factory import OpenApiPluginFactory
 
 config = {
-    'openapi_source_type': 'file',
-    'openapi_file_id': 'abc123',  # From upload endpoint
+    'openapi_source_type': 'content',
+    'openapi_spec_content': {
+        'openapi': '3.0.0',
+        'info': {'title': 'My API', 'version': '1.0.0'},
+        'paths': {}
+    },
     'base_url': 'https://api.myservice.com',
     'auth': {'type': 'bearer', 'token': 'your-token'}
 }
@@ -257,7 +252,6 @@ The plugin includes comprehensive error handling:
 - **ValueError**: If required parameters are missing or file format is invalid
 - **YAMLError/JSONDecodeError**: If spec file is malformed
 - **SecurityValidationError**: If uploaded file contains malicious content
-- **URLSecurityError**: If URL points to forbidden locations (localhost, private networks)
 - **FileSizeError**: If uploaded file exceeds 5MB limit
 
 ## API Endpoints
@@ -272,36 +266,11 @@ Content-Type: multipart/form-data
 Response: {
   "success": true,
   "file_id": "abc123",
-  "api_info": {
+    "spec_info": {
     "title": "My API",
-    "version": "1.0.0",
-    "endpoints_count": 25
-  }
-}
-```
-
-### Validate OpenAPI URL
-```
-POST /api/openapi/validate-url
-Content-Type: application/json
-Body: {"url": "https://api.example.com/openapi.yaml"}
-
-Response: {
-  "success": true,
-  "file_id": "def456",
-  "api_info": {...}
-}
-```
-
-### Download from URL
-```
-POST /api/openapi/download-from-url
-Content-Type: application/json
-Body: {"url": "https://api.example.com/openapi.yaml"}
-
-Response: {
-  "success": true,
-  "file_id": "ghi789"
+        "version": "1.0.0"
+    },
+    "spec_content": {...}
 }
 ```
 

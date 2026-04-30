@@ -55,6 +55,9 @@ navigation:
     - title: Getting Started
       url: /setup_instructions/
       icon: bi bi-rocket-takeoff
+    - title: Contributing
+      url: /contributing/
+      icon: bi bi-git
     - title: Features
       url: /features/
       icon: bi bi-stars

@@ -3,6 +3,7 @@
 
 import { showToast } from './chat-toast.js';
 import { showLoadingIndicatorInChatbox, hideLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
+import { sendMessageWithStreaming } from './chat-streaming.js';
 
 /**
  * Handle edit button click - opens edit modal
@@ -146,61 +147,35 @@ window.executeMessageEdit = function() {
                 console.log('   retry_thread_id:', data.chat_request.retry_thread_id);
                 console.log('   retry_thread_attempt:', data.chat_request.retry_thread_attempt);
                 console.log('   Full chat_request:', data.chat_request);
-                
-                // Call chat API with the edit parameters
-                return fetch('/api/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    credentials: 'same-origin',
-                    body: JSON.stringify(data.chat_request)
-                });
+
+                sendMessageWithStreaming(
+                    data.chat_request,
+                    null,
+                    data.chat_request.conversation_id,
+                    {
+                        onDone: () => {
+                            const conversationId = window.chatConversations?.getCurrentConversationId() || data.chat_request.conversation_id;
+                            if (conversationId) {
+                                import('./chat-messages.js').then(module => {
+                                    module.loadMessages(conversationId);
+                                }).catch(err => {
+                                    console.error('❌ Error loading chat-messages module:', err);
+                                    showToast('Failed to reload messages', 'error');
+                                });
+                            }
+                        },
+                        onError: (errorMessage) => {
+                            showToast(`Edit failed: ${errorMessage}`, 'error');
+                        },
+                        onFinally: () => {
+                            hideLoadingIndicatorInChatbox();
+                        }
+                    }
+                );
+
+                return null;
             } else {
                 throw new Error('Edit response missing chat_request');
-            }
-        })
-        .then(response => {
-            if (!response.ok) {
-                return response.json().then(data => {
-                    throw new Error(data.error || 'Chat API failed');
-                });
-            }
-            return response.json();
-        })
-        .then(chatData => {
-            console.log('✅ Chat API response:', chatData);
-            
-            // Hide typing indicator
-            hideLoadingIndicatorInChatbox();
-            console.log('🧹 Typing indicator removed');
-            
-            // Get current conversation ID using the proper API
-            const conversationId = window.chatConversations?.getCurrentConversationId();
-            
-            console.log(`🔍 Current conversation ID: ${conversationId}`);
-            
-            // Reload messages to show edited message and new response
-            if (conversationId) {
-                console.log('🔄 Reloading messages for conversation:', conversationId);
-                
-                // Import loadMessages dynamically
-                import('./chat-messages.js').then(module => {
-                    console.log('📦 chat-messages.js module loaded, calling loadMessages...');
-                    module.loadMessages(conversationId);
-                    // No toast - the reloaded messages are enough feedback
-                }).catch(err => {
-                    console.error('❌ Error loading chat-messages module:', err);
-                    showToast('error', 'Failed to reload messages');
-                });
-            } else {
-                console.error('❌ No currentConversationId found!');
-                
-                // Try to force a page refresh as fallback
-                console.log('🔄 Attempting page refresh as fallback...');
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1000);
             }
         })
         .catch(error => {
@@ -209,7 +184,7 @@ window.executeMessageEdit = function() {
             // Hide typing indicator on error
             hideLoadingIndicatorInChatbox();
             
-            showToast('error', `Edit failed: ${error.message}`);
+            showToast(`Edit failed: ${error.message}`, 'error');
         })
         .finally(() => {
             // Clean up pending edit

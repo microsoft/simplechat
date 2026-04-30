@@ -19,3 +19,5 @@ applyTo: '**/*.js'
 - Do not use display:none. Instead add and remove the d-none class when hiding or showing elements.
 
 - Prefer inline html notifications or toast messages using Bootstrap alert classes over browser alert() calls.
+
+- Use bootstrap modals for confirmation dialogs instead of native browser confirm() calls.

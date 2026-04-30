@@ -1,22 +1,54 @@
-# Uploading and Managing Documents
+---
+layout: showcase-page
+title: "Uploading and Managing Documents"
+permalink: /tutorials/uploading_documents/
+menubar: docs_menu
+accent: orange
+eyebrow: "Tutorial 3"
+description: "Learn how to put the right files into the right workspace, recognize processing states, and keep retrieval clean as content grows."
+hero_icons:
+  - bi-file-earmark-arrow-up
+  - bi-folder2-open
+  - bi-search
+hero_pills:
+  - Workspace-aware uploads
+  - Processing and status basics
+  - Retrieval quality starts here
+hero_links:
+  - label: Tutorial index
+    url: /tutorials/
+    style: primary
+  - label: Feature overview
+    url: /features/
+    style: secondary
+show_nav: true
+nav_links:
+  prev:
+    title: Create Your First Agent
+    url: /tutorials/first_agent/
+  next:
+    title: Document Classification Tutorial
+    url: /tutorials/classifying_documents/
+---
+Retrieval quality starts with disciplined uploads. This tutorial explains where documents belong, how processing works, and how to keep the knowledge base understandable as it expands.
 
-Documents are the foundation of Simple Chat's Retrieval-Augmented Generation (RAG) capabilities. This tutorial will teach you everything you need to know about uploading, organizing, and managing your documents effectively.
-
-## What You'll Learn
-
-By the end of this tutorial, you'll:
-- Upload documents to different workspace types
-- Understand document processing and status indicators
-- Organize documents effectively
-- Handle different file types and formats
-- Troubleshoot common upload issues
-- Manage document versions and updates
-
-## Prerequisites
-
-- Simple Chat deployed and configured
-- Basic workspace setup completed
-- Admin permissions for workspace configuration
+<section class="latest-release-card-grid">
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-diagram-2"></i></div>
+		<h2>Pick the right workspace</h2>
+		<p>Personal, group, and ephemeral content each serve a different purpose. Start by placing the file where the future conversation should happen.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-filetype-doc"></i></div>
+		<h2>Know the input types</h2>
+		<p>Text, Office, image, audio, and video inputs follow different extraction paths, so supported types and file quality matter.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-tags"></i></div>
+		<h2>Organize for reuse</h2>
+		<p>Classification, naming, and cleanup practices matter because they directly shape how easy it is to search, cite, and maintain content later.</p>
+	</article>
+</section>
 
 ## Understanding Workspaces
 

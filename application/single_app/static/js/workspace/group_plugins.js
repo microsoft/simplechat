@@ -3,6 +3,10 @@
 
 import { ensurePluginsTableInRoot, validatePluginManifest } from "../plugin_common.js";
 import { showToast } from "../chat/chat-toast.js";
+import {
+  humanizeName, truncateDescription, escapeHtml as escapeHtmlUtil,
+  setupViewToggle, switchViewContainers, openViewModal, createActionCard
+} from './view-utils.js';
 
 const root = document.getElementById("group-plugins-root");
 const permissionWarning = document.getElementById("group-plugins-permission-warning");
@@ -11,6 +15,7 @@ let plugins = [];
 let filteredPlugins = [];
 let templateReady = false;
 let listenersBound = false;
+let currentViewMode = 'list';
 let currentContext = window.groupWorkspaceContext || {
   activeGroupId: null,
   activeGroupName: "",
@@ -18,14 +23,7 @@ let currentContext = window.groupWorkspaceContext || {
 };
 
 function escapeHtml(value) {
-  if (!value) return "";
-  return value.replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  }[char] || char));
+  return escapeHtmlUtil(value);
 }
 
 function canManagePlugins() {
@@ -66,6 +64,14 @@ function bindRootEvents() {
   });
 
   root.addEventListener("click", async (event) => {
+    const viewBtn = event.target.closest(".view-group-plugin-btn");
+    if (viewBtn) {
+      const pluginId = viewBtn.dataset.pluginId;
+      const plugin = plugins.find(x => x.id === pluginId || x.name === pluginId);
+      if (plugin) openGroupPluginViewModal(plugin);
+      return;
+    }
+
     const createBtn = event.target.closest("#create-group-plugin-btn");
     if (createBtn) {
       event.preventDefault();
@@ -148,23 +154,28 @@ function renderPluginsTable(list) {
   const canManage = canManagePlugins() && groupAllowsModifications();
   list.forEach((plugin) => {
     const tr = document.createElement("tr");
-    const displayName = plugin.displayName || plugin.display_name || plugin.name || "";
-    const description = plugin.description || "No description available.";
+    const rawName = plugin.displayName || plugin.display_name || plugin.name || "";
+    const displayName = humanizeName(rawName);
+    const fullDesc = plugin.description || "No description available.";
+    const shortDesc = truncateDescription(fullDesc, 90);
     const isGlobal = Boolean(plugin.is_global);
 
-    let actionsHtml = "<span class=\"text-muted small\">—</span>";
+    // View button always visible
+    let actionsHtml = `
+      <button type="button" class="btn btn-sm btn-outline-info me-1 view-group-plugin-btn" data-plugin-id="${escapeHtml(plugin.id || plugin.name || '')}" title="View details">
+        <i class="bi bi-eye"></i>
+      </button>`;
+
     if (canManage && !isGlobal) {
-      actionsHtml = `
-        <div class="d-flex gap-1">
-          <button type="button" class="btn btn-sm btn-outline-secondary edit-group-plugin-btn" data-plugin-id="${escapeHtml(plugin.id || plugin.name || "")}">
-            <i class="bi bi-pencil"></i>
-          </button>
-          <button type="button" class="btn btn-sm btn-outline-danger delete-group-plugin-btn" data-plugin-id="${escapeHtml(plugin.id || plugin.name || "")}">
-            <i class="bi bi-trash"></i>
-          </button>
-        </div>`;
+      actionsHtml += `
+        <button type="button" class="btn btn-sm btn-outline-secondary me-1 edit-group-plugin-btn" data-plugin-id="${escapeHtml(plugin.id || plugin.name || '')}">
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-danger delete-group-plugin-btn" data-plugin-id="${escapeHtml(plugin.id || plugin.name || '')}">
+          <i class="bi bi-trash"></i>
+        </button>`;
     } else if (canManage && isGlobal) {
-      actionsHtml = "<span class=\"text-muted small\">Managed globally</span>";
+      actionsHtml += `<span class="text-muted small ms-1">Managed globally</span>`;
     }
 
     const titleHtml = isGlobal
@@ -172,11 +183,33 @@ function renderPluginsTable(list) {
       : escapeHtml(displayName);
 
     tr.innerHTML = `
-      <td><strong title="${escapeHtml(displayName)}">${titleHtml}</strong></td>
-      <td class="text-muted small">${escapeHtml(description)}</td>
+      <td><strong title="${escapeHtml(rawName)}">${titleHtml}</strong></td>
+      <td class="text-muted small" title="${escapeHtml(fullDesc)}">${escapeHtml(shortDesc)}</td>
       <td>${actionsHtml}</td>`;
 
     tbody.appendChild(tr);
+  });
+}
+
+function renderPluginsGrid(list) {
+  const gridView = document.getElementById('group-plugins-grid-view');
+  if (!gridView) return;
+  gridView.innerHTML = '';
+
+  if (!list.length) {
+    gridView.innerHTML = '<div class="col-12 text-center text-muted p-4">No group actions found.</div>';
+    return;
+  }
+
+  const canManage = canManagePlugins() && groupAllowsModifications();
+  list.forEach(plugin => {
+    const isGlobal = Boolean(plugin.is_global);
+    const col = createActionCard(plugin, {
+      onView: p => openGroupPluginViewModal(p),
+      onEdit: (canManage && !isGlobal) ? p => openPluginModal(p.id || p.name) : null,
+      onDelete: (canManage && !isGlobal) ? p => deleteGroupPlugin(p.id || p.name) : null
+    });
+    gridView.appendChild(col);
   });
 }
 
@@ -192,6 +225,19 @@ function filterPlugins(term) {
     });
   }
   renderPluginsTable(filteredPlugins);
+  renderPluginsGrid(filteredPlugins);
+}
+
+// Open the view modal for a group action with Edit/Delete actions
+function openGroupPluginViewModal(plugin) {
+  const canManage = canManagePlugins() && groupAllowsModifications();
+  const isGlobal = Boolean(plugin.is_global);
+  const callbacks = {};
+  if (canManage && !isGlobal) {
+    callbacks.onEdit = (p) => openPluginModal(p.id || p.name);
+    callbacks.onDelete = (p) => deleteGroupPlugin(p.id || p.name);
+  }
+  openViewModal(plugin, 'action', callbacks);
 }
 
 async function fetchGroupPlugins() {
@@ -220,7 +266,17 @@ async function fetchGroupPlugins() {
     filteredPlugins = plugins.slice();
 
     renderPluginsTable(filteredPlugins);
+    renderPluginsGrid(filteredPlugins);
     updatePermissionUI();
+
+    // Set up view toggle (only once after template is in DOM)
+    setupViewToggle('groupPlugins', 'groupPluginsViewPreference', (mode) => {
+      currentViewMode = mode;
+      switchViewContainers(mode,
+        document.getElementById('group-plugins-list-view'),
+        document.getElementById('group-plugins-grid-view')
+      );
+    });
   } catch (error) {
     console.error("Error loading group actions:", error);
     renderError(error.message || "Unable to load group actions.");

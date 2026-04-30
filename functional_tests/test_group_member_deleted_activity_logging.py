@@ -232,7 +232,7 @@ def test_group_member_deleted_logging():
                     item=log['id'],
                     partition_key=log['user_id']
                 )
-            except:
+            except Exception as ex:
                 pass
         print("✓ Activity logs cleaned up")
         

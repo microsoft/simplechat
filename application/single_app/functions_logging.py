@@ -5,7 +5,7 @@ from functions_settings import *
 
 def add_file_task_to_file_processing_log(document_id, user_id, content):
     settings = get_settings()
-    enable_file_processing_log = settings.get('enable_file_processing_log', True)
+    enable_file_processing_log = settings.get('enable_file_processing_logs', True)
 
     if enable_file_processing_log:
         try:

@@ -35,8 +35,15 @@ let currentFilter = "pending";
 let templates = [];
 let selectedTemplate = null;
 let reviewModal = null;
+let deleteConfirmModal = null;
+let deleteConfirmError = null;
+let deleteConfirmName = null;
+let confirmDeleteBtn = null;
 let currentPage = 1;
 let searchQuery = "";
+let pendingDeleteRequest = null;
+let restoreReviewModalAfterDelete = false;
+let deleteConfirmed = false;
 const PAGE_SIZE = 10;
 
 function init() {
@@ -47,6 +54,8 @@ function init() {
   if (modalEl && window.bootstrap) {
     reviewModal = bootstrap.Modal.getOrCreateInstance(modalEl);
   }
+
+  ensureDeleteConfirmModal();
 
   if (!window.appSettings?.enable_agent_template_gallery) {
     if (disabledAlert) disabledAlert.classList.remove("d-none");
@@ -96,7 +105,7 @@ function attachTableHandlers() {
     const deleteBtn = event.target.closest(".agent-template-inline-delete");
     if (deleteBtn) {
       const templateId = deleteBtn.dataset.templateId;
-      confirmAndDelete(templateId);
+      requestDeleteConfirmation(templateId);
     }
   });
 }
@@ -110,9 +119,61 @@ function attachModalHandlers() {
   rejectBtn.addEventListener("click", () => handleRejection());
   deleteBtn.addEventListener("click", () => {
     if (selectedTemplate?.id) {
-      confirmAndDelete(selectedTemplate.id, true);
+      requestDeleteConfirmation(selectedTemplate.id, true);
     }
   });
+}
+
+function ensureDeleteConfirmModal() {
+  if (!window.bootstrap) {
+    return;
+  }
+
+  let confirmModalEl = document.getElementById("agentTemplateDeleteConfirmModal");
+  if (!confirmModalEl) {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `
+        <div class="modal fade" id="agentTemplateDeleteConfirmModal" tabindex="-1" aria-labelledby="agentTemplateDeleteConfirmModalLabel" aria-hidden="true">
+          <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="agentTemplateDeleteConfirmModalLabel">Delete Template Submission</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                <p class="mb-3">Are you sure you want to delete <span class="fw-semibold" id="agent-template-delete-confirm-name">this template</span>? This action cannot be undone.</p>
+                <div id="agent-template-delete-confirm-error" class="alert alert-danger d-none mb-0" role="alert"></div>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="agent-template-confirm-delete-btn">
+                  <i class="bi bi-trash"></i>
+                  Delete Template
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+    );
+    confirmModalEl = document.getElementById("agentTemplateDeleteConfirmModal");
+  }
+
+  deleteConfirmModal = bootstrap.Modal.getOrCreateInstance(confirmModalEl);
+  deleteConfirmError = document.getElementById("agent-template-delete-confirm-error");
+  deleteConfirmName = document.getElementById("agent-template-delete-confirm-name");
+  confirmDeleteBtn = document.getElementById("agent-template-confirm-delete-btn");
+
+  if (confirmDeleteBtn && !confirmDeleteBtn.dataset.bound) {
+    confirmDeleteBtn.addEventListener("click", () => executePendingDelete());
+    confirmDeleteBtn.dataset.bound = "true";
+  }
+
+  if (!confirmModalEl.dataset.bound) {
+    confirmModalEl.addEventListener("hidden.bs.modal", handleDeleteConfirmModalHidden);
+    confirmModalEl.dataset.bound = "true";
+  }
 }
 
 function attachSearchHandler() {
@@ -476,29 +537,119 @@ function setModalButtonsDisabled(disabled) {
   });
 }
 
-async function confirmAndDelete(templateId, closeModal = false) {
+function requestDeleteConfirmation(templateId, closeModal = false) {
   if (!templateId) {
     return;
   }
-  if (!confirm('Delete this template? This action cannot be undone.')) {
+
+  ensureDeleteConfirmModal();
+  if (!deleteConfirmModal) {
+    showToast("Delete confirmation is unavailable.", "danger");
     return;
   }
+
+  const templateName = getTemplateName(templateId);
+  pendingDeleteRequest = {
+    templateId,
+    closeModal,
+  };
+  restoreReviewModalAfterDelete = closeModal;
+  deleteConfirmed = false;
+  hideDeleteConfirmError();
+  setDeleteConfirmBusy(false);
+  if (deleteConfirmName) {
+    deleteConfirmName.textContent = templateName;
+  }
+
+  if (closeModal && reviewModal) {
+    modalEl?.addEventListener("hidden.bs.modal", showDeleteConfirmAfterReviewModal, { once: true });
+    reviewModal.hide();
+    return;
+  }
+
+  deleteConfirmModal.show();
+}
+
+function showDeleteConfirmAfterReviewModal() {
+  deleteConfirmModal?.show();
+}
+
+function handleDeleteConfirmModalHidden() {
+  hideDeleteConfirmError();
+  setDeleteConfirmBusy(false);
+
+  if (restoreReviewModalAfterDelete && !deleteConfirmed && selectedTemplate?.id === pendingDeleteRequest?.templateId) {
+    reviewModal?.show();
+  }
+
+  pendingDeleteRequest = null;
+  restoreReviewModalAfterDelete = false;
+  deleteConfirmed = false;
+}
+
+function hideDeleteConfirmError() {
+  if (!deleteConfirmError) {
+    return;
+  }
+  deleteConfirmError.classList.add("d-none");
+  deleteConfirmError.textContent = "";
+}
+
+function showDeleteConfirmError(message) {
+  if (!deleteConfirmError) {
+    showToast(message, "danger");
+    return;
+  }
+  deleteConfirmError.classList.remove("d-none");
+  deleteConfirmError.textContent = message;
+}
+
+function setDeleteConfirmBusy(disabled) {
+  if (confirmDeleteBtn) {
+    confirmDeleteBtn.disabled = disabled;
+  }
+}
+
+function getTemplateName(templateId) {
+  if (selectedTemplate?.id === templateId) {
+    return selectedTemplate.title || selectedTemplate.display_name || "this template";
+  }
+
+  const matchingTemplate = templates.find((template) => template.id === templateId);
+  return matchingTemplate?.title || matchingTemplate?.display_name || "this template";
+}
+
+async function executePendingDelete() {
+  const templateId = pendingDeleteRequest?.templateId;
+  const closeModal = pendingDeleteRequest?.closeModal;
+
+  if (!templateId) {
+    return;
+  }
+
   try {
+    setDeleteConfirmBusy(true);
+    hideDeleteConfirmError();
     const response = await fetch(`/api/admin/agent-templates/${templateId}`, {
-      method: 'DELETE'
+      method: "DELETE"
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data.error || 'Failed to delete template.');
+      throw new Error(data.error || "Failed to delete template.");
     }
-    showToast('Template deleted.', 'success');
+
+    deleteConfirmed = true;
+    showToast("Template deleted.", "success");
     if (closeModal) {
-      reviewModal?.hide();
+      selectedTemplate = null;
     }
+    deleteConfirmModal?.hide();
     loadTemplatesForFilter(currentFilter);
   } catch (error) {
-    console.error('Failed to delete template', error);
-    showToast(error.message || 'Failed to delete template.', 'danger');
+    console.error("Failed to delete template", error);
+    showDeleteConfirmError(error.message || "Failed to delete template.");
+  } finally {
+    setDeleteConfirmBusy(false);
   }
 }
 

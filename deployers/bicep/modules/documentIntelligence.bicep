@@ -8,10 +8,6 @@ param tags object
 param enableDiagLogging bool
 param logAnalyticsId string
 
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
-
 param enablePrivateNetworking bool
 
 // Import diagnostic settings configurations
@@ -44,18 +40,6 @@ resource docIntelDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
     logs: diagnosticConfigs.outputs.standardLogCategories
     #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
-  }
-}
-
-//=========================================================
-// store document intelligence keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module documentIntelligenceSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
-  name: 'storeDocumentIntelligenceSecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'document-intelligence-key'
-    secretValue: docIntel.listKeys().key1
   }
 }
 

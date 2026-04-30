@@ -3,13 +3,13 @@
   "title": "SQL Query Plugin Additional Settings",
   "type": "object",
   "properties": {
-    "connection_string__Secret": {
+    "connection_string": {
       "type": "string",
       "description": "Database connection string. Required if server/database not provided."
     },
     "database_type": {
       "type": "string",
-      "enum": ["sqlserver", "postgresql", "mysql", "sqlite", "azure_sql", "azuresql"],
+      "enum": ["sqlserver", "postgresql", "mysql", "sqlite", "azure_sql"],
       "description": "Type of database engine."
     },
     "server": {
@@ -24,7 +24,7 @@
       "type": "string",
       "description": "Username for authentication."
     },
-    "password__Secret": {
+    "password": {
       "type": "string",
       "description": "Password for authentication."
     },
@@ -50,6 +50,6 @@
       "description": "Query timeout in seconds."
     }
   },
-  "required": ["database_type", "database"],
+  "required": ["database_type"],
   "additionalProperties": false
 }

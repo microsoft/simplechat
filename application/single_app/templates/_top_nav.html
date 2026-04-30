@@ -59,6 +59,35 @@
         <li class="nav-item">
           <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
         </li>
+
+        {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
+        {% if support_menu_role_allowed and app_settings.enable_support_menu %}
+          {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+          {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
+          {% if show_support_latest_features or show_support_send_feedback %}
+            <li class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle" href="#" id="supportMenuDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                {{ app_settings.support_menu_name or 'Support' }}
+              </a>
+              <ul class="dropdown-menu" aria-labelledby="supportMenuDropdown">
+                {% if show_support_latest_features %}
+                <li>
+                  <a class="dropdown-item" href="{{ url_for('support_latest_features') }}">
+                    Latest Features
+                  </a>
+                </li>
+                {% endif %}
+                {% if show_support_send_feedback %}
+                <li>
+                  <a class="dropdown-item" href="{{ url_for('support_send_feedback') }}">
+                    Send Feedback
+                  </a>
+                </li>
+                {% endif %}
+              </ul>
+            </li>
+          {% endif %}
+        {% endif %}
         
         <!-- External Links -->
         {% if app_settings.enable_external_links and app_settings.external_links %}

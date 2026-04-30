@@ -48,6 +48,178 @@ const publicPromptModal = new bootstrap.Modal(document.getElementById('publicPro
 const publicDocMetadataModal = new bootstrap.Modal(document.getElementById('publicDocMetadataModal'));
 const publicTagManagementModal = new bootstrap.Modal(document.getElementById('publicTagManagementModal'));
 const publicTagSelectionModal = new bootstrap.Modal(document.getElementById('publicTagSelectionModal'));
+const publicDocumentDeleteModalElement = document.getElementById('publicDocumentDeleteModal');
+const publicDocumentDeleteModal = publicDocumentDeleteModalElement ? new bootstrap.Modal(publicDocumentDeleteModalElement) : null;
+const publicDocumentDeleteModalTitle = document.getElementById('publicDocumentDeleteModalLabel');
+const publicDocumentDeleteModalBody = document.getElementById('publicDocumentDeleteModalBody');
+const publicDeleteCurrentBtn = document.getElementById('publicDeleteCurrentBtn');
+const publicDeleteAllBtn = document.getElementById('publicDeleteAllBtn');
+
+function getPublicDeleteModalContent(documentCount) {
+  if (documentCount === 1) {
+    return {
+      title: 'Delete Public Document',
+      body: `
+        <p class="mb-2">Choose how to delete this public document revision.</p>
+        <p class="mb-2"><strong>Delete Current Version</strong> removes the visible revision and keeps older revisions for future comparison.</p>
+        <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for this document.</p>
+      `,
+    };
+  }
+
+  return {
+    title: 'Delete Selected Public Documents',
+    body: `
+      <p class="mb-2">Choose how to delete ${documentCount} selected current public document revision(s).</p>
+      <p class="mb-2"><strong>Delete Current Version</strong> removes only the visible revision for each selected document and keeps older revisions.</p>
+      <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for each selected document.</p>
+    `,
+  };
+}
+
+function showPublicDocumentDeleteFeedback(message, variant = 'danger') {
+  if (typeof window.showToast === 'function') {
+    window.showToast(message, variant);
+    return;
+  }
+
+  let container = document.getElementById('publicDocumentDeleteFeedbackContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'publicDocumentDeleteFeedbackContainer';
+    container.className = 'toast-container position-fixed top-0 end-0 p-3';
+    document.body.appendChild(container);
+  }
+
+  if (window.bootstrap && typeof window.bootstrap.Toast === 'function') {
+    const toastElement = document.createElement('div');
+    toastElement.className = `toast align-items-center text-white bg-${variant} border-0`;
+    toastElement.setAttribute('role', 'alert');
+    toastElement.setAttribute('aria-live', 'assertive');
+    toastElement.setAttribute('aria-atomic', 'true');
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'd-flex';
+
+    const body = document.createElement('div');
+    body.className = 'toast-body';
+    body.textContent = message;
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close btn-close-white me-2 m-auto';
+    closeButton.setAttribute('data-bs-dismiss', 'toast');
+    closeButton.setAttribute('aria-label', 'Close');
+
+    wrapper.appendChild(body);
+    wrapper.appendChild(closeButton);
+    toastElement.appendChild(wrapper);
+    container.appendChild(toastElement);
+
+    const toast = new window.bootstrap.Toast(toastElement);
+    toast.show();
+    toastElement.addEventListener('hidden.bs.toast', () => {
+      toastElement.remove();
+    });
+    return;
+  }
+
+  const alertElement = document.createElement('div');
+  alertElement.className = `alert alert-${variant} alert-dismissible fade show mb-2`;
+  alertElement.setAttribute('role', 'alert');
+
+  const body = document.createElement('span');
+  body.textContent = message;
+
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'btn-close';
+  closeButton.setAttribute('data-bs-dismiss', 'alert');
+  closeButton.setAttribute('aria-label', 'Close');
+
+  alertElement.appendChild(body);
+  alertElement.appendChild(closeButton);
+  container.appendChild(alertElement);
+}
+
+function isPublicDocumentDeleteModalReady() {
+  return Boolean(
+    publicDocumentDeleteModal &&
+    publicDocumentDeleteModalElement &&
+    publicDocumentDeleteModalElement.isConnected &&
+    publicDocumentDeleteModalBody &&
+    publicDocumentDeleteModalBody.isConnected &&
+    publicDeleteCurrentBtn &&
+    publicDeleteCurrentBtn.isConnected &&
+    publicDeleteAllBtn &&
+    publicDeleteAllBtn.isConnected
+  );
+}
+
+function promptPublicDeleteMode(documentCount = 1) {
+  if (!isPublicDocumentDeleteModalReady()) {
+    showPublicDocumentDeleteFeedback('Delete confirmation dialog is unavailable. Refresh the page and try again.');
+    return Promise.resolve(null);
+  }
+
+  const modalContent = getPublicDeleteModalContent(documentCount);
+  if (publicDocumentDeleteModalTitle) {
+    publicDocumentDeleteModalTitle.textContent = modalContent.title;
+  }
+  publicDocumentDeleteModalBody.innerHTML = modalContent.body;
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const cleanup = () => {
+      publicDocumentDeleteModalElement.removeEventListener('hidden.bs.modal', handleHidden);
+      publicDeleteCurrentBtn.removeEventListener('click', handleCurrentOnly);
+      publicDeleteAllBtn.removeEventListener('click', handleAllVersions);
+    };
+
+    const finalize = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const handleHidden = () => finalize(null);
+    const handleCurrentOnly = () => {
+      publicDocumentDeleteModal.hide();
+      finalize('current_only');
+    };
+    const handleAllVersions = () => {
+      publicDocumentDeleteModal.hide();
+      finalize('all_versions');
+    };
+
+    publicDocumentDeleteModalElement.addEventListener('hidden.bs.modal', handleHidden);
+    publicDeleteCurrentBtn.addEventListener('click', handleCurrentOnly);
+    publicDeleteAllBtn.addEventListener('click', handleAllVersions);
+    publicDocumentDeleteModal.show();
+  });
+}
+
+async function requestPublicDocumentDeletion(documentId, deleteMode) {
+  const query = new URLSearchParams({ delete_mode: deleteMode });
+  const response = await fetch(`/api/public_documents/${documentId}?${query.toString()}`, { method: 'DELETE' });
+
+  let responseData = {};
+  try {
+    responseData = await response.json();
+  } catch (error) {
+    responseData = {};
+  }
+
+  if (!response.ok) {
+    throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
+  }
+
+  return responseData;
+}
 
 // Editors
 let publicSimplemde = null;
@@ -55,6 +227,12 @@ const publicPromptContentEl = document.getElementById('public-prompt-content');
 if (publicPromptContentEl && window.SimpleMDE) {
   publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false, autoDownloadFontAwesome: false });
 }
+document.getElementById('publicPromptModal')?.addEventListener('shown.bs.modal', () => {
+  if (publicSimplemde?.codemirror) {
+    publicSimplemde.codemirror.refresh();
+    publicSimplemde.codemirror.focus();
+  }
+});
 
 // DOM elements
 const publicSelect = document.getElementById('public-select');
@@ -199,8 +377,6 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if (activePublicId) fetchPublicDocs();
   });
 
-  Array.from(publicDropdownItems.children).forEach(()=>{}); // placeholder
-
   // --- Document selection event listeners ---
   // Event delegation for document checkboxes
   document.addEventListener('change', function(event) {
@@ -266,8 +442,6 @@ function updatePublicRoleDisplay(){
     if (nameRoleEl) nameRoleEl.textContent = activePublicName;
     if (display) display.style.display = 'block';
     if (uploadSection) uploadSection.style.display = ['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic) ? 'block' : 'none';
-    // uploadHr was removed from template, so skip
-    
     // Control visibility of Settings tab (only for Owners and Admins)
     const settingsTabNav = document.getElementById('public-settings-tab-nav');
     const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActivePublic);
@@ -491,6 +665,7 @@ function renderPublicDocumentRow(doc) {
         <p class="mb-1"><strong>Citations:</strong> ${getCitationBadge(doc.enhanced_citations)}</p>
         <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || 'N/A')}</p>
         <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(doc.keywords || 'N/A')}</p>
+        <p class="mb-1"><strong>Tags:</strong> ${renderPublicTagBadges(doc.tags || [])}</p>
         <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(doc.abstract || 'N/A')}</p>
         <hr class="my-2">
         <div class="d-flex flex-wrap gap-2">
@@ -791,7 +966,32 @@ async function onPublicUploadClick() {
     xhr.send(formData);
   });
 }
-window.deletePublicDocument=async function(id, event){ if(!confirm('Delete?')) return; try{ await fetch(`/api/public_documents/${id}`,{method:'DELETE'}); fetchPublicDocs(); }catch(e){ alert(`Error deleting: ${e.error||e.message}`);} };
+window.deletePublicDocument = async function(id, event) {
+  const deleteMode = await promptPublicDeleteMode(1);
+  if (!deleteMode) {
+    return;
+  }
+
+  const deleteTrigger = event ? event.target.closest('a, button') : null;
+  const originalDeleteTriggerHtml = deleteTrigger ? deleteTrigger.innerHTML : null;
+  if (deleteTrigger) {
+    deleteTrigger.classList.add('disabled');
+    deleteTrigger.setAttribute('aria-disabled', 'true');
+    deleteTrigger.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+  }
+
+  try {
+    await requestPublicDocumentDeletion(id, deleteMode);
+    fetchPublicDocs();
+  } catch (e) {
+    showPublicWorkspaceToast(`Error deleting: ${e.error || e.message}`, 'danger');
+    if (deleteTrigger && document.body.contains(deleteTrigger)) {
+      deleteTrigger.classList.remove('disabled');
+      deleteTrigger.removeAttribute('aria-disabled');
+      deleteTrigger.innerHTML = originalDeleteTriggerHtml;
+    }
+  }
+};
 
 window.searchPublicDocumentInChat = function(docId) {
   window.location.href = `/chats?search_documents=true&doc_scope=public&document_id=${docId}&workspace_id=${activePublicId}`;
@@ -851,34 +1051,45 @@ function clearPublicSelection() {
 
 function deletePublicSelectedDocuments() {
   if (publicSelectedDocuments.size === 0) return;
-  if (!confirm(`Are you sure you want to delete ${publicSelectedDocuments.size} selected document(s)? This action cannot be undone.`)) return;
 
-  const deleteBtn = document.getElementById('public-delete-selected-btn');
-  if (deleteBtn) {
-    deleteBtn.disabled = true;
-    deleteBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting...';
-  }
+  promptPublicDeleteMode(publicSelectedDocuments.size).then((deleteMode) => {
+    if (!deleteMode) {
+      return;
+    }
 
-  const deletePromises = Array.from(publicSelectedDocuments).map(docId =>
-    fetch(`/api/public_documents/${docId}`, { method: 'DELETE' })
-      .then(r => r.ok ? r.json() : Promise.reject(r))
-  );
+    const deleteBtn = document.getElementById('public-delete-selected-btn');
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
+      deleteBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting...';
+    }
 
-  Promise.allSettled(deletePromises)
-    .then(results => {
-      const successful = results.filter(r => r.status === 'fulfilled').length;
-      const failed = results.filter(r => r.status === 'rejected').length;
-      if (failed > 0) alert(`Deleted ${successful} document(s). ${failed} failed to delete.`);
-      publicSelectedDocuments.clear();
-      updatePublicBulkActionButtons();
-      fetchPublicDocs();
-    })
-    .finally(() => {
-      if (deleteBtn) {
-        deleteBtn.disabled = false;
-        deleteBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Selected';
-      }
-    });
+    const deletePromises = Array.from(publicSelectedDocuments).map((docId) => requestPublicDocumentDeletion(docId, deleteMode));
+
+    Promise.allSettled(deletePromises)
+      .then((results) => {
+        const successful = results.filter((result) => result.status === 'fulfilled').length;
+        const failed = results.filter((result) => result.status === 'rejected').length;
+        if (failed > 0) {
+          const toastType = successful === 0 ? 'danger' : 'warning';
+          showPublicWorkspaceToast(`Deleted ${successful} document(s). ${failed} failed to delete.`, toastType);
+        }
+
+        if (publicSelectionMode) {
+          togglePublicSelectionMode();
+        } else {
+          publicSelectedDocuments.clear();
+          updatePublicBulkActionButtons();
+        }
+
+        fetchPublicDocs();
+      })
+      .finally(() => {
+        if (deleteBtn) {
+          deleteBtn.disabled = false;
+          deleteBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Selected';
+        }
+      });
+  });
 }
 
 function chatWithPublicSelected() {
@@ -1708,7 +1919,7 @@ window.loadPublicWorkspaceTags = loadPublicWorkspaceTags;
 function isPublicColorLight(hex) {
   if (!hex) return true;
   hex = hex.replace('#', '');
-  const r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
+  const r = parseInt(hex.substring(0, 2), 16), g = parseInt(hex.substring(2, 4), 16), b = parseInt(hex.substring(4, 6), 16);
   return (r * 299 + g * 587 + b * 114) / 1000 > 155;
 }
 
@@ -1716,6 +1927,29 @@ function escapePublicHtml(text) {
   const d = document.createElement('div');
   d.textContent = text;
   return d.innerHTML;
+}
+
+function renderPublicTagBadges(tags, maxDisplay = 3) {
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return '<span class="text-muted small">No tags</span>';
+  }
+
+  let html = '';
+  const displayTags = tags.slice(0, maxDisplay);
+
+  displayTags.forEach(tagName => {
+    const tag = publicWorkspaceTags.find(t => t.name === tagName);
+    const color = tag && tag.color ? tag.color : '#6c757d';
+    const textClass = isPublicColorLight(color) ? 'text-dark' : 'text-light';
+
+    html += `<span class="tag-badge ${textClass}" style="background-color:${color};" title="${escapePublicHtml(tagName)}">${escapePublicHtml(tagName)}</span>`;
+  });
+
+  if (tags.length > maxDisplay) {
+    html += `<span class="badge bg-secondary">+${tags.length - maxDisplay}</span>`;
+  }
+
+  return html;
 }
 
 // --- Tag Management Modal ---

@@ -35,7 +35,7 @@ def register_route_backend_public_prompts(app):
                 user_id=user_id,
                 prompt_type='public_prompt',
                 args=request.args,
-                group_id=active_ws  # list_prompts uses this key generically
+                public_workspace_id=active_ws
             )
             return jsonify({
                 'prompts': items,
@@ -76,7 +76,7 @@ def register_route_backend_public_prompts(app):
                 content=content,
                 prompt_type='public_prompt',
                 user_id=user_id,
-                group_id=active_ws
+                public_workspace_id=active_ws
             )
             return jsonify(result), 201
         except Exception as e:
@@ -105,7 +105,7 @@ def register_route_backend_public_prompts(app):
                 user_id=user_id,
                 prompt_id=prompt_id,
                 prompt_type='public_prompt',
-                group_id=active_ws
+                public_workspace_id=active_ws
             )
             if not item:
                 return jsonify({'error':'Not found'}), 404
@@ -150,7 +150,7 @@ def register_route_backend_public_prompts(app):
                 prompt_id=prompt_id,
                 prompt_type='public_prompt',
                 updates=updates,
-                group_id=active_ws
+                public_workspace_id=active_ws
             )
             if not result:
                 return jsonify({'error':'Not found'}), 404
@@ -180,7 +180,7 @@ def register_route_backend_public_prompts(app):
             success = delete_prompt_doc(
                 user_id=user_id,
                 prompt_id=prompt_id,
-                group_id=active_ws
+                public_workspace_id=active_ws
             )
             if not success:
                 return jsonify({'error':'Not found'}), 404

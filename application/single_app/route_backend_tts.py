@@ -2,6 +2,8 @@
 
 from config import *
 from functions_authentication import *
+from functions_appinsights import log_event
+from functions_documents import get_speech_synthesis_config
 from functions_settings import *
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
@@ -41,14 +43,26 @@ def register_route_backend_tts(app):
                 return jsonify({"error": "Text-to-speech is not enabled"}), 403
             
             # Validate speech service configuration
-            speech_key = settings.get('speech_service_key', '')
-            speech_region = settings.get('speech_service_location', '')
+            speech_endpoint = (settings.get('speech_service_endpoint') or '').strip().rstrip('/')
+            speech_region = (settings.get('speech_service_location') or '').strip()
+            speech_auth_type = settings.get('speech_service_authentication_type', 'key')
             
-            if not speech_key or not speech_region:
-                debug_print("[TTS] Speech service not configured - missing key or region")
+            if not speech_endpoint:
+                debug_print("[TTS] Speech service not configured - missing endpoint")
+                return jsonify({"error": "Speech service not configured"}), 500
+
+            if speech_auth_type == 'key' and not (settings.get('speech_service_key') or '').strip():
+                debug_print("[TTS] Speech service not configured - missing key for key authentication")
+                return jsonify({"error": "Speech service not configured"}), 500
+
+            if speech_auth_type == 'managed_identity' and not speech_region:
+                debug_print("[TTS] Speech service not configured - missing location for managed identity")
                 return jsonify({"error": "Speech service not configured"}), 500
             
-            debug_print(f"[TTS] Speech service configured - region: {speech_region}")
+            debug_print(
+                f"[TTS] Speech service configured - auth_type: {speech_auth_type}, "
+                f"endpoint: {speech_endpoint}, location: {speech_region or 'n/a'}"
+            )
             
             # Parse request data
             data = request.get_json()
@@ -71,10 +85,12 @@ def register_route_backend_tts(app):
             debug_print(f"[TTS] Request params - voice: {voice}, speed: {speed}, text_length: {len(text)}")
             
             # Configure speech service
-            speech_config = speechsdk.SpeechConfig(
-                subscription=speech_key, 
-                region=speech_region
-            )
+            try:
+                speech_config = get_speech_synthesis_config(settings, speech_endpoint, speech_region)
+            except ValueError as config_error:
+                debug_print(f"[TTS] Speech service configuration invalid: {str(config_error)}")
+                return jsonify({"error": str(config_error)}), 500
+
             speech_config.speech_synthesis_voice_name = voice
             
             # Set output format to high quality

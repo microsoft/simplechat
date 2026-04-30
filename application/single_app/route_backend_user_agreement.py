@@ -130,7 +130,7 @@ def register_route_backend_user_agreement(app):
             return jsonify({"error": "workspace_id and workspace_type are required"}), 400
 
         # Validate workspace type
-        valid_types = ["personal", "group", "public"]
+        valid_types = ["personal", "group", "public", "chat"]
         if workspace_type not in valid_types:
             return jsonify({"error": f"Invalid workspace_type. Must be one of: {', '.join(valid_types)}"}), 400
 

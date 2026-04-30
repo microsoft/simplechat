@@ -8,10 +8,6 @@ param tags object
 param enableDiagLogging bool
 param logAnalyticsId string
 
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
-
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -46,18 +42,6 @@ resource redisCacheDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01
     logs: diagnosticConfigs.outputs.standardLogCategories
     #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
-  }
-}
-
-//=========================================================
-// store redis cache keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module redisCacheSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
-  name: 'storeRedisCacheSecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'redis-cache-key'
-    secretValue: redisCache.listKeys().primaryKey
   }
 }
 

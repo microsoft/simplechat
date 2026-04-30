@@ -109,19 +109,40 @@ def save_personal_action(user_id, action_data):
     try:
         # Check if an action with this name already exists
         existing_action = None
+        if action_data.get('id'):
+            existing_action = get_personal_action(
+                user_id,
+                action_data['id'],
+                return_type=SecretReturnType.NAME,
+            )
         if 'name' in action_data and action_data['name']:
-            existing_action = get_personal_action(user_id, action_data['name'])
+            existing_action = existing_action or get_personal_action(
+                user_id,
+                action_data['name'],
+                return_type=SecretReturnType.NAME,
+            )
         
         # Preserve existing ID if updating, or generate new ID if creating
+        now = datetime.utcnow().isoformat()
         if existing_action:
-            # Update existing action - preserve the original ID
+            # Update existing action - preserve the original ID and creation tracking
             action_data['id'] = existing_action['id']
+            action_data['created_by'] = existing_action.get('created_by', user_id)
+            action_data['created_at'] = existing_action.get('created_at', now)
         elif 'id' not in action_data or not action_data['id']:
             # New action - generate UUID for ID
             action_data['id'] = str(uuid.uuid4())
-            
+            action_data['created_by'] = user_id
+            action_data['created_at'] = now
+        else:
+            # Has an ID but no existing action found - treat as new
+            action_data['created_by'] = user_id
+            action_data['created_at'] = now
+        action_data['modified_by'] = user_id
+        action_data['modified_at'] = now
+
         action_data['user_id'] = user_id
-        action_data['last_updated'] = datetime.utcnow().isoformat()
+        action_data['last_updated'] = now
         
         # Validate required fields
         required_fields = ['name', 'displayName', 'type', 'description']
@@ -145,7 +166,12 @@ def save_personal_action(user_id, action_data):
             action_data['auth']['type'] = 'identity'
         
         # Store secrets in Key Vault before upsert
-        action_data = keyvault_plugin_save_helper(action_data, scope_value=user_id, scope="user")
+        action_data = keyvault_plugin_save_helper(
+            action_data,
+            scope_value=user_id,
+            scope="user",
+            existing_plugin=existing_action,
+        )
         result = cosmos_personal_actions_container.upsert_item(body=action_data)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
@@ -168,7 +194,7 @@ def delete_personal_action(user_id, action_id):
     """
     try:
         # Try to find the action first to get the correct ID
-        action = get_personal_action(user_id, action_id)
+        action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
         if not action:
             return False
             

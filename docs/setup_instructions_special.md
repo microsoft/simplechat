@@ -1,15 +1,54 @@
-# Simple Chat - Special Setup Instructions 
+---
+layout: showcase-page
+title: "Special Setup Scenarios"
+permalink: /setup_instructions_special/
+menubar: docs_menu
+accent: teal
+eyebrow: "Advanced Deployment Conditions"
+description: "Use this guide when the environment is not a standard commercial Azure rollout, or when identity and networking requirements are stricter than the default path."
+hero_icons:
+  - bi-shield-lock
+  - bi-globe-americas
+  - bi-diagram-3
+hero_pills:
+  - Azure Government support
+  - Managed identity patterns
+  - Enterprise private networking
+hero_links:
+  - label: Back to getting started
+    url: /setup_instructions/
+    style: primary
+  - label: Manual setup reference
+    url: /setup_instructions_manual/
+    style: secondary
+show_nav: true
+nav_links:
+  prev:
+    title: Manual Setup
+    url: /setup_instructions_manual/
+---
 
-- [Azure Government Configuration](#azure-government-configuration)
-- [How to use Managed Identity](#how-to-use-managed-identity)
-- [Enterprise Networking](#enterprise-networking)
+This page covers the deployment conditions that usually force teams off the quickest path: sovereign cloud requirements, secretless runtime access, and private network topologies.
 
-- [Return to Main](../README.md)
-
+<section class="latest-release-card-grid">
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-building-lock"></i></div>
+      <h2>Azure Government</h2>
+      <p>Adjust environment settings, endpoints, and identity registration so the application uses the correct sovereign cloud authorities and service domains.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-person-badge"></i></div>
+      <h2>Managed identity</h2>
+      <p>Replace stored keys with role-assigned resource access where the service supports it, and keep App Registration focused on user authentication.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-diagram-3"></i></div>
+      <h2>Enterprise networking</h2>
+      <p>Use private endpoints, VNet integration, dedicated subnets, and private DNS zones so app-to-service traffic stays on the Azure backbone.</p>
+   </article>
+</section>
 
 ## Azure Government Configuration
-
-> <a href="#simple-chat---special-setup-instructions" style="text-decoration: none;">Return to top</a>
 
 To run the application in Azure Government cloud:
 
@@ -30,8 +69,6 @@ To run the application in Azure Government cloud:
 4. **App Registration**: Ensure the App Registration is done within your Azure Government Azure AD tenant. The Redirect URI for the App Service will use the .azurewebsites.us domain.
 
 ## How to use Managed Identity
-
-> <a href="#simple-chat---setup-instructions" style="text-decoration: none;">Return to top</a>
 
 Using Managed Identity allows the App Service to authenticate to other Azure resources securely without needing to store secrets (like API keys or connection strings) in Application Settings.
 
@@ -80,17 +117,17 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    | Document Intelligence | Cognitive Services User             | Allows using the DI service for analysis.                    |
    | Content Safety        | Azure AI Developer      | Allows using the CS service for analysis. (Role name might vary slightly, check portal) |
    | Azure Storage Account | Storage Blob Data Contributor       | Required for Enhanced Citations if using Managed Identity. Allows reading/writing blobs. |
-   | Azure Speech Service  | Cognitive Services Speech Contributor             | Allows using the Speech service for transcription.           |
-   | Video Indexer         | (Handled via VI resource settings)  | VI typically uses its own Managed Identity to access associated Storage/Media Services. Check VI docs. |
+   | Azure Speech Service  | Cognitive Services Speech User (plus Speech Contributor if needed) | Use the custom-domain endpoint for managed identity. Add `Cognitive Services Speech Contributor` if transcription operations still require it. Managed-identity text-to-speech also needs the Speech Resource ID in Admin Settings. |
+   | Video Indexer         | Contributor on the Video Indexer resource | Grant the App Service system-assigned managed identity `Contributor` on the Video Indexer resource. Video Indexer resource creation may also ask for a separate user-assigned managed identity for its own storage/media integration. |
 
 3. **Configure Application to Use Managed Identity**:
 
    - Update the **Application settings** in the App Service (or .env before upload) **OR** use the toggles in the **Admin Settings UI** where available.
    - **Cosmos DB**: Set AZURE_COSMOS_AUTHENTICATION_TYPE="managed_identity" in Application Settings. Remove AZURE_COSMOS_KEY and AZURE_COSMOS_CONNECTION_STRING.
    - **Other Services (OpenAI, Search, DI, CS, Storage)**: Check the **Admin Settings UI** first. Most sections (GPT, Embeddings, Image Gen, Citations, Safety, Search & Extract) have toggles or dropdowns to select "Managed Identity" as the authentication method. Using the UI toggle is preferred as it handles the backend configuration. If UI options aren't present or for overrides, you might need specific environment variables like AZURE_OPENAI_USE_MANAGED_IDENTITY="True", but rely on the UI where possible.
+   - **Speech and Video Indexer**: In Search & Extract → Multimedia Support, the Speech section is shared by audio uploads, speech-to-text input, and text-to-speech. Video Indexer uses the App Service managed identity and the cloud/end-point selector rather than a Video Indexer API key.
 
 ## Enterprise Networking
-> <a href="#simple-chat---special-setup-instructions" style="text-decoration: none;">Return to top</a>
 
 ![Architecture with Private Endpoints](./images/architecture-private-endpoints.png)
 

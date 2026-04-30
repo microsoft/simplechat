@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for public workspace statistics and status management.
-Version: 0.234.112
-Implemented in: 0.234.112
+Version: 0.239.147
+Implemented in: 0.239.147
 
 This test ensures that public workspace statistics (last activity, recent activity count, 
 document metrics) and status management (active, locked, upload_disabled, inactive) work 
@@ -134,13 +134,19 @@ def test_activity_calculations():
         
         # Document 1: 10 days ago
         doc1_date = (datetime.now(timezone.utc) - timedelta(days=10)).strftime('%Y-%m-%d')
+        doc1_id = str(uuid.uuid4())
         create_document(
             file_name="test_old_doc.pdf",
             public_workspace_id=ws_id,
             user_id="test-user-123",
-            document_id=str(uuid.uuid4()),
+            document_id=doc1_id,
             num_file_chunks=0,
-            status='Completed',
+            status='Completed'
+        )
+        update_document(
+            document_id=doc1_id,
+            user_id="test-user-123",
+            public_workspace_id=ws_id,
             upload_date=doc1_date,
             number_of_pages=5
         )
@@ -148,13 +154,19 @@ def test_activity_calculations():
         
         # Document 2: 3 days ago (recent)
         doc2_date = (datetime.now(timezone.utc) - timedelta(days=3)).strftime('%Y-%m-%d')
+        doc2_id = str(uuid.uuid4())
         create_document(
             file_name="test_recent_doc.pdf",
             public_workspace_id=ws_id,
             user_id="test-user-123",
-            document_id=str(uuid.uuid4()),
+            document_id=doc2_id,
             num_file_chunks=0,
-            status='Completed',
+            status='Completed'
+        )
+        update_document(
+            document_id=doc2_id,
+            user_id="test-user-123",
+            public_workspace_id=ws_id,
             upload_date=doc2_date,
             number_of_pages=3
         )
@@ -162,13 +174,19 @@ def test_activity_calculations():
         
         # Document 3: Today (recent)
         doc3_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        doc3_id = str(uuid.uuid4())
         create_document(
             file_name="test_today_doc.pdf",
             public_workspace_id=ws_id,
             user_id="test-user-123",
-            document_id=str(uuid.uuid4()),
+            document_id=doc3_id,
             num_file_chunks=0,
-            status='Completed',
+            status='Completed'
+        )
+        update_document(
+            document_id=doc3_id,
+            user_id="test-user-123",
+            public_workspace_id=ws_id,
             upload_date=doc3_date,
             number_of_pages=2
         )
@@ -309,7 +327,7 @@ def run_all_tests():
     print("\n" + "=" * 60)
     print("🚀 PUBLIC WORKSPACE STATISTICS FUNCTIONAL TEST")
     print("=" * 60)
-    print(f"Version: 0.234.112")
+    print(f"Version: 0.239.147")
     print(f"Test Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     

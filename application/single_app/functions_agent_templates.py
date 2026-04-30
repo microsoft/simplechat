@@ -17,13 +17,22 @@ from azure.cosmos import exceptions
 from flask import current_app
 
 from config import cosmos_agent_templates_container
+from functions_activity_logging import (
+    log_agent_template_submission,
+    log_agent_template_approval,
+    log_agent_template_rejection,
+    log_agent_template_deletion,
+)
 from functions_appinsights import log_event
+from functions_notifications import create_notification, delete_notifications_by_metadata
 
 STATUS_PENDING = "pending"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUS_ARCHIVED = "archived"
 ALLOWED_STATUSES = {STATUS_PENDING, STATUS_APPROVED, STATUS_REJECTED, STATUS_ARCHIVED}
+
+TEMPLATE_APPROVAL_ADMIN_NOTIFICATION_TYPES = ['agent_template_pending_admin']
 
 _MAX_TEMPLATE_FIELD_LENGTHS = {
     "title": 200,
@@ -113,6 +122,93 @@ def _sanitize_template(doc: Dict[str, Any], include_internal: bool = False) -> D
             cleaned.pop(field, None)
 
     return cleaned
+
+
+def _template_detail_link(doc: Dict[str, Any]) -> str:
+    scope = (doc.get('source_scope') or 'personal').lower()
+    if scope == 'global':
+        return '/approvals#agent-template-approvals'
+    if scope == 'group':
+        return '/group_workspaces'
+    return '/workspace'
+
+
+def _create_submitter_notification(
+    doc: Dict[str, Any],
+    notification_type: str,
+    title: str,
+    message: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    submitter_id = doc.get('created_by')
+    if not submitter_id:
+        return
+
+    create_notification(
+        user_id=submitter_id,
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        link_url=_template_detail_link(doc),
+        link_context={
+            'template_id': doc.get('id'),
+            'source_scope': doc.get('source_scope')
+        },
+        metadata={
+            'template_id': doc.get('id'),
+            'template_title': doc.get('title') or doc.get('display_name'),
+            'source_scope': doc.get('source_scope')
+        } | (metadata or {})
+    )
+
+
+def _submitter_info(doc: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        'userId': doc.get('created_by'),
+        'email': doc.get('created_by_email'),
+        'displayName': doc.get('created_by_name'),
+    }
+
+
+def _create_pending_notifications(doc: Dict[str, Any]) -> None:
+    title = doc.get('title') or doc.get('display_name') or 'Agent Template'
+    submitter_name = doc.get('created_by_name') or 'A user'
+
+    create_notification(
+        notification_type='agent_template_pending_admin',
+        title=f'Template Approval Required: {title}',
+        message=f"{submitter_name} submitted '{title}' for review.",
+        link_url='/approvals#agent-template-approvals',
+        link_context={
+            'template_id': doc.get('id')
+        },
+        metadata={
+            'template_id': doc.get('id'),
+            'template_title': title,
+            'submitter_email': doc.get('created_by_email'),
+            'submitter_name': submitter_name
+        },
+        assignment={
+            'roles': ['Admin']
+        }
+    )
+
+    _create_submitter_notification(
+        doc,
+        notification_type='agent_template_pending_submitter',
+        title=f'Template Submitted: {title}',
+        message=(
+            f"Your template '{title}' was submitted for admin review. "
+            'You will receive another notification when a decision is made.'
+        )
+    )
+
+
+def _clear_pending_admin_notifications(template_id: str) -> None:
+    delete_notifications_by_metadata(
+        metadata_filters={'template_id': template_id},
+        notification_types=TEMPLATE_APPROVAL_ADMIN_NOTIFICATION_TYPES
+    )
 
 
 def _validate_template_lengths(payload: Dict[str, Any]) -> None:
@@ -237,6 +333,20 @@ def create_agent_template(payload: Dict[str, Any], user_info: Optional[Dict[str,
             "created_by": template.get('created_by'),
         },
     )
+
+    if not auto_approve:
+        _create_pending_notifications(template)
+
+    log_agent_template_submission(
+        user_id=template.get('created_by') or 'unknown',
+        template_id=template['id'],
+        template_name=template.get('title') or template.get('display_name') or 'Agent Template',
+        template_display_name=template.get('display_name'),
+        scope=template.get('source_scope') or 'personal',
+        template_status=template.get('status'),
+        submitter=_submitter_info(template),
+    )
+
     return _sanitize_template(template, include_internal=True)
 
 
@@ -309,6 +419,33 @@ def approve_agent_template(template_id: str, approver_info: Dict[str, Any], note
         "Agent template approved",
         extra={"template_id": template_id, "approved_by": doc['approved_by']},
     )
+
+    _clear_pending_admin_notifications(template_id)
+    _create_submitter_notification(
+        doc,
+        notification_type='agent_template_approved',
+        title=f"Template Approved: {doc.get('title') or doc.get('display_name') or 'Agent Template'}",
+        message=(
+            f"Your template '{doc.get('title') or doc.get('display_name') or 'Agent Template'}' "
+            f"was approved by {approver_info.get('displayName') or approver_info.get('email') or 'an admin'}."
+        ),
+        metadata={
+            'review_notes': notes
+        }
+    )
+
+    log_agent_template_approval(
+        user_id=approver_info.get('userId') or 'unknown',
+        template_id=template_id,
+        template_name=doc.get('title') or doc.get('display_name') or 'Agent Template',
+        template_display_name=doc.get('display_name'),
+        scope=doc.get('source_scope') or 'personal',
+        template_status=doc.get('status'),
+        approver=approver_info,
+        submitter=_submitter_info(doc),
+        review_notes=notes,
+    )
+
     return _sanitize_template(doc, include_internal=True)
 
 
@@ -334,12 +471,75 @@ def reject_agent_template(template_id: str, approver_info: Dict[str, Any], reaso
         "Agent template rejected",
         extra={"template_id": template_id, "approved_by": doc['approved_by']},
     )
+
+    _clear_pending_admin_notifications(template_id)
+    _create_submitter_notification(
+        doc,
+        notification_type='agent_template_rejected',
+        title=f"Template Declined: {doc.get('title') or doc.get('display_name') or 'Agent Template'}",
+        message=(
+            f"Your template '{doc.get('title') or doc.get('display_name') or 'Agent Template'}' "
+            f"was declined by {approver_info.get('displayName') or approver_info.get('email') or 'an admin'}. "
+            f"Reason provided: {reason}"
+        ),
+        metadata={
+            'rejection_reason': reason,
+            'review_notes': notes
+        }
+    )
+
+    log_agent_template_rejection(
+        user_id=approver_info.get('userId') or 'unknown',
+        template_id=template_id,
+        template_name=doc.get('title') or doc.get('display_name') or 'Agent Template',
+        template_display_name=doc.get('display_name'),
+        scope=doc.get('source_scope') or 'personal',
+        template_status=doc.get('status'),
+        approver=approver_info,
+        submitter=_submitter_info(doc),
+        review_reason=reason,
+        review_notes=notes,
+    )
+
     return _sanitize_template(doc, include_internal=True)
 
 
-def delete_agent_template(template_id: str) -> bool:
+def delete_agent_template(template_id: str, actor_info: Optional[Dict[str, Any]] = None) -> bool:
     try:
+        doc = get_agent_template(template_id)
+        if not doc:
+            return False
+
         cosmos_agent_templates_container.delete_item(item=template_id, partition_key=template_id)
+        _clear_pending_admin_notifications(template_id)
+
+        if actor_info:
+            actor_name = actor_info.get('displayName') or actor_info.get('email') or 'an admin'
+            _create_submitter_notification(
+                doc,
+                notification_type='agent_template_deleted',
+                title=f"Template Removed: {doc.get('title') or doc.get('display_name') or 'Agent Template'}",
+                message=(
+                    f"Your template '{doc.get('title') or doc.get('display_name') or 'Agent Template'}' "
+                    f"was removed by {actor_name}."
+                ),
+                metadata={
+                    'removed_by': actor_name,
+                    'previous_status': doc.get('status')
+                }
+            )
+
+        log_agent_template_deletion(
+            user_id=(actor_info or {}).get('userId') or doc.get('created_by') or 'unknown',
+            template_id=template_id,
+            template_name=doc.get('title') or doc.get('display_name') or 'Agent Template',
+            template_display_name=doc.get('display_name'),
+            scope=doc.get('source_scope') or 'personal',
+            template_status=doc.get('status'),
+            actor=actor_info,
+            submitter=_submitter_info(doc),
+        )
+
         log_event("Agent template deleted", extra={"template_id": template_id})
         return True
     except exceptions.CosmosResourceNotFoundError:

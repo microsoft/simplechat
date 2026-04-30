@@ -147,10 +147,10 @@ def validate_date_format():
                 # Try different date formats
                 try:
                     dt = datetime.fromisoformat(test_date.replace('Z', '+00:00'))
-                except:
+                except Exception as ex:
                     try:
                         dt = datetime.strptime(test_date, '%Y-%m-%d')
-                    except:
+                    except Exception as ex:
                         dt = datetime.strptime(test_date, '%Y-%m-%dT%H:%M:%S')
             
             formatted = dt.strftime('%m/%d/%Y')

@@ -1,4 +1,45 @@
-# ServiceNow OAuth 2.0 Setup for Simple Chat
+---
+layout: showcase-page
+title: "ServiceNow OAuth 2.0 Setup"
+permalink: /how-to/agents/ServiceNow/servicenow_oauth_setup/
+menubar: docs_menu
+accent: violet
+eyebrow: "How-To Guide"
+description: "Configure OAuth 2.0 bearer-token authentication for ServiceNow actions in Simple Chat using ServiceNow's current inbound integration flow."
+hero_icons: ["bi-key", "bi-shield-lock", "bi-arrow-repeat"]
+hero_pills: ["Bearer token auth", "Integration user + OAuth app credentials", "Production-oriented alternative to Basic Auth"]
+hero_links: [{ label: "ServiceNow integration", url: "/how-to/agents/ServiceNow/servicenow_integration/", style: "primary" }, { label: "Two-agent setup", url: "/how-to/agents/ServiceNow/two_agent_setup/", style: "secondary" }]
+---
+
+This guide matters when Basic Auth is not acceptable and you want a cleaner production authentication story for ServiceNow actions. The important idea is that OAuth setup here still depends on a dedicated ServiceNow user because the token executes with that user's permissions.
+
+<section class="latest-release-card-grid">
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-person-badge"></i></div>
+      <h2>Create a dedicated integration user</h2>
+      <p>The OAuth token should represent a service identity with only the roles required for the ServiceNow operations you plan to expose.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-app-indicator"></i></div>
+      <h2>Create the OAuth application</h2>
+      <p>ServiceNow's inbound integration flow generates the client ID and client secret you need before Simple Chat can request bearer tokens.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-box-arrow-in-down"></i></div>
+      <h2>Obtain and store the token</h2>
+      <p>Use cURL, PowerShell, or Python to request the access token, then store it securely and plan for refresh before expiry becomes an outage.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-plug"></i></div>
+      <h2>Wire it into the action</h2>
+      <p>Once the token exists, the Simple Chat action configuration becomes straightforward: the bearer token is what the OpenAPI action sends on each request.</p>
+   </article>
+</section>
+
+<div class="latest-release-note-panel">
+   <h2>Both credential sets matter</h2>
+   <p>The token request needs the OAuth app credentials and the ServiceNow integration-user credentials. That is the easiest place to get confused, so keep those identities clearly separated as you configure the flow.</p>
+</div>
 
 **Version:** 0.237.005  
 **Implemented in version:** 0.237.005

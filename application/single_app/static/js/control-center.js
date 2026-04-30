@@ -171,6 +171,7 @@ class ControlCenter {
         this.documentsChart = null;
         this.tokensChart = null;
         this.currentTrendDays = 30;
+        this.tokenFilters = this.getDefaultTokenFilters();
         
         // Activity Logs state
         this.activityLogsPage = 1;
@@ -200,6 +201,7 @@ class ControlCenter {
         }
         
         // Always load activity trends (available to all Control Center users)
+        this.loadTokenFilterOptions();
         this.loadActivityTrends();
     }
     
@@ -319,6 +321,12 @@ class ControlCenter {
             () => this.changeTrendPeriod(90));
         document.getElementById('trend-custom')?.addEventListener('click', 
             () => this.toggleCustomDateRange());
+        document.getElementById('tokenWorkspaceTypeFilter')?.addEventListener('change',
+            () => this.handleTokenWorkspaceTypeChange());
+        document.getElementById('tokenApplyFiltersBtn')?.addEventListener('click',
+            () => this.applyTokenFilters());
+        document.getElementById('tokenResetFiltersBtn')?.addEventListener('click',
+            () => this.resetTokenFilters());
         
         // Custom date range handlers
         document.getElementById('applyCustomRange')?.addEventListener('click', 
@@ -1344,6 +1352,149 @@ class ControlCenter {
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
+
+    getDefaultTokenFilters() {
+        return {
+            userId: 'all',
+            workspaceType: 'all',
+            groupId: 'all',
+            publicWorkspaceId: 'all',
+            model: 'all',
+            tokenType: 'all'
+        };
+    }
+
+    getTokenFilterRequestPayload() {
+        const tokenFilterMap = {
+            user_id: this.tokenFilters.userId,
+            workspace_type: this.tokenFilters.workspaceType,
+            group_id: this.tokenFilters.groupId,
+            public_workspace_id: this.tokenFilters.publicWorkspaceId,
+            model: this.tokenFilters.model,
+            token_type: this.tokenFilters.tokenType
+        };
+
+        return Object.fromEntries(
+            Object.entries(tokenFilterMap).filter(([, value]) => value && value !== 'all')
+        );
+    }
+
+    populateTokenFilterSelect(selectId, options, defaultLabel, valueKey = 'value', labelKey = 'label') {
+        const select = document.getElementById(selectId);
+        if (!select) {
+            return;
+        }
+
+        const optionMarkup = (options || []).map(option => {
+            const value = option[valueKey] ?? '';
+            const label = option[labelKey] ?? value;
+            return `<option value="${this.escapeHtml(String(value))}">${this.escapeHtml(String(label))}</option>`;
+        }).join('');
+
+        select.innerHTML = `<option value="all">${this.escapeHtml(defaultLabel)}</option>${optionMarkup}`;
+    }
+
+    setTokenFilterControlValues() {
+        const controlValues = {
+            tokenUserFilter: this.tokenFilters.userId,
+            tokenWorkspaceTypeFilter: this.tokenFilters.workspaceType,
+            tokenGroupFilter: this.tokenFilters.groupId,
+            tokenPublicWorkspaceFilter: this.tokenFilters.publicWorkspaceId,
+            tokenModelFilter: this.tokenFilters.model,
+            tokenTypeFilter: this.tokenFilters.tokenType
+        };
+
+        Object.entries(controlValues).forEach(([controlId, value]) => {
+            const select = document.getElementById(controlId);
+            if (!select) {
+                return;
+            }
+
+            const optionExists = Array.from(select.options).some(option => option.value === value);
+            select.value = optionExists ? value : 'all';
+        });
+
+        this.handleTokenWorkspaceTypeChange(false);
+    }
+
+    async loadTokenFilterOptions() {
+        try {
+            const response = await fetch('/api/admin/control-center/token-filters');
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to load token filter options');
+            }
+
+            const filters = data.filters || {};
+            this.populateTokenFilterSelect('tokenUserFilter', filters.users, 'All users', 'id', 'label');
+            this.populateTokenFilterSelect('tokenWorkspaceTypeFilter', filters.workspace_types, 'All workspaces');
+            this.populateTokenFilterSelect('tokenGroupFilter', filters.groups, 'All groups', 'id', 'name');
+            this.populateTokenFilterSelect('tokenPublicWorkspaceFilter', filters.public_workspaces, 'All public workspaces', 'id', 'name');
+            this.populateTokenFilterSelect('tokenModelFilter', filters.models, 'All models');
+            this.populateTokenFilterSelect('tokenTypeFilter', filters.token_types, 'All token types');
+            this.setTokenFilterControlValues();
+        } catch (error) {
+            console.error('Failed to load token filter options:', error);
+            showToast('Failed to load token filter options.', 'warning');
+        }
+    }
+
+    handleTokenWorkspaceTypeChange(clearDependentFilters = true) {
+        const workspaceTypeSelect = document.getElementById('tokenWorkspaceTypeFilter');
+        const groupContainer = document.getElementById('tokenGroupFilterContainer');
+        const publicWorkspaceContainer = document.getElementById('tokenPublicWorkspaceFilterContainer');
+        const groupSelect = document.getElementById('tokenGroupFilter');
+        const publicWorkspaceSelect = document.getElementById('tokenPublicWorkspaceFilter');
+        const workspaceType = workspaceTypeSelect ? workspaceTypeSelect.value : 'all';
+
+        if (groupContainer) {
+            groupContainer.classList.toggle('d-none', workspaceType !== 'group');
+        }
+        if (publicWorkspaceContainer) {
+            publicWorkspaceContainer.classList.toggle('d-none', workspaceType !== 'public');
+        }
+
+        if (clearDependentFilters) {
+            if (workspaceType !== 'group' && groupSelect) {
+                groupSelect.value = 'all';
+            }
+            if (workspaceType !== 'public' && publicWorkspaceSelect) {
+                publicWorkspaceSelect.value = 'all';
+            }
+        }
+    }
+
+    syncTokenFiltersFromControls() {
+        const nextFilters = this.getDefaultTokenFilters();
+        nextFilters.userId = document.getElementById('tokenUserFilter')?.value || 'all';
+        nextFilters.workspaceType = document.getElementById('tokenWorkspaceTypeFilter')?.value || 'all';
+        nextFilters.groupId = document.getElementById('tokenGroupFilter')?.value || 'all';
+        nextFilters.publicWorkspaceId = document.getElementById('tokenPublicWorkspaceFilter')?.value || 'all';
+        nextFilters.model = document.getElementById('tokenModelFilter')?.value || 'all';
+        nextFilters.tokenType = document.getElementById('tokenTypeFilter')?.value || 'all';
+
+        if (nextFilters.workspaceType !== 'group') {
+            nextFilters.groupId = 'all';
+        }
+        if (nextFilters.workspaceType !== 'public') {
+            nextFilters.publicWorkspaceId = 'all';
+        }
+
+        this.tokenFilters = nextFilters;
+        this.setTokenFilterControlValues();
+    }
+
+    applyTokenFilters() {
+        this.syncTokenFiltersFromControls();
+        this.loadActivityTrends();
+    }
+
+    resetTokenFilters() {
+        this.tokenFilters = this.getDefaultTokenFilters();
+        this.setTokenFilterControlValues();
+        this.loadActivityTrends();
+    }
     
     // Activity Trends Methods
     async loadActivityTrends() {
@@ -1352,11 +1503,20 @@ class ControlCenter {
                 console.log('🔍 [Frontend Debug] Loading activity trends for', this.currentTrendDays, 'days');
             }
             
-            // Build API URL with custom date range if specified
-            let apiUrl = `/api/admin/control-center/activity-trends?days=${this.currentTrendDays}`;
+            const params = new URLSearchParams({
+                days: this.currentTrendDays
+            });
+
             if (this.customStartDate && this.customEndDate) {
-                apiUrl += `&start_date=${this.customStartDate}&end_date=${this.customEndDate}`;
+                params.append('start_date', this.customStartDate);
+                params.append('end_date', this.customEndDate);
             }
+
+            Object.entries(this.getTokenFilterRequestPayload()).forEach(([key, value]) => {
+                params.append(key, value);
+            });
+
+            const apiUrl = `/api/admin/control-center/activity-trends?${params.toString()}`;
             
             const response = await fetch(apiUrl);
             if (appSettings?.enable_debug_logging) {
@@ -2170,6 +2330,11 @@ class ControlCenter {
                 charts: selectedCharts,
                 time_window: timeWindow
             };
+
+            const tokenFilters = this.getTokenFilterRequestPayload();
+            if (Object.keys(tokenFilters).length > 0) {
+                exportData.token_filters = tokenFilters;
+            }
             
             // Add custom dates if selected
             if (timeWindow === 'custom') {
@@ -2400,7 +2565,21 @@ class ControlCenter {
                 const tokenType = log.token_type || 'unknown';
                 const totalTokens = log.usage?.total_tokens || 0;
                 const model = log.usage?.model || 'N/A';
-                return `Type: ${tokenType}<br>Tokens: ${totalTokens.toLocaleString()}<br><small class="text-muted">Model: ${model}</small>`;
+                const tokenScopeDetails = [];
+                if (log.workspace_type) {
+                    tokenScopeDetails.push(`Workspace: ${this.capitalizeFirst(log.workspace_type)}`);
+                }
+                if (log.workspace_context?.group_id) {
+                    tokenScopeDetails.push(`Group: ${this.escapeHtml(log.workspace_context.group_id)}`);
+                }
+                if (log.workspace_context?.public_workspace_id) {
+                    tokenScopeDetails.push(`Public Workspace: ${this.escapeHtml(log.workspace_context.public_workspace_id)}`);
+                }
+
+                const tokenScopeMarkup = tokenScopeDetails.length > 0
+                    ? `<br><small class="text-muted">${tokenScopeDetails.join(' · ')}</small>`
+                    : '';
+                return `Type: ${this.escapeHtml(tokenType)}<br>Tokens: ${totalTokens.toLocaleString()}<br><small class="text-muted">Model: ${this.escapeHtml(model)}</small>${tokenScopeMarkup}`;
                 
             case 'group_status_change':
                 const groupName = log.group?.group_name || 'Unknown Group';
@@ -2794,6 +2973,11 @@ class ControlCenter {
                 charts: selectedCharts,
                 time_window: timeWindow
             };
+
+            const tokenFilters = this.getTokenFilterRequestPayload();
+            if (Object.keys(tokenFilters).length > 0) {
+                chatData.token_filters = tokenFilters;
+            }
             
             // Add custom dates if selected
             if (timeWindow === 'custom') {
