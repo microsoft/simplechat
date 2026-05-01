@@ -6,19 +6,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.241.007)**
 
-#### New Features
+#### Bug Fixes
 
-*   **Collaborative Conversations Foundation**
-    *   Added the first backend foundation for multi-user collaborative conversations with dedicated conversation, message, and per-user membership state storage in Cosmos DB.
-    *   Added protected APIs for creating personal or group collaborative conversations, accepting invites, inviting or removing members in personal conversations, posting human messages, publishing typing events, and subscribing to a conversation-wide SSE event stream.
-    *   This initial slice keeps the existing single-user chat experience intact while establishing the persistence and eventing layer needed for shared conversation UI, explicit AI invocation, and future read-state improvements.
-    *   (Ref: `collaboration_models.py`, `functions_collaboration.py`, `route_backend_collaboration.py`, `config.py`, `test_collaborative_conversation_foundation.py`)
-
-*   **Core Document Search And Summarization**
-    *   Added a shared backend document search service with a dedicated authenticated API for hybrid search, ordered document-chunk retrieval, and on-demand document summarization.
-    *   Added an always-loaded Semantic Kernel core plugin so every agent and model-only kernel session can search accessible workspace documents, pull full ordered chunk windows for a document, and run hierarchical summarization with optional focus and target-length guidance.
-    *   The new summarization flow can now work across the whole document instead of relying only on distilled top search hits, which improves long-document summarization and creates a reusable foundation for future document comparison workflows.
-    *   (Ref: `functions_search.py`, `functions_search_service.py`, `functions_documents.py`, `route_backend_search.py`, `document_search_plugin.py`, `semantic_kernel_loader.py`)
+*   **Global Agent Scope Gate Fallback**
+    *   Fixed per-user Semantic Kernel chats so selecting a global agent no longer silently falls back to the standard GPT model when personal agents are disabled for the tenant.
+    *   The per-user loader now treats global, personal, and group agent scopes separately, allowing valid global-agent selections to continue through agent invocation while keeping personal and group scope toggles enforced as configured.
+    *   Added regression coverage for the shared scope gate used by the per-user loader.
+    *   (Ref: `semantic_kernel_loader.py`, `functions_agent_scope.py`, `test_global_agent_scope_gate.py`, global agent request routing)
 
 ### **(v0.241.006)**
 
