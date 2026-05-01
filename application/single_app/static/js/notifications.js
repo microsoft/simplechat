@@ -13,6 +13,7 @@
     // Configuration
     const MIN_POLL_INTERVAL = 20000; // 20 seconds
     const MAX_POLL_INTERVAL = 40000; // 40 seconds
+    const MAX_NOTIFICATION_POLL_FAILURES = 3;
     
     // State
     let currentPage = 1;
@@ -21,6 +22,8 @@
     let currentSearch = '';
     let pollTimeout = null;
     let isPolling = false;
+    let consecutivePollFailures = 0;
+    let notificationPollingDisabled = false;
     let workflowAlertQueue = [];
     let activeWorkflowAlert = null;
     let activeWorkflowAlertTargets = [];
@@ -50,6 +53,87 @@
      */
     function getRandomPollInterval() {
         return Math.floor(Math.random() * (MAX_POLL_INTERVAL - MIN_POLL_INTERVAL + 1)) + MIN_POLL_INTERVAL;
+    }
+
+    function clearNotificationPollTimeout() {
+        if (!pollTimeout) {
+            return;
+        }
+
+        clearTimeout(pollTimeout);
+        pollTimeout = null;
+    }
+
+    function disableNotificationPolling(reason) {
+        clearNotificationPollTimeout();
+
+        if (notificationPollingDisabled) {
+            return;
+        }
+
+        notificationPollingDisabled = true;
+        isPolling = false;
+        const normalizedReason = String(reason || 'unknown error').trim() || 'unknown error';
+        console.warn(`Notification polling disabled: ${normalizedReason}`);
+    }
+
+    function scheduleNotificationPoll() {
+        if (notificationPollingDisabled) {
+            return;
+        }
+
+        clearNotificationPollTimeout();
+        pollTimeout = setTimeout(pollNotificationCount, getRandomPollInterval());
+    }
+
+    function buildNotificationPollingError(message, shouldDisablePolling = false) {
+        const error = new Error(message);
+        error.shouldDisableNotificationPolling = shouldDisablePolling;
+        return error;
+    }
+
+    function parseNotificationJsonResponse(response, endpointLabel) {
+        const responseUrl = String(response?.url || '');
+        const contentType = String(response?.headers?.get('content-type') || '').toLowerCase();
+        const isRedirected = Boolean(response?.redirected);
+        const looksLikeAuthRedirect = /\/login|\/\.auth\//i.test(responseUrl);
+
+        if (isRedirected || looksLikeAuthRedirect) {
+            throw buildNotificationPollingError(
+                `Authentication redirect detected while fetching ${endpointLabel}.`,
+                true,
+            );
+        }
+
+        if (!response.ok) {
+            const shouldDisablePolling = response.status === 401 || response.status === 403;
+            throw buildNotificationPollingError(
+                `Notification request for ${endpointLabel} failed with HTTP ${response.status}.`,
+                shouldDisablePolling,
+            );
+        }
+
+        if (!contentType.includes('application/json')) {
+            throw buildNotificationPollingError(
+                `Expected JSON from ${endpointLabel}, received ${contentType || 'unknown content type'}.`,
+                true,
+            );
+        }
+
+        return response.json();
+    }
+
+    function handleNotificationPollingError(error, contextLabel) {
+        consecutivePollFailures += 1;
+
+        if (error?.shouldDisableNotificationPolling || consecutivePollFailures >= MAX_NOTIFICATION_POLL_FAILURES) {
+            disableNotificationPolling(
+                error?.message || `${contextLabel} failed ${consecutivePollFailures} times`,
+            );
+            return;
+        }
+
+        console.error(`Error ${contextLabel}:`, error);
     }
 
     function getShownWorkflowAlertIds() {
@@ -450,21 +534,26 @@
     }
 
     function loadWorkflowAlerts() {
-        if (!workflowAlertModal || isLoadingWorkflowAlerts) {
+        if (notificationPollingDisabled || !workflowAlertModal || isLoadingWorkflowAlerts) {
             return Promise.resolve();
         }
 
         isLoadingWorkflowAlerts = true;
 
-        return fetch('/api/notifications/workflow-alerts?limit=5')
-            .then(response => response.json())
+        return fetch('/api/notifications/workflow-alerts?limit=5', {
+            headers: {
+                'Accept': 'application/json',
+            },
+        })
+            .then(response => parseNotificationJsonResponse(response, 'workflow alerts'))
             .then(data => {
                 if (data.success) {
+                    consecutivePollFailures = 0;
                     enqueueWorkflowAlerts(data.notifications || []);
                 }
             })
             .catch(error => {
-                console.error('Error loading workflow alerts:', error);
+                handleNotificationPollingError(error, 'loading workflow alerts');
             })
             .finally(() => {
                 isLoadingWorkflowAlerts = false;
@@ -472,10 +561,19 @@
     }
 
     function fetchNotificationCount() {
-        return fetch('/api/notifications/count')
-            .then(response => response.json())
+        if (notificationPollingDisabled) {
+            return Promise.resolve();
+        }
+
+        return fetch('/api/notifications/count', {
+            headers: {
+                'Accept': 'application/json',
+            },
+        })
+            .then(response => parseNotificationJsonResponse(response, 'notification count'))
             .then(data => {
                 if (data.success) {
+                    consecutivePollFailures = 0;
                     updateNotificationBadge(data.count);
                     if (data.count > 0) {
                         return loadWorkflowAlerts();
@@ -484,7 +582,7 @@
                 return undefined;
             })
             .catch(error => {
-                console.error('Error polling notification count:', error);
+                handleNotificationPollingError(error, 'polling notification count');
             });
     }
 
@@ -563,18 +661,25 @@
      * Poll for notification count
      */
     function pollNotificationCount() {
-        if (isPolling) return;
+        if (notificationPollingDisabled || isPolling) return;
         
         isPolling = true;
 
         fetchNotificationCount()
             .finally(() => {
                 isPolling = false;
-                
+
                 // Schedule next poll with randomized interval
-                pollTimeout = setTimeout(pollNotificationCount, getRandomPollInterval());
+                scheduleNotificationPoll();
             });
     }
+
+    window.simpleChatNotifications = {
+        ...(window.simpleChatNotifications || {}),
+        stopPolling: disableNotificationPolling,
+        isPollingDisabled: () => notificationPollingDisabled,
+        refreshCount: fetchNotificationCount,
+    };
     
     /**
      * Format relative time
@@ -1094,9 +1199,7 @@
     
     // Clean up on page unload
     window.addEventListener('beforeunload', function() {
-        if (pollTimeout) {
-            clearTimeout(pollTimeout);
-        }
+        clearNotificationPollTimeout();
     });
     
 })();

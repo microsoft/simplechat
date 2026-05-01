@@ -1,5 +1,7 @@
 # route_frontend_authentication.py
 
+import os
+
 from unittest import result
 from config import *
 from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, get_requested_oauth_scopes
@@ -27,6 +29,25 @@ def build_front_door_urls(front_door_url):
     login_redirect_url = f"{base_url}/getAToken"
     
     return home_url, login_redirect_url
+
+
+def _use_app_service_easy_auth_logout():
+    """Return True when the current request is running behind App Service Easy Auth."""
+    if not os.getenv('WEBSITE_HOSTNAME'):
+        return False
+
+    easy_auth_headers = (
+        request.headers.get('X-MS-CLIENT-PRINCIPAL'),
+        request.headers.get('X-MS-CLIENT-PRINCIPAL-ID'),
+        request.headers.get('X-MS-CLIENT-PRINCIPAL-NAME'),
+    )
+    return any(easy_auth_headers) or bool(os.getenv('WEBSITE_AUTH_AAD_ALLOWED_TENANTS'))
+
+
+def _build_app_service_easy_auth_logout_url():
+    """Build the Easy Auth logout URL that resets the upstream session before re-entering Flask login."""
+    post_logout_redirect_uri = quote(url_for('login'), safe='')
+    return f"/.auth/logout?post_logout_redirect_uri={post_logout_redirect_uri}"
 
 def register_route_frontend_authentication(app):
     @app.route('/login')
@@ -228,6 +249,11 @@ def register_route_frontend_authentication(app):
         """
         session.clear()
 
+        if _use_app_service_easy_auth_logout():
+            logout_url = _build_app_service_easy_auth_logout_url()
+            debug_print(f"Redirecting local logout through App Service Easy Auth: {logout_url}")
+            return redirect(logout_url)
+
         from functions_settings import get_settings
         settings = get_settings() or {}
 
@@ -253,6 +279,12 @@ def register_route_frontend_authentication(app):
         user_email = session.get("user", {}).get("preferred_username") or session.get("user", {}).get("email")
         # Clear Flask session data
         session.clear()
+
+        if _use_app_service_easy_auth_logout():
+            logout_url = _build_app_service_easy_auth_logout_url()
+            debug_print(f"{user_name} logged out. Redirecting to App Service Easy Auth logout.")
+            return redirect(logout_url)
+
         # Redirect user to Azure AD logout endpoint
         # MSAL provides a helper for this too, but constructing manually is fine
         # Get settings from database, with environment variable fallback

@@ -6166,6 +6166,289 @@ def register_route_backend_chats(app):
             return 'Combining comparison findings across the selected documents'
         return 'Running exhaustive review across the selected documents'
 
+    def _build_document_action_hybrid_citations(execution_result):
+        review_result = execution_result.get('review_result') if isinstance(execution_result, dict) else {}
+        review_result = review_result if isinstance(review_result, dict) else {}
+        review_coverage = execution_result.get('review_coverage') if isinstance(execution_result, dict) else {}
+        review_coverage = review_coverage if isinstance(review_coverage, dict) else {}
+
+        document_summaries = review_result.get('documents') if isinstance(review_result.get('documents'), list) else []
+        if not document_summaries:
+            document_summaries = review_coverage.get('documents') if isinstance(review_coverage.get('documents'), list) else []
+
+        citations = []
+        seen_document_ids = set()
+        for index, document_summary in enumerate(document_summaries, start=1):
+            if not isinstance(document_summary, dict):
+                continue
+
+            document_id = str(document_summary.get('document_id') or '').strip()
+            dedupe_key = document_id or f'document-{index}'
+            if dedupe_key in seen_document_ids:
+                continue
+            seen_document_ids.add(dedupe_key)
+
+            file_name = str(
+                document_summary.get('file_name')
+                or document_summary.get('document_name')
+                or document_summary.get('title')
+                or 'Document'
+            ).strip() or 'Document'
+            role_label = str(document_summary.get('role_label') or '').strip().lower()
+            status_text = str(document_summary.get('status_text') or document_summary.get('status') or 'Completed').strip()
+            processed_windows = int(document_summary.get('processed_windows') or 0)
+            total_windows = int(document_summary.get('total_windows') or 0)
+            failed_windows = int(document_summary.get('failed_windows') or 0)
+            processed_chunks = int(document_summary.get('processed_chunks') or 0)
+            total_chunks = int(document_summary.get('total_chunks') or 0)
+            failed_chunks = int(document_summary.get('failed_chunks') or 0)
+            total_pages = int(document_summary.get('total_pages') or 0)
+            failed_ranges = [
+                str(range_label).strip()
+                for range_label in (document_summary.get('failed_ranges') or [])
+                if str(range_label).strip()
+            ]
+
+            metadata_lines = []
+            if role_label:
+                metadata_lines.append(f"Role: {role_label.title()} document")
+            if status_text:
+                metadata_lines.append(f"Status: {status_text}")
+            metadata_lines.append(f"Windows reviewed: {processed_windows}/{total_windows}")
+            if total_chunks or processed_chunks or failed_chunks:
+                metadata_lines.append(f"Chunks completed: {processed_chunks}/{total_chunks}")
+            if failed_windows:
+                metadata_lines.append(f"Failed windows: {failed_windows}")
+            if failed_chunks:
+                metadata_lines.append(f"Failed chunks: {failed_chunks}")
+            if total_pages:
+                metadata_lines.append(f"Pages covered: {total_pages}")
+            if failed_ranges:
+                metadata_lines.append(f"Failed ranges: {', '.join(failed_ranges)}")
+
+            citations.append({
+                'file_name': file_name,
+                'document_id': document_id,
+                'citation_id': f'{dedupe_key}_coverage',
+                'page_number': 'Metadata',
+                'chunk_id': f'{dedupe_key}_coverage',
+                'chunk_sequence': 10000 - index,
+                'score': 0.0,
+                'group_id': document_summary.get('scope_id') if document_summary.get('scope') == 'group' else None,
+                'public_workspace_id': document_summary.get('scope_id') if document_summary.get('scope') == 'public' else None,
+                'version': document_summary.get('version'),
+                'classification': document_summary.get('classification'),
+                'metadata_type': 'document_comparison_summary' if role_label else 'document_review_summary',
+                'metadata_content': '\n'.join(metadata_lines),
+                'location_label': 'Coverage',
+                'location_value': 'Document summary',
+            })
+
+        return citations
+
+    def _resolve_document_action_selected_documents(document_ids, document_scope, max_documents=5):
+        resolved_documents = []
+
+        for document_id in (document_ids or [])[:max_documents]:
+            normalized_document_id = str(document_id or '').strip()
+            if not normalized_document_id or normalized_document_id == 'all':
+                continue
+
+            resolved_document = {
+                'id': normalized_document_id,
+                'display_name': normalized_document_id,
+                'file_name': None,
+                'group_id': None,
+                'public_workspace_id': None,
+            }
+
+            try:
+                doc_query = (
+                    'SELECT TOP 1 c.file_name, c.title, c.group_id, c.public_workspace_id '
+                    'FROM c WHERE c.id = @doc_id '
+                    'ORDER BY c.version DESC'
+                )
+                doc_params = [{'name': '@doc_id', 'value': normalized_document_id}]
+
+                for source_hint, cosmos_container in get_document_containers_for_scope(document_scope):
+                    doc_results = list(cosmos_container.query_items(
+                        query=doc_query,
+                        parameters=doc_params,
+                        enable_cross_partition_query=True,
+                    ))
+                    if not doc_results:
+                        continue
+
+                    doc_info = doc_results[0]
+                    display_name = str(
+                        doc_info.get('title') or doc_info.get('file_name') or normalized_document_id
+                    ).strip() or normalized_document_id
+                    resolved_document = {
+                        'id': normalized_document_id,
+                        'display_name': display_name,
+                        'file_name': doc_info.get('file_name'),
+                        'group_id': doc_info.get('group_id'),
+                        'public_workspace_id': doc_info.get('public_workspace_id'),
+                        'source_hint': source_hint,
+                    }
+                    break
+            except Exception as exc:
+                debug_print(
+                    '[ChatDocumentAction] Failed to resolve selected document metadata | '
+                    f'document_id={normalized_document_id} | '
+                    f'error={exc}'
+                )
+
+            resolved_documents.append(resolved_document)
+
+        return resolved_documents
+
+    def _summarize_document_action_document_names(document_names, total_count):
+        cleaned_names = [
+            str(document_name).strip()
+            for document_name in (document_names or [])
+            if str(document_name).strip()
+        ]
+        if not cleaned_names:
+            if total_count == 1:
+                return '1 selected document'
+            return f'{total_count} selected documents'
+
+        preview_names = cleaned_names[:3]
+        summary = ', '.join(preview_names)
+        if total_count > len(preview_names):
+            summary = f'{summary} (+{total_count - len(preview_names)} more)'
+        return summary
+
+    def _build_document_action_user_metadata(
+        data,
+        user_id,
+        conversation_id,
+        current_thread_id,
+        previous_thread_id,
+        normalized_action,
+        request_agent_info,
+        streaming_enabled=False,
+    ):
+        timestamp = datetime.utcnow().isoformat()
+        selected_document_ids = normalized_action.get('document_ids', [])
+        document_scope = normalized_action.get('doc_scope', 'all')
+        active_group_ids = normalized_action.get('active_group_ids', [])
+        active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
+        resolved_documents = _resolve_document_action_selected_documents(selected_document_ids, document_scope)
+        resolved_documents_by_id = {
+            document.get('id'): document
+            for document in resolved_documents
+            if document.get('id')
+        }
+        resolved_document_names = [
+            document.get('display_name')
+            for document in resolved_documents
+            if document.get('display_name')
+        ]
+
+        selected_document_summary = _summarize_document_action_document_names(
+            resolved_document_names,
+            len(selected_document_ids),
+        )
+        if normalized_action.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON:
+            left_document_id = str(normalized_action.get('left_document_id') or '').strip()
+            left_document_name = resolved_documents_by_id.get(left_document_id, {}).get('display_name') or left_document_id or 'Selected left document'
+            right_document_ids = normalized_action.get('right_document_ids', [])
+            right_document_names = [
+                resolved_documents_by_id.get(document_id, {}).get('display_name') or str(document_id).strip()
+                for document_id in right_document_ids
+                if str(document_id).strip()
+            ]
+            right_document_summary = _summarize_document_action_document_names(
+                right_document_names,
+                len(right_document_ids),
+            )
+            selected_document_summary = f'Left: {left_document_name} | Right: {right_document_summary}'
+
+        current_user = get_current_user_info()
+        user_info = {
+            'user_id': user_id,
+            'timestamp': timestamp,
+        }
+        if current_user:
+            user_info.update({
+                'username': current_user.get('userPrincipalName'),
+                'display_name': current_user.get('displayName'),
+                'email': current_user.get('email'),
+            })
+
+        workspace_search = {
+            'search_enabled': False,
+            'document_scope': document_scope,
+            'selected_document_id': selected_document_ids[0] if len(selected_document_ids) == 1 else None,
+            'document_name': selected_document_summary,
+            'selected_document_count': len(selected_document_ids),
+            'selected_document_names': resolved_document_names,
+        }
+
+        if document_scope == 'group' and active_group_ids:
+            group_doc = find_group_by_id(active_group_ids[0])
+            workspace_search['group_name'] = group_doc.get('name') if group_doc else None
+        if document_scope == 'public' and active_public_workspace_ids:
+            workspace_search['active_public_workspace_id'] = active_public_workspace_ids[0]
+
+        selected_model = str(data.get('model_deployment') or data.get('model_id') or '').strip()
+        user_metadata = {
+            'user_info': user_info,
+            'thread_info': {
+                'thread_id': current_thread_id,
+                'previous_thread_id': previous_thread_id,
+                'active_thread': True,
+                'thread_attempt': 1,
+            },
+            'button_states': {
+                'image_generation': False,
+                'document_search': False,
+                'web_search': False,
+            },
+            'workspace_search': workspace_search,
+            'model_selection': {
+                'selected_model': selected_model,
+                'frontend_requested_model': selected_model,
+                'model_id': data.get('model_id'),
+                'model_endpoint_id': data.get('model_endpoint_id'),
+                'model_provider': data.get('model_provider'),
+                'reasoning_effort': data.get('reasoning_effort') if data.get('reasoning_effort') not in (None, '', 'none') else None,
+                'streaming': bool(streaming_enabled),
+            },
+            'chat_context': {
+                'conversation_id': conversation_id,
+                'chat_type': 'group' if document_scope == 'group' else 'public' if document_scope == 'public' else 'personal',
+            },
+            'exhaustive_review': {
+                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                'document_ids': selected_document_ids,
+                'doc_scope': document_scope,
+                'active_group_ids': active_group_ids,
+                'active_public_workspace_id': active_public_workspace_ids,
+            },
+            'document_action': normalized_action,
+        }
+
+        if user_metadata['chat_context']['chat_type'] == 'group' and workspace_search.get('group_name'):
+            user_metadata['chat_context']['group_name'] = workspace_search.get('group_name')
+        if user_metadata['chat_context']['chat_type'] == 'public' and active_public_workspace_ids:
+            user_metadata['chat_context']['workspace_context'] = active_public_workspace_ids[0]
+
+        if request_agent_info:
+            user_metadata['agent_selection'] = {
+                'selected_agent': request_agent_info.get('name'),
+                'agent_display_name': request_agent_info.get('display_name'),
+                'is_global': request_agent_info.get('is_global', False),
+                'is_group': request_agent_info.get('is_group', False),
+                'group_id': request_agent_info.get('group_id'),
+                'group_name': request_agent_info.get('group_name'),
+                'agent_id': request_agent_info.get('id'),
+            }
+
+        return user_metadata
+
     def _build_document_action_stream_activity_callback(publish_background_event, assistant_message_id):
         if not callable(publish_background_event) or not assistant_message_id:
             return None, None
@@ -6336,31 +6619,16 @@ def register_route_backend_chats(app):
         previous_thread_id = _get_latest_chat_thread_id(conversation_id)
         current_thread_id = str(uuid.uuid4())
         user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
-        user_metadata = {
-            'user_info': {
-                'user_id': user_id,
-            },
-            'thread_info': {
-                'thread_id': current_thread_id,
-                'previous_thread_id': previous_thread_id,
-                'active_thread': True,
-                'thread_attempt': 1,
-            },
-            'model_selection': {
-                'selected_model': data.get('model_deployment'),
-                'model_id': data.get('model_id'),
-                'model_endpoint_id': data.get('model_endpoint_id'),
-                'model_provider': data.get('model_provider'),
-            },
-            'exhaustive_review': {
-                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
-                'document_ids': normalized_action.get('document_ids', []),
-                'doc_scope': normalized_action.get('doc_scope'),
-                'active_group_ids': normalized_action.get('active_group_ids'),
-                'active_public_workspace_id': normalized_action.get('active_public_workspace_id'),
-            },
-            'document_action': normalized_action,
-        }
+        user_metadata = _build_document_action_user_metadata(
+            data=data,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            current_thread_id=current_thread_id,
+            previous_thread_id=previous_thread_id,
+            normalized_action=normalized_action,
+            request_agent_info=request_agent_info,
+            streaming_enabled=callable(publish_background_event),
+        )
         user_message_doc = make_json_serializable({
             'id': user_message_id,
             'conversation_id': conversation_id,
@@ -6372,7 +6640,7 @@ def register_route_backend_chats(app):
         })
         cosmos_messages_container.upsert_item(user_message_doc)
 
-        assistant_message_id, _, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
+        assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             current_user_thread_id=current_thread_id,
@@ -6436,8 +6704,8 @@ def register_route_backend_chats(app):
                 workflow_like,
                 settings,
                 conversation_id=conversation_id,
-                run_id=None,
-                thought_tracker=None,
+                run_id=assistant_message_id,
+                thought_tracker=thought_tracker,
                 external_activity_callback=stream_activity_callback,
             )
         except Exception as exc:
@@ -6462,6 +6730,7 @@ def register_route_backend_chats(app):
             return {'error': str(exc), 'conversation_id': conversation_id, 'user_message_id': user_message_id}, 500
 
         assistant_timestamp = datetime.utcnow().isoformat()
+        hybrid_citations_list = _build_document_action_hybrid_citations(execution_result)
         prepared_agent_citations = persist_agent_citation_artifacts(
             conversation_id=conversation_id,
             assistant_message_id=assistant_message_id,
@@ -6477,7 +6746,7 @@ def register_route_backend_chats(app):
             'content': execution_result.get('reply', ''),
             'timestamp': assistant_timestamp,
             'augmented': False,
-            'hybrid_citations': [],
+            'hybrid_citations': hybrid_citations_list,
             'web_search_citations': [],
             'hybridsearch_query': None,
             'agent_citations': prepared_agent_citations,
@@ -6500,6 +6769,9 @@ def register_route_backend_chats(app):
             },
         })
         cosmos_messages_container.upsert_item(assistant_doc)
+
+        if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
+            conversation_item['title'] = (user_message[:30] + '...') if len(user_message) > 30 else user_message
 
         conversation_item['last_updated'] = datetime.utcnow().isoformat()
         conversation_item['chat_type'] = data.get('chat_type') or conversation_item.get('chat_type') or 'new'
@@ -6556,12 +6828,12 @@ def register_route_backend_chats(app):
             'user_message_id': user_message_id,
             'blocked': False,
             'augmented': False,
-            'hybrid_citations': [],
+            'hybrid_citations': hybrid_citations_list,
             'web_search_citations': [],
             'agent_citations': prepared_agent_citations,
             'reload_messages': False,
             'kernel_fallback_notice': None,
-            'thoughts_enabled': False,
+            'thoughts_enabled': thought_tracker.enabled,
             'review_coverage': execution_result.get('review_coverage') or {},
             'document_action': normalized_action,
         }), 200

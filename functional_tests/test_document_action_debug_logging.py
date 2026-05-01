@@ -2,8 +2,8 @@
 # test_document_action_debug_logging.py
 """
 Functional test for document action debug logging.
-Version: 0.241.091
-Implemented in: 0.241.091
+Version: 0.241.095
+Implemented in: 0.241.095
 
 This test ensures exhaustive review and document comparison flows emit
 debug_print instrumentation for start, progress, failure, and completion in
@@ -60,7 +60,7 @@ def test_document_action_debug_logging_markers() -> None:
     assert_contains(CHAT_ROUTE_FILE, "[ChatDocumentAction] Execution failed | ")
     assert_contains(CHAT_ROUTE_FILE, "[ChatDocumentAction] Execution completed | ")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.091"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.241.095"')
 
     print("✅ Document action debug logging markers verified")
 

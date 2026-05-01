@@ -2,7 +2,7 @@
 # test_document_action_stream_reconnect.py
 """
 Functional test for document action stream reconnect support.
-Version: 0.241.091
+Version: 0.241.095
 Implemented in: 0.241.090
 
 This test ensures exhaustive review and document comparison streaming
@@ -50,8 +50,8 @@ def test_document_action_stream_reconnect_wiring() -> None:
         "@app.route('/api/chat', methods=['POST'])",
     )
 
-    assert 'VERSION = "0.241.091"' in config_content, (
-        "Expected config.py version 0.241.091 for the document action reconnect fix."
+    assert 'VERSION = "0.241.095"' in config_content, (
+        "Expected config.py version 0.241.095 for the document action reconnect fix."
     )
     assert "@app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream status endpoint to exist for reconnect support."
