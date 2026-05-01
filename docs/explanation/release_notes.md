@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.007)**
+
+#### Bug Fixes
+
+*   **Global Agent Scope Gate Fallback**
+    *   Fixed per-user Semantic Kernel chats so selecting a global agent no longer silently falls back to the standard GPT model when personal agents are disabled for the tenant.
+    *   The per-user loader now treats global, personal, and group agent scopes separately, allowing valid global-agent selections to continue through agent invocation while keeping personal and group scope toggles enforced as configured.
+    *   Added regression coverage for the shared scope gate used by the per-user loader.
+    *   (Ref: `semantic_kernel_loader.py`, `functions_agent_scope.py`, `test_global_agent_scope_gate.py`, global agent request routing)
+
 ### **(v0.241.006)**
 
 #### Bug Fixes

@@ -47,7 +47,7 @@ from functions_personal_agents import get_personal_agents, ensure_migration_comp
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
-from functions_agent_scope import find_agent_by_scope
+from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
 import app_settings_cache
 
 # Agent and Azure OpenAI chat service imports
@@ -1897,24 +1897,34 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
 
     # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
     selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}
+    selected_agent_is_global = selected_agent_data.get('is_global', False)
     selected_agent_is_group = selected_agent_data.get('is_group', False)
     selected_agent_group_id = selected_agent_data.get('group_id')
     conversation_group_id = getattr(g, "conversation_group_id", None)
     allow_user_agents = settings.get('allow_user_agents', False)
     allow_group_agents = settings.get('allow_group_agents', False)
 
-    if selected_agent_is_group and not allow_group_agents:
-        log_event(
-            "[SK Loader] Group agents are disabled; skipping group agent load.",
-            level=logging.WARNING
-        )
-        load_core_plugins_only(kernel, settings)
-        return kernel, None
-    if not selected_agent_is_group and not allow_user_agents:
-        log_event(
-            "[SK Loader] User agents are disabled; skipping personal agent load.",
-            level=logging.WARNING
-        )
+    if not is_selected_agent_scope_enabled(settings, selected_agent_data):
+        if selected_agent_is_group:
+            log_event(
+                "[SK Loader] Group agents are disabled; skipping group agent load.",
+                level=logging.WARNING,
+                extra={
+                    'agent_name': selected_agent_data.get('name'),
+                    'allow_group_agents': allow_group_agents,
+                    'is_global': selected_agent_is_global,
+                }
+            )
+        else:
+            log_event(
+                "[SK Loader] User agents are disabled; skipping personal agent load.",
+                level=logging.WARNING,
+                extra={
+                    'agent_name': selected_agent_data.get('name'),
+                    'allow_user_agents': allow_user_agents,
+                    'is_global': selected_agent_is_global,
+                }
+            )
         load_core_plugins_only(kernel, settings)
         return kernel, None
 
