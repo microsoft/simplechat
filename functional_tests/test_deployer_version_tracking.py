@@ -2,7 +2,7 @@
 # test_deployer_version_tracking.py
 """
 Functional test for deployer version tracking.
-Version: 0.241.089
+Version: 0.241.091
 Implemented in: 0.241.083
 
 This test ensures the deployers folder includes a standalone version marker
@@ -38,8 +38,8 @@ def test_deployer_version_tracking() -> bool:
     feature_index_content = read_workspace_file("docs/explanation/features/index.md")
     claude_content = read_workspace_file("CLAUDE.md")
 
-    assert 'VERSION = "0.241.089"' in config_content, (
-        "Expected config.py version 0.241.089 for the deployer version tracking feature follow-up."
+    assert 'VERSION = "0.241.091"' in config_content, (
+        "Expected config.py version 0.241.091 for the deployer version tracking feature follow-up."
     )
     assert deployer_version == "1.0.0", "Expected deployers/version.txt to start at deployer version 1.0.0"
     assert re.fullmatch(r"\d+\.\d+\.\d+", deployer_version), (

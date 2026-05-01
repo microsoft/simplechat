@@ -2,7 +2,7 @@
 # test_workspace_document_selection_controls.py
 """
 Functional test for workspace document selection controls.
-Version: 0.241.089
+Version: 0.241.091
 Implemented in: 0.241.087
 
 This test ensures personal and group workspaces expose select-all controls in
@@ -30,8 +30,8 @@ def test_workspace_document_selection_controls_wiring() -> None:
     workspace_tags_js = read_text("application/single_app/static/js/workspace/workspace-tags.js")
     group_template = read_text("application/single_app/templates/group_workspaces.html")
 
-    assert 'VERSION = "0.241.089"' in config_content, (
-        "Expected config.py version 0.241.089 for the workspace document selection controls update."
+    assert 'VERSION = "0.241.091"' in config_content, (
+        "Expected config.py version 0.241.091 for the workspace document selection controls update."
     )
 
     assert 'id="docs-select-all-checkbox"' in workspace_template, (

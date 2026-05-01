@@ -171,6 +171,18 @@ def run_document_comparison(
     if not left_document_id or not right_document_ids:
         raise ValueError('Document comparison requires one left document and at least one right document.')
 
+    debug_print(
+        '[DocumentComparison] Starting comparison | '
+        f'user_id={user_id} | '
+        f'left_document_id={left_document_id} | '
+        f'right_count={len(right_document_ids)} | '
+        f"doc_scope={action_config.get('doc_scope')} | "
+        f"window_unit={action_config.get('window_unit')} | "
+        f"window_size={action_config.get('window_size')} | "
+        f"window_percent={action_config.get('window_percent')} | "
+        f'prompt_chars={len(normalized_prompt)}'
+    )
+
     coverage = {
         'document_count': 0,
         'total_windows': 0,
@@ -195,6 +207,12 @@ def run_document_comparison(
     for document_index, document_id in enumerate(document_order, start=1):
         document_state = document_states[document_id]
         role_label = document_state.get('role_label', 'right')
+        debug_print(
+            '[DocumentComparison] Starting summary pass | '
+            f'document_index={document_index} | '
+            f'document_id={document_id} | '
+            f'role={role_label}'
+        )
         document_state['status'] = 'running'
         document_state['status_text'] = f"Preparing {role_label}-side document {document_index} of {len(document_order)}"
         _refresh_comparison_coverage(coverage, document_order, document_states)
@@ -239,11 +257,26 @@ def run_document_comparison(
         document_state['active_window_number'] = None
         document_state['active_attempt_number'] = None
         _refresh_comparison_coverage(coverage, document_order, document_states)
+        debug_print(
+            '[DocumentComparison] Completed summary pass | '
+            f'document_index={document_index} | '
+            f'document_id={document_id} | '
+            f"document_name={document_state.get('document_name')} | "
+            f"processed_windows={document_state.get('processed_windows', 0)} | "
+            f"failed_windows={document_state.get('failed_windows', 0)}"
+        )
 
     left_document_name = document_states[left_document_id].get('document_name') or left_document_id
     comparison_items = []
     for comparison_index, right_document_id in enumerate(right_document_ids, start=1):
         right_document_name = document_states[right_document_id].get('document_name') or right_document_id
+        debug_print(
+            '[DocumentComparison] Starting pairwise comparison | '
+            f'comparison_index={comparison_index}/{len(right_document_ids)} | '
+            f'left_document_id={left_document_id} | '
+            f'right_document_id={right_document_id} | '
+            f'right_document_name={right_document_name}'
+        )
         if callable(activity_callback):
             activity_callback({
                 'type': 'comparison_started',
@@ -273,6 +306,13 @@ def run_document_comparison(
             },
         ) or '').strip()
         if not pairwise_text:
+            debug_print(
+                '[DocumentComparison] Pairwise comparison failed | '
+                f'comparison_index={comparison_index}/{len(right_document_ids)} | '
+                f'left_document_id={left_document_id} | '
+                f'right_document_id={right_document_id} | '
+                'error=empty comparison response'
+            )
             raise RuntimeError(
                 f'Document comparison returned an empty response for {left_document_name} and {right_document_name}.'
             )
@@ -282,6 +322,12 @@ def run_document_comparison(
             'right_document_name': right_document_name,
             'text': pairwise_text,
         })
+        debug_print(
+            '[DocumentComparison] Completed pairwise comparison | '
+            f'comparison_index={comparison_index}/{len(right_document_ids)} | '
+            f'left_document_id={left_document_id} | '
+            f'right_document_id={right_document_id}'
+        )
         if callable(activity_callback):
             activity_callback({
                 'type': 'comparison_completed',
@@ -297,6 +343,11 @@ def run_document_comparison(
     if len(comparison_items) == 1:
         final_reply = comparison_items[0].get('text', '').strip()
     else:
+        debug_print(
+            '[DocumentComparison] Starting comparison reduction | '
+            f'left_document_id={left_document_id} | '
+            f'comparison_count={len(comparison_items)}'
+        )
         if callable(activity_callback):
             activity_callback({
                 'type': 'comparison_reduction_started',
@@ -318,7 +369,16 @@ def run_document_comparison(
             },
         ) or '').strip()
         if not final_reply:
+            debug_print(
+                '[DocumentComparison] Comparison reduction failed | '
+                f'left_document_id={left_document_id} | error=empty reduction response'
+            )
             raise RuntimeError('Document comparison reduction returned an empty response.')
+        debug_print(
+            '[DocumentComparison] Completed comparison reduction | '
+            f'left_document_id={left_document_id} | '
+            f'comparison_count={len(comparison_items)}'
+        )
 
     coverage_summary = _format_comparison_coverage_summary(
         coverage,

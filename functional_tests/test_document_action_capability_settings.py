@@ -2,7 +2,7 @@
 # test_document_action_capability_settings.py
 """
 Functional test for document action capability settings.
-Version: 0.241.089
+Version: 0.241.091
 Implemented in: 0.241.084
 
 This test ensures admin settings can enable or disable exhaustive review and
@@ -37,8 +37,8 @@ def test_document_action_capability_settings_wiring() -> None:
     workflow_template_content = read_text("application/single_app/templates/workspace.html")
     workflow_js_content = read_text("application/single_app/static/js/workspace/workspace_workflows.js")
 
-    assert 'VERSION = "0.241.089"' in config_content, (
-        "Expected config.py version 0.241.089 for document action capability settings."
+    assert 'VERSION = "0.241.091"' in config_content, (
+        "Expected config.py version 0.241.091 for document action capability settings."
     )
     assert 'DEFAULT_DOCUMENT_ACTION_CAPABILITIES' in document_actions_content, (
         "Expected shared document action helpers to define default capability settings."

@@ -415,6 +415,18 @@ def run_exhaustive_document_review(
         max_value=8,
     )
 
+    debug_print(
+        '[ExhaustiveReview] Starting review | '
+        f'user_id={user_id} | '
+        f"documents={len(targets.get('document_ids', []))} | "
+        f"doc_scope={targets.get('doc_scope')} | "
+        f"window_unit={targets.get('window_unit')} | "
+        f"window_size={targets.get('window_size')} | "
+        f"window_percent={targets.get('window_percent')} | "
+        f"max_retries={targets.get('max_retries_per_window')} | "
+        f'prompt_chars={len(normalized_review_prompt)}'
+    )
+
     coverage = {
         'document_count': 0,
         'total_windows': 0,
@@ -495,6 +507,16 @@ def run_exhaustive_document_review(
         document_summary = document_run.get('document_summary') or {}
         windows = document_run.get('windows') or []
         document_index = document_run.get('document_index') or 1
+        debug_print(
+            '[ExhaustiveReview] Starting document | '
+            f'document_index={document_index} | '
+            f"document_count={coverage.get('document_count', 0)} | "
+            f'document_id={document_id} | '
+            f'document_name={document_name} | '
+            f"windows={len(windows)} | "
+            f"chunks={document_summary.get('total_chunks', 0)} | "
+            f"pages={document_summary.get('total_pages', 0)}"
+        )
         document_summary['status'] = 'running'
         document_summary['status_text'] = f"Starting document {document_index} of {coverage.get('document_count', 0)}"
         if callable(activity_callback):
@@ -514,6 +536,14 @@ def run_exhaustive_document_review(
             window_range = _serialize_window_range(window_payload)
             document_summary['ranges'].append(window_range)
             window_label = _build_window_label(document_name, window_range)
+            debug_print(
+                '[ExhaustiveReview] Starting window | '
+                f'document_id={document_id} | '
+                f'document_name={document_name} | '
+                f"window={window_range.get('window_number')} | "
+                f"chunk_count={window_range.get('chunk_count', 0)} | "
+                f"page_range={window_range.get('page_start')}:{window_range.get('page_end')}"
+            )
             document_summary['active_window_number'] = window_range.get('window_number')
             document_summary['active_attempt_number'] = 1
             document_summary['status_text'] = (
@@ -558,6 +588,15 @@ def run_exhaustive_document_review(
                     break
                 except Exception as exc:
                     last_error = str(exc)
+                    debug_print(
+                        '[ExhaustiveReview] Window attempt failed | '
+                        f'document_id={document_id} | '
+                        f'document_name={document_name} | '
+                        f"window={window_range.get('window_number')} | "
+                        f'attempt={attempt_number}/{max_attempts} | '
+                        f'will_retry={attempt_number < max_attempts} | '
+                        f'error={last_error}'
+                    )
                     document_summary['active_window_number'] = window_range.get('window_number')
                     document_summary['active_attempt_number'] = attempt_number
                     document_summary['status_text'] = (
@@ -579,6 +618,13 @@ def run_exhaustive_document_review(
                         break
 
             if review_text:
+                debug_print(
+                    '[ExhaustiveReview] Completed window | '
+                    f'document_id={document_id} | '
+                    f'document_name={document_name} | '
+                    f"window={window_range.get('window_number')} | "
+                    f"chunk_count={window_range.get('chunk_count', 0)}"
+                )
                 coverage['processed_windows'] += 1
                 coverage['processed_chunks'] += window_range.get('chunk_count', 0) or 0
                 document_summary['processed_windows'] += 1
@@ -603,6 +649,13 @@ def run_exhaustive_document_review(
                         'progress': _build_progress_snapshot(coverage),
                     })
             else:
+                debug_print(
+                    '[ExhaustiveReview] Window failed | '
+                    f'document_id={document_id} | '
+                    f'document_name={document_name} | '
+                    f"window={window_range.get('window_number')} | "
+                    f'error={last_error or "unknown"}'
+                )
                 coverage['failed_windows'] += 1
                 coverage['failed_chunks'] += window_range.get('chunk_count', 0) or 0
                 document_summary['failed_windows'] += 1
@@ -633,8 +686,22 @@ def run_exhaustive_document_review(
                 'failed_chunks': document_summary.get('failed_chunks', 0),
                 'progress': _build_progress_snapshot(coverage),
             })
+        debug_print(
+            '[ExhaustiveReview] Completed document | '
+            f'document_index={document_index} | '
+            f'document_id={document_id} | '
+            f'document_name={document_name} | '
+            f"processed_windows={document_summary.get('processed_windows', 0)} | "
+            f"failed_windows={document_summary.get('failed_windows', 0)} | "
+            f"processed_chunks={document_summary.get('processed_chunks', 0)} | "
+            f"failed_chunks={document_summary.get('failed_chunks', 0)}"
+        )
 
     if not reduction_items:
+        debug_print(
+            '[ExhaustiveReview] Review failed | '
+            f'user_id={user_id} | error=No document windows were reviewed successfully'
+        )
         raise RuntimeError('No document windows were reviewed successfully.')
 
     current_items = reduction_items
@@ -643,6 +710,12 @@ def run_exhaustive_document_review(
         next_items = []
         batches = _build_reduction_batches(current_items, reduction_batch_size)
         for batch_index, batch_items in enumerate(batches, start=1):
+            debug_print(
+                '[ExhaustiveReview] Starting reduction batch | '
+                f'round={reduction_round} | '
+                f'batch={batch_index}/{len(batches)} | '
+                f'items={len(batch_items)}'
+            )
             reduction_prompt = _build_reduction_prompt(
                 normalized_review_prompt,
                 batch_items,
@@ -659,11 +732,22 @@ def run_exhaustive_document_review(
                 },
             ) or '').strip()
             if not reduced_text:
+                debug_print(
+                    '[ExhaustiveReview] Reduction failed | '
+                    f'round={reduction_round} | '
+                    f'batch={batch_index} | error=empty reduction response'
+                )
                 raise RuntimeError(
                     f'Exhaustive review reduction returned an empty response at round {reduction_round}, batch {batch_index}.'
                 )
 
             source_labels = [item.get('label') for item in batch_items]
+            debug_print(
+                '[ExhaustiveReview] Completed reduction batch | '
+                f'round={reduction_round} | '
+                f'batch={batch_index}/{len(batches)} | '
+                f'sources={len(source_labels)}'
+            )
             next_items.append({
                 'label': f'Reduction {reduction_round}.{batch_index}',
                 'text': reduced_text,

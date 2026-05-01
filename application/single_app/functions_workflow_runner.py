@@ -51,6 +51,7 @@ from functions_document_actions import (
     get_enabled_document_action_types,
 )
 from functions_document_comparison import run_document_comparison
+from functions_debug import debug_print
 from functions_exhaustive_document_review import run_exhaustive_document_review
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
@@ -1772,6 +1773,15 @@ def _execute_exhaustive_review_workflow(
     )
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
+    debug_print(
+        '[WorkflowExhaustiveReview] Starting workflow action | '
+        f"workflow_id={workflow.get('id')} | "
+        f'run_id={run_id} | '
+        f"runner_type={workflow.get('runner_type')} | "
+        f'conversation_id={conversation_id} | '
+        f"documents={len(review_config.get('document_ids') or [])} | "
+        f'max_documents={workflow_review_max_documents}'
+    )
 
     if workflow.get('runner_type') == 'agent':
         with _ensure_execution_context(user_id):
@@ -1895,6 +1905,15 @@ def _execute_exhaustive_review_workflow(
         activity_callback=activity_callback,
         max_documents=workflow_review_max_documents,
     )
+    debug_print(
+        '[WorkflowExhaustiveReview] Completed workflow action | '
+        f"workflow_id={workflow.get('id')} | "
+        f'run_id={run_id} | '
+        f'provider={provider} | '
+        f'model={deployment_name} | '
+        f"processed_windows={(review_result.get('coverage') or {}).get('processed_windows', 0)} | "
+        f"failed_windows={(review_result.get('coverage') or {}).get('failed_windows', 0)}"
+    )
     return {
         'reply': review_result.get('reply', ''),
         'review_result': review_result,
@@ -1923,6 +1942,15 @@ def _execute_document_comparison_workflow(
     )
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
+    debug_print(
+        '[WorkflowDocumentComparison] Starting workflow action | '
+        f"workflow_id={workflow.get('id')} | "
+        f'run_id={run_id} | '
+        f"runner_type={workflow.get('runner_type')} | "
+        f'conversation_id={conversation_id} | '
+        f"left_document_id={comparison_config.get('left_document_id')} | "
+        f"right_count={len(comparison_config.get('right_document_ids') or [])}"
+    )
 
     if workflow.get('runner_type') == 'agent':
         with _ensure_execution_context(user_id):
@@ -2030,6 +2058,15 @@ def _execute_document_comparison_workflow(
         invoke_prompt=invoke_model_prompt,
         activity_callback=activity_callback,
     )
+    debug_print(
+        '[WorkflowDocumentComparison] Completed workflow action | '
+        f"workflow_id={workflow.get('id')} | "
+        f'run_id={run_id} | '
+        f'provider={provider} | '
+        f'model={deployment_name} | '
+        f"processed_windows={(comparison_result.get('coverage') or {}).get('processed_windows', 0)} | "
+        f"failed_windows={(comparison_result.get('coverage') or {}).get('failed_windows', 0)}"
+    )
     return {
         'reply': comparison_result.get('reply', ''),
         'review_result': comparison_result,
@@ -2048,27 +2085,61 @@ def _execute_document_action_workflow(
     external_activity_callback=None,
 ):
     action_config = _get_document_action_config(workflow)
-    if action_config.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
-        return _execute_exhaustive_review_workflow(
-            workflow,
-            settings,
-            conversation_id=conversation_id,
-            run_id=run_id,
-            thought_tracker=thought_tracker,
-            external_activity_callback=external_activity_callback,
-            action_config=action_config,
+    action_type = action_config.get('type')
+    debug_print(
+        '[WorkflowDocumentAction] Dispatching action | '
+        f"workflow_id={workflow.get('id')} | "
+        f'run_id={run_id} | '
+        f'action_type={action_type} | '
+        f"runner_type={workflow.get('runner_type')} | "
+        f'conversation_id={conversation_id}'
+    )
+
+    try:
+        if action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
+            result = _execute_exhaustive_review_workflow(
+                workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                external_activity_callback=external_activity_callback,
+                action_config=action_config,
+            )
+        elif action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+            result = _execute_document_comparison_workflow(
+                workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                external_activity_callback=external_activity_callback,
+                action_config=action_config,
+            )
+        else:
+            raise ValueError('No document action is enabled for this workflow.')
+    except Exception as exc:
+        debug_print(
+            '[WorkflowDocumentAction] Action failed | '
+            f"workflow_id={workflow.get('id')} | "
+            f'run_id={run_id} | '
+            f'action_type={action_type} | '
+            f"runner_type={workflow.get('runner_type')} | "
+            f'error={exc}'
         )
-    if action_config.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON:
-        return _execute_document_comparison_workflow(
-            workflow,
-            settings,
-            conversation_id=conversation_id,
-            run_id=run_id,
-            thought_tracker=thought_tracker,
-            external_activity_callback=external_activity_callback,
-            action_config=action_config,
-        )
-    raise ValueError('No document action is enabled for this workflow.')
+        raise
+
+    debug_print(
+        '[WorkflowDocumentAction] Action completed | '
+        f"workflow_id={workflow.get('id')} | "
+        f'run_id={run_id} | '
+        f'action_type={action_type} | '
+        f"provider={result.get('provider')} | "
+        f"model={result.get('model_deployment_name')} | "
+        f"processed_windows={(result.get('review_coverage') or {}).get('processed_windows', 0)} | "
+        f"failed_windows={(result.get('review_coverage') or {}).get('failed_windows', 0)}"
+    )
+    return result
 
 
 def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None, thought_tracker=None):

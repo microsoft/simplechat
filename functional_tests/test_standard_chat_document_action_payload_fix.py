@@ -2,7 +2,7 @@
 # test_standard_chat_document_action_payload_fix.py
 """
 Functional test for standard chat document action payload fix.
-Version: 0.241.089
+Version: 0.241.091
 Implemented in: 0.241.075
 
 This test ensures standard chat omits disabled document-action payload fields
@@ -27,8 +27,8 @@ def test_standard_chat_omits_disabled_document_action_payloads():
     chat_messages_content = read_text("application/single_app/static/js/chat/chat-messages.js")
     feature_doc_content = read_text("docs/explanation/features/v0.241.072/DOCUMENT_ACTIONS_AND_COMPARISON.md")
 
-    assert 'VERSION = "0.241.089"' in config_content, (
-        "Expected config.py version 0.241.089 for the search-documents label update."
+    assert 'VERSION = "0.241.091"' in config_content, (
+        "Expected config.py version 0.241.091 for the search-documents label update."
     )
     assert '`Search Documents` keeps the normal prompt flow while searching the selected documents for relevant context.' in feature_doc_content, (
         "Expected the document actions feature doc to describe the renamed default search behavior."

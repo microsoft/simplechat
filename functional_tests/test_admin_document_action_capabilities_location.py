@@ -2,7 +2,7 @@
 # test_admin_document_action_capabilities_location.py
 """
 Functional test for admin document action capabilities placement.
-Version: 0.241.089
+Version: 0.241.091
 Implemented in: 0.241.089
 
 This test ensures the Document Action Capabilities card is rendered at the
@@ -27,8 +27,8 @@ def test_admin_document_action_capabilities_card_location() -> None:
     config_content = read_text("application/single_app/config.py")
     template_content = read_text("application/single_app/templates/admin_settings.html")
 
-    assert 'VERSION = "0.241.089"' in config_content, (
-        "Expected config.py version 0.241.089 for the admin document action capabilities placement update."
+    assert 'VERSION = "0.241.091"' in config_content, (
+        "Expected config.py version 0.241.091 for the admin document action capabilities placement update."
     )
     assert template_content.count('id="document-action-capabilities-card"') == 1, (
         "Expected exactly one document action capabilities card in the admin settings template."

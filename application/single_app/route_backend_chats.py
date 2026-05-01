@@ -6269,6 +6269,14 @@ def register_route_backend_chats(app):
             selected_document_ids = [selected_document_id]
 
         requested_action = data.get('document_action') if isinstance(data.get('document_action'), dict) else {}
+        debug_print(
+            '[ChatDocumentAction] Received request | '
+            f'user_id={user_id} | '
+            f'conversation_id={conversation_id or "new"} | '
+            f'forced_action_type={forced_action_type or "none"} | '
+            f'requested_action_type={requested_action.get("type") or "none"} | '
+            f'selected_document_count={len(selected_document_ids)}'
+        )
         if forced_action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW and not requested_action:
             requested_action = {
                 'type': DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
@@ -6289,6 +6297,12 @@ def register_route_backend_chats(app):
                 allowed_action_types=get_enabled_document_action_types(settings=settings),
             )
         except ValueError as exc:
+            debug_print(
+                '[ChatDocumentAction] Validation failed | '
+                f'user_id={user_id} | '
+                f'conversation_id={conversation_id or "new"} | '
+                f'error={exc}'
+            )
             return {'error': str(exc)}, 400
         if normalized_action.get('type') == DOCUMENT_ACTION_TYPE_NONE:
             return {'error': 'Select a document action before sending this request.'}, 400
@@ -6299,6 +6313,17 @@ def register_route_backend_chats(app):
         active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
         request_agent_info = data.get('agent_info') if isinstance(data.get('agent_info'), dict) else {}
         runner_type = 'agent' if request_agent_info else 'model'
+        debug_print(
+            '[ChatDocumentAction] Normalized action | '
+            f'user_id={user_id} | '
+            f'conversation_id={conversation_id or "new"} | '
+            f'action_type={normalized_action.get("type")} | '
+            f'doc_scope={document_scope} | '
+            f'documents={len(selected_document_ids)} | '
+            f'group_ids={len(active_group_ids)} | '
+            f'public_workspace_ids={len(active_public_workspace_ids)} | '
+            f'runner_type={runner_type}'
+        )
 
         try:
             conversation_item = _load_or_create_exhaustive_review_conversation(user_id, conversation_id=conversation_id)
@@ -6399,6 +6424,14 @@ def register_route_backend_chats(app):
         }
 
         try:
+            debug_print(
+                '[ChatDocumentAction] Executing action | '
+                f'user_id={user_id} | '
+                f'conversation_id={conversation_id} | '
+                f'action_type={normalized_action.get("type")} | '
+                f'runner_type={runner_type} | '
+                f'assistant_message_id={assistant_message_id}'
+            )
             execution_result = _execute_document_action_workflow(
                 workflow_like,
                 settings,
@@ -6408,6 +6441,14 @@ def register_route_backend_chats(app):
                 external_activity_callback=stream_activity_callback,
             )
         except Exception as exc:
+            debug_print(
+                '[ChatDocumentAction] Execution failed | '
+                f'user_id={user_id} | '
+                f'conversation_id={conversation_id} | '
+                f'action_type={normalized_action.get("type")} | '
+                f'runner_type={runner_type} | '
+                f'error={exc}'
+            )
             log_event(
                 f'[ChatExhaustiveReview] Exhaustive chat review failed: {exc}',
                 extra={
@@ -6487,6 +6528,17 @@ def register_route_backend_chats(app):
             debug_print(f'[ChatExhaustiveReview] Conversation metadata update failed: {exc}')
 
         cosmos_conversations_container.upsert_item(conversation_item)
+        debug_print(
+            '[ChatDocumentAction] Execution completed | '
+            f'user_id={user_id} | '
+            f'conversation_id={conversation_id} | '
+            f'action_type={normalized_action.get("type")} | '
+            f'runner_type={runner_type} | '
+            f'assistant_message_id={assistant_message_id} | '
+            f"model={execution_result.get('model_deployment_name')} | "
+            f"processed_windows={(execution_result.get('review_coverage') or {}).get('processed_windows', 0)} | "
+            f"failed_windows={(execution_result.get('review_coverage') or {}).get('failed_windows', 0)}"
+        )
 
         return make_json_serializable({
             'reply': execution_result.get('reply', ''),
@@ -6534,6 +6586,10 @@ def register_route_backend_chats(app):
     @login_required
     @user_required
     def chat_document_action_stream_api():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
         data = request.get_json() or {}
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
@@ -6542,6 +6598,7 @@ def register_route_backend_chats(app):
             conversation_id = str(uuid.uuid4())
         data['conversation_id'] = conversation_id
         g.conversation_id = conversation_id
+        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)
 
         def generate_document_action_response(publish_background_event=None):
             try:
@@ -6558,7 +6615,7 @@ def register_route_backend_chats(app):
             except Exception as document_action_error:
                 yield f"data: {json.dumps({'error': str(document_action_error), 'conversation_id': conversation_id})}\n\n"
 
-        return build_background_stream_response(generate_document_action_response)
+        return build_background_stream_response(generate_document_action_response, stream_session=stream_session)
 
     @app.route('/api/chat/exhaustive-review', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -6573,6 +6630,10 @@ def register_route_backend_chats(app):
     @login_required
     @user_required
     def chat_exhaustive_review_stream_api():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
         data = request.get_json() or {}
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
@@ -6581,6 +6642,7 @@ def register_route_backend_chats(app):
             conversation_id = str(uuid.uuid4())
         data['conversation_id'] = conversation_id
         g.conversation_id = conversation_id
+        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)
 
         def generate_exhaustive_review_response(publish_background_event=None):
             try:
@@ -6597,7 +6659,7 @@ def register_route_backend_chats(app):
             except Exception as exhaustive_error:
                 yield f"data: {json.dumps({'error': str(exhaustive_error), 'conversation_id': conversation_id})}\n\n"
 
-        return build_background_stream_response(generate_exhaustive_review_response)
+        return build_background_stream_response(generate_exhaustive_review_response, stream_session=stream_session)
 
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())

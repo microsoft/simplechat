@@ -2,7 +2,7 @@
 # test_chat_document_action_select_all_toggle.py
 """
 Functional test for chat document action select-all toggle.
-Version: 0.241.089
+Version: 0.241.091
 Implemented in: 0.241.085
 
 This test ensures the chat document picker switches its top action from
@@ -28,8 +28,8 @@ def test_chat_document_action_select_all_toggle_wiring() -> None:
     chat_messages_content = read_text("application/single_app/static/js/chat/chat-messages.js")
     chat_template_content = read_text("application/single_app/templates/chats.html")
 
-    assert 'VERSION = "0.241.089"' in config_content, (
-        "Expected config.py version 0.241.089 for the chat document select-all toggle update."
+    assert 'VERSION = "0.241.091"' in config_content, (
+        "Expected config.py version 0.241.091 for the chat document select-all toggle update."
     )
     assert 'const documentActionSelect = document.getElementById("document-action-select");' in chat_documents_content, (
         "Expected the chat document picker to inspect the current document action selection."

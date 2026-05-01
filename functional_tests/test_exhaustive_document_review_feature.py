@@ -1,7 +1,7 @@
 # test_exhaustive_document_review_feature.py
 """
 Functional test for exhaustive document review.
-Version: 0.241.089
+Version: 0.241.091
 Implemented in: 0.241.069
 
 This test ensures workflows and chat share the deterministic exhaustive
@@ -31,8 +31,8 @@ def test_exhaustive_document_review_feature_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md")
 
-    assert 'VERSION = "0.241.089"' in config_content, (
-        "Expected config.py version 0.241.089 for exhaustive document review wiring checks."
+    assert 'VERSION = "0.241.091"' in config_content, (
+        "Expected config.py version 0.241.091 for exhaustive document review wiring checks."
     )
     assert 'def normalize_exhaustive_review_targets(' in review_service_content, (
         "Expected functions_exhaustive_document_review.py to normalize structured review targets."
