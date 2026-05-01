@@ -160,8 +160,10 @@ export async function toggleScopeLock(conversationId, newState) {
 
   updateHeaderLockIcon();
 
-  // Reload docs for the new scope
-  loadAllDocs().then(() => { loadTagsForScope(); });
+  // Reload scope-dependent UI and notify listeners like the agent picker.
+  runScopeRefreshPipeline('scope-lock').catch(error => {
+    console.error('Failed to refresh scope-dependent UI after toggling scope lock:', error);
+  });
 }
 
 /**
@@ -1703,6 +1705,11 @@ export function handleDocumentSelectChange() {
 
   // Sync button text from current hidden select state
   syncDropdownButtonText();
+  window.dispatchEvent(new CustomEvent('chat:document-selection-changed', {
+    detail: {
+      documentIds: Array.from(docSelectEl.selectedOptions).map(option => option.value).filter(Boolean),
+    },
+  }));
 }
 
 

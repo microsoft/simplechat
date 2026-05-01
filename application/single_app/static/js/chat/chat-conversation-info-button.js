@@ -36,7 +36,7 @@ export function toggleConversationInfoButton(hasActiveConversation) {
   const infoButton = document.getElementById('conversation-info-btn');
   
   if (infoButton) {
-    infoButton.style.display = hasActiveConversation ? 'inline-block' : 'none';
+    infoButton.classList.toggle('d-none', !hasActiveConversation);
   }
 }
 
@@ -52,4 +52,35 @@ export function showConversationInfoButton() {
  */
 export function hideConversationInfoButton() {
   toggleConversationInfoButton(false);
+}
+
+function buildWorkflowActivityUrl(conversationId, workflowId) {
+  if (!conversationId) {
+    return '';
+  }
+
+  const url = new URL('/workflow-activity', window.location.origin);
+  url.searchParams.set('conversationId', conversationId);
+  if (workflowId) {
+    url.searchParams.set('workflowId', workflowId);
+  }
+  return url.toString();
+}
+
+export function updateWorkflowActivityButton(conversationId, metadata = {}) {
+  const activityButton = document.getElementById('workflow-activity-btn');
+  if (!activityButton) {
+    return;
+  }
+
+  const workflowId = String(metadata.workflow_id || '').trim();
+  const isWorkflowConversation = String(metadata.chat_type || '').trim().toLowerCase() === 'workflow' || Boolean(workflowId);
+  const activityUrl = isWorkflowConversation ? buildWorkflowActivityUrl(conversationId, workflowId) : '';
+
+  activityButton.classList.toggle('d-none', !activityUrl);
+  activityButton.href = activityUrl || '#';
+}
+
+export function hideWorkflowActivityButton() {
+  updateWorkflowActivityButton('', {});
 }

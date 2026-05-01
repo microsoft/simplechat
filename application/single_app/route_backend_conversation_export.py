@@ -3,6 +3,7 @@
 import io
 import json
 import markdown2
+import os
 import re
 import tempfile
 import zipfile
@@ -17,6 +18,17 @@ from flask import jsonify, make_response, request
 from functions_appinsights import log_event
 from functions_authentication import *
 from functions_chat import sort_messages_by_thread
+from functions_chart_export import (
+    decode_base64_image_data_uri,
+    replace_inline_chart_blocks_with_export_html,
+)
+from functions_collaboration import (
+    assert_user_can_view_collaboration_conversation,
+    get_accessible_collaboration_message_thoughts,
+    get_collaboration_conversation,
+    is_collaboration_conversation,
+    list_collaboration_messages,
+)
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
 from functions_message_artifacts import (
@@ -84,29 +96,43 @@ def register_route_backend_conversation_export(app):
             settings = get_settings()
             exported = []
             for conv_id in conversation_ids:
+                conversation = None
+                messages = []
                 try:
                     conversation = cosmos_conversations_container.read_item(
                         item=conv_id,
                         partition_key=conv_id
                     )
+                    if conversation.get('user_id') != user_id:
+                        debug_print(f"Export: user {user_id} does not own conversation {conv_id}")
+                        continue
+
+                    message_query = """
+                        SELECT * FROM c
+                        WHERE c.conversation_id = @conversation_id
+                        ORDER BY c.timestamp ASC
+                    """
+                    messages = list(cosmos_messages_container.query_items(
+                        query=message_query,
+                        parameters=[{'name': '@conversation_id', 'value': conv_id}],
+                        partition_key=conv_id
+                    ))
                 except Exception:
-                    debug_print(f"Export: conversation {conv_id} not found or access denied")
-                    continue
-
-                if conversation.get('user_id') != user_id:
-                    debug_print(f"Export: user {user_id} does not own conversation {conv_id}")
-                    continue
-
-                message_query = """
-                    SELECT * FROM c
-                    WHERE c.conversation_id = @conversation_id
-                    ORDER BY c.timestamp ASC
-                """
-                messages = list(cosmos_messages_container.query_items(
-                    query=message_query,
-                    parameters=[{'name': '@conversation_id', 'value': conv_id}],
-                    partition_key=conv_id
-                ))
+                    try:
+                        conversation = get_collaboration_conversation(conv_id)
+                        access_context = assert_user_can_view_collaboration_conversation(
+                            user_id,
+                            conversation,
+                            allow_pending=True,
+                        )
+                        user_state = access_context.get('user_state') or {}
+                        conversation = dict(conversation)
+                        conversation['is_pinned'] = bool(user_state.get('is_pinned', False))
+                        conversation['is_hidden'] = bool(user_state.get('is_hidden', False))
+                        messages = list_collaboration_messages(conv_id)
+                    except Exception:
+                        debug_print(f"Export: conversation {conv_id} not found or access denied")
+                        continue
 
                 exported.append(
                     _build_export_entry(
@@ -254,7 +280,7 @@ def _build_export_entry(
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
     ordered_messages = sort_messages_by_thread(filtered_messages)
 
-    raw_thoughts = get_thoughts_for_conversation(conversation.get('id'), user_id)
+    raw_thoughts = [] if is_collaboration_conversation(conversation) else get_thoughts_for_conversation(conversation.get('id'), user_id)
     thoughts_by_message = defaultdict(list)
     for thought in raw_thoughts:
         thoughts_by_message[thought.get('message_id')].append(_sanitize_thought(thought))
@@ -275,6 +301,13 @@ def _build_export_entry(
             message_transcript_index = transcript_index
 
         thoughts = thoughts_by_message.get(message.get('id'), [])
+        if not thoughts and is_collaboration_conversation(conversation):
+            collaboration_thoughts = get_accessible_collaboration_message_thoughts(
+                conversation,
+                message,
+                user_id,
+            )
+            thoughts = [_sanitize_thought(thought) for thought in collaboration_thoughts]
         exported_message = _sanitize_message(
             message,
             sequence_index=sequence_index,
@@ -349,7 +382,7 @@ def _sanitize_conversation(
     return {
         'id': conversation.get('id'),
         'title': conversation.get('title', 'Untitled'),
-        'last_updated': conversation.get('last_updated', ''),
+        'last_updated': conversation.get('last_updated') or conversation.get('updated_at', ''),
         'chat_type': conversation.get('chat_type', 'personal'),
         'tags': conversation.get('tags', []),
         'context': conversation.get('context', []),
@@ -745,8 +778,15 @@ def generate_conversation_summary(
     # Persist to Cosmos when a conversation_id is available
     if conversation_id:
         try:
-            update_conversation_with_metadata(conversation_id, {'summary': summary_data})
-            debug_print(f"Summary persisted to conversation {conversation_id}")
+            summary_persisted = update_conversation_with_metadata(conversation_id, {'summary': summary_data})
+            if summary_persisted:
+                debug_print(f"Summary persisted to conversation {conversation_id}")
+            else:
+                debug_print(f"Summary was generated but not persisted for conversation {conversation_id}")
+                log_event(
+                    f"Conversation summary persistence returned false for {conversation_id}",
+                    level='WARNING'
+                )
         except Exception as persist_exc:
             debug_print(f"Failed to persist summary to Cosmos: {persist_exc}")
             log_event(f"Failed to persist conversation summary: {persist_exc}", level="WARNING")
@@ -1013,7 +1053,11 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
             if message.get('timestamp'):
                 lines.append(f"*{message.get('timestamp')}*")
             lines.append('')
-            lines.append(message.get('content_text') or '_No content recorded._')
+            lines.append(
+                replace_inline_chart_blocks_with_export_html(
+                    message.get('content_text') or '_No content recorded._'
+                )
+            )
             lines.append('')
 
     lines.append('## Appendix A — Conversation Metadata')
@@ -1082,7 +1126,11 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
             if message.get('timestamp'):
                 lines.append(f"*{message.get('timestamp')}*")
             lines.append('')
-            lines.append(message.get('content_text') or '_No content recorded._')
+            lines.append(
+                replace_inline_chart_blocks_with_export_html(
+                    message.get('content_text') or '_No content recorded._'
+                )
+            )
             lines.append('')
 
     return '\n'.join(lines).strip()
@@ -1351,7 +1399,9 @@ def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
 
     doc.add_paragraph('')
 
-    content = _normalize_content(message.get('content', ''))
+    content = replace_inline_chart_blocks_with_export_html(
+        _normalize_content(message.get('content', ''))
+    )
     if content:
         _add_markdown_content_to_doc(doc, content)
     else:
@@ -2000,6 +2050,14 @@ def _append_inline_html_runs(paragraph, node: Any, formatting: Optional[Dict[str
         return
 
     if tag_name == 'img':
+        image_bytes = decode_base64_image_data_uri(node.get('src'))
+        if image_bytes:
+            try:
+                paragraph.add_run().add_picture(io.BytesIO(image_bytes), width=Inches(6.0))
+                return
+            except Exception:
+                pass
+
         alt_text = node.get('alt') or 'Image'
         run = paragraph.add_run(f'[{alt_text}]')
         _apply_run_formatting(run, formatting)
@@ -2173,6 +2231,25 @@ small {
     font-size: 8pt;
     color: #666;
 }
+.export-inline-chart {
+    background-color: #fafafa;
+    border: 1px solid #ddd;
+    padding: 8pt;
+    margin-top: 6pt;
+    margin-bottom: 10pt;
+}
+.export-inline-chart img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+.export-inline-chart-caption {
+    font-size: 8pt;
+    color: #666;
+    text-align: center;
+    margin-top: 4pt;
+}
 a {
     color: #0066cc;
 }
@@ -2226,7 +2303,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
     if summary_intro.get('enabled') and summary_intro.get('generated') and summary_intro.get('content'):
         parts.append('<h2>Abstract</h2>')
         abstract_html = markdown2.markdown(
-            summary_intro.get('content', ''),
+            replace_inline_chart_blocks_with_export_html(summary_intro.get('content', '')),
             extras=['fenced-code-blocks', 'tables']
         )
         parts.append(f'<div class="abstract">{abstract_html}</div>')
@@ -2268,7 +2345,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
                 f'{_escape_html(speaker)}</b>{ts_str}</p>'
             )
             content_html = markdown2.markdown(
-                content,
+                replace_inline_chart_blocks_with_export_html(content),
                 extras=['fenced-code-blocks', 'tables', 'break-on-newline']
             )
             parts.append(content_html)
@@ -2365,7 +2442,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
                 )
             content = message.get('content_text', '') or 'No content recorded.'
             content_html = markdown2.markdown(
-                content,
+                replace_inline_chart_blocks_with_export_html(content),
                 extras=['fenced-code-blocks', 'tables', 'break-on-newline']
             )
             parts.append(content_html)

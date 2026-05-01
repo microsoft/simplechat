@@ -16,6 +16,97 @@ from functions_debug import *
 logger = logging.getLogger(__name__)
 
 
+SEARCH_DEFAULT_TOP_N = 12
+SEARCH_MAX_TOP_N = 500
+VALID_SEARCH_SCOPES = {"all", "personal", "group", "public"}
+BASE_SEARCH_SELECT_FIELDS = [
+    "id",
+    "document_id",
+    "chunk_text",
+    "chunk_id",
+    "file_name",
+    "version",
+    "chunk_sequence",
+    "upload_date",
+    "document_classification",
+    "document_tags",
+    "page_number",
+    "author",
+    "chunk_keywords",
+    "title",
+    "chunk_summary",
+]
+SEARCH_SELECT_FIELDS_BY_SCOPE = {
+    "personal": BASE_SEARCH_SELECT_FIELDS + ["user_id"],
+    "group": BASE_SEARCH_SELECT_FIELDS + ["group_id"],
+    "public": BASE_SEARCH_SELECT_FIELDS + ["public_workspace_id"],
+}
+
+
+def normalize_search_top_n(top_n, default_top_n=SEARCH_DEFAULT_TOP_N, max_top_n=SEARCH_MAX_TOP_N):
+    """Return a bounded integer top-N value for search-style operations."""
+    try:
+        normalized_top_n = int(top_n)
+    except (TypeError, ValueError):
+        return default_top_n
+
+    if normalized_top_n < 1:
+        return default_top_n
+
+    return min(normalized_top_n, max_top_n)
+
+
+def normalize_search_scope(doc_scope, default_scope="all"):
+    """Normalize search scope values to the supported set."""
+    normalized_scope = str(doc_scope or default_scope).strip().lower()
+    if normalized_scope not in VALID_SEARCH_SCOPES:
+        return default_scope
+    return normalized_scope
+
+
+def normalize_search_id_list(raw_ids):
+    """Normalize an optional list or comma-separated string of ids."""
+    if raw_ids is None:
+        return []
+
+    if isinstance(raw_ids, str):
+        candidate_ids = [value.strip() for value in raw_ids.split(",") if value.strip()]
+    elif isinstance(raw_ids, list):
+        candidate_ids = [str(value).strip() for value in raw_ids if str(value).strip()]
+    else:
+        candidate_ids = [str(raw_ids).strip()] if str(raw_ids).strip() else []
+
+    normalized_ids = []
+    seen_ids = set()
+    for candidate_id in candidate_ids:
+        if candidate_id in seen_ids:
+            continue
+        seen_ids.add(candidate_id)
+        normalized_ids.append(candidate_id)
+
+    return normalized_ids
+
+
+def get_search_select_fields(scope_name):
+    return SEARCH_SELECT_FIELDS_BY_SCOPE.get(scope_name, SEARCH_SELECT_FIELDS_BY_SCOPE["personal"])
+
+
+def get_search_result_scope(result_item):
+    if result_item.get("public_workspace_id"):
+        return "public"
+    if result_item.get("group_id"):
+        return "group"
+    return "personal"
+
+
+def get_search_result_scope_id(result_item):
+    return (
+        result_item.get("public_workspace_id")
+        or result_item.get("group_id")
+        or result_item.get("user_id")
+    )
+
+
 def normalize_scores(results: List[Dict[str, Any]], index_name: str = "unknown") -> List[Dict[str, Any]]:
     """
     Normalize search scores to [0, 1] range using min-max normalization.
@@ -108,6 +199,10 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     This function uses document-set-aware caching to ensure consistent results
     across identical queries against the same document set.
     """
+
+    top_n = normalize_search_top_n(top_n)
+    doc_scope = normalize_search_scope(doc_scope)
+    document_ids = normalize_search_id_list(document_ids)
 
     # Backwards compat: wrap single group ID into list
     if not active_group_ids and active_group_id:
@@ -253,7 +348,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "user_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("personal")
             )
 
             # Only search group index if active_group_ids is provided
@@ -271,7 +366,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                     semantic_configuration_name="nexus-group-index-semantic-configuration",
                     query_caption="extractive",
                     query_answer="extractive",
-                    select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                    select=get_search_select_fields("group")
                 )
             else:
                 group_results = []
@@ -298,7 +393,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "public_workspace_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("public")
             )
         else:
             # Build user filter with optional tags
@@ -317,7 +412,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "user_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("personal")
             )
 
             # Only search group index if active_group_ids is provided
@@ -335,7 +430,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                     semantic_configuration_name="nexus-group-index-semantic-configuration",
                     query_caption="extractive",
                     query_answer="extractive",
-                    select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                    select=get_search_select_fields("group")
                 )
             else:
                 group_results = []
@@ -362,7 +457,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "public_workspace_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("public")
             )
 
         # Extract results from each index
@@ -412,7 +507,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "user_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("personal")
             )
             results = extract_search_results(user_results, top_n)
         else:
@@ -431,7 +526,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "user_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("personal")
             )
             results = extract_search_results(user_results, top_n)
 
@@ -452,7 +547,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-group-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("group")
             )
             results = extract_search_results(group_results, top_n)
         else:
@@ -469,7 +564,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-group-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("group")
             )
             results = extract_search_results(group_results, top_n)
     
@@ -497,7 +592,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "public_workspace_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("public")
             )
             results = extract_search_results(public_results, top_n)
         else:
@@ -523,7 +618,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "public_workspace_id", "version", "chunk_sequence", "upload_date", "document_classification", "document_tags", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                select=get_search_select_fields("public")
             )
             results = extract_search_results(public_results, top_n)
     
@@ -613,13 +708,18 @@ def extract_search_results(paged_results, top_n):
     for i, r in enumerate(paged_results):
         if i >= top_n:
             break
+        result_scope = get_search_result_scope(r)
         extracted.append({
             "id": r["id"],
+            "document_id": r.get("document_id"),
             "chunk_text": r["chunk_text"],
             "chunk_id": r["chunk_id"],
             "file_name": r["file_name"],
+            "user_id": r.get("user_id"),
             "group_id": r.get("group_id"),
             "public_workspace_id": r.get("public_workspace_id"),
+            "scope": result_scope,
+            "scope_id": get_search_result_scope_id(r),
             "version": r["version"],
             "chunk_sequence": r["chunk_sequence"],
             "upload_date": r["upload_date"],

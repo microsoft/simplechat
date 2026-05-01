@@ -165,6 +165,8 @@ azd provision --preview
 
 If your App Service is already configured to pull its image from Azure Container Registry and your goal is to avoid any infrastructure reprovisioning, you can use an image-only rollout.
 
+For the Azure CLI deployer specifically, the repo now includes `deployers/azurecli/upgrade-simplechat.ps1` for that path. It performs the code-only rollout in PowerShell by building the image in ACR and updating the existing App Service container configuration.
+
 The repo already contains an image publish workflow:
 
 - [.github/workflows/docker_image_publish.yml](../../.github/workflows/docker_image_publish.yml)

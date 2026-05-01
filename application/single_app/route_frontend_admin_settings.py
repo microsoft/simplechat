@@ -20,6 +20,7 @@ from support_menu_config import (
 )
 
 ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
+MAX_CUSTOM_LOGO_STORAGE_HEIGHT = 500
 
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
@@ -36,6 +37,32 @@ def open_allowed_uploaded_image(file_bytes, filename):
         )
 
     return img, detected_format
+
+def prepare_logo_image_for_storage(file_bytes, filename, max_height=MAX_CUSTOM_LOGO_STORAGE_HEIGHT):
+    img, detected_format = open_allowed_uploaded_image(file_bytes, filename)
+    original_size = img.size
+
+    if img.mode == 'P':
+        img = img.convert('RGBA')
+    elif img.mode != 'RGB' and img.mode != 'RGBA':
+        img = img.convert('RGB')
+
+    if max_height and img.height > max_height:
+        aspect_ratio = img.width / img.height
+        resized_width = max(1, int(round(aspect_ratio * max_height)))
+        img = img.resize((resized_width, max_height), Image.Resampling.LANCZOS)
+
+    img_bytes_io = BytesIO()
+    img.save(img_bytes_io, format='PNG', optimize=True)
+    png_data = img_bytes_io.getvalue()
+
+    return {
+        'detected_format': detected_format,
+        'original_size': original_size,
+        'stored_size': img.size,
+        'png_data': png_data,
+        'base64_str': base64.b64encode(png_data).decode('utf-8'),
+    }
 
 def register_route_frontend_admin_settings(app):
     @app.route('/admin/settings', methods=['GET', 'POST'])
@@ -229,6 +256,8 @@ def register_route_frontend_admin_settings(app):
             settings['allow_user_custom_endpoints'] = settings.get('allow_user_custom_agent_endpoints', False)
         if 'allow_user_plugins' not in settings:
             settings['allow_user_plugins'] = False
+        if 'allow_user_workflows' not in settings:
+            settings['allow_user_workflows'] = True
         if 'allow_group_agents' not in settings:
             settings['allow_group_agents'] = False
         if 'allow_group_custom_endpoints' not in settings:
@@ -436,6 +465,18 @@ def register_route_frontend_admin_settings(app):
 
             # --- Fetch all other form data as before ---
             app_title = form_data.get('app_title', 'AI Chat Application')
+            landing_page_logo_scale_percent = min(
+                500,
+                max(
+                    50,
+                    parse_admin_int(
+                        form_data.get('landing_page_logo_scale_percent'),
+                        settings.get('landing_page_logo_scale_percent', 100),
+                        'landing_page_logo_scale_percent',
+                        100
+                    )
+                )
+            )
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
             conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
             enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
@@ -1092,6 +1133,7 @@ def register_route_frontend_admin_settings(app):
                 'favicon_version': settings.get('favicon_version', 1),
                 'landing_page_text': form_data.get('landing_page_text', ''),
                 'landing_page_alignment': form_data.get('landing_page_alignment', 'left'),
+                'landing_page_logo_scale_percent': landing_page_logo_scale_percent,
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
                 'enable_left_nav_default': form_data.get('enable_left_nav_default') == 'on',
                 'release_notifications_registered': form_data.get('release_notifications_registered', 'false').lower() == 'true',
@@ -1392,64 +1434,22 @@ def register_route_frontend_admin_settings(app):
                         content=f"Logo file uploaded: {logo_file.filename}"
                     )
 
-                    # 3) Load into Pillow from the original bytes for processing
-                    img, detected_format = open_allowed_uploaded_image(file_bytes, logo_file.filename)
-                    
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Loaded image for processing: {logo_file.filename} (format: {detected_format})"
-                    )
-
-                    # Ensure image mode is compatible (e.g., convert palette modes)
-                    if img.mode == 'P':
-                        img = img.convert('RGBA')
-                    elif img.mode != 'RGB' and img.mode != 'RGBA':
-                         img = img.convert('RGB')
+                    processed_logo = prepare_logo_image_for_storage(file_bytes, logo_file.filename)
 
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Converted image mode for processing: {logo_file.filename} (mode: {img.mode})"
-                    )
-
-                    # 4) Resize to height=100
-                    w, h = img.size
-                    if h > 100:
-                        aspect = w / h
-                        new_height = 100
-                        new_width = int(aspect * new_height)
-                        # Use LANCZOS (previously ANTIALIAS) for resizing
-                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Resized image for processing: {logo_file.filename} (new size: {img.size})"
-                    )
-
-                    # 5) Convert to PNG in-memory
-                    img_bytes_io = BytesIO()
-                    img.save(img_bytes_io, format='PNG')
-                    png_data = img_bytes_io.getvalue()
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Converted image to PNG for processing: {logo_file.filename}"
-                    )
-
-                    # 6) Turn to base64
-                    base64_str = base64.b64encode(png_data).decode('utf-8')
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Converted image to base64 for processing: {base64_str}"
+                        content=(
+                            f"Prepared logo asset: {logo_file.filename} "
+                            f"(format: {processed_logo['detected_format']}, "
+                            f"original size: {processed_logo['original_size']}, "
+                            f"stored size: {processed_logo['stored_size']}, "
+                            f"png bytes: {len(processed_logo['png_data'])})"
+                        )
                     )
 
                     # ****** CHANGE HERE: Update only on success *****
-                    new_settings['custom_logo_base64'] = base64_str
+                    new_settings['custom_logo_base64'] = processed_logo['base64_str']
 
                     current_version = settings.get('logo_version', 1) # Get version from settings loaded at start
                     new_settings['logo_version'] = current_version + 1 # Increment
@@ -1474,64 +1474,22 @@ def register_route_frontend_admin_settings(app):
                         content=f"Dark mode logo file uploaded: {logo_dark_file.filename}"
                     )
 
-                    # 2) Load into Pillow from the original bytes for processing
-                    img, detected_format = open_allowed_uploaded_image(file_bytes, logo_dark_file.filename)
-                    
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename} (format: {detected_format})"
-                    )
-
-                    # 3) Ensure image mode is compatible (e.g., convert palette modes)
-                    if img.mode == 'P':
-                        img = img.convert('RGBA')
-                    elif img.mode != 'RGB' and img.mode != 'RGBA':
-                         img = img.convert('RGB')
+                    processed_dark_logo = prepare_logo_image_for_storage(file_bytes, logo_dark_file.filename)
 
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Converted dark mode logo image mode for processing: {logo_dark_file.filename} (mode: {img.mode})"
-                    )
-
-                    # 4) Resize to height=100
-                    w, h = img.size
-                    if h > 100:
-                        aspect = w / h
-                        new_height = 100
-                        new_width = int(aspect * new_height)
-                        # Use LANCZOS (previously ANTIALIAS) for resizing
-                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Resized dark mode logo image for processing: {logo_dark_file.filename} (new size: {img.size})"
-                    )
-
-                    # 5) Convert to PNG in-memory
-                    img_bytes_io = BytesIO()
-                    img.save(img_bytes_io, format='PNG')
-                    png_data = img_bytes_io.getvalue()
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Converted dark mode logo image to PNG for processing: {logo_dark_file.filename}"
-                    )
-
-                    # 6) Turn to base64
-                    base64_str = base64.b64encode(png_data).decode('utf-8')
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Converted dark mode logo image to base64 for processing: {base64_str}"
+                        content=(
+                            f"Prepared dark mode logo asset: {logo_dark_file.filename} "
+                            f"(format: {processed_dark_logo['detected_format']}, "
+                            f"original size: {processed_dark_logo['original_size']}, "
+                            f"stored size: {processed_dark_logo['stored_size']}, "
+                            f"png bytes: {len(processed_dark_logo['png_data'])})"
+                        )
                     )
 
                     # ****** CHANGE HERE: Update only on success *****
-                    new_settings['custom_logo_dark_base64'] = base64_str
+                    new_settings['custom_logo_dark_base64'] = processed_dark_logo['base64_str']
 
                     current_version = settings.get('logo_dark_version', 1) # Get version from settings loaded at start
                     new_settings['logo_dark_version'] = current_version + 1 # Increment

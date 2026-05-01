@@ -25,7 +25,8 @@ def ensure_default_global_agent_exists():
     If none exist, create a default global agent (using the researcher agent template).
     """
     try:
-        agents = get_global_agents() or []
+        agents = get_global_agents(include_disabled=True) or []
+        default_agent = None
         if not agents:
             default_agent = {
                 "name": "researcher",
@@ -42,6 +43,7 @@ def ensure_default_global_agent_exists():
                 "enable_agent_gpt_apim": False,
                 "is_global": True,
                 "is_group": False,
+                "is_enabled": True,
                 "agent_type": "local",
                 "instructions": (
                     "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\n"
@@ -70,14 +72,16 @@ def ensure_default_global_agent_exists():
 
         settings = get_settings()
         needs_default = False
+        enabled_agents = [agent for agent in agents if agent.get('is_enabled', True)]
         global_selected = settings.get("global_selected_agent") if settings else None
         if not isinstance(global_selected, dict):
             needs_default = True
         elif global_selected.get("name", "") == "":
             needs_default = True
         if settings and needs_default:
+            selected_agent = default_agent or (enabled_agents[0] if enabled_agents else agents[0])
             settings["global_selected_agent"] = {
-                "name": default_agent["name"],
+                "name": selected_agent["name"],
                 "is_global": True
             }
             save_settings(settings)
@@ -91,16 +95,23 @@ def ensure_default_global_agent_exists():
         print(f"Error ensuring default global agent exists: {e}")
         traceback.print_exc()
 
-def get_global_agents():
+def get_global_agents(include_disabled=False):
     """
     Get all global agents.
+
+    Args:
+        include_disabled (bool): When True, include disabled agents for admin management.
     
     Returns:
         list: List of global agent dictionaries
     """
     try:
+        query = "SELECT * FROM c"
+        if not include_disabled:
+            query = "SELECT * FROM c WHERE NOT IS_DEFINED(c.is_enabled) OR c.is_enabled = true"
+
         agents = list(cosmos_global_agents_container.query_items(
-            query="SELECT * FROM c",
+            query=query,
             enable_cross_partition_query=True
         ))
         # Mask or replace sensitive keys for UI display
@@ -110,6 +121,7 @@ def get_global_agents():
                 agent['max_completion_tokens'] = -1
             agent.setdefault('is_global', True)
             agent.setdefault('is_group', False)
+            agent.setdefault('is_enabled', True)
             agent.setdefault('agent_type', 'local')
             agent.setdefault('model_endpoint_id', '')
             agent.setdefault('model_id', '')
@@ -206,6 +218,12 @@ def save_global_agent(agent_data, user_id=None):
         else:
             cleaned_agent['created_by'] = user_id
             cleaned_agent['created_at'] = now
+        if 'is_enabled' in cleaned_agent:
+            cleaned_agent['is_enabled'] = bool(cleaned_agent.get('is_enabled'))
+        elif existing_agent is not None:
+            cleaned_agent['is_enabled'] = bool(existing_agent.get('is_enabled', True))
+        else:
+            cleaned_agent['is_enabled'] = True
         cleaned_agent['modified_by'] = user_id
         cleaned_agent['modified_at'] = now
         cleaned_agent['updated_at'] = now
@@ -281,3 +299,44 @@ def delete_global_agent(agent_id):
         print(f"Error deleting global agent {agent_id}: {str(e)}")
         traceback.print_exc()
         return False
+
+
+def update_global_agent_enabled(agent_id, is_enabled, user_id=None):
+    """
+    Enable or disable a global agent without rewriting stored secret references.
+
+    Args:
+        agent_id (str): The agent ID to update.
+        is_enabled (bool): The desired enabled state.
+        user_id (str, optional): The user performing the change.
+
+    Returns:
+        dict: Updated agent document or None if the operation fails.
+    """
+    try:
+        if user_id is None:
+            user_id = get_current_user_id()
+        if not user_id:
+            user_id = "system"
+
+        agent = cosmos_global_agents_container.read_item(
+            item=agent_id,
+            partition_key=agent_id
+        )
+        now = datetime.utcnow().isoformat()
+        agent['is_enabled'] = bool(is_enabled)
+        agent['modified_by'] = user_id
+        agent['modified_at'] = now
+        agent['updated_at'] = now
+        result = cosmos_global_agents_container.upsert_item(body=agent)
+        return result
+    except Exception as e:
+        log_event(
+            f"Error updating enabled state for global agent {agent_id}: {e}",
+            extra={"agent_id": agent_id, "exception": str(e), "is_enabled": bool(is_enabled)},
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        print(f"Error updating enabled state for global agent {agent_id}: {str(e)}")
+        traceback.print_exc()
+        return None

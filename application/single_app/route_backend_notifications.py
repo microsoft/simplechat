@@ -83,6 +83,30 @@ def register_route_backend_notifications(app):
                 'count': 0
             }), 500
 
+    @app.route("/api/notifications/workflow-alerts", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_get_workflow_alert_notifications():
+        """Get unread workflow alert notifications for the current user."""
+        try:
+            user_id = get_current_user_id()
+            limit = int(request.args.get('limit', 5))
+            if limit < 1 or limit > 10:
+                limit = 5
+
+            notifications = get_unread_workflow_priority_notifications(user_id, limit=limit)
+            return jsonify({
+                'success': True,
+                'notifications': notifications,
+            })
+        except Exception as e:
+            debug_print(f"Error fetching workflow alert notifications: {e}")
+            return jsonify({
+                'success': False,
+                'notifications': [],
+            }), 500
+
     @app.route("/api/notifications/<notification_id>/read", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required

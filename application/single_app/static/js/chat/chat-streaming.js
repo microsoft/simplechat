@@ -1,12 +1,17 @@
 // chat-streaming.js
-import { appendMessage, updateUserMessageId } from './chat-messages.js';
+import { appendMessage, renderAiMessageContent, updateUserMessageId } from './chat-messages.js';
 import { applyConversationMetadataUpdate, markConversationRead } from './chat-conversations.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { showToast } from './chat-toast.js';
 import { applyScopeLock } from './chat-documents.js';
 import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
+import { hydrateInlineCharts } from './chat-inline-charts.js';
 
 let currentStreamController = null;
+
+function normalizeLegacyEscapedSseDelimiters(chunk) {
+    return String(chunk || '').replace(/(\})\\n\\n(?=(?:data:|event:|id:|retry:|:|$))/g, '$1\n\n');
+}
 
 function parseSseEventPayload(eventBlock) {
     const dataLines = eventBlock
@@ -245,7 +250,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 if (done) {
                     stopThoughtPolling();
 
-                    sseBuffer += decoder.decode();
+                    sseBuffer += normalizeLegacyEscapedSseDelimiters(decoder.decode());
                     const processedFinalEvent = processSseBuffer(true);
 
                     if (!processedFinalEvent && !streamCompleted && !streamError) {
@@ -287,7 +292,9 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     return;
                 }
                 
-                sseBuffer += decoder.decode(value, { stream: true }).replace(/\r/g, '');
+                sseBuffer += normalizeLegacyEscapedSseDelimiters(
+                    decoder.decode(value, { stream: true }).replace(/\r/g, '')
+                );
 
                 if (processSseBuffer() || streamCompleted || streamError) {
                     return;
@@ -388,11 +395,12 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 }
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
+    const { endpoint = '/api/chat/stream' } = options;
     const tempAiMessageId = createStreamingPlaceholder('Streaming...');
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
     return consumeStreamingResponse(
-        signal => fetch('/api/chat/stream', {
+        signal => fetch(endpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -454,8 +462,9 @@ function updateStreamingMessage(messageId, content) {
     if (contentElement) {
         // Render markdown during streaming for proper formatting
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-            const renderedContent = DOMPurify.sanitize(marked.parse(content));
-            contentElement.innerHTML = renderedContent;
+            const renderedContent = renderAiMessageContent(content);
+            contentElement.innerHTML = renderedContent.htmlContent;
+            hydrateInlineCharts(messageElement);
         } else {
             contentElement.textContent = content;
         }
@@ -485,10 +494,11 @@ function handleStreamError(messageId, partialContent, errorMessage) {
         
         // Parse markdown for partial content
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-            finalContent = DOMPurify.sanitize(marked.parse(finalContent));
+            finalContent = renderAiMessageContent(finalContent).htmlContent;
         }
         
         contentElement.innerHTML = finalContent;
+        hydrateInlineCharts(messageElement);
         
         // Add error banner
         const errorBanner = document.createElement('div');
@@ -517,9 +527,28 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
     // Remove the temporary streaming message
     messageElement.remove();
 
+    const existingFinalMessage = finalData.message_id
+        ? document.querySelector(`[data-message-id="${finalData.message_id}"]`)
+        : null;
+
     if (finalData.kernel_fallback_notice) {
         showToast(finalData.kernel_fallback_notice, 'warning');
     }
+
+    if (existingFinalMessage) {
+        if (finalData.conversation_id) {
+            markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
+                console.warn('Failed to clear unread state after live streaming completion:', error);
+            });
+        }
+        return;
+    }
+
+    const finalMessageObject = {
+        ...finalData,
+        content: finalData.full_content || finalData.content || '',
+        role: finalData.role || 'assistant',
+    };
 
     if (finalData.image_url) {
         appendMessage(
@@ -533,7 +562,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
             finalData.agent_citations || [],
             finalData.agent_display_name || null,
             finalData.agent_name || null,
-            null,
+            finalMessageObject,
             true
         );
 
@@ -557,7 +586,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         finalData.agent_citations || [],
         finalData.agent_display_name || null,
         finalData.agent_name || null,
-        null,
+        finalMessageObject,
         true // isNewMessage - trigger autoplay for new streaming responses
     );
     

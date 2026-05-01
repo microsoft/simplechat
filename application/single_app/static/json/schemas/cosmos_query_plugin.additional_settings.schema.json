@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cosmos Query Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "database_name": {
+      "type": "string",
+      "description": "Azure Cosmos DB database name."
+    },
+    "container_name": {
+      "type": "string",
+      "description": "Azure Cosmos DB container name."
+    },
+    "partition_key_path": {
+      "type": "string",
+      "description": "Partition key path for the configured container, for example /tenantId or /id."
+    },
+    "field_hints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Optional field names or document properties the model should prefer when querying this container."
+    },
+    "max_items": {
+      "type": "integer",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Maximum number of items returned by a query."
+    },
+    "timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 120,
+      "description": "Absolute timeout in seconds for Cosmos client requests."
+    }
+  },
+  "required": ["database_name", "container_name", "partition_key_path"],
+  "additionalProperties": false
+}

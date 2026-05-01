@@ -1,7 +1,14 @@
 # route_backend_thoughts.py
 
 from flask import request, jsonify
+from config import CosmosResourceNotFoundError
 from functions_authentication import login_required, user_required, get_current_user_id
+from functions_collaboration import (
+    assert_user_can_view_collaboration_conversation,
+    get_accessible_collaboration_message_thoughts,
+    get_collaboration_conversation,
+    get_collaboration_message,
+)
 from functions_settings import get_settings
 from functions_thoughts import get_thoughts_for_message, get_pending_thoughts
 from swagger_wrapper import swagger_route, get_auth_security
@@ -26,6 +33,23 @@ def register_route_backend_thoughts(app):
 
         try:
             thoughts = get_thoughts_for_message(conversation_id, message_id, user_id)
+            if not thoughts:
+                try:
+                    message_doc = get_collaboration_message(message_id)
+                    if str(message_doc.get('conversation_id') or '') == str(conversation_id or ''):
+                        collaboration_conversation = get_collaboration_conversation(conversation_id)
+                        assert_user_can_view_collaboration_conversation(
+                            user_id,
+                            collaboration_conversation,
+                            allow_pending=True,
+                        )
+                        thoughts = get_accessible_collaboration_message_thoughts(
+                            collaboration_conversation,
+                            message_doc,
+                            user_id,
+                        )
+                except CosmosResourceNotFoundError:
+                    thoughts = thoughts or []
             # Strip internal Cosmos fields before returning
             sanitized = []
             for t in thoughts:
@@ -36,10 +60,14 @@ def register_route_backend_thoughts(app):
                     'step_type': t.get('step_type'),
                     'content': t.get('content'),
                     'detail': t.get('detail'),
+                    'activity': t.get('activity'),
+                    'progress': t.get('progress'),
                     'duration_ms': t.get('duration_ms'),
                     'timestamp': t.get('timestamp')
                 })
             return jsonify({'thoughts': sanitized, 'enabled': True}), 200
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
         except Exception as e:
             log_event(f"api_get_message_thoughts error: {e}", level="WARNING")
             return jsonify({'error': 'Failed to retrieve thoughts'}), 500
@@ -63,6 +91,17 @@ def register_route_backend_thoughts(app):
             return jsonify({'thoughts': [], 'enabled': False}), 200
 
         try:
+            try:
+                collaboration_conversation = get_collaboration_conversation(conversation_id)
+                assert_user_can_view_collaboration_conversation(
+                    user_id,
+                    collaboration_conversation,
+                    allow_pending=True,
+                )
+                return jsonify({'thoughts': [], 'enabled': True}), 200
+            except CosmosResourceNotFoundError:
+                pass
+
             message_id = request.args.get('message_id')
             thoughts = get_pending_thoughts(conversation_id, user_id, message_id=message_id)
             sanitized = []
@@ -74,10 +113,14 @@ def register_route_backend_thoughts(app):
                     'step_type': t.get('step_type'),
                     'content': t.get('content'),
                     'detail': t.get('detail'),
+                    'activity': t.get('activity'),
+                    'progress': t.get('progress'),
                     'duration_ms': t.get('duration_ms'),
                     'timestamp': t.get('timestamp')
                 })
             return jsonify({'thoughts': sanitized, 'enabled': True}), 200
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
         except Exception as e:
             log_event(f"api_get_pending_thoughts error: {e}", level="WARNING")
             return jsonify({'error': 'Failed to retrieve pending thoughts'}), 500

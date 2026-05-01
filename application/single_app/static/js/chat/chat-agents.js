@@ -6,7 +6,7 @@ import {
     setUserSetting
 } from '../agents_common.js';
 import { createSearchableSingleSelect } from './chat-searchable-select.js';
-import { getEffectiveScopes, setEffectiveScopes } from './chat-documents.js';
+import { getEffectiveScopes, isScopeLocked, setEffectiveScopes } from './chat-documents.js';
 import { getConversationFilteringContext } from './chat-conversation-scope.js';
 
 const enableAgentsBtn = document.getElementById("enable-agents-btn");
@@ -99,16 +99,20 @@ function getAgentOptionLabel(agent, duplicateCounts) {
     return `${displayName} (${agent.name || agent.id || 'agent'})`;
 }
 
+function shouldUseConversationScopeGuard(filteringContext) {
+    return !filteringContext.isNewConversation && isScopeLocked() !== false;
+}
+
 function isAgentEnabledForContext(agent, scopes, filteringContext) {
-    if (!filteringContext.isNewConversation && filteringContext.conversationScope === 'group') {
+    if (shouldUseConversationScopeGuard(filteringContext) && filteringContext.conversationScope === 'group') {
         return agent.is_global || String(agent.group_id || '') === String(filteringContext.groupId || '');
     }
 
-    if (!filteringContext.isNewConversation && filteringContext.conversationScope === 'public') {
+    if (shouldUseConversationScopeGuard(filteringContext) && filteringContext.conversationScope === 'public') {
         return agent.is_global;
     }
 
-    if (!filteringContext.isNewConversation && filteringContext.conversationScope === 'personal') {
+    if (shouldUseConversationScopeGuard(filteringContext) && filteringContext.conversationScope === 'personal') {
         return !agent.is_group;
     }
 
@@ -202,7 +206,7 @@ function rebuildAgentOptions(sections, selectedAgentObj, filteringContext) {
 
     agentSelect.innerHTML = '';
 
-    const hideUnavailableOptions = !filteringContext.isNewConversation;
+    const hideUnavailableOptions = shouldUseConversationScopeGuard(filteringContext);
     const renderedSections = sections
         .map(section => ({
             ...section,

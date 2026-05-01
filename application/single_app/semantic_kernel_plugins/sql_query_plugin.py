@@ -81,7 +81,7 @@ class SQLQueryPlugin(BasePlugin):
         self.supported_databases = {
             'sqlserver': {
                 'module': 'pyodbc',
-                'default_driver': 'ODBC Driver 17 for SQL Server',
+                'default_driver': 'ODBC Driver 18 for SQL Server',
                 'default_port': 1433
             },
             'postgresql': {

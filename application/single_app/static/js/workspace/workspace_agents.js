@@ -89,7 +89,7 @@ function renderAgentsTable(agentsList) {
         <i class="bi bi-eye"></i>
       </button>
       <button class="btn btn-sm btn-primary chat-agent-btn me-1" data-name="${escapeHtml(agent.name)}" title="Chat with this agent">
-        <i class="bi bi-chat-dots me-1"></i>Chat
+        <i class="bi bi-chat-dots-fill me-1"></i>Chat
       </button>`;
 
     if (!isGlobal) {

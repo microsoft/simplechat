@@ -65,6 +65,13 @@ document.addEventListener('DOMContentLoaded', () => {
              } else {
                   console.error("fetchUserPrompts function not found.");
              }
+        } else if (targetId === '#workflows-tab') {
+             console.log("Loading workflows tab data...");
+             if (typeof window.fetchUserWorkflows === 'function') {
+                 window.fetchUserWorkflows();
+             } else {
+                 console.error("fetchUserWorkflows function not found.");
+             }
         }
     }
 

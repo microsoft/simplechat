@@ -9,6 +9,9 @@ import traceback
 from typing import Dict, Any, List, Optional, Tuple
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from functions_appinsights import log_event
+from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
+from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE
+from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
 
 
 class PluginHealthChecker:
@@ -40,11 +43,39 @@ class PluginHealthChecker:
                 errors.append(f"Missing required field: {field}")
         
         # Validate specific plugin types
-        if plugin_type in ['azure_function', 'blob_storage', 'queue_storage']:
+        if plugin_type in ['azure_function', 'queue_storage']:
             if 'endpoint' not in manifest:
                 errors.append(f"Plugin type '{plugin_type}' requires 'endpoint' field")
             if 'auth' not in manifest:
                 errors.append(f"Plugin type '{plugin_type}' requires 'auth' field")
+
+        elif plugin_type == BLOB_STORAGE_PLUGIN_TYPE:
+            additional_fields = manifest.get('additionalFields', {})
+            if not isinstance(additional_fields, dict):
+                additional_fields = {}
+
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = (auth.get('type') or '').strip().lower()
+            endpoint = (manifest.get('endpoint') or '').strip()
+            container_name = str(
+                manifest.get('container_name') or additional_fields.get('container_name') or ''
+            ).strip()
+
+            if not auth:
+                errors.append("Blob storage plugin requires 'auth' field")
+            if not container_name:
+                errors.append("Blob storage plugin requires 'container_name' in additionalFields")
+            if auth_type not in {'connection_string', 'identity', 'key'}:
+                errors.append("Blob storage plugin requires auth.type values 'connection_string', 'identity', or 'key'")
+            if auth_type == 'connection_string' and not auth.get('key'):
+                errors.append("Blob storage plugin requires auth.key when auth.type='connection_string'")
+            if auth_type == 'key':
+                if not endpoint:
+                    errors.append("Blob storage plugin requires an 'endpoint' field when auth.type='key'")
+                if not auth.get('key'):
+                    errors.append("Blob storage plugin requires auth.key when auth.type='key'")
+            if auth_type == 'identity' and not endpoint:
+                errors.append("Blob storage plugin requires an 'endpoint' field when auth.type='identity'")
         
         elif plugin_type in ['sql_query', 'sql_schema']:
             additional_fields = manifest.get('additionalFields', {})
@@ -60,11 +91,54 @@ class PluginHealthChecker:
                 errors.append(f"SQL plugin requires 'database_type' field")
             if not connection_string and not (server and database):
                 errors.append("SQL plugin requires either 'connection_string' or 'server' and 'database' fields")
+
+        elif plugin_type == 'cosmos_query':
+            additional_fields = manifest.get('additionalFields', {})
+            if not isinstance(additional_fields, dict):
+                additional_fields = {}
+
+            endpoint = manifest.get('endpoint')
+            database_name = manifest.get('database_name') or additional_fields.get('database_name')
+            container_name = manifest.get('container_name') or additional_fields.get('container_name')
+            partition_key_path = manifest.get('partition_key_path') or additional_fields.get('partition_key_path')
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = (auth.get('type') or 'identity').strip()
+
+            if not endpoint:
+                errors.append("Cosmos plugin requires an 'endpoint' field")
+            if not database_name:
+                errors.append("Cosmos plugin requires 'database_name' in additionalFields")
+            if not container_name:
+                errors.append("Cosmos plugin requires 'container_name' in additionalFields")
+            if not partition_key_path:
+                errors.append("Cosmos plugin requires 'partition_key_path' in additionalFields")
+            if auth_type not in {'identity', 'key'}:
+                errors.append("Cosmos plugin only supports auth.type values 'identity' and 'key'")
+            if auth_type == 'key' and not auth.get('key'):
+                errors.append("Cosmos plugin requires auth.key when auth.type='key'")
         
         elif plugin_type == 'log_analytics':
             additional_fields = manifest.get('additionalFields', {})
             if 'workspaceId' not in additional_fields:
                 errors.append("Log Analytics plugin requires 'workspaceId' in additionalFields")
+
+        elif plugin_type == 'simplechat':
+            endpoint = manifest.get('endpoint')
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            if not endpoint:
+                errors.append(f"SimpleChat plugin requires an 'endpoint' field (use {SIMPLECHAT_DEFAULT_ENDPOINT})")
+            if auth.get('type') != 'user':
+                errors.append("SimpleChat plugin requires auth.type='user'")
+
+        elif plugin_type == AZURE_MAPS_PLUGIN_TYPE:
+            endpoint = manifest.get('endpoint')
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            if not endpoint:
+                errors.append(f"Azure Maps plugin requires an 'endpoint' field (use {AZURE_MAPS_DEFAULT_ENDPOINT})")
+            if auth.get('type') != 'key':
+                errors.append("Azure Maps plugin requires auth.type='key'")
+            if not auth.get('key'):
+                errors.append("Azure Maps plugin requires auth.key with an Azure Maps subscription key")
         
         return len(errors) == 0, errors
     

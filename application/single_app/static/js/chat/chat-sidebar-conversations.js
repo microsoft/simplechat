@@ -5,6 +5,13 @@ import { showToast } from "./chat-toast.js";
 
 const sidebarConversationsList = document.getElementById("sidebar-conversations-list");
 const sidebarNewChatBtn = document.getElementById("sidebar-new-chat-btn");
+const sidebarWorkflowSection = document.getElementById("sidebar-workflow-section");
+const sidebarWorkflowsToggle = document.getElementById("sidebar-workflows-toggle");
+const sidebarWorkflowsCaret = document.getElementById("sidebar-workflows-caret");
+const sidebarWorkflowListContainer = document.getElementById("sidebar-workflow-list-container");
+const sidebarWorkflowConversationsList = document.getElementById("sidebar-workflow-conversations-list");
+const sidebarWorkflowShowMoreBtn = document.getElementById("sidebar-workflow-show-more-btn");
+const DEFAULT_WORKFLOW_SECTION_LIMIT = 5;
 
 function dispatchSidebarConversationsLoaded(details = {}) {
   document.dispatchEvent(new CustomEvent('chat:sidebar-conversations-loaded', {
@@ -16,6 +23,9 @@ let currentActiveConversationId = null;
 let sidebarShowHiddenConversations = false; // Track if hidden conversations should be shown in sidebar
 let isLoadingSidebarConversations = false; // Prevent concurrent sidebar loads
 let pendingSidebarReload = false; // Track if a reload is pending
+let sidebarWorkflowSectionExpanded = false;
+let sidebarWorkflowSectionCollapsed = false;
+let sidebarVisibleConversations = [];
 
 function getShortGroupLabel(name) {
   const normalizedName = (name || '').trim();
@@ -166,6 +176,107 @@ function closeSidebarConversationDropdown(dropdownBtn, dropdownInstance) {
   }
 }
 
+function isWorkflowConversation(conversation = {}) {
+  return String(conversation?.chat_type || '').trim().toLowerCase() === 'workflow';
+}
+
+function isSidebarQuickSearchActive() {
+  const searchTerm = window.chatConversations?.getQuickSearchTerm?.();
+  return Boolean(searchTerm && searchTerm.trim() !== '');
+}
+
+function appendSidebarConversationItems(container, conversations = []) {
+  if (!container) {
+    return;
+  }
+
+  conversations.forEach(conversation => {
+    container.appendChild(createSidebarConversationItem(conversation));
+  });
+}
+
+function setSidebarListMessage(container, message) {
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = `<div class="text-center p-2 text-muted small">${message}</div>`;
+}
+
+function applyWorkflowSectionCollapsedState(isCollapsed = false) {
+  if (!sidebarWorkflowListContainer || !sidebarWorkflowsCaret || !sidebarWorkflowsToggle) {
+    return;
+  }
+
+  sidebarWorkflowListContainer.classList.toggle('d-none', isCollapsed);
+  sidebarWorkflowsCaret.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+  sidebarWorkflowsToggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+}
+
+function renderWorkflowConversations(workflowConversations = [], isSearchActive = false) {
+  if (!sidebarWorkflowSection || !sidebarWorkflowConversationsList) {
+    return;
+  }
+
+  sidebarWorkflowConversationsList.innerHTML = '';
+
+  if (workflowConversations.length === 0) {
+    sidebarWorkflowSection.classList.add('d-none');
+    if (sidebarWorkflowShowMoreBtn) {
+      sidebarWorkflowShowMoreBtn.classList.add('d-none');
+      sidebarWorkflowShowMoreBtn.setAttribute('aria-expanded', 'false');
+    }
+    return;
+  }
+
+  sidebarWorkflowSection.classList.remove('d-none');
+  applyWorkflowSectionCollapsedState(isSearchActive ? false : sidebarWorkflowSectionCollapsed);
+
+  const showAllWorkflowConversations = isSearchActive
+    || sidebarWorkflowSectionExpanded
+    || workflowConversations.length <= DEFAULT_WORKFLOW_SECTION_LIMIT;
+  const visibleWorkflowConversations = showAllWorkflowConversations
+    ? workflowConversations
+    : workflowConversations.slice(0, DEFAULT_WORKFLOW_SECTION_LIMIT);
+
+  appendSidebarConversationItems(sidebarWorkflowConversationsList, visibleWorkflowConversations);
+
+  if (!sidebarWorkflowShowMoreBtn) {
+    return;
+  }
+
+  const showExpandButton = !isSearchActive && workflowConversations.length > DEFAULT_WORKFLOW_SECTION_LIMIT;
+  sidebarWorkflowShowMoreBtn.classList.toggle('d-none', !showExpandButton);
+  sidebarWorkflowShowMoreBtn.textContent = sidebarWorkflowSectionExpanded ? 'Show less' : 'Show more';
+  sidebarWorkflowShowMoreBtn.setAttribute('aria-expanded', sidebarWorkflowSectionExpanded ? 'true' : 'false');
+}
+
+function renderSidebarConversationSections(visibleConversations = [], totalConversationCount = 0) {
+  if (!sidebarConversationsList) {
+    return;
+  }
+
+  const regularConversations = visibleConversations.filter(conversation => !isWorkflowConversation(conversation));
+  const workflowConversations = visibleConversations.filter(conversation => isWorkflowConversation(conversation));
+  const isSearchActive = isSidebarQuickSearchActive();
+
+  sidebarConversationsList.innerHTML = '';
+
+  if (regularConversations.length > 0) {
+    appendSidebarConversationItems(sidebarConversationsList, regularConversations);
+  } else if (visibleConversations.length === 0 && totalConversationCount > 0) {
+    setSidebarListMessage(sidebarConversationsList, 'No matching conversations.');
+  } else if (workflowConversations.length > 0 && isSearchActive) {
+    setSidebarListMessage(sidebarConversationsList, 'No matching standard conversations.');
+  } else if (workflowConversations.length > 0) {
+    setSidebarListMessage(sidebarConversationsList, 'No standard conversations yet.');
+  } else {
+    setSidebarListMessage(sidebarConversationsList, 'No conversations yet.');
+  }
+
+  renderWorkflowConversations(workflowConversations, isSearchActive);
+}
+
 export function setConversationUnreadState(conversationId, hasUnread) {
   const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
   if (!sidebarItem) {
@@ -190,99 +301,127 @@ export function setConversationUnreadState(conversationId, hasUnread) {
   }
 }
 
+function resetSidebarConversationSections(showLoadingState = true) {
+  sidebarVisibleConversations = [];
+
+  if (showLoadingState && sidebarConversationsList) {
+    sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">Loading conversations...</div>';
+  }
+
+  if (sidebarWorkflowConversationsList) {
+    sidebarWorkflowConversationsList.innerHTML = '';
+  }
+
+  if (sidebarWorkflowSection) {
+    sidebarWorkflowSection.classList.add('d-none');
+  }
+
+  if (sidebarWorkflowShowMoreBtn) {
+    sidebarWorkflowShowMoreBtn.classList.add('d-none');
+    sidebarWorkflowShowMoreBtn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function renderSidebarConversationPayload(mergedConversations = []) {
+  if (mergedConversations.length === 0) {
+    renderSidebarConversationSections([], 0);
+    dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
+    return;
+  }
+
+  const sortedConversations = [...mergedConversations].sort((a, b) => {
+    const aPinned = a.is_pinned || false;
+    const bPinned = b.is_pinned || false;
+
+    if (aPinned !== bPinned) {
+      return bPinned ? 1 : -1;
+    }
+
+    const aDate = new Date(a.last_updated);
+    const bDate = new Date(b.last_updated);
+    return bDate - aDate;
+  });
+
+  let visibleConversations = sortedConversations.filter(convo => {
+    const isHidden = convo.is_hidden || false;
+    const isSelectionMode = window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive();
+    return !isHidden || sidebarShowHiddenConversations || isSelectionMode;
+  });
+
+  if (window.chatConversations && window.chatConversations.getQuickSearchTerm) {
+    const searchTerm = window.chatConversations.getQuickSearchTerm();
+    if (searchTerm && searchTerm.trim() !== '') {
+      const searchLower = searchTerm.toLowerCase().trim();
+      visibleConversations = visibleConversations.filter(convo => {
+        const titleLower = (convo.title || '').toLowerCase();
+        return titleLower.includes(searchLower);
+      });
+    }
+  }
+
+  sidebarVisibleConversations = visibleConversations;
+  renderSidebarConversationSections(visibleConversations, mergedConversations.length);
+
+  dispatchSidebarConversationsLoaded({
+    loaded: true,
+    count: mergedConversations.length,
+    hasVisibleConversations: visibleConversations.length > 0,
+    isError: false
+  });
+
+  if (window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive()) {
+    setSidebarSelectionMode(true);
+
+    if (window.chatConversations.getSelectedConversations) {
+      const selectedIds = window.chatConversations.getSelectedConversations();
+      selectedIds.forEach(id => {
+        updateSidebarConversationSelection(id, true);
+      });
+    }
+  }
+}
+
 // Load conversations for the sidebar
-export function loadSidebarConversations() {
+export function loadSidebarConversations(options = {}) {
+  const { conversations = null } = options;
+
   if (!sidebarConversationsList) return;
+
+  if (Array.isArray(conversations)) {
+    pendingSidebarReload = false;
+    isLoadingSidebarConversations = false;
+    resetSidebarConversationSections(false);
+    renderSidebarConversationPayload(conversations);
+    return Promise.resolve(conversations);
+  }
   
   // If already loading, mark that we need to reload again after current load finishes
   if (isLoadingSidebarConversations) {
     console.log('Sidebar load already in progress, marking pending reload...');
     pendingSidebarReload = true;
-    return;
+    return Promise.resolve();
   }
   
   isLoadingSidebarConversations = true;
   pendingSidebarReload = false; // Clear any pending reload flag
-  sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">Loading conversations...</div>';
+  resetSidebarConversationSections(true);
 
-  fetch("/api/get_conversations")
-    .then(response => response.ok ? response.json() : response.json().then(err => Promise.reject(err)))
-    .then(data => {
-      sidebarConversationsList.innerHTML = "";
-      if (!data.conversations || data.conversations.length === 0) {
-        sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">No conversations yet.</div>';
-        dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
-        
-        // Reset loading flag even when no conversations
-        isLoadingSidebarConversations = false;
-        
-        // Check for pending reload even when no conversations
-        if (pendingSidebarReload) {
-          console.log('Pending reload detected (no conversations), reloading sidebar...');
-          setTimeout(() => loadSidebarConversations(), 100);
-        }
-        return;
-      }
-      
-      // Sort conversations: pinned first (by last_updated), then unpinned (by last_updated)
-      const sortedConversations = [...data.conversations].sort((a, b) => {
-        const aPinned = a.is_pinned || false;
-        const bPinned = b.is_pinned || false;
-        
-        // If pin status differs, pinned comes first
-        if (aPinned !== bPinned) {
-          return bPinned ? 1 : -1;
-        }
-        
-        // If same pin status, sort by last_updated (most recent first)
-        const aDate = new Date(a.last_updated);
-        const bDate = new Date(b.last_updated);
-        return bDate - aDate;
-      });
-      
-      // Filter conversations based on show/hide hidden setting
-      let visibleConversations = sortedConversations.filter(convo => {
-        const isHidden = convo.is_hidden || false;
-        // Show hidden conversations if toggle is on OR if we're in selection mode
-        const isSelectionMode = window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive();
-        return !isHidden || sidebarShowHiddenConversations || isSelectionMode;
-      });
-      
-      // Apply quick search filter if active
-      if (window.chatConversations && window.chatConversations.getQuickSearchTerm) {
-        const searchTerm = window.chatConversations.getQuickSearchTerm();
-        if (searchTerm && searchTerm.trim() !== '') {
-          const searchLower = searchTerm.toLowerCase().trim();
-          visibleConversations = visibleConversations.filter(convo => {
-            const titleLower = (convo.title || '').toLowerCase();
-            return titleLower.includes(searchLower);
-          });
-        }
-      }
-      
-      visibleConversations.forEach(convo => {
-        sidebarConversationsList.appendChild(createSidebarConversationItem(convo));
-      });
+  const legacyConversationsRequest = fetch("/api/get_conversations")
+    .then(response => response.ok ? response.json() : response.json().then(err => Promise.reject(err)));
+  const collaborationConversationsRequest = window.chatCollaboration?.fetchCollaborationConversationList
+    ? window.chatCollaboration.fetchCollaborationConversationList().catch(error => {
+        console.warn('Failed to load collaborative sidebar conversations:', error);
+        return [];
+      })
+    : Promise.resolve([]);
 
-      dispatchSidebarConversationsLoaded({
-        loaded: true,
-        count: data.conversations.length,
-        hasVisibleConversations: visibleConversations.length > 0,
-        isError: false
-      });
-      
-      // Restore selection mode hints if selection mode is active
-      if (window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive()) {
-        setSidebarSelectionMode(true);
-        
-        // Restore individual conversation selections
-        if (window.chatConversations.getSelectedConversations) {
-          const selectedIds = window.chatConversations.getSelectedConversations();
-          selectedIds.forEach(id => {
-            updateSidebarConversationSelection(id, true);
-          });
-        }
-      }
+  return Promise.all([legacyConversationsRequest, collaborationConversationsRequest])
+    .then(([data, collaborationConversations]) => {
+      const mergedConversations = [
+        ...(Array.isArray(data.conversations) ? data.conversations : []),
+        ...(Array.isArray(collaborationConversations) ? collaborationConversations : []),
+      ];
+      renderSidebarConversationPayload(mergedConversations);
       
       // Reset loading flag
       isLoadingSidebarConversations = false;
@@ -292,6 +431,8 @@ export function loadSidebarConversations() {
         console.log('Pending reload detected, reloading sidebar conversations...');
         setTimeout(() => loadSidebarConversations(), 100); // Small delay to prevent rapid reloads
       }
+
+      return mergedConversations;
     })
     .catch(error => {
       console.error("Error loading sidebar conversations:", error);
@@ -304,6 +445,8 @@ export function loadSidebarConversations() {
         console.log('Pending reload detected after error, retrying...');
         setTimeout(() => loadSidebarConversations(), 500); // Longer delay after error
       }
+
+      throw error;
     });
 }
 
@@ -313,28 +456,74 @@ function createSidebarConversationItem(convo) {
   convoItem.classList.add("sidebar-conversation-item");
   convoItem.setAttribute("data-conversation-id", convo.id);
   convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? 'true' : 'false';
+  const isCollaborativeConversation = convo.conversation_kind === 'collaborative';
+  const normalizedChatType = normalizeSidebarChatType(convo.chat_type || '', convo.context || []);
+  const canManageMembers = isCollaborativeConversation
+    ? Boolean(convo.can_manage_members)
+    : ['personal_single_user', 'group-single-user'].includes(normalizedChatType);
+  const canManageRoles = isCollaborativeConversation ? Boolean(convo.can_manage_roles) : false;
+  const canEditCollaborativeTitle = !isCollaborativeConversation || canManageRoles;
+  const canShowAddParticipants = ['personal_single_user', 'personal_multi_user', 'group-single-user', 'group_multi_user'].includes(normalizedChatType)
+    && canManageMembers;
+  const canDeleteCollaborativeConversation = Boolean(convo.can_delete_conversation);
+  const canLeaveCollaborativeConversation = Boolean(convo.can_leave_conversation);
+  const collaborativeDeleteLabel = canDeleteCollaborativeConversation ? 'Delete / Leave' : 'Leave';
+
+  if (isCollaborativeConversation) {
+    convoItem.dataset.conversationKind = 'collaborative';
+  }
+  if (convo.membership_status) {
+    convoItem.dataset.membershipStatus = convo.membership_status;
+  }
+  convoItem.dataset.canManageMembers = canManageMembers ? 'true' : 'false';
+  convoItem.dataset.canManageRoles = canManageRoles ? 'true' : 'false';
+  convoItem.dataset.canAcceptInvite = convo.can_accept_invite ? 'true' : 'false';
+  convoItem.dataset.canPostMessages = convo.can_post_messages === false ? 'false' : 'true';
+  convoItem.dataset.canDeleteConversation = canDeleteCollaborativeConversation ? 'true' : 'false';
+  convoItem.dataset.canLeaveConversation = canLeaveCollaborativeConversation ? 'true' : 'false';
+  convoItem.dataset.currentUserRole = convo.current_user_role || '';
   applySidebarConversationContextAttributes(convoItem, convo.chat_type || '', convo.context || []);
   
   const isPinned = convo.is_pinned || false;
   const isHidden = convo.is_hidden || false;
   const pinIcon = isPinned ? '<i class="bi bi-pin-angle me-1"></i>' : '';
   const hiddenIcon = isHidden ? '<i class="bi bi-eye-slash me-1 text-muted"></i>' : '';
-  
-  convoItem.innerHTML = `
-    <div class="d-flex justify-content-between align-items-center">
-      <div class="sidebar-conversation-title flex-grow-1" title="${convo.title} (Double-click to edit)">${pinIcon}${hiddenIcon}${convo.title}</div>
-      <div class="dropdown conversation-dropdown" style="opacity: 0; transition: opacity 0.2s;">
-        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Conversation options">
-          <i class="bi bi-three-dots-vertical"></i>
-        </button>
-        <ul class="dropdown-menu dropdown-menu-end">
-          <li><a class="dropdown-item details-btn" href="#"><i class="bi bi-info-circle me-2"></i>Details</a></li>
+  const collaborationIcon = isCollaborativeConversation ? '<i class="bi bi-people me-1"></i>' : '';
+  const titleTooltip = isCollaborativeConversation
+    ? convo.title
+    : `${convo.title} (Double-click to edit)`;
+  const addParticipantsItemHtml = canShowAddParticipants
+    ? '<li><a class="dropdown-item add-participants-btn" href="#"><i class="bi bi-person-plus me-2"></i>Add participants</a></li>'
+    : '';
+  const legacyActionsHtml = isCollaborativeConversation
+    ? `
+          <li><a class="dropdown-item pin-btn" href="#"><i class="bi bi-pin-angle me-2"></i>${isPinned ? 'Unpin' : 'Pin'}</a></li>
+          <li><a class="dropdown-item hide-btn" href="#"><i class="bi bi-${isHidden ? 'eye' : 'eye-slash'} me-2"></i>${isHidden ? 'Unhide' : 'Hide'}</a></li>
+          <li><a class="dropdown-item select-btn" href="#"><i class="bi bi-check-square me-2"></i>Select</a></li>
+          <li><a class="dropdown-item export-btn" href="#"><i class="bi bi-download me-2"></i>Export</a></li>
+            ${canEditCollaborativeTitle ? '<li><a class="dropdown-item edit-btn" href="#"><i class="bi bi-pencil-fill me-2"></i>Edit title</a></li>' : ''}
+          ${(canDeleteCollaborativeConversation || canLeaveCollaborativeConversation) ? `<li><a class="dropdown-item delete-btn text-danger" href="#"><i class="bi bi-trash-fill me-2"></i>${collaborativeDeleteLabel}</a></li>` : ''}
+      `
+    : `
           <li><a class="dropdown-item pin-btn" href="#"><i class="bi bi-pin-angle me-2"></i>${isPinned ? 'Unpin' : 'Pin'}</a></li>
           <li><a class="dropdown-item hide-btn" href="#"><i class="bi bi-${isHidden ? 'eye' : 'eye-slash'} me-2"></i>${isHidden ? 'Unhide' : 'Hide'}</a></li>
           <li><a class="dropdown-item select-btn" href="#"><i class="bi bi-check-square me-2"></i>Select</a></li>
           <li><a class="dropdown-item export-btn" href="#"><i class="bi bi-download me-2"></i>Export</a></li>
           <li><a class="dropdown-item edit-btn" href="#"><i class="bi bi-pencil-fill me-2"></i>Edit title</a></li>
           <li><a class="dropdown-item delete-btn text-danger" href="#"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>
+      `;
+  
+  convoItem.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center">
+      <div class="sidebar-conversation-title flex-grow-1" title="${titleTooltip}">${pinIcon}${hiddenIcon}${collaborationIcon}${convo.title}</div>
+      <div class="dropdown conversation-dropdown" style="opacity: 0; transition: opacity 0.2s;">
+        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Conversation options">
+          <i class="bi bi-three-dots-vertical"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><a class="dropdown-item details-btn" href="#"><i class="bi bi-info-circle me-2"></i>Details</a></li>
+          ${addParticipantsItemHtml}
+          ${legacyActionsHtml}
         </ul>
       </div>
     </div>
@@ -395,6 +584,9 @@ function createSidebarConversationItem(convo) {
   const titleElement = convoItem.querySelector('.sidebar-conversation-title');
   if (titleElement) {
     titleElement.addEventListener('dblclick', (e) => {
+      if (!canEditCollaborativeTitle) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       enableSidebarTitleEdit(convo.id);
@@ -457,6 +649,7 @@ function createSidebarConversationItem(convo) {
   
   // Add dropdown menu event handlers
   const detailsBtn = convoItem.querySelector('.details-btn');
+  const addParticipantsBtn = convoItem.querySelector('.add-participants-btn');
   const pinBtn = convoItem.querySelector('.pin-btn');
   const hideBtn = convoItem.querySelector('.hide-btn');
   const selectBtn = convoItem.querySelector('.select-btn');
@@ -478,6 +671,15 @@ function createSidebarConversationItem(convo) {
       }
     });
   }
+
+  if (addParticipantsBtn) {
+    addParticipantsBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
+      window.chatCollaboration?.openParticipantPicker?.({ conversationId: convo.id });
+    });
+  }
   
   if (pinBtn) {
     pinBtn.addEventListener('click', async (e) => {
@@ -487,7 +689,7 @@ function createSidebarConversationItem(convo) {
       closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle pin status
       try {
-        const response = await fetch(`/api/conversations/${convo.id}/pin`, {
+        const response = await fetch(isCollaborativeConversation ? `/api/collaboration/conversations/${convo.id}/pin` : `/api/conversations/${convo.id}/pin`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -518,7 +720,7 @@ function createSidebarConversationItem(convo) {
       closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle hide status
       try {
-        const response = await fetch(`/api/conversations/${convo.id}/hide`, {
+        const response = await fetch(isCollaborativeConversation ? `/api/collaboration/conversations/${convo.id}/hide` : `/api/conversations/${convo.id}/hide`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -797,8 +999,12 @@ export function updateSidebarConversationTitle(conversationId, newTitle) {
   if (sidebarItem) {
     const titleElement = sidebarItem.querySelector('.sidebar-conversation-title');
     if (titleElement) {
-      titleElement.textContent = newTitle;
-      titleElement.title = `${newTitle} (Double-click to edit)`;
+      const existingIcons = Array.from(titleElement.querySelectorAll('i')).map(icon => icon.cloneNode(true));
+      titleElement.innerHTML = '';
+      existingIcons.forEach(icon => titleElement.appendChild(icon));
+      titleElement.appendChild(document.createTextNode(newTitle));
+      const isCollaborativeConversation = sidebarItem.dataset.conversationKind === 'collaborative';
+      titleElement.title = isCollaborativeConversation ? newTitle : `${newTitle} (Double-click to edit)`;
     }
   }
   
@@ -816,6 +1022,34 @@ export function applySidebarConversationMetadataUpdate(conversationId, updates =
 
   if (updates.title) {
     updateSidebarConversationTitle(conversationId, updates.title);
+  }
+
+  if (updates.conversation_kind) {
+    sidebarItem.dataset.conversationKind = updates.conversation_kind;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'membership_status') && updates.membership_status) {
+    sidebarItem.dataset.membershipStatus = updates.membership_status;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_manage_members')) {
+    sidebarItem.dataset.canManageMembers = updates.can_manage_members ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_manage_roles')) {
+    sidebarItem.dataset.canManageRoles = updates.can_manage_roles ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_accept_invite')) {
+    sidebarItem.dataset.canAcceptInvite = updates.can_accept_invite ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_post_messages')) {
+    sidebarItem.dataset.canPostMessages = updates.can_post_messages === false ? 'false' : 'true';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_delete_conversation')) {
+    sidebarItem.dataset.canDeleteConversation = updates.can_delete_conversation ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_leave_conversation')) {
+    sidebarItem.dataset.canLeaveConversation = updates.can_leave_conversation ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'current_user_role')) {
+    sidebarItem.dataset.currentUserRole = updates.current_user_role || '';
   }
 
   if (Object.prototype.hasOwnProperty.call(updates, 'chat_type') || Array.isArray(updates.context)) {
@@ -871,7 +1105,8 @@ export function enableSidebarTitleEdit(conversationId) {
     
     try {
       // Call the update function from main module
-      const response = await fetch(`/api/conversations/${conversationId}`, {
+      const isCollaborativeConversation = sidebarItem.dataset.conversationKind === 'collaborative';
+      const response = await fetch(isCollaborativeConversation ? `/api/collaboration/conversations/${conversationId}` : `/api/conversations/${conversationId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -953,8 +1188,6 @@ export function enableSidebarTitleEdit(conversationId) {
 document.addEventListener('DOMContentLoaded', () => {
   // Only initialize if we're on the chats page and elements exist
   if (sidebarConversationsList) {
-    loadSidebarConversations();
-    
     // Handle new chat button click
     if (sidebarNewChatBtn) {
       sidebarNewChatBtn.addEventListener('click', () => {
@@ -962,6 +1195,39 @@ document.addEventListener('DOMContentLoaded', () => {
         const mainNewConversationBtn = document.getElementById('new-conversation-btn');
         if (mainNewConversationBtn) {
           mainNewConversationBtn.click();
+        }
+      });
+    }
+
+    if (sidebarWorkflowShowMoreBtn) {
+      sidebarWorkflowShowMoreBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        sidebarWorkflowSectionExpanded = !sidebarWorkflowSectionExpanded;
+        renderWorkflowConversations(
+          sidebarVisibleConversations.filter(conversation => isWorkflowConversation(conversation)),
+          isSidebarQuickSearchActive()
+        );
+      });
+    }
+
+    if (sidebarWorkflowsToggle) {
+      const toggleWorkflowSection = () => {
+        sidebarWorkflowSectionCollapsed = !sidebarWorkflowSectionCollapsed;
+        renderWorkflowConversations(
+          sidebarVisibleConversations.filter(conversation => isWorkflowConversation(conversation)),
+          isSidebarQuickSearchActive()
+        );
+      };
+
+      sidebarWorkflowsToggle.addEventListener('click', (e) => {
+        e.preventDefault();
+        toggleWorkflowSection();
+      });
+
+      sidebarWorkflowsToggle.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleWorkflowSection();
         }
       });
     }

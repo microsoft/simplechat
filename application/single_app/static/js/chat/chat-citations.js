@@ -473,16 +473,20 @@ function renderAgentCitationResult(toolResultEl, toolResultSummaryEl, toolResult
   });
 }
 
-async function fetchAgentCitationArtifact(conversationId, artifactId) {
+export async function fetchAgentCitationArtifact(conversationId, artifactId) {
   if (!conversationId || !artifactId) {
     return null;
   }
 
   const response = await fetch(
-    `/api/conversation/${encodeURIComponent(conversationId)}/agent-citation/${encodeURIComponent(artifactId)}`,
+    `/api/conversation/${encodeURIComponent(conversationId)}/agent-citation/${encodeURIComponent(artifactId)}?ts=${Date.now()}`,
     {
       method: "GET",
-      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+      },
     }
   );
 

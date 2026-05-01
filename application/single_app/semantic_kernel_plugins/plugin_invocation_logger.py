@@ -12,6 +12,7 @@ import logging
 import functools
 import inspect
 import threading
+import uuid
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -29,6 +30,7 @@ class PluginInvocationStart:
     user_id: Optional[str]
     timestamp: str
     conversation_id: Optional[str] = None
+    invocation_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -49,6 +51,7 @@ class PluginInvocation:
     timestamp: str
     success: bool
     conversation_id: Optional[str] = None
+    invocation_id: Optional[str] = None
     error_message: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -490,6 +493,7 @@ def log_plugin_invocation_started(
     function_name: str,
     parameters: Dict[str, Any],
     conversation_id: Optional[str] = None,
+    invocation_id: Optional[str] = None,
 ):
     """Convenience function to log the start of a plugin invocation."""
     user_id, resolved_conversation_id = _resolve_invocation_context(conversation_id)
@@ -501,6 +505,7 @@ def log_plugin_invocation_started(
         user_id=user_id,
         conversation_id=resolved_conversation_id,
         timestamp=datetime.utcnow().isoformat(),
+        invocation_id=invocation_id or str(uuid.uuid4()),
     )
 
     _plugin_logger.log_invocation_start(invocation_start)
@@ -510,7 +515,8 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
                          parameters: Dict[str, Any], result: Any,
                          start_time: float, end_time: float, 
                          success: bool = True, error_message: Optional[str] = None,
-                         conversation_id: Optional[str] = None):
+                         conversation_id: Optional[str] = None,
+                         invocation_id: Optional[str] = None):
     """Convenience function to log a plugin invocation."""
     user_id, resolved_conversation_id = _resolve_invocation_context(conversation_id)
     
@@ -524,6 +530,7 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
         duration_ms=(end_time - start_time) * 1000,
         user_id=user_id,
         conversation_id=resolved_conversation_id,
+        invocation_id=invocation_id or str(uuid.uuid4()),
         timestamp=datetime.utcnow().isoformat(),
         success=success,
         error_message=error_message
@@ -637,6 +644,7 @@ def plugin_function_logger(plugin_name: str):
             @functools.wraps(func)
             async def wrapper(*args, **kwargs):
                 start_time = time.time()
+                invocation_id = str(uuid.uuid4())
                 function_name = _resolve_function_name(wrapper)
                 _log_start(function_name)
                 parameters = _build_parameters(args, kwargs)
@@ -645,6 +653,7 @@ def plugin_function_logger(plugin_name: str):
                     plugin_name=plugin_name,
                     function_name=function_name,
                     parameters=parameters,
+                    invocation_id=invocation_id,
                 )
 
                 try:
@@ -660,7 +669,8 @@ def plugin_function_logger(plugin_name: str):
                         result=result,
                         start_time=start_time,
                         end_time=end_time,
-                        success=True
+                        success=True,
+                        invocation_id=invocation_id,
                     )
 
                     return result
@@ -678,7 +688,8 @@ def plugin_function_logger(plugin_name: str):
                         start_time=start_time,
                         end_time=end_time,
                         success=False,
-                        error_message=str(e)
+                        error_message=str(e),
+                        invocation_id=invocation_id,
                     )
 
                     raise
@@ -686,6 +697,7 @@ def plugin_function_logger(plugin_name: str):
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
                 start_time = time.time()
+                invocation_id = str(uuid.uuid4())
                 function_name = _resolve_function_name(wrapper)
                 _log_start(function_name)
                 parameters = _build_parameters(args, kwargs)
@@ -694,6 +706,7 @@ def plugin_function_logger(plugin_name: str):
                     plugin_name=plugin_name,
                     function_name=function_name,
                     parameters=parameters,
+                    invocation_id=invocation_id,
                 )
 
                 try:
@@ -723,6 +736,7 @@ def plugin_function_logger(plugin_name: str):
                                     start_time=start_time,
                                     end_time=end_time,
                                     success=True,
+                                    invocation_id=invocation_id,
                                 )
                                 return awaited_value
                             except Exception as await_error:
@@ -738,6 +752,7 @@ def plugin_function_logger(plugin_name: str):
                                     end_time=end_time,
                                     success=False,
                                     error_message=str(await_error),
+                                    invocation_id=invocation_id,
                                 )
                                 raise
 
@@ -754,7 +769,8 @@ def plugin_function_logger(plugin_name: str):
                         result=result,
                         start_time=start_time,
                         end_time=end_time,
-                        success=True
+                        success=True,
+                        invocation_id=invocation_id,
                     )
 
                     return result
@@ -772,7 +788,8 @@ def plugin_function_logger(plugin_name: str):
                         start_time=start_time,
                         end_time=end_time,
                         success=False,
-                        error_message=str(e)
+                        error_message=str(e),
+                        invocation_id=invocation_id,
                     )
 
                     raise

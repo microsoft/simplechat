@@ -1136,6 +1136,7 @@
                                 <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
                             </div>
                         </div>
+                        <p class="text-muted small">Disable a global agent to keep it saved for admins while hiding it from runtime selection until it is re-enabled.</p>
                         <div class="mb-3 d-flex align-items-center">
                             {% if settings.orchestration_type == "default_agent" %}
                                 <label for="default-agent-select" class="form-label me-2 mb-0">Selected Agent:</label>
@@ -1216,6 +1217,7 @@
                                 <h6>Global Actions</h6>
                                 <button type="button" class="btn btn-primary btn-sm" id="add-plugin-btn">Add Action</button>
                             </div>
+                            <p class="text-muted small">Disable a global action to keep the configuration without exposing it to runtime action loading until it is re-enabled.</p>
                             {% if settings.per_user_semantic_kernel %}
                             <!-- Action Feature Flags -->
                                 <div class="card p-3 mb-3" id="plugin-feature-toggles">
@@ -1463,14 +1465,38 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Hide the application title from the header and navigation, showing only the logo if enabled."></i>
                     </div>
                     <div class="form-group mb-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label for="landing_page_logo_scale_percent" class="form-label mb-0">Main Page Logo Size</label>
+                            <span id="landing-page-logo-scale-value" class="small text-muted fw-semibold">{{ settings.landing_page_logo_scale_percent | default(100) }}%</span>
+                        </div>
+                        <input
+                            type="range"
+                            class="form-range"
+                            id="landing_page_logo_scale_percent"
+                            name="landing_page_logo_scale_percent"
+                            min="50"
+                            max="500"
+                            step="10"
+                            value="{{ settings.landing_page_logo_scale_percent | default(100) }}"
+                            aria-describedby="landing-page-logo-scale-help"
+                        />
+                        <div class="d-flex justify-content-between small text-muted">
+                            <span>50%</span>
+                            <span>500%</span>
+                        </div>
+                        <small id="landing-page-logo-scale-help" class="form-text text-muted">
+                            Adjust the logo size on the home page only. This does not change the logo size in the top or sidebar navigation.
+                        </small>
+                    </div>
+                    <div class="form-group mb-3">
                         <label for="logo_file">Upload Custom Logo (Light Mode)</label>
                         <input type="file" class="form-control" name="logo_file" id="logo_file" accept=".png,.jpg,.jpeg">
-                        <small class="form-text text-muted">This logo will be displayed in light mode.</small>
+                        <small class="form-text text-muted">This logo will be displayed in light mode and stored at up to 500px tall so the main page can render it sharply without keeping oversized assets in settings.</small>
                     </div>
                     <div class="form-group mb-3">
                         <label for="logo_dark_file">Upload Custom Logo (Dark Mode)</label>
                         <input type="file" class="form-control" name="logo_dark_file" id="logo_dark_file" accept=".png,.jpg,.jpeg">
-                        <small class="form-text text-muted">This logo will be displayed in dark mode. If not provided, the light mode logo will be used in both themes.</small>
+                        <small class="form-text text-muted">This logo will be displayed in dark mode. If not provided, the light mode logo will be used in both themes. Dark logos are also stored at up to 500px tall.</small>
                     </div>
                     <div class="form-group mb-3">
                         <label for="favicon_file">Upload Custom Favicon</label>
@@ -3913,6 +3939,17 @@
                             Enable Personal Workspaces
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own private workspaces for document storage, knowledge bases, and personal AI interactions."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-0">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_user_workflows"
+                            name="allow_user_workflows"
+                            {% if settings.allow_user_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_user_workflows">
+                            Allow User Workflows
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create personal workflows that run a selected agent or model manually or on an interval schedule."></i>
                     </div>
                 </div>
 

@@ -51,3 +51,7 @@ Confirm the root cause is fixed. Review your solution for logic correctness and 
 
 7. Final Reflection and Additional Testing
 Reflect carefully on the original intent of the user and the problem statement. Think about potential edge cases or scenarios that may not be covered by existing tests. Write additional tests that would need to pass to fully validate the correctness of your solution. Run these new tests and ensure they all pass. Be aware that there are additional hidden tests that must also pass for the solution to be successful. Do not assume the task is complete just because the visible tests pass; continue refining until you are confident the fix is robust and comprehensive.
+
+VERSIONING
+Application versioning remains in `application/single_app/config.py`.
+Deployer and CI/CD versioning lives separately in `deployers/version.txt`; when files under `deployers/` are modified, increment `deployers/version.txt` as part of the same change, defaulting to a patch bump unless a deliberate minor or major compatibility change is intended.

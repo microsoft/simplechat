@@ -2008,6 +2008,172 @@ def log_action_deletion(
         debug_print(f"⚠️  Warning: Failed to log action deletion: {str(e)}")
 
 
+def log_workflow_creation(
+    user_id: str,
+    workflow_id: str,
+    workflow_name: str,
+    runner_type: Optional[str] = None,
+    trigger_type: Optional[str] = None,
+) -> None:
+    """Log a personal workflow creation activity."""
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'workflow_creation',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'workflow',
+            'operation': 'create',
+            'entity': {
+                'id': workflow_id,
+                'name': workflow_name,
+                'runner_type': runner_type,
+                'trigger_type': trigger_type,
+            },
+            'workspace_type': 'personal',
+            'workspace_context': {},
+        }
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"[WorkflowActivity] Workflow created: {workflow_name} by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO,
+        )
+    except Exception as e:
+        log_event(
+            message=f"[WorkflowActivity] Error logging workflow creation: {str(e)}",
+            extra={'user_id': user_id, 'workflow_id': workflow_id, 'error': str(e)},
+            level=logging.ERROR,
+        )
+
+
+def log_workflow_update(
+    user_id: str,
+    workflow_id: str,
+    workflow_name: str,
+    runner_type: Optional[str] = None,
+    trigger_type: Optional[str] = None,
+) -> None:
+    """Log a personal workflow update activity."""
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'workflow_update',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'workflow',
+            'operation': 'update',
+            'entity': {
+                'id': workflow_id,
+                'name': workflow_name,
+                'runner_type': runner_type,
+                'trigger_type': trigger_type,
+            },
+            'workspace_type': 'personal',
+            'workspace_context': {},
+        }
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"[WorkflowActivity] Workflow updated: {workflow_name} by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO,
+        )
+    except Exception as e:
+        log_event(
+            message=f"[WorkflowActivity] Error logging workflow update: {str(e)}",
+            extra={'user_id': user_id, 'workflow_id': workflow_id, 'error': str(e)},
+            level=logging.ERROR,
+        )
+
+
+def log_workflow_deletion(
+    user_id: str,
+    workflow_id: str,
+    workflow_name: str,
+) -> None:
+    """Log a personal workflow deletion activity."""
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'workflow_deletion',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'workflow',
+            'operation': 'delete',
+            'entity': {
+                'id': workflow_id,
+                'name': workflow_name,
+            },
+            'workspace_type': 'personal',
+            'workspace_context': {},
+        }
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"[WorkflowActivity] Workflow deleted: {workflow_name} by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO,
+        )
+    except Exception as e:
+        log_event(
+            message=f"[WorkflowActivity] Error logging workflow deletion: {str(e)}",
+            extra={'user_id': user_id, 'workflow_id': workflow_id, 'error': str(e)},
+            level=logging.ERROR,
+        )
+
+
+def log_workflow_run(
+    user_id: str,
+    workflow_id: str,
+    workflow_name: str,
+    status: str,
+    trigger_source: str,
+    run_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    runner_type: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Log a personal workflow run activity."""
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'workflow_run',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'workflow',
+            'operation': 'run',
+            'entity': {
+                'id': workflow_id,
+                'name': workflow_name,
+                'runner_type': runner_type,
+            },
+            'workspace_type': 'personal',
+            'workspace_context': {},
+            'run': {
+                'id': run_id,
+                'status': status,
+                'trigger_source': trigger_source,
+                'conversation_id': conversation_id,
+                'error': error,
+            },
+        }
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"[WorkflowActivity] Workflow run {status}: {workflow_name} by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO if status == 'completed' else logging.WARNING,
+        )
+    except Exception as e:
+        log_event(
+            message=f"[WorkflowActivity] Error logging workflow run: {str(e)}",
+            extra={'user_id': user_id, 'workflow_id': workflow_id, 'error': str(e)},
+            level=logging.ERROR,
+        )
+
+
 def _log_agent_template_activity(
     user_id: str,
     template_id: str,

@@ -47,6 +47,11 @@
         "description": {
           "type": "string"
         },
+        "is_enabled": {
+          "type": "boolean",
+          "description": "False when the action is hidden from runtime use but retained for admin management.",
+          "default": true
+        },
         "endpoint": {
           "type": "string"
         },

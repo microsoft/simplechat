@@ -62,6 +62,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_custom_endpoints': False,
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
+        'allow_user_workflows': True,
         'allow_group_agents': False,
         'allow_group_custom_endpoints': False,
         'allow_group_custom_agent_endpoints': False,
@@ -83,6 +84,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'landing_page_text': 'You can add text here and it supports Markdown. '
                              'You agree to our [acceptable user policy](acceptable_use_policy.html) by using this service.',
         'landing_page_alignment': 'left',
+        'landing_page_logo_scale_percent': 100,
         'show_logo': False,
         'hide_app_title': False,
         'custom_logo_base64': '',
@@ -263,6 +265,9 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Processing Thoughts
         'enable_thoughts': True,
+
+        # Collaborative Conversations
+        'enable_collaborative_conversations': True,
 
         # Search and Extract
         'azure_ai_search_endpoint': '',

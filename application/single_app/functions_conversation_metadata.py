@@ -7,6 +7,7 @@ from functions_authentication import get_current_user_info
 from functions_group import find_group_by_id
 from functions_public_workspaces import find_public_workspace_by_id
 from functions_documents import get_document_metadata
+from functions_collaboration import get_collaboration_conversation
 from functions_debug import debug_print
 
 def get_user_info_by_id(user_id):
@@ -59,6 +60,23 @@ def _normalize_scope_id_list(raw_ids):
             normalized_ids.append(normalized_id)
 
     return normalized_ids
+
+
+def _get_conversation_item_with_source(conversation_id):
+    """Load a conversation from the legacy or collaboration store."""
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_conversation_id:
+        raise CosmosResourceNotFoundError(message='Conversation not found')
+
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=normalized_conversation_id,
+            partition_key=normalized_conversation_id
+        )
+        return conversation_item, 'legacy'
+    except CosmosResourceNotFoundError:
+        conversation_item = get_collaboration_conversation(normalized_conversation_id)
+        return conversation_item, 'collaboration'
 
 
 def _build_primary_context_from_scope_selection(
@@ -390,7 +408,11 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
     if existing_primary:
         # Documents were used - set chat_type based on primary context scope
         if existing_primary.get('scope') == 'group':
-            conversation_item['chat_type'] = 'group-single-user'  # Default to single-user for now
+            conversation_item['chat_type'] = (
+                'group'
+                if conversation_item.get('conversation_kind') == 'collaboration_source'
+                else 'group-single-user'
+            )
         elif existing_primary.get('scope') == 'public':
             conversation_item['chat_type'] = 'public'
         elif existing_primary.get('scope') == 'personal':
@@ -696,23 +718,23 @@ def update_conversation_with_metadata(conversation_id, metadata_updates):
         bool: True if successful, False otherwise
     """
     try:
-        # Read the existing conversation
-        conversation_item = cosmos_conversations_container.read_item(
-            item=conversation_id,
-            partition_key=conversation_id
-        )
+        conversation_item, conversation_source = _get_conversation_item_with_source(conversation_id)
         
         # Update with new metadata
         conversation_item.update(metadata_updates)
-        conversation_item['last_updated'] = datetime.utcnow().isoformat()
+        updated_at = datetime.utcnow().isoformat()
         
-        # Upsert back to Cosmos
-        cosmos_conversations_container.upsert_item(conversation_item)
+        if conversation_source == 'collaboration':
+            conversation_item['updated_at'] = updated_at
+            cosmos_collaboration_conversations_container.upsert_item(conversation_item)
+        else:
+            conversation_item['last_updated'] = updated_at
+            cosmos_conversations_container.upsert_item(conversation_item)
         
         return True
         
     except Exception as e:
-        print(f"Error updating conversation metadata for {conversation_id}: {e}")
+        debug_print(f"Error updating conversation metadata for {conversation_id}: {e}")
         return False
 
 
@@ -727,12 +749,9 @@ def get_conversation_metadata(conversation_id):
         dict: Conversation metadata or None if not found
     """
     try:
-        conversation_item = cosmos_conversations_container.read_item(
-            item=conversation_id,
-            partition_key=conversation_id
-        )
+        conversation_item, _ = _get_conversation_item_with_source(conversation_id)
         return conversation_item
         
     except Exception as e:
-        print(f"Error retrieving conversation metadata for {conversation_id}: {e}")
+        debug_print(f"Error retrieving conversation metadata for {conversation_id}: {e}")
         return None
