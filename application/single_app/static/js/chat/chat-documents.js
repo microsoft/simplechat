@@ -14,6 +14,9 @@ const docDropdownButton = document.getElementById("document-dropdown-button");
 const docDropdownItems = document.getElementById("document-dropdown-items");
 const docDropdownMenu = document.getElementById("document-dropdown-menu");
 const docSearchInput = document.getElementById("document-search-input");
+const documentActionSelect = document.getElementById("document-action-select");
+
+const DOCUMENT_ACTION_NONE = "none";
 
 // Tags filter elements
 const chatTagsFilter = document.getElementById("chat-tags-filter");
@@ -717,6 +720,53 @@ function appendDocumentSection(sectionLabel, documents, sectionIndex) {
   });
 }
 
+function getCurrentDocumentActionType() {
+  return String(documentActionSelect?.value || DOCUMENT_ACTION_NONE).trim().toLowerCase() || DOCUMENT_ACTION_NONE;
+}
+
+function isExplicitDocumentSelectionMode() {
+  return getCurrentDocumentActionType() !== DOCUMENT_ACTION_NONE;
+}
+
+function getSelectableDocumentOptions() {
+  if (!docSelectEl) {
+    return [];
+  }
+
+  return Array.from(docSelectEl.options).filter(option => option.value && !option.disabled);
+}
+
+function areAllSelectableDocumentsSelected() {
+  const selectableDocumentOptions = getSelectableDocumentOptions();
+  return selectableDocumentOptions.length > 0 && selectableDocumentOptions.every(option => option.selected);
+}
+
+function getDocumentDropdownActionLabel() {
+  if (!isExplicitDocumentSelectionMode()) {
+    return "All Documents";
+  }
+
+  return areAllSelectableDocumentsSelected() ? "Clear Selected Documents" : "Select All Documents";
+}
+
+function updateDocumentDropdownActionState() {
+  const actionLabel = getDocumentDropdownActionLabel();
+
+  if (docSelectEl) {
+    const allDocumentsOption = Array.from(docSelectEl.options).find(option => option.value === "");
+    if (allDocumentsOption) {
+      allDocumentsOption.textContent = actionLabel;
+    }
+  }
+
+  if (docDropdownItems) {
+    const actionItem = docDropdownItems.querySelector('.dropdown-item[data-document-id=""]');
+    if (actionItem) {
+      actionItem.textContent = actionLabel;
+    }
+  }
+}
+
 /* ---------------------------------------------------------------------------
    Populate the Document Dropdown Based on the Scope
 --------------------------------------------------------------------------- */
@@ -735,20 +785,20 @@ export function populateDocumentSelectScope() {
     docDropdownItems.innerHTML = "";
   }
 
-  // Always add an "All Documents" option to the hidden select
+  // Add the top-level picker action to the hidden select.
   const allOpt = document.createElement("option");
   allOpt.value = ""; // Use empty string for "All"
-  allOpt.textContent = "All Documents"; // Consistent label
+  allOpt.textContent = getDocumentDropdownActionLabel();
   docSelectEl.appendChild(allOpt);
 
-  // Add "All Documents" item to custom dropdown
+  // Add the top-level picker action to the custom dropdown.
   if (docDropdownItems) {
     const allItem = document.createElement("button");
     allItem.type = "button";
     allItem.classList.add("dropdown-item");
     allItem.setAttribute("data-document-id", "");
     allItem.setAttribute("data-search-role", "action");
-    allItem.textContent = "All Documents";
+    allItem.textContent = getDocumentDropdownActionLabel();
     allItem.style.display = "block";
     allItem.style.width = "100%";
     allItem.style.textAlign = "left";
@@ -823,18 +873,12 @@ export function populateDocumentSelectScope() {
     }
   }
 
-  // Reset to "All Documents" (no specific documents selected)
-  // With multi-select, clear all selections
+  // Reset to no specific documents selected.
   Array.from(docSelectEl.options).forEach(opt => { opt.selected = false; });
-  if (docDropdownButton) {
-    docDropdownButton.querySelector(".selected-document-text").textContent = "All Documents";
-
-    // Clear all checkbox states
-    if (docDropdownItems) {
-      docDropdownItems.querySelectorAll(".doc-checkbox").forEach(cb => {
-        cb.checked = false;
-      });
-    }
+  if (docDropdownItems) {
+    docDropdownItems.querySelectorAll(".doc-checkbox").forEach(cb => {
+      cb.checked = false;
+    });
   }
 
   // Trigger UI update after populating
@@ -1474,23 +1518,26 @@ export function filterDocumentsBySelectedTags() {
    Sync Dropdown Button Text with Selection State
 --------------------------------------------------------------------------- */
 function syncDropdownButtonText() {
-  if (!docDropdownButton || !docDropdownItems) return;
+  if (!docDropdownButton || !docSelectEl) return;
 
-  const checkedItems = docDropdownItems.querySelectorAll('.doc-checkbox:checked');
-  const count = checkedItems.length;
+  const selectedDocumentOptions = Array.from(docSelectEl.selectedOptions).filter(option => option.value);
+  const count = selectedDocumentOptions.length;
   const textEl = docDropdownButton.querySelector(".selected-document-text");
   if (!textEl) return;
 
   if (count === 0) {
-    textEl.textContent = "All Documents";
+    textEl.textContent = isExplicitDocumentSelectionMode() ? "Select Documents" : "All Documents";
   } else if (count === 1) {
-    // Show the single document name
-    const parentItem = checkedItems[0].closest('.dropdown-item');
-    const labelSpan = parentItem ? parentItem.querySelector('span') : null;
+    const selectedDocumentId = selectedDocumentOptions[0].value;
+    const labelSpan = docDropdownItems
+      ? docDropdownItems.querySelector(`.dropdown-item[data-document-id="${selectedDocumentId}"] span`)
+      : null;
     textEl.textContent = labelSpan ? labelSpan.textContent : "1 document selected";
   } else {
     textEl.textContent = `${count} documents selected`;
   }
+
+  updateDocumentDropdownActionState();
 }
 
 /* ---------------------------------------------------------------------------
@@ -1623,6 +1670,12 @@ if (docSelectEl) {
   docSelectEl.addEventListener("change", handleDocumentSelectChange);
 }
 
+if (documentActionSelect) {
+  documentActionSelect.addEventListener("change", function() {
+    syncDropdownButtonText();
+  });
+}
+
 // Add event listeners for custom document dropdown
 if (docDropdownMenu) {
   // Prevent dropdown menu from closing when clicking inside
@@ -1653,16 +1706,41 @@ if (docDropdownItems) {
 
     const docId = item.getAttribute('data-document-id');
 
-    // "All Documents" item clears all selections
+    // The top picker action clears in search mode and toggles select-all in document action mode.
     if (docId === '' || docId === null) {
-      // Uncheck all checkboxes
-      docDropdownItems.querySelectorAll('.doc-checkbox').forEach(cb => {
-        cb.checked = false;
-      });
-      // Clear hidden select
-      if (docSelectEl) {
-        Array.from(docSelectEl.options).forEach(opt => { opt.selected = false; });
+      if (isExplicitDocumentSelectionMode()) {
+        const selectableDocumentIds = new Set(getSelectableDocumentOptions().map(option => option.value));
+        const shouldClearSelections = areAllSelectableDocumentsSelected();
+
+        docDropdownItems.querySelectorAll('.dropdown-item').forEach(dropdownItem => {
+          const itemDocumentId = dropdownItem.getAttribute('data-document-id');
+          const checkbox = dropdownItem.querySelector('.doc-checkbox');
+          if (!checkbox || !itemDocumentId) {
+            return;
+          }
+
+          checkbox.checked = !shouldClearSelections && selectableDocumentIds.has(itemDocumentId);
+        });
+
+        if (docSelectEl) {
+          Array.from(docSelectEl.options).forEach(option => {
+            if (!option.value) {
+              option.selected = false;
+              return;
+            }
+
+            option.selected = !shouldClearSelections && !option.disabled;
+          });
+        }
+      } else {
+        docDropdownItems.querySelectorAll('.doc-checkbox').forEach(cb => {
+          cb.checked = false;
+        });
+        if (docSelectEl) {
+          Array.from(docSelectEl.options).forEach(opt => { opt.selected = false; });
+        }
       }
+
       syncDropdownButtonText();
       handleDocumentSelectChange();
       return;

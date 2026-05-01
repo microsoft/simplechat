@@ -1,7 +1,7 @@
 # test_exhaustive_document_review_feature.py
 """
 Functional test for exhaustive document review.
-Version: 0.241.075
+Version: 0.241.089
 Implemented in: 0.241.069
 
 This test ensures workflows and chat share the deterministic exhaustive
@@ -31,14 +31,29 @@ def test_exhaustive_document_review_feature_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md")
 
-    assert 'VERSION = "0.241.075"' in config_content, (
-        "Expected config.py version 0.241.075 for exhaustive document review wiring checks."
+    assert 'VERSION = "0.241.089"' in config_content, (
+        "Expected config.py version 0.241.089 for exhaustive document review wiring checks."
     )
     assert 'def normalize_exhaustive_review_targets(' in review_service_content, (
         "Expected functions_exhaustive_document_review.py to normalize structured review targets."
     )
     assert 'def run_exhaustive_document_review(' in review_service_content, (
         "Expected functions_exhaustive_document_review.py to execute the shared exhaustive review loop."
+    )
+    assert 'def _resolve_document_name(' in review_service_content, (
+        "Expected the exhaustive review service to resolve a preferred source name for each document."
+    )
+    assert 'Preferred source name:' in review_service_content, (
+        "Expected the exhaustive review prompt to expose a preferred source name for tables and citations."
+    )
+    assert 'Source filename:' in review_service_content, (
+        "Expected the exhaustive review prompt to provide the canonical filename to the model."
+    )
+    assert 'Document ID:' not in review_service_content, (
+        "Expected the exhaustive review prompt to stop emphasizing internal document GUIDs."
+    )
+    assert "'file_name': document_file_name," in review_service_content, (
+        "Expected exhaustive review coverage results to retain each document's file name."
     )
     assert '## Coverage' in review_service_content, (
         "Expected the exhaustive review service to append a deterministic coverage summary."

@@ -33,9 +33,20 @@
       min-height: 18px;
       display: none; /* Hide checkboxes by default */
     }
+
+    .document-select-all-checkbox {
+      cursor: pointer;
+      min-width: 18px;
+      min-height: 18px;
+      display: none;
+    }
     
     /* Show checkboxes when in selection mode */
     .selection-mode .document-checkbox {
+      display: block;
+    }
+
+    .selection-mode .document-select-all-checkbox {
       display: block;
     }
     
@@ -814,7 +825,12 @@
               <thead>
                 <tr>
                   <th>
-                    <!-- Expand/Collapse Column -->
+                    <input
+                      type="checkbox"
+                      id="docs-select-all-checkbox"
+                      class="form-check-input document-select-all-checkbox"
+                      aria-label="Select all visible documents"
+                    />
                   </th>
                   <th class="sortable-header" data-sort-field="file_name" style="cursor: pointer; user-select: none;">
                     File Name <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
@@ -856,6 +872,8 @@
                 <option value="10" selected>10</option>
                 <option value="20">20</option>
                 <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="250">250</option>
               </select>
               <span class="ms-1 small text-muted">items per page</span>
             </div>
@@ -881,6 +899,8 @@
                 <option value="10" selected>10</option>
                 <option value="20">20</option>
                 <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="250">250</option>
               </select>
               <span class="ms-1 small text-muted">items per page</span>
             </div>
@@ -1235,8 +1255,12 @@
                 <label for="workflow-document-action-type" class="form-label">Action Type</label>
                 <select class="form-select" id="workflow-document-action-type">
                   <option value="none">Standard Prompt Run</option>
+                  {% if settings.document_action_capabilities.exhaustive_review.enabled %}
                   <option value="exhaustive_review">Exhaustive Review</option>
+                  {% endif %}
+                  {% if settings.document_action_capabilities.comparison.enabled %}
                   <option value="comparison">Compare Documents</option>
+                  {% endif %}
                 </select>
               </div>
               <div class="col-md-6">
@@ -2030,6 +2054,7 @@
     window.enable_video_file_support = "{{ enable_video_file_support | tojson }}";
     window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
     window.enable_file_sharing = "{{ enable_file_sharing | tojson }}";
+    window.documentActionCapabilities = {{ settings.document_action_capabilities|default({}, true)|tojson|safe }};
     window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
     
     // Pass current user ID for ownership checks

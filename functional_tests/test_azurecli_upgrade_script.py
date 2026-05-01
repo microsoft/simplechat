@@ -2,7 +2,7 @@
 # test_azurecli_upgrade_script.py
 """
 Functional test for Azure CLI code-only upgrade script.
-Version: 0.241.083
+Version: 0.241.089
 Implemented in: 0.241.079
 
 This test ensures that the Azure CLI deployer includes a standalone upgrade

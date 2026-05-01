@@ -40,10 +40,21 @@ const workflowEnabledGroup = document.getElementById("workflow-enabled-group");
 const workflowEnabledToggle = document.getElementById("workflow-enabled");
 const workflowTriggerHelp = document.getElementById("workflow-trigger-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
-const WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10;
 const DOCUMENT_ACTION_NONE = "none";
 const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = "exhaustive_review";
 const DOCUMENT_ACTION_COMPARISON = "comparison";
+const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
+    [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: {
+        enabled: true,
+        chat_max_documents: 3,
+        workflow_max_documents: 10,
+    },
+    [DOCUMENT_ACTION_COMPARISON]: {
+        enabled: true,
+        chat_max_documents: 3,
+        workflow_max_documents: 10,
+    },
+};
 const workflowDocumentActionTypeSelect = document.getElementById("workflow-document-action-type");
 const workflowDocumentActionHelp = document.getElementById("workflow-document-action-help");
 const workflowDocumentTargetsFields = document.getElementById("workflow-document-targets-fields");
@@ -68,6 +79,41 @@ const workflowHistoryModalLabel = document.getElementById("workflowHistoryModalL
 const workflowHistoryBody = document.getElementById("workflow-history-body");
 const workflowHistoryConversationId = document.getElementById("workflow-history-conversation-id");
 const workflowHistoryConversationLink = document.getElementById("workflow-history-open-conversation-link");
+
+function getDocumentActionCapability(actionType) {
+    const defaultCapability = DEFAULT_DOCUMENT_ACTION_CAPABILITIES[actionType] || {
+        enabled: false,
+        chat_max_documents: 3,
+        workflow_max_documents: 10,
+    };
+    const configuredCapability = window.documentActionCapabilities?.[actionType] || {};
+    return {
+        ...defaultCapability,
+        ...configuredCapability,
+    };
+}
+
+function isDocumentActionEnabled(actionType) {
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        return true;
+    }
+
+    return Boolean(getDocumentActionCapability(actionType).enabled);
+}
+
+function getWorkflowDocumentActionMaxDocuments(actionType) {
+    return Number.parseInt(getDocumentActionCapability(actionType).workflow_max_documents || 10, 10);
+}
+
+function getDocumentActionLabel(actionType) {
+    if (actionType === DOCUMENT_ACTION_COMPARISON) {
+        return "Document comparison";
+    }
+    if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
+        return "Exhaustive review";
+    }
+    return "Document action";
+}
 
 const workflowDeleteModalEl = document.getElementById("workflowDeleteModal");
 const workflowDeleteModal = workflowDeleteModalEl && window.bootstrap ? bootstrap.Modal.getOrCreateInstance(workflowDeleteModalEl) : null;
@@ -331,15 +377,16 @@ function applySelectedWorkspaceDocumentsToWorkflow() {
         return;
     }
 
-    const limitedSelectedIds = selectedIds.slice(0, WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS);
-    if (selectedIds.length > WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    const workflowMaxDocuments = getWorkflowDocumentActionMaxDocuments(actionType);
+
+    const limitedSelectedIds = selectedIds.slice(0, workflowMaxDocuments);
+    if (selectedIds.length > workflowMaxDocuments) {
         showToast(
-            `Workflow document actions currently support up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents. Applied the first ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} selected documents.`,
+            `${getDocumentActionLabel(actionType)} workflows currently support up to ${workflowMaxDocuments} documents. Applied the first ${workflowMaxDocuments} selected documents.`,
             "warning"
         );
     }
-
-    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
     if (actionType === DOCUMENT_ACTION_COMPARISON) {
         if (!workflowComparisonLeftDocumentIdInput || !workflowComparisonRightDocumentIdsInput) {
             return;
@@ -1141,11 +1188,15 @@ function buildWorkflowPayload() {
     if (documentActionType === DOCUMENT_ACTION_COMPARISON && !payload.document_action.right_document_ids.length) {
         throw new Error("Add one or more right-side document ids for comparison.");
     }
+    if (documentActionType !== DOCUMENT_ACTION_NONE && !isDocumentActionEnabled(documentActionType)) {
+        throw new Error(`${getDocumentActionLabel(documentActionType)} is currently disabled by an administrator.`);
+    }
     const documentActionCount = documentActionType === DOCUMENT_ACTION_COMPARISON
         ? 1 + payload.document_action.right_document_ids.length
         : payload.document_action.document_ids.length;
-    if (documentActionCount > WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
-        throw new Error(`Workflow document actions support up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents per run.`);
+    const workflowMaxDocuments = getWorkflowDocumentActionMaxDocuments(documentActionType);
+    if (documentActionCount > workflowMaxDocuments) {
+        throw new Error(`${getDocumentActionLabel(documentActionType)} workflows support up to ${workflowMaxDocuments} documents per run.`);
     }
     if (documentActionType !== DOCUMENT_ACTION_NONE && rawWindowSize && (!Number.isInteger(payload.document_action.window_size) || payload.document_action.window_size < 1)) {
         throw new Error("Window size must be a whole number greater than zero.");

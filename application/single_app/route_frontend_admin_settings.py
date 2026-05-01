@@ -8,6 +8,7 @@ from functions_settings import *
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
+from functions_document_actions import normalize_document_action_capabilities
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
@@ -71,6 +72,7 @@ def register_route_frontend_admin_settings(app):
     @admin_required
     def admin_settings():
         settings = get_settings()
+        settings['document_action_capabilities'] = normalize_document_action_capabilities(settings)
         admin_user = session.get('user', {})
         admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
         # --- Refined Default Checks (Good Practice) ---
@@ -626,6 +628,42 @@ def register_route_frontend_admin_settings(app):
             support_latest_features_visibility = normalize_support_latest_features_visibility(
                 support_latest_features_visibility
             )
+
+            current_document_action_capabilities = normalize_document_action_capabilities(settings)
+            document_action_capabilities = normalize_document_action_capabilities({
+                'document_action_capabilities': {
+                    'exhaustive_review': {
+                        'enabled': form_data.get('document_action_exhaustive_review_enabled') == 'on',
+                        'chat_max_documents': parse_admin_int(
+                            form_data.get('document_action_exhaustive_review_chat_max_documents'),
+                            current_document_action_capabilities.get('exhaustive_review', {}).get('chat_max_documents', 3),
+                            'document_action_exhaustive_review_chat_max_documents',
+                            3,
+                        ),
+                        'workflow_max_documents': parse_admin_int(
+                            form_data.get('document_action_exhaustive_review_workflow_max_documents'),
+                            current_document_action_capabilities.get('exhaustive_review', {}).get('workflow_max_documents', 10),
+                            'document_action_exhaustive_review_workflow_max_documents',
+                            10,
+                        ),
+                    },
+                    'comparison': {
+                        'enabled': form_data.get('document_action_comparison_enabled') == 'on',
+                        'chat_max_documents': parse_admin_int(
+                            form_data.get('document_action_comparison_chat_max_documents'),
+                            current_document_action_capabilities.get('comparison', {}).get('chat_max_documents', 3),
+                            'document_action_comparison_chat_max_documents',
+                            3,
+                        ),
+                        'workflow_max_documents': parse_admin_int(
+                            form_data.get('document_action_comparison_workflow_max_documents'),
+                            current_document_action_capabilities.get('comparison', {}).get('workflow_max_documents', 10),
+                            'document_action_comparison_workflow_max_documents',
+                            10,
+                        ),
+                    },
+                }
+            })
 
             # Enhanced Citations...
             enable_enhanced_citations = form_data.get('enable_enhanced_citations') == 'on'
@@ -1266,6 +1304,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_support_latest_features': enable_support_latest_features,
                 'enable_support_latest_feature_documentation_links': enable_support_latest_feature_documentation_links,
                 'support_latest_features_visibility': support_latest_features_visibility,
+                'document_action_capabilities': document_action_capabilities,
 
                 # Enhanced Citations
                 'enable_enhanced_citations': enable_enhanced_citations,

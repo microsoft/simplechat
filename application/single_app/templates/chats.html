@@ -624,8 +624,12 @@
                              <label class="form-label mb-1 small text-muted" for="document-action-select">Action</label>
                              <select class="form-select form-select-sm" id="document-action-select" title="Choose how chat should use the selected documents">
                                         <option value="none">Search Documents</option>
+                                 {% if settings.document_action_capabilities.exhaustive_review.enabled %}
                                  <option value="exhaustive_review">Exhaustive Review</option>
+                                 {% endif %}
+                                 {% if settings.document_action_capabilities.comparison.enabled %}
                                  <option value="comparison">Compare Documents</option>
+                                 {% endif %}
                              </select>
                              <div id="document-comparison-left-container" class="mt-2 d-none">
                                  <label class="form-label mb-1 small text-muted" for="document-comparison-left-select">Left Document</label>
@@ -1293,7 +1297,8 @@
         enforce_workspace_scope_lock: {{ settings.enforce_workspace_scope_lock|tojson }},
         enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
         enable_thoughts: {{ settings.enable_thoughts|tojson }},
-        enable_collaborative_conversations: {{ settings.enable_collaborative_conversations|tojson }}
+        enable_collaborative_conversations: {{ settings.enable_collaborative_conversations|tojson }},
+        documentActionCapabilities: {{ settings.document_action_capabilities|default({}, true)|tojson|safe }}
     };
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)

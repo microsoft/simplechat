@@ -2,6 +2,7 @@
 
 from config import *
 from functions_appinsights import log_event
+from functions_document_actions import get_default_document_action_capabilities
 import app_settings_cache
 import inspect
 import copy
@@ -72,6 +73,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_new_foundry_agents': False,
         'allow_group_new_foundry_agents': False,
         'allow_personal_new_foundry_agents': False,
+        'document_action_capabilities': get_default_document_action_capabilities(),
         'enable_agent_template_gallery': True,
         'agent_templates_allow_user_submission': True,
         'agent_templates_require_approval': True,

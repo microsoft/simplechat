@@ -41,16 +41,17 @@ from functions_collaboration import (
     mirror_source_message_to_collaboration,
 )
 from functions_document_actions import (
+    DOCUMENT_ACTION_CONTEXT_WORKFLOW,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
     DOCUMENT_ACTION_TYPE_NONE,
     get_document_action_config,
+    get_document_action_max_documents,
+    get_document_action_max_documents_by_type,
+    get_enabled_document_action_types,
 )
 from functions_document_comparison import run_document_comparison
-from functions_exhaustive_document_review import (
-    WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
-    run_exhaustive_document_review,
-)
+from functions_exhaustive_document_review import run_exhaustive_document_review
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_tool_label,
@@ -1588,7 +1589,15 @@ def _chain_activity_callbacks(*callbacks):
 
 
 def _get_document_action_config(workflow):
-    return get_document_action_config(workflow, max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS)
+    settings = get_settings()
+    return get_document_action_config(
+        workflow,
+        max_documents_by_type=get_document_action_max_documents_by_type(
+            DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+            settings=settings,
+        ),
+        allowed_action_types=get_enabled_document_action_types(settings=settings),
+    )
 
 
 def _build_document_action_activity_callback(workflow, run_id, thought_tracker=None):
@@ -1751,6 +1760,11 @@ def _execute_exhaustive_review_workflow(
     review_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
     if review_config.get('type') != DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
         raise ValueError('Exhaustive review is not enabled for this workflow.')
+    workflow_review_max_documents = get_document_action_max_documents(
+        DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+        DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+        settings=settings,
+    )
 
     activity_callback = _chain_activity_callbacks(
         _build_document_action_activity_callback(workflow, run_id, thought_tracker=thought_tracker),
@@ -1816,7 +1830,7 @@ def _execute_exhaustive_review_workflow(
                     window_percent=review_config.get('window_percent'),
                     max_retries_per_window=review_config.get('max_retries_per_window'),
                     activity_callback=activity_callback,
-                    max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+                    max_documents=workflow_review_max_documents,
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
@@ -1879,7 +1893,7 @@ def _execute_exhaustive_review_workflow(
         window_percent=review_config.get('window_percent'),
         max_retries_per_window=review_config.get('max_retries_per_window'),
         activity_callback=activity_callback,
-        max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+        max_documents=workflow_review_max_documents,
     )
     return {
         'reply': review_result.get('reply', ''),

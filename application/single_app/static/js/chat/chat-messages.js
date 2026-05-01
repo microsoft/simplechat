@@ -44,8 +44,56 @@ const documentComparisonLeftSelect = document.getElementById('document-compariso
 const DOCUMENT_ACTION_NONE = 'none';
 const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = 'exhaustive_review';
 const DOCUMENT_ACTION_COMPARISON = 'comparison';
-const CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 3;
-const WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10;
+const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
+  [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: {
+    enabled: true,
+    chat_max_documents: 3,
+    workflow_max_documents: 10,
+  },
+  [DOCUMENT_ACTION_COMPARISON]: {
+    enabled: true,
+    chat_max_documents: 3,
+    workflow_max_documents: 10,
+  },
+};
+
+function getDocumentActionCapability(actionType) {
+  const defaultCapability = DEFAULT_DOCUMENT_ACTION_CAPABILITIES[actionType] || {
+    enabled: false,
+    chat_max_documents: 3,
+    workflow_max_documents: 10,
+  };
+  const configuredCapability = window.appSettings?.documentActionCapabilities?.[actionType] || {};
+  return {
+    ...defaultCapability,
+    ...configuredCapability,
+  };
+}
+
+function isDocumentActionEnabled(actionType) {
+  if (actionType === DOCUMENT_ACTION_NONE) {
+    return true;
+  }
+
+  return Boolean(getDocumentActionCapability(actionType).enabled);
+}
+
+function getDocumentActionMaxDocuments(actionType, executionContext) {
+  const capability = getDocumentActionCapability(actionType);
+  return executionContext === 'workflow'
+    ? Number.parseInt(capability.workflow_max_documents || 10, 10)
+    : Number.parseInt(capability.chat_max_documents || 3, 10);
+}
+
+function getDocumentActionLabel(actionType) {
+  if (actionType === DOCUMENT_ACTION_COMPARISON) {
+    return 'document comparison';
+  }
+  if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
+    return 'exhaustive review';
+  }
+  return 'document action';
+}
 
 function getSelectedDocumentIds() {
   const docSel = document.getElementById('document-select');
@@ -2545,9 +2593,15 @@ export function actuallySendMessage(finalMessageToSend) {
     showToast('Choose one left document and at least one right document for comparison.', 'warning');
     return;
   }
-  if (useDocumentAction && totalSelectedDocuments > CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
+  if (useDocumentAction && !isDocumentActionEnabled(actionType)) {
+    showToast(`${getDocumentActionLabel(actionType)} is currently disabled by an administrator.`, 'warning');
+    return;
+  }
+  const chatMaxDocuments = getDocumentActionMaxDocuments(actionType, 'chat');
+  const workflowMaxDocuments = getDocumentActionMaxDocuments(actionType, 'workflow');
+  if (useDocumentAction && totalSelectedDocuments > chatMaxDocuments) {
     showToast(
-      `Chat document actions support up to ${CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents. Use workflows for up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents.`,
+      `Chat ${getDocumentActionLabel(actionType)} supports up to ${chatMaxDocuments} documents. Use workflows for up to ${workflowMaxDocuments} documents.`,
       'warning'
     );
     return;

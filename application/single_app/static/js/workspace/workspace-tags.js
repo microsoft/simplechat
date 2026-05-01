@@ -494,12 +494,20 @@ function buildFolderDocumentsTable(docs) {
     const titleIcon = folderSortBy === 'title'
         ? (folderSortOrder === 'asc' ? 'bi-sort-alpha-down' : 'bi-sort-alpha-up')
         : 'bi-arrow-down-up text-muted';
+    const selectedDocuments = window.selectedDocuments || new Set();
+    const selectionModeClass = window.isDocumentSelectionModeActive?.() ? ' selection-mode' : '';
 
     let html = `
-        <table class="table table-striped table-sm" id="folder-docs-table">
+        <table class="table table-striped table-sm${selectionModeClass}" id="folder-docs-table">
             <thead>
                 <tr>
-                    <th style="width: 50px;"></th>
+                    <th style="width: 50px;">
+                        <input
+                            type="checkbox"
+                            class="form-check-input document-select-all-checkbox"
+                            aria-label="Select all visible folder documents"
+                        />
+                    </th>
                     <th class="folder-sortable-header" data-sort-field="file_name" style="cursor: pointer; user-select: none;">
                         File Name <i class="bi ${fnIcon} small sort-icon"></i>
                     </th>
@@ -528,13 +536,16 @@ function buildFolderDocumentsTable(docs) {
         let firstColHtml = '';
         if (isComplete && !hasError) {
             firstColHtml = `
-                <button class="btn btn-link p-0" onclick="window.onEditDocument('${docId}')" title="View Metadata">
-                    <span class="bi bi-chevron-right"></span>
-                </button>`;
+                <input type="checkbox" class="form-check-input document-checkbox" data-document-id="${docId}"${selectedDocuments.has(docId) ? ' checked' : ''}>
+                <span class="expand-collapse-container">
+                    <button class="btn btn-link p-0" onclick="window.onEditDocument('${docId}')" title="View Metadata">
+                        <span class="bi bi-chevron-right"></span>
+                    </button>
+                </span>`;
         } else if (hasError) {
-            firstColHtml = `<span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span>`;
+            firstColHtml = `<input type="checkbox" class="form-check-input document-checkbox" data-document-id="${docId}"${selectedDocuments.has(docId) ? ' checked' : ''}><span class="expand-collapse-container"><span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span></span>`;
         } else {
-            firstColHtml = `<span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span>`;
+            firstColHtml = `<input type="checkbox" class="form-check-input document-checkbox" data-document-id="${docId}"${selectedDocuments.has(docId) ? ' checked' : ''}><span class="expand-collapse-container"><span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span></span>`;
         }
 
         // Chat button
@@ -560,6 +571,10 @@ function buildFolderDocumentsTable(docs) {
                         <i class="bi bi-three-dots-vertical"></i>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item select-btn" href="#" onclick="window.toggleSelectionMode(); return false;">
+                            <i class="bi bi-check-square me-2"></i>Select
+                        </a></li>
+                        <li><hr class="dropdown-divider"></li>
                         <li><a class="dropdown-item" href="#" onclick="window.onEditDocument('${docId}'); return false;">
                             <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
                         </a></li>`;
@@ -863,6 +878,8 @@ async function renderFolderContents(tagName) {
                     <option value="10"${folderPageSize === 10 ? ' selected' : ''}>10</option>
                     <option value="20"${folderPageSize === 20 ? ' selected' : ''}>20</option>
                     <option value="50"${folderPageSize === 50 ? ' selected' : ''}>50</option>
+                    <option value="100"${folderPageSize === 100 ? ' selected' : ''}>100</option>
+                    <option value="250"${folderPageSize === 250 ? ' selected' : ''}>250</option>
                 </select>
                 <span class="ms-1 small text-muted">items per page</span>
             </div>
@@ -881,6 +898,7 @@ async function renderFolderContents(tagName) {
 
         container.innerHTML = html;
         wireBackButton(container);
+    window.syncDocumentSelectionUI?.();
 
         // Wire up folder page-size select
         const folderPageSizeSelect = document.getElementById('folder-page-size-select');

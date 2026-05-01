@@ -862,6 +862,7 @@
                     <button type="button" class="btn btn-secondary" id="walkthrough-prev-btn">Previous</button>
                     <div>
                         <button type="button" class="btn btn-primary" id="walkthrough-next-btn">Next</button>
+
                         <button type="button" class="btn btn-success" id="walkthrough-finish-btn" style="display: none;">Finish Setup and Save</button>
                     </div>
                 </div>
@@ -1043,6 +1044,113 @@
                 
                 <div class="alert alert-warning mb-3" role="alert">
                     <strong>Note:</strong> All changes to global agents and actions require a restart of the web app to take effect.
+                </div>
+
+                {% set exhaustive_capability = settings.document_action_capabilities.exhaustive_review %}
+                {% set comparison_capability = settings.document_action_capabilities.comparison %}
+                <div class="card p-3 mb-4" id="document-action-capabilities-card">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
+                        <div>
+                            <h5 class="mb-1"><i class="bi bi-files me-2"></i>Document Action Capabilities</h5>
+                            <p class="text-muted small mb-0">Configure the document actions shown in the <strong>Action</strong> dropdown in Chat and Workflow. These controls live in the Agents and Actions tab, but remain separate from the global agent and custom action cards below.</p>
+                        </div>
+                        <span class="badge text-bg-light border align-self-start align-self-lg-center">Chat: 2-300 | Workflow: 2-1000</span>
+                    </div>
+                    <div class="alert alert-light border small mb-3" role="alert">
+                        Use these settings to explicitly allow Exhaustive Review and Document Comparison in the Chat and Workflow <strong>Action</strong> dropdowns without bundling them into the global agent or custom action configuration cards below.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-xl-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="document_action_exhaustive_review_enabled" name="document_action_exhaustive_review_enabled" {% if exhaustive_capability.enabled %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="document_action_exhaustive_review_enabled">Enable Exhaustive Review</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to run deterministic exhaustive review across selected documents in chat and workflows."></i>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_exhaustive_review_chat_max_documents" class="form-label mb-0">Chat max documents</label>
+                                        <span id="document_action_exhaustive_review_chat_max_documents_value" class="small text-muted fw-semibold">{{ exhaustive_capability.chat_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_exhaustive_review_chat_max_documents_range" min="2" max="300" step="1" value="{{ exhaustive_capability.chat_max_documents }}" data-range-sync="document_action_exhaustive_review_chat_max_documents" data-range-display="document_action_exhaustive_review_chat_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_exhaustive_review_chat_max_documents" name="document_action_exhaustive_review_chat_max_documents" min="2" max="300" value="{{ exhaustive_capability.chat_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>300</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_exhaustive_review_workflow_max_documents" class="form-label mb-0">Workflow max documents</label>
+                                        <span id="document_action_exhaustive_review_workflow_max_documents_value" class="small text-muted fw-semibold">{{ exhaustive_capability.workflow_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_exhaustive_review_workflow_max_documents_range" min="2" max="1000" step="1" value="{{ exhaustive_capability.workflow_max_documents }}" data-range-sync="document_action_exhaustive_review_workflow_max_documents" data-range-display="document_action_exhaustive_review_workflow_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_exhaustive_review_workflow_max_documents" name="document_action_exhaustive_review_workflow_max_documents" min="2" max="1000" value="{{ exhaustive_capability.workflow_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>1000</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-xl-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="document_action_comparison_enabled" name="document_action_comparison_enabled" {% if comparison_capability.enabled %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="document_action_comparison_enabled">Enable Document Comparison</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to compare one baseline document against one or more selected documents in chat and workflows."></i>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_comparison_chat_max_documents" class="form-label mb-0">Chat max documents</label>
+                                        <span id="document_action_comparison_chat_max_documents_value" class="small text-muted fw-semibold">{{ comparison_capability.chat_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_comparison_chat_max_documents_range" min="2" max="300" step="1" value="{{ comparison_capability.chat_max_documents }}" data-range-sync="document_action_comparison_chat_max_documents" data-range-display="document_action_comparison_chat_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_comparison_chat_max_documents" name="document_action_comparison_chat_max_documents" min="2" max="300" value="{{ comparison_capability.chat_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>300</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_comparison_workflow_max_documents" class="form-label mb-0">Workflow max documents</label>
+                                        <span id="document_action_comparison_workflow_max_documents_value" class="small text-muted fw-semibold">{{ comparison_capability.workflow_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_comparison_workflow_max_documents_range" min="2" max="1000" step="1" value="{{ comparison_capability.workflow_max_documents }}" data-range-sync="document_action_comparison_workflow_max_documents" data-range-display="document_action_comparison_workflow_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_comparison_workflow_max_documents" name="document_action_comparison_workflow_max_documents" min="2" max="1000" value="{{ comparison_capability.workflow_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>1000</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Agents Configuration Section -->

@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, List, Optional
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_search import normalize_search_id_list, normalize_search_scope
-from functions_search_service import build_document_chunk_windows, get_document_chunks_payload
 
 
 DEFAULT_WINDOW_UNIT = 'pages'
@@ -16,6 +15,12 @@ DEFAULT_REDUCTION_BATCH_SIZE = 5
 DEFAULT_MAX_REDUCTION_ROUNDS = 4
 CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 3
 WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10
+
+
+def _get_search_service_helpers():
+    from functions_search_service import build_document_chunk_windows, get_document_chunks_payload
+
+    return build_document_chunk_windows, get_document_chunks_payload
 
 
 def _coerce_int(value, default_value, min_value=None, max_value=None):
@@ -54,6 +59,30 @@ def _calculate_progress_percent(completed_value, total_value, fallback_complete=
     return 100 if fallback_complete else 0
 
 
+def _resolve_document_file_name(document_payload):
+    if not isinstance(document_payload, dict):
+        return ''
+    return str(document_payload.get('file_name') or '').strip()
+
+
+def _resolve_document_title(document_payload):
+    if not isinstance(document_payload, dict):
+        return ''
+    return str(document_payload.get('title') or '').strip()
+
+
+def _resolve_document_name(document_payload):
+    if not isinstance(document_payload, dict):
+        return 'Document'
+
+    return (
+        _resolve_document_file_name(document_payload)
+        or _resolve_document_title(document_payload)
+        or str(document_payload.get('id') or '').strip()
+        or 'Document'
+    )
+
+
 def _build_progress_snapshot(coverage):
     coverage = coverage if isinstance(coverage, dict) else {}
     document_summaries = coverage.get('documents', []) if isinstance(coverage.get('documents'), list) else []
@@ -81,6 +110,8 @@ def _build_progress_snapshot(coverage):
         documents.append({
             'document_id': document_summary.get('document_id'),
             'document_name': document_summary.get('document_name'),
+            'file_name': document_summary.get('file_name'),
+            'title': document_summary.get('title'),
             'scope': document_summary.get('scope'),
             'scope_id': document_summary.get('scope_id'),
             'status': status,
@@ -232,14 +263,23 @@ def _build_window_label(document_name, window_range):
 
 
 def _build_window_review_prompt(review_prompt, document_payload, window_payload, window_range):
-    document_name = document_payload.get('title') or document_payload.get('file_name') or document_payload.get('id')
+    document_file_name = _resolve_document_file_name(document_payload)
+    document_title = _resolve_document_title(document_payload)
+    document_name = _resolve_document_name(document_payload)
     range_label = _build_window_label(document_name, window_range)
+    display_title_line = ''
+    if document_title and document_title != document_name:
+        display_title_line = f'Display title: {document_title}\n'
+
     return (
         'You are completing a deterministic document review. Review only the supplied document excerpt. '
         'Do not assume that missing details appear elsewhere in the document. If the excerpt is insufficient '
-        'for a conclusion, say so explicitly.\n\n'
-        f'Document: {document_name}\n'
-        f'Document ID: {document_payload.get("id")}\n'
+        'for a conclusion, say so explicitly. When you need to name the source document in a table, '
+        'summary, or citation, use the preferred source name below and do not substitute an internal GUID '\
+        'or document identifier.\n\n'
+        f'Preferred source name: {document_name}\n'
+        f'Source filename: {document_file_name or document_name}\n'
+        f'{display_title_line}'
         f'Scope: {document_payload.get("scope")}\n'
         f'Coverage slice: {range_label}\n'
         f'Chunk count in slice: {window_range.get("chunk_count", 0)}\n'
@@ -305,9 +345,15 @@ def _format_coverage_summary(coverage):
         lines.append('')
         lines.append('### Document Coverage')
         for document_summary in document_summaries:
+            coverage_document_name = (
+                document_summary.get('file_name')
+                or document_summary.get('document_name')
+                or document_summary.get('document_id')
+                or 'Document'
+            )
             lines.append(
                 '- '
-                f"{document_summary.get('document_name')}: "
+                f"{coverage_document_name}: "
                 f"{document_summary.get('processed_windows', 0)}/{document_summary.get('total_windows', 0)} windows processed, "
                 f"{document_summary.get('processed_chunks', 0)}/{document_summary.get('total_chunks', 0)} chunks completed"
             )
@@ -341,6 +387,8 @@ def run_exhaustive_document_review(
         raise ValueError('A review prompt is required for exhaustive document review.')
     if not callable(invoke_prompt):
         raise ValueError('A callable invoke_prompt handler is required for exhaustive document review.')
+
+    build_document_chunk_windows, get_document_chunks_payload = _get_search_service_helpers()
 
     targets = normalize_exhaustive_review_targets(
         document_ids=document_ids,
@@ -401,14 +449,16 @@ def run_exhaustive_document_review(
             window_percent=targets.get('window_percent'),
         )
 
-        document_name = (
-            document_payload.get('document', {}).get('title')
-            or document_payload.get('document', {}).get('file_name')
-            or document_id
-        )
+        document_metadata = document_payload.get('document') if isinstance(document_payload.get('document'), dict) else {}
+        document_file_name = _resolve_document_file_name(document_metadata)
+        document_title = _resolve_document_title(document_metadata)
+        document_name = _resolve_document_name(document_metadata)
+
         document_summary = {
             'document_id': document_id,
             'document_name': document_name,
+            'file_name': document_file_name,
+            'title': document_title,
             'scope': document_payload.get('scope'),
             'scope_id': document_payload.get('scope_id'),
             'total_windows': len(windows),

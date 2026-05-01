@@ -97,6 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupToggles(); // This function will be extended below
     setupLandingPageLogoScaleControl();
+    setupDocumentActionCapabilityControls();
     
     // Initialize tooltips
     initializeTooltips();
@@ -4937,6 +4938,76 @@ function setupLandingPageLogoScaleControl() {
     slider.addEventListener('input', updateValue);
     slider.addEventListener('change', updateValue);
     updateValue();
+}
+
+function setupDocumentActionCapabilityControls() {
+    const rangeInputs = document.querySelectorAll('.document-action-capability-range');
+    if (!rangeInputs.length) {
+        return;
+    }
+
+    rangeInputs.forEach(rangeInput => {
+        const numberInputId = rangeInput.getAttribute('data-range-sync');
+        const valueDisplayId = rangeInput.getAttribute('data-range-display');
+        const numberInput = numberInputId ? document.getElementById(numberInputId) : null;
+        const valueDisplay = valueDisplayId ? document.getElementById(valueDisplayId) : null;
+
+        if (!numberInput) {
+            return;
+        }
+
+        const minValue = Number.parseInt(rangeInput.min || numberInput.min || '0', 10);
+        const maxValue = Number.parseInt(rangeInput.max || numberInput.max || '0', 10);
+
+        const clampValue = rawValue => {
+            const parsedValue = Number.parseInt(rawValue, 10);
+            if (Number.isNaN(parsedValue)) {
+                return null;
+            }
+
+            return Math.min(maxValue, Math.max(minValue, parsedValue));
+        };
+
+        const updateValueDisplay = value => {
+            if (valueDisplay) {
+                valueDisplay.textContent = `${value}`;
+            }
+        };
+
+        const syncFromRange = () => {
+            const clampedValue = clampValue(rangeInput.value);
+            if (clampedValue === null) {
+                return;
+            }
+
+            rangeInput.value = `${clampedValue}`;
+            numberInput.value = `${clampedValue}`;
+            updateValueDisplay(clampedValue);
+        };
+
+        const syncFromNumber = forceClamp => {
+            const clampedValue = clampValue(numberInput.value);
+            if (clampedValue === null) {
+                if (forceClamp) {
+                    syncFromRange();
+                }
+                return;
+            }
+
+            if (forceClamp || numberInput.value !== '') {
+                rangeInput.value = `${clampedValue}`;
+                numberInput.value = `${clampedValue}`;
+                updateValueDisplay(clampedValue);
+            }
+        };
+
+        rangeInput.addEventListener('input', syncFromRange);
+        rangeInput.addEventListener('change', syncFromRange);
+        numberInput.addEventListener('input', () => syncFromNumber(false));
+        numberInput.addEventListener('change', () => syncFromNumber(true));
+
+        syncFromNumber(true);
+    });
 }
 
 /**

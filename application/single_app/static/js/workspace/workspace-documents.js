@@ -40,6 +40,71 @@ const documentDeleteAllBtn = document.getElementById("documentDeleteAllBtn");
 let selectionModeActive = false;
 let selectedDocuments = new Set();
 
+function getDocumentSelectionTables() {
+    return [
+        document.getElementById("documents-table"),
+        document.getElementById("folder-docs-table"),
+    ].filter(Boolean);
+}
+
+function getVisibleDocumentCheckboxes() {
+    return Array.from(document.querySelectorAll("#documents-table .document-checkbox, #folder-docs-table .document-checkbox"));
+}
+
+function getDocumentSelectAllCheckboxes() {
+    return Array.from(document.querySelectorAll("#documents-table .document-select-all-checkbox, #folder-docs-table .document-select-all-checkbox"));
+}
+
+function syncDocumentCheckboxesWithSelection() {
+    const visibleCheckboxes = getVisibleDocumentCheckboxes();
+    const expandContainers = document.querySelectorAll('#documents-table .expand-collapse-container, #folder-docs-table .expand-collapse-container');
+    const selectedVisibleCount = visibleCheckboxes.reduce((count, checkbox) => {
+        const documentId = checkbox.getAttribute("data-document-id");
+        const isSelected = selectedDocuments.has(documentId);
+        checkbox.checked = isSelected;
+        return count + (isSelected ? 1 : 0);
+    }, 0);
+
+    getDocumentSelectionTables().forEach((table) => {
+        table.classList.toggle("selection-mode", selectionModeActive);
+    });
+
+    expandContainers.forEach((container) => {
+        container.classList.toggle('d-none', selectionModeActive);
+        container.classList.toggle('d-inline-block', !selectionModeActive);
+    });
+
+    getDocumentSelectAllCheckboxes().forEach((checkbox) => {
+        const hasVisibleDocuments = visibleCheckboxes.length > 0;
+        checkbox.checked = hasVisibleDocuments && selectedVisibleCount === visibleCheckboxes.length;
+        checkbox.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleCheckboxes.length;
+        checkbox.disabled = !selectionModeActive || !hasVisibleDocuments;
+    });
+}
+
+window.syncDocumentSelectionUI = function() {
+    syncDocumentCheckboxesWithSelection();
+    updateBulkActionButtons();
+};
+
+window.isDocumentSelectionModeActive = function() {
+    return selectionModeActive;
+};
+
+window.toggleSelectAllDocuments = function(isSelected) {
+    getVisibleDocumentCheckboxes().forEach((checkbox) => {
+        const documentId = checkbox.getAttribute("data-document-id");
+        checkbox.checked = isSelected;
+        if (isSelected) {
+            selectedDocuments.add(documentId);
+        } else {
+            selectedDocuments.delete(documentId);
+        }
+    });
+
+    window.syncDocumentSelectionUI();
+};
+
 // --- Filter elements ---
 const docsSearchInput = document.getElementById('docs-search-input');
 // Conditionally get elements based on flags passed from template
@@ -753,6 +818,7 @@ function fetchUserDocuments() {
                 window.lastFetchedDocs = docs;
                 docs.forEach(doc => renderDocumentRow(doc));
             }
+            window.syncDocumentSelectionUI();
             renderDocsPaginationControls(data.page, data.page_size, data.total_count);
         })
         .catch(error => {
@@ -800,7 +866,7 @@ function renderDocumentRow(doc) {
     // First column with checkbox and expand/collapse
     let firstColumnHtml = `
         <td class="align-middle">
-            <input type="checkbox" class="document-checkbox" data-document-id="${docId}" style="display: none;">
+            <input type="checkbox" class="form-check-input document-checkbox" data-document-id="${docId}"${selectedDocuments.has(docId) ? ' checked' : ''}>
             <span class="expand-collapse-container">
             ${isComplete && !hasError ?
                 `<button class="btn btn-link p-0" onclick="window.toggleDetails('${docId}')" title="Show/Hide Details">
@@ -1526,36 +1592,19 @@ window.fetchUserDocuments = fetchUserDocuments;
 window.toggleSelectionMode = function() {
     selectionModeActive = !selectionModeActive;
     
-    const documentsTable = document.getElementById("documents-table");
-    const checkboxes = document.querySelectorAll('.document-checkbox');
-    const expandContainers = document.querySelectorAll('.expand-collapse-container');
+    const expandContainers = document.querySelectorAll('#documents-table .expand-collapse-container, #folder-docs-table .expand-collapse-container');
     const bulkActionsBar = document.getElementById('bulkActionsBar');
+
+    getDocumentSelectionTables().forEach((table) => {
+        table.classList.toggle('selection-mode', selectionModeActive);
+    });
     
     if (selectionModeActive) {
-        // Enter selection mode
-        documentsTable.classList.add('selection-mode');
-        
-        // Show checkboxes and hide expand buttons
-        checkboxes.forEach(checkbox => {
-            checkbox.classList.remove('d-none');
-            checkbox.classList.add('d-inline-block');
-        });
-        
         expandContainers.forEach(container => {
             container.classList.remove('d-inline-block');
             container.classList.add('d-none');
         });
     } else {
-        // Exit selection mode
-        documentsTable.classList.remove('selection-mode');
-        
-        // Hide checkboxes and show expand buttons
-        checkboxes.forEach(checkbox => {
-            checkbox.classList.remove('d-inline-block');
-            checkbox.classList.add('d-none');
-            checkbox.checked = false;
-        });
-        
         expandContainers.forEach(container => {
             container.classList.remove('d-none');
             container.classList.add('d-inline-block');
@@ -1570,6 +1619,8 @@ window.toggleSelectionMode = function() {
         // Clear selected documents
         selectedDocuments.clear();
     }
+
+    window.syncDocumentSelectionUI();
 };
 
 // Update selected documents
@@ -1581,7 +1632,7 @@ window.updateSelectedDocuments = function(documentId, isSelected) {
     }
     
     // Show/hide appropriate action buttons based on selection
-    updateBulkActionButtons();
+    window.syncDocumentSelectionUI();
 };
 
 // Update bulk action buttons visibility
@@ -1721,12 +1772,8 @@ window.removeSelectedDocuments = function() {
 
 // Clear selection handler
 window.clearDocumentSelection = function() {
-    const checkboxes = document.querySelectorAll('.document-checkbox');
-    checkboxes.forEach(checkbox => {
-        checkbox.checked = false;
-    });
     selectedDocuments.clear();
-    updateBulkActionButtons();
+    window.syncDocumentSelectionUI();
 };
 
 // Add event listeners for selection functionality
@@ -1741,15 +1788,16 @@ document.addEventListener('DOMContentLoaded', function() {
         clearSelectionBtn.addEventListener('click', window.clearDocumentSelection);
     }
     
-    // Delegate event listener for checkboxes (they're dynamically created)
-    if (documentsTableBody) {
-        documentsTableBody.addEventListener('change', function(event) {
-            if (event.target.classList.contains('document-checkbox')) {
-                const documentId = event.target.getAttribute('data-document-id');
-                window.updateSelectedDocuments(documentId, event.target.checked);
-            }
-        });
-    }
+    document.addEventListener('change', function(event) {
+        if (event.target.classList.contains('document-checkbox')) {
+            const documentId = event.target.getAttribute('data-document-id');
+            window.updateSelectedDocuments(documentId, event.target.checked);
+        }
+
+        if (event.target.classList.contains('document-select-all-checkbox')) {
+            window.toggleSelectAllDocuments(event.target.checked);
+        }
+    });
 });
 
 // Approve shared document handler

@@ -55,12 +55,14 @@ from functions_message_artifacts import (
     make_json_serializable,
 )
 from functions_document_actions import (
+    DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
     DOCUMENT_ACTION_TYPE_NONE,
+    get_document_action_max_documents_by_type,
+    get_enabled_document_action_types,
     normalize_document_action_config,
 )
-from functions_exhaustive_document_review import CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS
 from functions_thoughts import ThoughtTracker
 from functions_workflow_runner import _execute_document_action_workflow
 
@@ -6280,7 +6282,11 @@ def register_route_backend_chats(app):
         try:
             normalized_action = normalize_document_action_config(
                 action_payload=requested_action,
-                max_documents=CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+                max_documents_by_type=get_document_action_max_documents_by_type(
+                    DOCUMENT_ACTION_CONTEXT_CHAT,
+                    settings=settings,
+                ),
+                allowed_action_types=get_enabled_document_action_types(settings=settings),
             )
         except ValueError as exc:
             return {'error': str(exc)}, 400

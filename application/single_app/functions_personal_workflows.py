@@ -17,10 +17,12 @@ from config import (
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_document_actions import (
+    DOCUMENT_ACTION_CONTEXT_WORKFLOW,
     build_legacy_exhaustive_review_config,
+    get_document_action_max_documents_by_type,
+    get_enabled_document_action_types,
     normalize_document_action_config,
 )
-from functions_exhaustive_document_review import WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS
 from functions_global_agents import get_global_agents
 from functions_personal_agents import get_personal_agents
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
@@ -84,11 +86,16 @@ def _normalize_alert_priority(value):
 def _normalize_document_action_config(workflow_data, existing_workflow=None):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
+    settings = get_settings()
     return normalize_document_action_config(
         action_payload=workflow_data.get('document_action'),
         existing_action=existing_workflow.get('document_action'),
         legacy_exhaustive_review=workflow_data.get('exhaustive_review') or existing_workflow.get('exhaustive_review'),
-        max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+        max_documents_by_type=get_document_action_max_documents_by_type(
+            DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+            settings=settings,
+        ),
+        allowed_action_types=get_enabled_document_action_types(settings=settings),
     )
 
 
