@@ -31,3 +31,17 @@ def find_agent_by_scope(agents_cfg, selected_agent_data):
         return next((agent for agent in agents_cfg if agent.get("name") == selected_agent_name and scope_matches(agent)), None)
 
     return None
+
+
+def is_selected_agent_scope_enabled(settings, selected_agent_data):
+    """Return whether app settings allow the selected agent's scope."""
+    if not isinstance(selected_agent_data, dict):
+        return True
+
+    if selected_agent_data.get("is_group", False):
+        return bool((settings or {}).get("allow_group_agents", False))
+
+    if selected_agent_data.get("is_global", False):
+        return True
+
+    return bool((settings or {}).get("allow_user_agents", False))
