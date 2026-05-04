@@ -6242,9 +6242,9 @@ def register_route_backend_chats(app):
 
             left_document_name = str(left_document.get('document_name') or left_document.get('document_id') or '').strip()
             if is_comparison and left_document_name:
-                coverage_lines.append(f'Left document: {left_document_name}')
+                coverage_lines.append(f'Source document: {left_document_name}')
             if is_comparison:
-                coverage_lines.append(f'Right documents compared: {len(right_documents)}')
+                coverage_lines.append(f'Target documents compared: {len(right_documents)}')
 
             citations.append({
                 'file_name': 'Coverage',
@@ -6329,8 +6329,9 @@ def register_route_backend_chats(app):
 
         return citations
 
-    def _resolve_document_action_selected_documents(document_ids, document_scope, max_documents=5):
+    def _resolve_document_action_selected_documents(document_ids, document_scope, conversation_id=None, max_documents=5):
         resolved_documents = []
+        normalized_conversation_id = str(conversation_id or '').strip()
 
         for document_id in (document_ids or [])[:max_documents]:
             normalized_document_id = str(document_id or '').strip()
@@ -6375,6 +6376,34 @@ def register_route_backend_chats(app):
                         'source_hint': source_hint,
                     }
                     break
+
+                if normalized_conversation_id:
+                    message_query = (
+                        'SELECT TOP 1 c.filename, c.role '
+                        'FROM c WHERE c.conversation_id = @conversation_id AND c.id = @doc_id'
+                    )
+                    message_params = [
+                        {'name': '@conversation_id', 'value': normalized_conversation_id},
+                        {'name': '@doc_id', 'value': normalized_document_id},
+                    ]
+                    message_results = list(cosmos_messages_container.query_items(
+                        query=message_query,
+                        parameters=message_params,
+                        partition_key=normalized_conversation_id,
+                    ))
+                    if message_results:
+                        message_info = message_results[0]
+                        display_name = str(
+                            message_info.get('filename') or normalized_document_id
+                        ).strip() or normalized_document_id
+                        resolved_document = {
+                            'id': normalized_document_id,
+                            'display_name': display_name,
+                            'file_name': message_info.get('filename'),
+                            'group_id': None,
+                            'public_workspace_id': None,
+                            'source_hint': 'chat_upload',
+                        }
             except Exception as exc:
                 debug_print(
                     '[ChatDocumentAction] Failed to resolve selected document metadata | '
@@ -6418,7 +6447,11 @@ def register_route_backend_chats(app):
         document_scope = normalized_action.get('doc_scope', 'all')
         active_group_ids = normalized_action.get('active_group_ids', [])
         active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
-        resolved_documents = _resolve_document_action_selected_documents(selected_document_ids, document_scope)
+        resolved_documents = _resolve_document_action_selected_documents(
+            selected_document_ids,
+            document_scope,
+            conversation_id=conversation_id,
+        )
         resolved_documents_by_id = {
             document.get('id'): document
             for document in resolved_documents
@@ -6436,7 +6469,7 @@ def register_route_backend_chats(app):
         )
         if normalized_action.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON:
             left_document_id = str(normalized_action.get('left_document_id') or '').strip()
-            left_document_name = resolved_documents_by_id.get(left_document_id, {}).get('display_name') or left_document_id or 'Selected left document'
+            left_document_name = resolved_documents_by_id.get(left_document_id, {}).get('display_name') or left_document_id or 'Selected Source document'
             right_document_ids = normalized_action.get('right_document_ids', [])
             right_document_names = [
                 resolved_documents_by_id.get(document_id, {}).get('display_name') or str(document_id).strip()
@@ -6447,7 +6480,7 @@ def register_route_backend_chats(app):
                 right_document_names,
                 len(right_document_ids),
             )
-            selected_document_summary = f'Left: {left_document_name} | Right: {right_document_summary}'
+            selected_document_summary = f'Source: {left_document_name} | Targets: {right_document_summary}'
 
         current_user = get_current_user_info()
         user_info = {

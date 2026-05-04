@@ -1,0 +1,276 @@
+# test_chat_inline_export_action_buttons.py
+"""
+UI test for assistant inline export action buttons.
+Version: 0.241.108
+Implemented in: 0.241.108
+
+This test ensures assistant replies show inline export buttons when the latest
+user prompt explicitly asks for a supported export format such as a
+presentation, markdown document, or email, that the buttons persist when the
+conversation history is reloaded, and that inline create actions show a
+pending label while the export is being prepared.
+"""
+
+import json
+import os
+import time
+from pathlib import Path
+
+import pytest
+from playwright.sync_api import expect
+
+
+BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
+STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
+
+
+def _require_ui_env():
+    if not BASE_URL:
+        pytest.skip("Set SIMPLECHAT_UI_BASE_URL to run this UI test.")
+    if not STORAGE_STATE or not Path(STORAGE_STATE).exists():
+        pytest.skip("Set SIMPLECHAT_UI_STORAGE_STATE to a valid authenticated Playwright storage state file.")
+
+
+def _fulfill_json(route, payload, status=200):
+    route.fulfill(
+        status=status,
+        content_type="application/json",
+        body=json.dumps(payload),
+    )
+
+
+@pytest.mark.ui
+def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
+    """Validate inline export actions appear only for matching new assistant replies."""
+    _require_ui_env()
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 1440, "height": 900},
+    )
+    page = context.new_page()
+
+    page.route(
+        "**/api/user/settings",
+        lambda route: _fulfill_json(route, {"selected_agent": None, "settings": {"enable_agents": False}}),
+    )
+    page.route("**/api/get_conversations", lambda route: _fulfill_json(route, {"conversations": []}))
+
+    def handle_powerpoint_export(route):
+        time.sleep(0.25)
+        route.fulfill(
+            status=200,
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ),
+            body=b"mock-pptx-download",
+        )
+
+    page.route("**/api/message/export-powerpoint", handle_powerpoint_export)
+
+    try:
+        page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        page.wait_for_selector("#chatbox")
+        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
+
+        page.evaluate(
+            """
+            async () => {
+                const conversationId = 'inline-export-actions-test';
+                currentConversationId = conversationId;
+                window.currentConversationId = conversationId;
+
+                const messagesModule = await import('/static/js/chat/chat-messages.js');
+
+                messagesModule.appendMessage(
+                    'You',
+                    'Please create a presentation and send an email for this summary.',
+                    null,
+                    'user-presentation-request',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'user-presentation-request',
+                        role: 'user',
+                        content: 'Please create a presentation and send an email for this summary.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'Here is the summary you requested.',
+                    null,
+                    'assistant-presentation-response',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-presentation-response',
+                        role: 'assistant',
+                        content: 'Here is the summary you requested.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'You',
+                    'Please create a word document for this saved summary.',
+                    null,
+                    'user-history-request',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'user-history-request',
+                        role: 'user',
+                        content: 'Please create a word document for this saved summary.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'This reloaded assistant reply should keep its export action.',
+                    null,
+                    'assistant-historical-response',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-historical-response',
+                        role: 'assistant',
+                        content: 'This reloaded assistant reply should keep its export action.',
+                    },
+                    false
+                );
+
+                messagesModule.appendMessage(
+                    'You',
+                    'Please create a markdown document for this answer too.',
+                    null,
+                    'user-markdown-request',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'user-markdown-request',
+                        role: 'user',
+                        content: 'Please create a markdown document for this answer too.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'Here is the markdown-ready answer.',
+                    null,
+                    'assistant-markdown-response',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-markdown-response',
+                        role: 'assistant',
+                        content: 'Here is the markdown-ready answer.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'You',
+                    'Thanks for the summary.',
+                    null,
+                    'user-no-export-request',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'user-no-export-request',
+                        role: 'user',
+                        content: 'Thanks for the summary.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'No quick export actions should render for this reply.',
+                    null,
+                    'assistant-no-export-response',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-no-export-response',
+                        role: 'assistant',
+                        content: 'No quick export actions should render for this reply.',
+                    },
+                    true
+                );
+            }
+            """
+        )
+
+        presentation_message = page.locator('[data-message-id="assistant-presentation-response"]')
+        presentation_actions = presentation_message.locator('.inline-assistant-export-actions')
+        expect(presentation_actions).to_be_visible()
+        expect(presentation_actions.locator('button')).to_have_count(3)
+        powerpoint_button = presentation_actions.locator('button', has_text='Create PowerPoint Presentation')
+        expect(powerpoint_button).to_be_visible()
+        expect(presentation_actions.locator('button', has_text='Create Word Document')).to_be_visible()
+
+        email_button = presentation_actions.locator('button', has_text='Send an Email')
+        expect(email_button).to_be_visible()
+        expect(email_button).to_have_attribute('title', 'Opens Message in your default mail program')
+        expect(presentation_actions.locator('button', has_text='Create Markdown Document')).to_have_count(0)
+
+        powerpoint_button.click()
+        expect(powerpoint_button).to_have_text('Creating PowerPoint Presentation...')
+        expect(powerpoint_button).to_be_disabled()
+        expect(powerpoint_button).to_have_text('Create PowerPoint Presentation')
+
+        historical_message = page.locator('[data-message-id="assistant-historical-response"]')
+        historical_actions = historical_message.locator('.inline-assistant-export-actions')
+        expect(historical_actions).to_be_visible()
+        expect(historical_actions.locator('button')).to_have_count(1)
+        expect(historical_actions.locator('button', has_text='Create Word Document')).to_be_visible()
+        expect(historical_actions.locator('button', has_text='Create PowerPoint Presentation')).to_have_count(0)
+
+        markdown_message = page.locator('[data-message-id="assistant-markdown-response"]')
+        markdown_actions = markdown_message.locator('.inline-assistant-export-actions')
+        expect(markdown_actions).to_be_visible()
+        expect(markdown_actions.locator('button')).to_have_count(1)
+        expect(markdown_actions.locator('button', has_text='Create Markdown Document')).to_be_visible()
+
+        no_export_message = page.locator('[data-message-id="assistant-no-export-response"]')
+        expect(no_export_message.locator('.inline-assistant-export-actions')).to_have_count(0)
+    finally:
+        context.close()
+        browser.close()

@@ -376,6 +376,13 @@ function buildSteps() {
             phase: "chat"
         },
         {
+            id: "ai-message-export-ppt",
+            selectorList: [".tutorial-ai-message .dropdown-menu .dropdown-export-ppt-btn", ".ai-message .dropdown-menu .dropdown-export-ppt-btn"],
+            title: "Export to PowerPoint",
+            body: "PowerPoint export reshapes the message into slide-ready sections so the result works better for presentations and stakeholder readouts.",
+            phase: "chat"
+        },
+        {
             id: "ai-message-use-prompt",
             selectorList: [".tutorial-ai-message .dropdown-menu .dropdown-copy-prompt-btn", ".ai-message .dropdown-menu .dropdown-copy-prompt-btn"],
             title: "Use as prompt",
@@ -927,6 +934,7 @@ function getMessageStepConfig(stepId) {
         "ai-message-feedback-action": { type: "ai", selector: ".feedback-btn[data-feedback-type='positive'], .feedback-btn", popupSelector: ".feedback-btn[data-feedback-type='positive'], .feedback-btn" },
         "ai-message-export-md": { type: "ai", selector: ".dropdown-export-md-btn", popupSelector: ".dropdown-export-md-btn" },
         "ai-message-export-word": { type: "ai", selector: ".dropdown-export-word-btn", popupSelector: ".dropdown-export-word-btn" },
+        "ai-message-export-ppt": { type: "ai", selector: ".dropdown-export-ppt-btn", popupSelector: ".dropdown-export-ppt-btn" },
         "ai-message-use-prompt": { type: "ai", selector: ".dropdown-copy-prompt-btn", popupSelector: ".dropdown-copy-prompt-btn" },
         "ai-message-open-email": { type: "ai", selector: ".dropdown-open-email-btn", popupSelector: ".dropdown-open-email-btn" },
         "ai-message-thoughts": { type: "ai", selector: ".thoughts-container" },
@@ -1022,6 +1030,7 @@ function buildTutorialMessageExamplesMarkup() {
                                     <li><hr class="dropdown-divider"></li>
                                     <li><a class="dropdown-item dropdown-export-md-btn" href="#"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                                     <li><a class="dropdown-item dropdown-export-word-btn" href="#"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                                    <li><a class="dropdown-item dropdown-export-ppt-btn" href="#"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
                                     <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                                     <li><a class="dropdown-item dropdown-open-email-btn" href="#"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
                                 </ul>
@@ -1066,6 +1075,7 @@ function buildTutorialMessageExamplesMarkup() {
                                         <li><hr class="dropdown-divider"></li>
                                         <li><a class="dropdown-item dropdown-export-md-btn" href="#"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                                         <li><a class="dropdown-item dropdown-export-word-btn" href="#"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                                        <li><a class="dropdown-item dropdown-export-ppt-btn" href="#"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
                                         <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                                         <li><a class="dropdown-item dropdown-open-email-btn" href="#"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
                                     </ul>

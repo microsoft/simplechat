@@ -1,14 +1,18 @@
 # functions_search_service.py
 """Shared search, retrieval, and summarization services for documents."""
 
+import io
+import json
 import logging
 import math
+import os
 from typing import Any, Dict, List, Optional
 
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from openai import AzureOpenAI
 
-from config import cognitive_services_scope
+from config import CLIENTS, cognitive_services_scope, cosmos_messages_container
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_documents import get_document_record, get_ordered_document_chunks
@@ -34,6 +38,8 @@ SUMMARY_DEFAULT_MIN_PAGE_WINDOW = 5
 SUMMARY_DEFAULT_MAX_PAGE_WINDOW = 25
 SUMMARY_DEFAULT_CHUNK_WINDOW = 20
 SUMMARY_MAX_WINDOW_SIZE = 50
+CHAT_UPLOAD_CHUNK_WORD_SIZE = 400
+CHAT_UPLOAD_CHUNK_WORD_OVERLAP = 40
 
 
 def _coerce_positive_int(value, default_value, min_value=1, max_value=None):
@@ -109,6 +115,143 @@ def _serialize_document(document_item, scope_name):
         "group_id": document_item.get("group_id"),
         "public_workspace_id": document_item.get("public_workspace_id"),
         "user_id": document_item.get("user_id"),
+        "conversation_id": document_item.get("conversation_id"),
+        "source_type": document_item.get("source_type") or ("chat_upload" if scope_name == "chat" else "workspace_document"),
+    }
+
+
+def _load_chat_upload_blob_text(message_item):
+    if str(message_item.get("file_content_source") or "").strip().lower() != "blob":
+        return ""
+
+    blob_container = str(message_item.get("blob_container") or "").strip()
+    blob_path = str(message_item.get("blob_path") or "").strip()
+    if not blob_container or not blob_path:
+        return ""
+
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        return ""
+
+    try:
+        blob_client = blob_service_client.get_blob_client(container=blob_container, blob=blob_path)
+        blob_data = blob_client.download_blob().readall()
+        file_ext = os.path.splitext(str(message_item.get("filename") or ""))[1].lower()
+
+        if file_ext in {".xlsx", ".xlsm", ".xls"}:
+            # Import locally because spreadsheet parsing is only needed for blob-backed chat uploads.
+            import pandas as pd
+
+            if file_ext == ".xls":
+                dataframe = pd.read_excel(io.BytesIO(blob_data), engine="xlrd")
+            else:
+                dataframe = pd.read_excel(io.BytesIO(blob_data), engine="openpyxl")
+            return dataframe.to_csv(index=False)
+
+        return blob_data.decode("utf-8", errors="replace")
+    except Exception as exc:
+        debug_print(
+            "[SearchService] Failed to load chat upload blob content | "
+            f"message_id={message_item.get('id')} | error={exc}"
+        )
+        return ""
+
+
+def _coerce_chat_upload_text(message_item):
+    for field_name in ("file_content", "extracted_text"):
+        field_value = message_item.get(field_name)
+        if isinstance(field_value, str) and field_value.strip():
+            return field_value.strip()
+
+    blob_text = _load_chat_upload_blob_text(message_item)
+    if blob_text:
+        return blob_text.strip()
+
+    vision_analysis = message_item.get("vision_analysis")
+    if isinstance(vision_analysis, str) and vision_analysis.strip():
+        return vision_analysis.strip()
+    if vision_analysis not in (None, "", [], {}):
+        try:
+            return json.dumps(vision_analysis, ensure_ascii=False, indent=2).strip()
+        except (TypeError, ValueError):
+            return ""
+
+    return ""
+
+
+def _build_chat_upload_chunks(text_content, max_chunks=None):
+    normalized_text = str(text_content or "").strip()
+    if not normalized_text:
+        return []
+
+    words = normalized_text.split()
+    if not words:
+        return []
+
+    step_size = max(1, CHAT_UPLOAD_CHUNK_WORD_SIZE - CHAT_UPLOAD_CHUNK_WORD_OVERLAP)
+    chunks = []
+
+    for chunk_index, start_offset in enumerate(range(0, len(words), step_size), start=1):
+        chunk_text = " ".join(words[start_offset:start_offset + CHAT_UPLOAD_CHUNK_WORD_SIZE]).strip()
+        if not chunk_text:
+            continue
+
+        chunks.append({
+            "chunk_id": str(chunk_index),
+            "chunk_text": chunk_text,
+            "page_number": chunk_index,
+            "chunk_sequence": chunk_index,
+        })
+        if max_chunks is not None and len(chunks) >= max_chunks:
+            break
+
+    return chunks
+
+
+def _resolve_chat_upload_context(document_id, conversation_id=None):
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_document_id = str(document_id or "").strip()
+    if not normalized_conversation_id or not normalized_document_id:
+        return None
+
+    try:
+        message_item = cosmos_messages_container.read_item(
+            item=normalized_document_id,
+            partition_key=normalized_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        return None
+    except Exception as exc:
+        debug_print(
+            "[SearchService] Failed to resolve chat upload context | "
+            f"document_id={normalized_document_id} | conversation_id={normalized_conversation_id} | error={exc}"
+        )
+        return None
+
+    role_name = str(message_item.get("role") or "").strip().lower()
+    is_uploaded_image = role_name == "image" and bool((message_item.get("metadata") or {}).get("is_user_upload"))
+    if role_name not in {"file", "image"} or (role_name == "image" and not is_uploaded_image):
+        return None
+
+    comparison_text = _coerce_chat_upload_text(message_item)
+    if not comparison_text:
+        return None
+
+    message_title = str(message_item.get("filename") or message_item.get("title") or normalized_document_id).strip() or normalized_document_id
+    resolved_document = {
+        "id": normalized_document_id,
+        "file_name": message_title,
+        "title": message_title,
+        "conversation_id": normalized_conversation_id,
+        "source_type": "chat_upload",
+        "comparison_text": comparison_text,
+    }
+    return {
+        "scope": "chat",
+        "group_id": None,
+        "public_workspace_id": None,
+        "conversation_id": normalized_conversation_id,
+        "document": resolved_document,
     }
 
 
@@ -118,6 +261,7 @@ def resolve_document_context(
     doc_scope="all",
     active_group_ids=None,
     active_public_workspace_id=None,
+    conversation_id=None,
 ):
     normalized_scope = normalize_search_scope(doc_scope)
 
@@ -167,6 +311,13 @@ def resolve_document_context(
                     "public_workspace_id": public_workspace_id,
                     "document": public_document,
                 }
+
+    chat_upload_context = _resolve_chat_upload_context(
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
+    if chat_upload_context:
+        return chat_upload_context
 
     return None
 
@@ -378,6 +529,7 @@ def get_document_chunks_payload(
     doc_scope="all",
     active_group_ids=None,
     active_public_workspace_id=None,
+    conversation_id=None,
     window_unit="pages",
     window_size=None,
     window_percent=None,
@@ -389,16 +541,24 @@ def get_document_chunks_payload(
         doc_scope=doc_scope,
         active_group_ids=active_group_ids,
         active_public_workspace_id=active_public_workspace_id,
+        conversation_id=conversation_id,
     )
     if not document_context:
         raise LookupError("Document not found or access denied")
 
-    chunks = get_ordered_document_chunks(
-        document_id=document_id,
-        user_id=user_id,
-        group_id=document_context.get("group_id"),
-        public_workspace_id=document_context.get("public_workspace_id"),
-    )
+    if document_context.get("scope") == "chat":
+        chunks = _build_chat_upload_chunks(document_context.get("document", {}).get("comparison_text"))
+    else:
+        chunks = get_ordered_document_chunks(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+        )
+
+    if not chunks:
+        raise LookupError("Document content is not available for review")
+
     windows = build_document_chunk_windows(
         chunks,
         window_unit=window_unit,
@@ -422,10 +582,13 @@ def get_document_chunks_payload(
         "document": _serialize_document(document_context.get("document"), document_context.get("scope")),
         "scope": document_context.get("scope"),
         "scope_id": (
-            document_context.get("public_workspace_id")
+            document_context.get("conversation_id")
+            or document_context.get("document", {}).get("conversation_id")
+            or document_context.get("public_workspace_id")
             or document_context.get("group_id")
             or document_context.get("document", {}).get("user_id")
         ),
+        "conversation_id": document_context.get("conversation_id") or document_context.get("document", {}).get("conversation_id"),
         "chunk_count": len(chunks),
         "returned_chunk_count": len(selected_chunks),
         "window_count": len(windows),

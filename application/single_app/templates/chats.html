@@ -542,19 +542,9 @@
                                  <option value="exhaustive_review" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Review</option>
                                  {% endif %}
                                  {% if settings.document_action_capabilities.comparison.enabled %}
-                                 <option value="comparison" data-action-description="Compare one selected document against the others to explain differences, relationships, or downstream impact." title="Compare one selected document against the others to explain differences, relationships, or downstream impact.">Compare</option>
+                                 <option value="comparison" data-action-description="Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact." title="Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact.">Compare</option>
                                  {% endif %}
                              </select>
-                             <div id="document-comparison-targets-container" class="mt-2 d-none">
-                                 <label class="form-label mb-1 small text-muted" for="document-comparison-targets-select">Comparison Versions</label>
-                                 <select class="form-select form-select-sm" id="document-comparison-targets-select" multiple size="6"></select>
-                                 <div class="form-text small">Choose one or more versions from the selected documents. The current version of each selected document is preselected.</div>
-                             </div>
-                             <div id="document-comparison-left-container" class="mt-2 d-none">
-                                 <label class="form-label mb-1 small text-muted" for="document-comparison-left-select">Left Version</label>
-                                 <select class="form-select form-select-sm" id="document-comparison-left-select"></select>
-                                 <div class="form-text small">Every other selected version becomes a right-side comparison target.</div>
-                             </div>
                          </div>
                          <div class="flex-shrink-0" style="min-width: 120px; max-width: 250px;">
                              <label class="form-label mb-1 small text-muted d-flex align-items-center gap-1">
@@ -643,6 +633,26 @@
                              </div>
                          </div>
                      </div>
+                     <div id="document-comparison-summary-bar" class="mt-2 d-none">
+                         <div class="border rounded-3 px-2 py-2 bg-body-tertiary d-flex flex-wrap align-items-center gap-2">
+                             <div class="small text-uppercase text-muted fw-semibold me-1">Compare</div>
+                             <div class="d-flex align-items-center gap-1 flex-wrap">
+                                 <span class="small text-muted">Source</span>
+                                 <div id="document-comparison-inline-source-tags" class="d-flex flex-wrap gap-1"></div>
+                             </div>
+                             <div class="d-flex align-items-center gap-1 flex-wrap flex-grow-1">
+                                 <span class="small text-muted">Targets</span>
+                                 <div id="document-comparison-inline-target-tags" class="d-flex flex-wrap gap-1"></div>
+                             </div>
+                             <button type="button"
+                                     class="btn btn-outline-secondary btn-sm ms-auto"
+                                     id="document-comparison-edit-btn"
+                                     data-bs-toggle="modal"
+                                     data-bs-target="#document-comparison-modal">
+                                 <i class="bi bi-pencil-square me-1"></i><span id="document-comparison-edit-btn-label">Edit Compare</span>
+                             </button>
+                         </div>
+                     </div>
                 </div>
                 {% endif %}
 
@@ -704,6 +714,59 @@
         </div> 
     </div> 
 </div> 
+
+<div class="modal fade" id="document-comparison-modal" tabindex="-1" aria-labelledby="documentComparisonModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="documentComparisonModalLabel">Edit Compare</h5>
+                    <div class="small text-muted">Choose one Source and at least one Target. Workspace versions come from the document picker, and chat uploads appear here after upload.</div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="document-comparison-board" class="d-flex flex-column gap-3">
+                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                        <div id="document-comparison-selection-summary" class="small text-muted">Choose one Source and at least one Target. Workspace versions come from the document picker, and chat uploads appear here after upload.</div>
+                        <div class="small text-muted">Source is the baseline. Every Target is compared against it.</div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-xl-4">
+                            <div class="border rounded-3 p-3 h-100 bg-body-tertiary">
+                                <div class="small fw-semibold text-body mb-1">Available Items</div>
+                                <div class="small text-muted mb-2">Drag an item into Source or Targets, or use the action buttons on each card.</div>
+                                <div id="document-comparison-available-list" class="d-flex flex-column gap-2" role="list" aria-label="Available comparison items" style="max-height: min(56vh, 34rem); overflow-y: auto;"></div>
+                            </div>
+                        </div>
+                        <div class="col-xl-4">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <div class="small fw-semibold text-body">Source</div>
+                                    <span class="badge text-bg-primary">Baseline</span>
+                                </div>
+                                <div id="document-comparison-source-dropzone" class="d-flex flex-column gap-2 rounded-3 border p-2 bg-body-tertiary" data-comparison-dropzone="source" aria-label="Comparison source" style="min-height: 18rem; max-height: min(56vh, 34rem); overflow-y: auto; border-style: dashed !important;"></div>
+                                <select class="d-none" id="document-comparison-left-select" aria-hidden="true"></select>
+                            </div>
+                        </div>
+                        <div class="col-xl-4">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <div class="small fw-semibold text-body">Targets</div>
+                                    <span class="badge text-bg-secondary">1 to many</span>
+                                </div>
+                                <div id="document-comparison-selection-list" class="d-flex flex-column gap-2 rounded-3 border p-2 bg-body-tertiary" data-comparison-dropzone="target" role="list" aria-label="Comparison targets" style="min-height: 18rem; max-height: min(56vh, 34rem); overflow-y: auto; border-style: dashed !important;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Modal for collecting thumbs-down reason -->
 <div class="modal fade" id="feedback-modal" tabindex="-1" aria-labelledby="feedbackModalLabel" aria-hidden="true">

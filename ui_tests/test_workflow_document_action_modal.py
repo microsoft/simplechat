@@ -1,11 +1,11 @@
 # test_workflow_document_action_modal.py
 """
 UI test for workflow document action modal.
-Version: 0.241.097
-Implemented in: 0.241.097
+Version: 0.241.103
+Implemented in: 0.241.103
 
 This test ensures the workflow modal exposes the renamed Search/Review/Compare
-selector states, updates the hover description, and submits version-aware
+selector states, uses Source/Target wording, and submits version-aware
 comparison payloads.
 """
 
@@ -175,14 +175,16 @@ def test_workflow_document_action_modal_comparison(playwright):
 
         expect(page.locator("#workflow-document-action-type")).to_have_attribute(
             "title",
-            "Compare one baseline document against the others to explain differences, relationships, or downstream impact.",
+            "Compare one source document against the selected target documents to explain differences, relationships, or downstream impact.",
         )
         expect(page.locator("#workflow-document-action-help")).to_contain_text(
-            "Compare one baseline document against the others to explain differences, relationships, or downstream impact."
+            "Compare one source document against the selected target documents to explain differences, relationships, or downstream impact."
         )
 
         expect(page.locator("#workflow-comparison-target-fields")).to_be_visible()
         expect(page.locator("#workflow-exhaustive-target-fields")).to_be_hidden()
+        expect(page.get_by_label("Target Versions")).to_be_visible()
+        expect(page.get_by_label("Source Version")).to_be_visible()
 
         page.evaluate(
             """

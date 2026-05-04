@@ -230,6 +230,7 @@ def run_document_comparison(
     action_config,
     invoke_prompt,
     activity_callback=None,
+    conversation_id=None,
 ):
     normalized_prompt = str(comparison_prompt or '').strip()
     if not normalized_prompt:
@@ -243,7 +244,7 @@ def run_document_comparison(
     left_document_id = str(action_config.get('left_document_id') or '').strip()
     right_document_ids = list(action_config.get('right_document_ids') or [])
     if not left_document_id or not right_document_ids:
-        raise ValueError('Document comparison requires one left document and at least one right document.')
+        raise ValueError('Document comparison requires one Source document and at least one Target document.')
 
     debug_print(
         '[DocumentComparison] Starting comparison | '
@@ -338,6 +339,7 @@ def run_document_comparison(
             doc_scope=action_config.get('doc_scope'),
             active_group_ids=action_config.get('active_group_ids'),
             active_public_workspace_id=action_config.get('active_public_workspace_id'),
+            conversation_id=conversation_id,
             window_unit=action_config.get('window_unit'),
             window_size=action_config.get('window_size'),
             window_percent=action_config.get('window_percent'),

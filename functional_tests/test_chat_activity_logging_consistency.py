@@ -185,8 +185,36 @@ def test_document_action_route_uses_shared_chat_activity_logger():
     print('✅ Document-action chat activity wiring verified.')
 
 
+def test_control_center_activity_logs_surface_chat_activity():
+    """Control Center should expose chat activity rows in filters, formatting, and search fields."""
+    print('🔍 Testing Control Center chat activity surfacing...')
+
+    template_content = (APP_ROOT / 'templates' / 'control_center.html').read_text(encoding='utf-8')
+    javascript_content = (APP_ROOT / 'static' / 'js' / 'control-center.js').read_text(encoding='utf-8')
+    route_content = (APP_ROOT / 'route_backend_control_center.py').read_text(encoding='utf-8')
+
+    assert '<option value="chat_activity">Chat Activity</option>' in template_content, (
+        'Expected the Activity Logs filter dropdown to expose chat_activity records.'
+    )
+    assert "'chat_activity': 'Chat Activity'" in javascript_content, (
+        'Expected the Control Center formatter to present chat_activity with a friendly label.'
+    )
+    assert "case 'chat_activity':" in javascript_content, (
+        'Expected the Control Center details formatter to render chat_activity rows explicitly.'
+    )
+    assert "additional_context.get('conversation_source', '')" in route_content, (
+        'Expected the Activity Logs search path to include chat activity source fields.'
+    )
+    assert "additional_context.get('document_action_type', '')" in route_content, (
+        'Expected the Activity Logs search path to include document-action chat labels.'
+    )
+
+    print('✅ Control Center chat activity surfacing verified.')
+
+
 if __name__ == '__main__':
     test_log_chat_activity_persists_activity_record()
     test_collaboration_message_persistence_reuses_chat_activity_logger()
     test_document_action_route_uses_shared_chat_activity_logger()
+    test_control_center_activity_logs_surface_chat_activity()
     print('✅ Chat activity logging consistency verified.')

@@ -239,7 +239,7 @@ def normalize_document_action_config(
 
     left_candidates = normalize_search_id_list([source_action.get('left_document_id')])
     if not left_candidates:
-        raise ValueError('Select one left-side document for comparison.')
+        raise ValueError('Select one Source document for comparison.')
 
     left_document_id = left_candidates[0]
     right_document_ids = [
@@ -247,7 +247,7 @@ def normalize_document_action_config(
         if document_id != left_document_id
     ]
     if not right_document_ids:
-        raise ValueError('Select one or more right-side documents for comparison.')
+        raise ValueError('Select one or more Target documents for comparison.')
 
     normalized_targets = normalize_exhaustive_review_targets(
         document_ids=[left_document_id, *right_document_ids],

@@ -1,12 +1,13 @@
 # test_chat_document_action_selector_labels.py
 """
 UI test for chat document action selector labels.
-Version: 0.241.097
-Implemented in: 0.241.097
+Version: 0.241.104
+Implemented in: 0.241.104
 
 This test ensures the chat document action selector renders before scope,
 uses the Search/Review/Compare labels, updates the hover description for
-each selected action, and exposes version-aware comparison targets.
+each selected action, and exposes the compact Source/Target comparison summary
+plus the modal editor with both version history and uploaded chat files.
 """
 
 import json
@@ -75,7 +76,45 @@ def test_chat_document_action_selector_labels(playwright):
         route.continue_()
 
     page.route("**/api/user/settings", handle_user_settings)
-    page.route("**/api/get_conversations", lambda route: _fulfill_json(route, {"conversations": []}))
+    page.route(
+        "**/api/get_conversations",
+        lambda route: _fulfill_json(
+            route,
+            {
+                "conversations": [
+                    {
+                        "id": "compare-convo-1",
+                        "title": "Compare Uploads",
+                        "last_updated": "2026-05-03T12:00:00Z",
+                        "classification": [],
+                        "context": [],
+                        "chat_type": "new",
+                        "is_pinned": False,
+                        "is_hidden": False,
+                        "has_unread_assistant_response": False,
+                    }
+                ]
+            },
+        ),
+    )
+    page.route(
+        "**/conversation/compare-convo-1/messages?*",
+        lambda route: _fulfill_json(
+            route,
+            {
+                "messages": [
+                    {
+                        "id": "upload-msg-1",
+                        "role": "file",
+                        "content": "Uploaded file ready for comparison",
+                        "file_name": "chat-upload-notes.pdf",
+                        "conversation_id": "compare-convo-1",
+                        "timestamp": "2026-05-03T12:01:00Z",
+                    }
+                ]
+            },
+        ),
+    )
     page.route("**/api/documents?page_size=1000", lambda route: _fulfill_json(route, documents_payload))
     page.route(
         "**/api/documents/personal-doc-1/versions",
@@ -137,7 +176,7 @@ def test_chat_document_action_selector_labels(playwright):
         page.select_option("#document-action-select", "comparison")
         expect(action_select).to_have_attribute(
             "title",
-            "Compare one selected document against the others to explain differences, relationships, or downstream impact.",
+            "Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact.",
         )
 
         page.locator("#document-select").evaluate(
@@ -155,12 +194,30 @@ def test_chat_document_action_selector_labels(playwright):
             """
         )
 
-        expect(page.locator("#document-comparison-targets-container")).to_be_visible()
-        expect(page.locator("#document-comparison-targets-select option")).to_have_count(2)
-        page.select_option("#document-comparison-targets-select", ["personal-doc-v2", "personal-doc-v1"])
-        expect(page.locator("#document-comparison-left-select option")).to_have_count(2)
-        page.select_option("#document-comparison-left-select", "personal-doc-v1")
-        expect(page.locator("#document-comparison-left-select")).to_have_value("personal-doc-v1")
+        comparison_summary_bar = page.locator("#document-comparison-summary-bar")
+        expect(comparison_summary_bar).to_be_visible()
+        expect(page.locator("#document-comparison-inline-source-tags")).to_contain_text("Alpha Brief v2")
+        expect(page.locator("#document-comparison-inline-target-tags")).to_contain_text("None selected")
+        expect(page.locator("#document-comparison-edit-btn-label")).to_have_text("Edit Compare")
+
+        page.get_by_role("button", name="Edit Compare").click()
+        expect(page.locator("#document-comparison-modal")).to_be_visible()
+        expect(page.locator("#document-comparison-available-list")).to_contain_text("Alpha Brief")
+        expect(page.locator("#document-comparison-available-list")).to_contain_text("chat-upload-notes.pdf")
+
+        page.locator("#document-comparison-available-list .border.rounded-3").filter(has_text="Version 1").get_by_role("button", name="Use as Source").click()
+        expect(page.locator("#document-comparison-source-dropzone")).to_contain_text("Version 1")
+
+        page.locator("#document-comparison-available-list .border.rounded-3").filter(has_text="Version 2").get_by_role("button", name="Add to Target").click()
+        page.locator("#document-comparison-available-list .border.rounded-3").filter(has_text="chat-upload-notes.pdf").get_by_role("button", name="Add to Target").click()
+        expect(page.locator("#document-comparison-selection-list")).to_contain_text("Version 2")
+        expect(page.locator("#document-comparison-selection-list")).to_contain_text("chat-upload-notes.pdf")
+
+        page.get_by_role("button", name="Done").click()
+        expect(page.locator("#document-comparison-modal")).to_be_hidden()
+        expect(page.locator("#document-comparison-inline-source-tags")).to_contain_text("Alpha Brief v1")
+        expect(page.locator("#document-comparison-inline-target-tags")).to_contain_text("Alpha Brief v2")
+        expect(page.locator("#document-comparison-inline-target-tags")).to_contain_text("chat-upload-notes.pdf")
     finally:
         context.close()
         browser.close()

@@ -1,12 +1,12 @@
 # test_document_actions_and_comparison_feature.py
 """
 Functional test for document actions and comparison.
-Version: 0.241.097
-Implemented in: 0.241.097
+Version: 0.241.104
+Implemented in: 0.241.104
 
 This test ensures chat and workflows share the generic backend document action
-shape, expose version-aware comparison selectors, and support comparing
-multiple versions from the same document family.
+shape, expose Source/Target comparison selectors, and support compact summary
+tags plus a modal editor for workspace revisions and chat-uploaded files.
 """
 
 from pathlib import Path
@@ -35,10 +35,11 @@ def test_document_actions_and_comparison_wiring():
     workflow_template_content = read_text("application/single_app/templates/workspace.html")
     workflow_js_content = read_text("application/single_app/static/js/workspace/workspace_workflows.js")
     feature_index_content = read_text("docs/explanation/features/index.md")
-    feature_doc_content = read_text("docs/explanation/features/v0.241.097/DOCUMENT_VERSION_COMPARISON.md")
+    search_service_content = read_text("application/single_app/functions_search_service.py")
+    latest_feature_doc_content = read_text("docs/explanation/features/v0.241.104/CHAT_COMPARISON_MODAL_SUMMARY.md")
 
-    assert 'VERSION = "0.241.097"' in config_content, (
-        "Expected config.py version 0.241.097 for document actions and comparison."
+    assert 'VERSION = "0.241.104"' in config_content, (
+        "Expected config.py version 0.241.104 for document actions and comparison."
     )
     assert "DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'" in document_actions_content, (
         "Expected shared document action helpers to define the comparison action type."
@@ -49,11 +50,17 @@ def test_document_actions_and_comparison_wiring():
     assert 'def run_document_comparison(' in comparison_service_content, (
         "Expected a dedicated deterministic comparison service."
     )
+    assert 'conversation_id=None' in comparison_service_content, (
+        "Expected the comparison service to accept chat conversation context for uploaded files."
+    )
     assert '_build_pairwise_comparison_prompt' in comparison_service_content, (
         "Expected the comparison service to build pairwise comparison prompts."
     )
     assert 'comparison_items' in comparison_service_content, (
         "Expected the comparison service to retain pairwise comparison results."
+    )
+    assert 'def _resolve_chat_upload_context(' in search_service_content, (
+        "Expected search helpers to resolve uploaded chat files for comparison and review."
     )
     assert "/api/documents/<document_id>/versions" in documents_route_content, (
         "Expected personal document routes to expose a versions endpoint for comparison target selection."
@@ -82,11 +89,11 @@ def test_document_actions_and_comparison_wiring():
     assert 'document-action-select' in chat_template_content, (
         "Expected the chat UI to expose a document action selector."
     )
-    assert 'document-comparison-targets-select' in chat_template_content, (
-        "Expected the chat UI to expose comparison version target selection."
+    assert 'document-comparison-summary-bar' in chat_template_content, (
+        "Expected the chat UI to expose a compact comparison summary bar."
     )
-    assert 'document-comparison-left-select' in chat_template_content, (
-        "Expected the chat UI to expose a left version selector for comparison."
+    assert 'document-comparison-modal' in chat_template_content, (
+        "Expected the chat UI to expose a dedicated comparison modal editor."
     )
     assert 'fetchDocumentVersions' in chat_documents_content, (
         "Expected the chat document loader to fetch version families for selected comparison documents."
@@ -94,17 +101,26 @@ def test_document_actions_and_comparison_wiring():
     assert 'DOCUMENT_ACTION_COMPARISON' in chat_messages_content, (
         "Expected the chat client to handle the comparison action type."
     )
-    assert 'getSelectedComparisonTargetIds' in chat_messages_content, (
-        "Expected the chat client to track selected comparison version targets."
+    assert 'buildComparisonChatUploadCatalog' in chat_messages_content, (
+        "Expected the chat client to merge uploaded chat files into the comparison candidate catalog."
+    )
+    assert 'getComparisonCandidateCatalog' in chat_messages_content, (
+        "Expected the chat client to combine version history targets with uploaded chat files."
+    )
+    assert 'renderComparisonInlineSummary' in chat_messages_content, (
+        "Expected the chat client to render compact comparison tags outside the modal editor."
     )
     assert 'right_document_ids: comparisonRightDocumentIds' in chat_messages_content, (
-        "Expected chat requests to serialize one-left-to-many-right comparison targets."
+        "Expected chat requests to serialize one-source-to-many-target comparison targets."
     )
     assert 'workflow-document-action-type' in workflow_template_content, (
         "Expected the workflow modal to expose a document action selector."
     )
     assert 'workflow-comparison-target-document-ids' in workflow_template_content, (
         "Expected the workflow modal to expose comparison version targets."
+    )
+    assert 'Source Version' in workflow_template_content, (
+        "Expected the workflow modal to use Source terminology for the comparison anchor version."
     )
     assert 'DOCUMENT_ACTION_COMPARISON' in workflow_js_content, (
         "Expected the workflow UI to handle the comparison action type."
@@ -115,17 +131,20 @@ def test_document_actions_and_comparison_wiring():
     assert 'getSelectedWorkflowComparisonTargetIds' in workflow_js_content, (
         "Expected workflow payload building to derive comparison targets from selected versions."
     )
+    assert 'Compare one source to' in workflow_js_content, (
+        "Expected workflow summaries to use Source/Target wording for compare actions."
+    )
     assert 'payload.document_action.document_ids.length < 2' in workflow_js_content, (
         "Expected workflow save validation to require at least two comparison version targets."
     )
-    assert 'DOCUMENT_VERSION_COMPARISON.md' in feature_index_content, (
-        "Expected the feature index to link the document version comparison documentation."
+    assert 'CHAT_COMPARISON_MODAL_SUMMARY.md' in feature_index_content, (
+        "Expected the feature index to link the modal comparison summary documentation."
     )
-    assert 'Document Version Comparison' in feature_doc_content, (
-        "Expected versioned feature documentation for version-aware document comparison."
+    assert 'Chat Comparison Modal Summary' in latest_feature_doc_content, (
+        "Expected versioned feature documentation for the modal comparison summary enhancement."
     )
-    assert 'Implemented in version: **0.241.097**' in feature_doc_content, (
-        "Expected the feature documentation to include version 0.241.097."
+    assert 'Implemented in version: **0.241.104**' in latest_feature_doc_content, (
+        "Expected the feature documentation to include version 0.241.104."
     )
 
     print("✅ Document action and comparison wiring verified.")

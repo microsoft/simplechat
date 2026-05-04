@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for chat tutorial selector coverage.
-Version: 0.239.180
-Implemented in: 0.239.180
+Version: 0.241.105
+Implemented in: 0.241.105
 
 This test ensures that the chat tutorial points at the current visible chat-page
 controls and does not regress back to stale hidden or removed selectors.
@@ -47,6 +47,7 @@ def test_chat_tutorial_selectors() -> bool:
         ".ai-message .dropdown-menu .feedback-btn",
         ".ai-message .dropdown-menu .dropdown-export-md-btn",
         ".ai-message .dropdown-menu .dropdown-export-word-btn",
+        ".ai-message .dropdown-menu .dropdown-export-ppt-btn",
         ".ai-message .dropdown-menu .dropdown-copy-prompt-btn",
         ".ai-message .dropdown-menu .dropdown-open-email-btn",
         ".sidebar-conversation-item .dropdown-menu .details-btn",

@@ -2097,6 +2097,7 @@ def _execute_document_comparison_workflow(
                     action_config=comparison_config,
                     invoke_prompt=invoke_prompt,
                     activity_callback=activity_callback,
+                    conversation_id=conversation_id,
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
@@ -2152,6 +2153,7 @@ def _execute_document_comparison_workflow(
         action_config=comparison_config,
         invoke_prompt=invoke_model_prompt,
         activity_callback=activity_callback,
+        conversation_id=conversation_id,
     )
     debug_print(
         '[WorkflowDocumentComparison] Completed workflow action | '

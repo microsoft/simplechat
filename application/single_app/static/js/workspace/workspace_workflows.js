@@ -46,7 +46,7 @@ const DOCUMENT_ACTION_COMPARISON = "comparison";
 const DOCUMENT_ACTION_DESCRIPTIONS = {
     [DOCUMENT_ACTION_NONE]: "Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.",
     [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: "Perform an in-depth analysis across all selected documents based on your request.",
-    [DOCUMENT_ACTION_COMPARISON]: "Compare one baseline document against the others to explain differences, relationships, or downstream impact.",
+    [DOCUMENT_ACTION_COMPARISON]: "Compare one source document against the selected target documents to explain differences, relationships, or downstream impact.",
 };
 const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
     [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: {
@@ -554,7 +554,7 @@ function getWorkflowDocumentActionSummary(workflow) {
         if (!config.left_document_id) {
             return "Compare";
         }
-        return `Compare one baseline to ${rightCount || 0} ${rightCount === 1 ? "document" : "documents"}`;
+        return `Compare one source to ${rightCount || 0} ${rightCount === 1 ? "target" : "targets"}`;
     }
 
     return "Search";
@@ -1419,10 +1419,10 @@ function buildWorkflowPayload() {
         throw new Error("Select at least two document versions for compare.");
     }
     if (documentActionType === DOCUMENT_ACTION_COMPARISON && !payload.document_action.left_document_id) {
-        throw new Error("Add one left-side document id for compare.");
+        throw new Error("Add one Source document id for compare.");
     }
     if (documentActionType === DOCUMENT_ACTION_COMPARISON && !payload.document_action.right_document_ids.length) {
-        throw new Error("Add one or more right-side document ids for compare.");
+        throw new Error("Add one or more Target document ids for compare.");
     }
     if (documentActionType !== DOCUMENT_ACTION_NONE && !isDocumentActionEnabled(documentActionType)) {
         throw new Error(`${getDocumentActionDisplayLabel(documentActionType)} is currently disabled by an administrator.`);

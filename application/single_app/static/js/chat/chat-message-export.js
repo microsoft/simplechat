@@ -5,7 +5,8 @@ import { showToast } from "./chat-toast.js";
  * Per-message export module.
  *
  * Provides functions to export a single chat message as Markdown (.md)
- * or Word (.docx) from the three-dots dropdown on each message bubble.
+ * Word (.docx), or PowerPoint (.pptx) from the three-dots dropdown on each
+ * message bubble.
  */
 
 /**
@@ -123,6 +124,44 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
     } catch (err) {
         console.error('Error exporting message to Word:', err);
         showToast('Failed to export message to Word.', 'danger');
+    }
+}
+
+/**
+ * Export a single message as a PowerPoint (.pptx) presentation by calling
+ * the backend endpoint that uses python-pptx to generate slides.
+ */
+export async function exportMessageAsPowerPoint(messageDiv, messageId, role) {
+    const conversationId = window.currentConversationId;
+    if (!conversationId || !messageId) {
+        showToast('Cannot export - no active conversation or message.', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/message/export-powerpoint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message_id: messageId,
+                conversation_id: conversationId
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => null);
+            const errorMsg = errorData?.error || `Export failed (${response.status})`;
+            showToast(errorMsg, 'danger');
+            return;
+        }
+
+        const blob = await response.blob();
+        const filename = `message_export_${filenameTimestamp()}.pptx`;
+        downloadBlob(blob, filename);
+        showToast('Message exported as PowerPoint.', 'success');
+    } catch (err) {
+        console.error('Error exporting message to PowerPoint:', err);
+        showToast('Failed to export message to PowerPoint.', 'danger');
     }
 }
 

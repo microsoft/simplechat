@@ -1259,7 +1259,7 @@
                   <option value="exhaustive_review" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Review</option>
                   {% endif %}
                   {% if settings.document_action_capabilities.comparison.enabled %}
-                  <option value="comparison" data-action-description="Compare one baseline document against the others to explain differences, relationships, or downstream impact." title="Compare one baseline document against the others to explain differences, relationships, or downstream impact.">Compare</option>
+                  <option value="comparison" data-action-description="Compare one source document against the selected target documents to explain differences, relationships, or downstream impact." title="Compare one source document against the selected target documents to explain differences, relationships, or downstream impact.">Compare</option>
                   {% endif %}
                 </select>
               </div>
@@ -1298,15 +1298,15 @@
 
               <div id="workflow-comparison-target-fields" class="d-none">
                 <div class="mb-3">
-                  <label for="workflow-comparison-target-document-ids" class="form-label">Comparison Versions</label>
+                  <label for="workflow-comparison-target-document-ids" class="form-label">Target Versions</label>
                   <select class="form-select" id="workflow-comparison-target-document-ids" multiple size="8"></select>
-                  <div class="form-text">Use selected workspace documents to load available versions. The current version of each selected document is preselected.</div>
+                  <div class="form-text">Use selected workspace documents to load available versions. Pick the versions you want available for this comparison run.</div>
                 </div>
 
                 <div class="mb-3">
-                  <label for="workflow-comparison-left-document-id" class="form-label mb-2">Left Version</label>
+                  <label for="workflow-comparison-left-document-id" class="form-label mb-2">Source Version</label>
                   <select class="form-select" id="workflow-comparison-left-document-id"></select>
-                  <div class="form-text">Every other selected version becomes a right-side comparison target.</div>
+                  <div class="form-text">Every other selected version becomes a Target document for the comparison.</div>
                 </div>
               </div>
 

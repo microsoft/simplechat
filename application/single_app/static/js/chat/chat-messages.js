@@ -39,14 +39,23 @@ if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_
 }
 
 const documentActionSelect = document.getElementById('document-action-select');
-const documentComparisonTargetsContainer = document.getElementById('document-comparison-targets-container');
-const documentComparisonTargetsSelect = document.getElementById('document-comparison-targets-select');
-const documentComparisonLeftContainer = document.getElementById('document-comparison-left-container');
+const documentComparisonSummaryBar = document.getElementById('document-comparison-summary-bar');
+const documentComparisonInlineSourceTags = document.getElementById('document-comparison-inline-source-tags');
+const documentComparisonInlineTargetTags = document.getElementById('document-comparison-inline-target-tags');
+const documentComparisonEditButtonLabel = document.getElementById('document-comparison-edit-btn-label');
+const documentComparisonModalEl = document.getElementById('document-comparison-modal');
+const documentComparisonModal = documentComparisonModalEl && window.bootstrap
+  ? bootstrap.Modal.getOrCreateInstance(documentComparisonModalEl)
+  : null;
+const documentComparisonBoard = document.getElementById('document-comparison-board');
+const documentComparisonAvailableList = document.getElementById('document-comparison-available-list');
+const documentComparisonSourceDropzone = document.getElementById('document-comparison-source-dropzone');
 const documentComparisonLeftSelect = document.getElementById('document-comparison-left-select');
 const documentComparisonSelectionSummary = document.getElementById('document-comparison-selection-summary');
 const documentComparisonSelectionList = document.getElementById('document-comparison-selection-list');
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
+let comparisonChatUploadCatalog = [];
 let comparisonSelectedDocumentIdsSnapshot = [];
 let comparisonDocumentSelectionOrder = [];
 let selectedComparisonTargetIds = [];
@@ -56,7 +65,7 @@ const DOCUMENT_ACTION_COMPARISON = 'comparison';
 const DOCUMENT_ACTION_DESCRIPTIONS = {
   [DOCUMENT_ACTION_NONE]: 'Find relevant information in the selected documents.',
   [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: 'Perform an in-depth analysis across all selected documents based on your request.',
-  [DOCUMENT_ACTION_COMPARISON]: 'Compare one selected document against the others to explain differences, relationships, or downstream impact.',
+  [DOCUMENT_ACTION_COMPARISON]: 'Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact.',
 };
 const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
   [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: {
@@ -128,6 +137,60 @@ function syncDocumentActionTooltip() {
   documentActionSelect.title = description;
   documentActionSelect.setAttribute('aria-description', description);
 }
+
+const INLINE_ASSISTANT_EXPORT_ACTIONS = Object.freeze({
+  powerpoint: {
+    actionName: 'exportMessageAsPowerPoint',
+    buttonClass: 'inline-export-ppt-btn',
+    iconClass: 'bi bi-file-earmark-slides',
+    label: 'Create PowerPoint Presentation',
+    pendingLabel: 'Creating PowerPoint Presentation...',
+    title: 'Create PowerPoint Presentation',
+  },
+  word: {
+    actionName: 'exportMessageAsWord',
+    buttonClass: 'inline-export-word-btn',
+    iconClass: 'bi bi-file-earmark-word',
+    label: 'Create Word Document',
+    pendingLabel: 'Creating Word Document...',
+    title: 'Create Word Document',
+  },
+  markdown: {
+    actionName: 'exportMessageAsMarkdown',
+    buttonClass: 'inline-export-md-btn',
+    iconClass: 'bi bi-markdown',
+    label: 'Create Markdown Document',
+    pendingLabel: 'Creating Markdown Document...',
+    title: 'Create Markdown Document',
+  },
+  email: {
+    actionName: 'openInEmail',
+    buttonClass: 'inline-open-email-btn',
+    iconClass: 'bi bi-envelope',
+    label: 'Send an Email',
+    pendingLabel: 'Opening Email Draft...',
+    title: 'Opens Message in your default mail program',
+  },
+});
+
+const INLINE_ASSISTANT_EXPORT_ACTIONS_BY_NAME = Object.freeze(
+  Object.values(INLINE_ASSISTANT_EXPORT_ACTIONS).reduce((actionsByName, actionConfig) => {
+    if (actionConfig?.actionName) {
+      actionsByName[actionConfig.actionName] = actionConfig;
+    }
+    return actionsByName;
+  }, {})
+);
+
+const INLINE_ASSISTANT_EXPORT_ACTION_ORDER = ['powerpoint', 'word', 'markdown', 'email'];
+const INLINE_ASSISTANT_EXPORT_VERB_PATTERN = /\b(create|make|generate|draft|write|prepare|compose|build|send|export)\b/i;
+const INLINE_ASSISTANT_EXPORT_PATTERNS = Object.freeze({
+  powerpoint: /\b(powerpoint|pptx|slide deck|slides?)\b/i,
+  presentation: /\bpresentation\b/i,
+  word: /\b(word document|word doc|docx|microsoft word|word file)\b|\b(?:in|as)\s+word\b/i,
+  markdown: /\b(markdown|markdown document|\.md|md file)\b/i,
+  email: /\b(e-?mail|email)\b/i,
+});
 
 function getSelectedDocumentIds() {
   const docSel = document.getElementById('document-select');
@@ -204,11 +267,33 @@ function getOrderedSelectedDocumentIds() {
   return orderedSelectedDocumentIds;
 }
 
+function getComparisonCandidateCatalog() {
+  return [...comparisonVersionCatalog, ...comparisonChatUploadCatalog];
+}
+
+function getCurrentComparisonSourceId() {
+  return String(selectedComparisonTargetIds[0] || '').trim();
+}
+
+function getCurrentComparisonTargetIds() {
+  const sourceId = getCurrentComparisonSourceId();
+  return getSelectedComparisonTargetIds().filter(versionId => versionId !== sourceId);
+}
+
 function getComparisonVersionEntry(versionId) {
-  return comparisonVersionCatalog.find(version => version.id === versionId) || null;
+  return getComparisonCandidateCatalog().find(version => version.id === versionId) || null;
 }
 
 function buildComparisonVersionDetails(version) {
+  if (version?.sourceType === 'chat_upload') {
+    const detailParts = [String(version.kindLabel || 'Chat upload').trim() || 'Chat upload'];
+    const formattedUploadDate = formatDocumentVersionDate(version?.upload_date || version?.timestamp);
+    if (formattedUploadDate) {
+      detailParts.push(formattedUploadDate);
+    }
+    return detailParts.join(' | ');
+  }
+
   const detailParts = [];
   const versionNumber = Number.parseInt(version?.version, 10);
 
@@ -229,145 +314,301 @@ function buildComparisonVersionDetails(version) {
 
 function buildComparisonOrderSummary(selectedVersions) {
   if (!selectedVersions.length) {
-    return 'Select a baseline version, then add versions to compare to the right.';
+    return 'Choose one Source and at least one Target. Workspace versions come from the document picker, and chat uploads appear here after upload.';
   }
 
-  if (selectedVersions.length === 1) {
-    return 'Pick one or more additional versions to compare against the left-side baseline.';
+  const sourceVersion = selectedVersions[0];
+  const targetCount = Math.max(0, selectedVersions.length - 1);
+  if (targetCount === 0) {
+    return `Source ready: ${sourceVersion.label || sourceVersion.groupLabel || sourceVersion.id}. Add one or more Targets to compare.`;
   }
 
-  const sequence = selectedVersions.map(version => {
-    const detailText = buildComparisonVersionDetails(version);
-    return detailText
-      ? `${version.groupLabel} ${detailText}`
-      : version.groupLabel;
-  });
-
-  return `Comparison order: ${sequence.join(' -> ')}`;
+  return `Source ready: ${sourceVersion.label || sourceVersion.groupLabel || sourceVersion.id}. ${targetCount} Target${targetCount === 1 ? '' : 's'} selected.`;
 }
 
-function renderComparisonSelectionList() {
-  if (!documentComparisonSelectionList) {
+function buildComparisonChatUploadCatalog(messages = []) {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+
+  return messages
+    .map(message => {
+      const roleName = String(message?.role || '').trim().toLowerCase();
+      const isUserUploadedImage = roleName === 'image' && Boolean(message?.metadata?.is_user_upload);
+      if (roleName !== 'file' && !isUserUploadedImage) {
+        return null;
+      }
+
+      const hasInlineText = typeof message?.file_content === 'string' && message.file_content.trim().length > 0;
+      const hasExtractedText = typeof message?.extracted_text === 'string' && message.extracted_text.trim().length > 0;
+      const hasBlobBackedContent = String(message?.file_content_source || '').trim().toLowerCase() === 'blob';
+      const hasVisionAnalysis = message?.vision_analysis !== null
+        && message?.vision_analysis !== undefined
+        && message?.vision_analysis !== ''
+        && (!Array.isArray(message.vision_analysis) || message.vision_analysis.length > 0);
+
+      if (!hasInlineText && !hasExtractedText && !hasBlobBackedContent && !hasVisionAnalysis) {
+        return null;
+      }
+
+      const label = String(
+        message?.filename
+        || (isUserUploadedImage ? 'Uploaded image' : '')
+        || message?.id
+        || 'Chat upload'
+      ).trim() || 'Chat upload';
+      const uploadDate = message?.timestamp || message?.created_at || '';
+
+      return {
+        id: String(message.id || '').trim(),
+        label,
+        groupLabel: 'Chat Uploads',
+        sourceType: 'chat_upload',
+        upload_date: uploadDate,
+        timestamp: uploadDate,
+        kindLabel: isUserUploadedImage
+          ? 'Image upload'
+          : (message?.is_table ? 'Table upload' : 'Chat upload'),
+      };
+    })
+    .filter(upload => upload?.id)
+    .sort((leftUpload, rightUpload) => {
+      const timestampComparison = String(rightUpload.timestamp || '').localeCompare(String(leftUpload.timestamp || ''));
+      if (timestampComparison !== 0) {
+        return timestampComparison;
+      }
+      return String(leftUpload.label || '').localeCompare(String(rightUpload.label || ''));
+    });
+}
+
+function buildComparisonEmptyState(messageText) {
+  return `<div class="h-100 d-flex align-items-center justify-content-center text-center text-muted small px-3">${escapeHtml(messageText)}</div>`;
+}
+
+function truncateComparisonSummaryLabel(label, maxLength = 28) {
+  const normalizedLabel = String(label || '').trim();
+  if (normalizedLabel.length <= maxLength) {
+    return normalizedLabel;
+  }
+
+  return `${normalizedLabel.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function buildComparisonSummaryLabel(candidate) {
+  if (!candidate) {
+    return '';
+  }
+
+  const baseName = String(
+    candidate.groupLabel
+    || candidate.title
+    || candidate.file_name
+    || candidate.label
+    || candidate.id
+    || 'Document'
+  ).trim() || 'Document';
+  const versionNumber = Number.parseInt(candidate.version, 10);
+
+  if (candidate.sourceType === 'workspace_document' && Number.isFinite(versionNumber)) {
+    return `${baseName} v${versionNumber}`;
+  }
+
+  return baseName;
+}
+
+function renderComparisonSummaryBadge(candidate, badgeClass) {
+  const fullLabel = buildComparisonSummaryLabel(candidate);
+  const compactLabel = truncateComparisonSummaryLabel(fullLabel);
+  return `<span class="badge rounded-pill ${badgeClass} text-truncate" style="max-width: 14rem;" title="${escapeHtml(fullLabel)}">${escapeHtml(compactLabel)}</span>`;
+}
+
+function renderComparisonSummaryPlaceholder(labelText) {
+  return `<span class="badge rounded-pill text-bg-light border text-body-secondary">${escapeHtml(labelText)}</span>`;
+}
+
+function renderComparisonInlineSummary(selectedVersions = []) {
+  const sourceVersion = selectedVersions[0] || null;
+  const targetVersions = selectedVersions.slice(1);
+
+  if (documentComparisonInlineSourceTags) {
+    documentComparisonInlineSourceTags.innerHTML = sourceVersion
+      ? renderComparisonSummaryBadge(sourceVersion, 'text-bg-primary')
+      : renderComparisonSummaryPlaceholder('Not set');
+  }
+
+  if (documentComparisonInlineTargetTags) {
+    documentComparisonInlineTargetTags.innerHTML = targetVersions.length
+      ? targetVersions.map(targetVersion => renderComparisonSummaryBadge(targetVersion, 'text-bg-secondary')).join('')
+      : renderComparisonSummaryPlaceholder('None selected');
+  }
+
+  if (documentComparisonEditButtonLabel) {
+    documentComparisonEditButtonLabel.textContent = selectedVersions.length ? 'Edit Compare' : 'Set Up Compare';
+  }
+}
+
+function renderComparisonAvailableCard(candidate, currentSourceId, targetIdSet) {
+  const isSource = candidate.id === currentSourceId;
+  const isTarget = targetIdSet.has(candidate.id);
+  const canMoveSourceToTarget = isSource && selectedComparisonTargetIds.length > 1;
+  const sourceButtonLabel = isSource ? 'Source selected' : 'Use as Source';
+  const targetButtonLabel = isSource
+    ? (canMoveSourceToTarget ? 'Move to Target' : 'Source selected')
+    : (isTarget ? 'Added to Target' : 'Add to Target');
+  const badgeClass = isSource
+    ? 'text-bg-primary'
+    : (isTarget ? 'text-bg-info' : 'text-bg-light border text-body-secondary');
+  const badgeText = isSource
+    ? 'Source'
+    : (isTarget ? 'Target' : (candidate.sourceType === 'chat_upload' ? 'Chat' : 'Version'));
+
+  return `<div class="border rounded-3 p-2 bg-body d-flex flex-column gap-2"
+              draggable="true"
+              data-comparison-drag-id="${escapeHtml(candidate.id)}"
+              aria-grabbed="false">
+          <div class="d-flex align-items-start justify-content-between gap-2">
+              <div class="flex-grow-1" style="min-width: 0;">
+                  <div class="small fw-semibold text-body">${escapeHtml(candidate.label || candidate.groupLabel || candidate.id)}</div>
+                  <div class="small text-muted">${escapeHtml(buildComparisonVersionDetails(candidate) || 'Ready to compare')}</div>
+              </div>
+              <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+          </div>
+          <div class="d-flex flex-wrap gap-2">
+              <button type="button"
+                      class="btn btn-outline-primary btn-sm"
+                      data-comparison-set-source-id="${escapeHtml(candidate.id)}"
+                      ${isSource ? 'disabled' : ''}>${escapeHtml(sourceButtonLabel)}</button>
+              <button type="button"
+                      class="btn btn-outline-secondary btn-sm"
+                      data-comparison-set-target-id="${escapeHtml(candidate.id)}"
+                      ${(isTarget && !canMoveSourceToTarget) ? 'disabled' : ''}>${escapeHtml(targetButtonLabel)}</button>
+          </div>
+      </div>`;
+}
+
+function renderComparisonSelectionCard(candidate, roleLabel, badgeClass, actionsHtml = '') {
+  return `<div class="border rounded-3 p-2 bg-body d-flex flex-column gap-2"
+              draggable="true"
+              data-comparison-drag-id="${escapeHtml(candidate.id)}"
+              role="listitem"
+              aria-grabbed="false">
+          <div class="d-flex align-items-start justify-content-between gap-2">
+              <div class="flex-grow-1" style="min-width: 0;">
+                  <div class="small fw-semibold text-body">${escapeHtml(candidate.label || candidate.groupLabel || candidate.id)}</div>
+                  <div class="small text-muted">${escapeHtml(buildComparisonVersionDetails(candidate) || 'Selected item')}</div>
+              </div>
+              <span class="badge ${badgeClass}">${escapeHtml(roleLabel)}</span>
+          </div>
+          ${actionsHtml ? `<div class="d-flex flex-wrap gap-2">${actionsHtml}</div>` : ''}
+      </div>`;
+}
+
+function renderComparisonAvailableList() {
+  if (!documentComparisonAvailableList) {
     return;
   }
 
+  const candidateGroups = [
+    {
+      heading: 'Workspace Versions',
+      items: comparisonVersionCatalog,
+    },
+    {
+      heading: 'Chat Uploads',
+      items: comparisonChatUploadCatalog,
+    },
+  ].filter(group => group.items.length > 0);
+
+  if (!candidateGroups.length) {
+    documentComparisonAvailableList.innerHTML = buildComparisonEmptyState(
+      'Select workspace documents or upload files to this chat to start building a comparison.'
+    );
+    return;
+  }
+
+  const currentSourceId = getCurrentComparisonSourceId();
+  const targetIdSet = new Set(getCurrentComparisonTargetIds());
+  documentComparisonAvailableList.innerHTML = candidateGroups.map(group => `
+      <div class="d-flex flex-column gap-2">
+          <div class="small text-uppercase text-muted fw-semibold">${escapeHtml(group.heading)}</div>
+          ${group.items.map(candidate => renderComparisonAvailableCard(candidate, currentSourceId, targetIdSet)).join('')}
+      </div>
+  `).join('');
+}
+
+function renderComparisonSelectionList() {
   const selectedVersions = getSelectedComparisonTargetIds()
     .map(versionId => getComparisonVersionEntry(versionId))
     .filter(Boolean);
+  const sourceVersion = selectedVersions[0] || null;
+  const targetVersions = selectedVersions.slice(1);
+
+  renderComparisonInlineSummary(selectedVersions);
 
   if (documentComparisonSelectionSummary) {
     documentComparisonSelectionSummary.textContent = buildComparisonOrderSummary(selectedVersions);
   }
 
-  if (!selectedVersions.length) {
-    documentComparisonSelectionList.innerHTML = '<div class="text-muted small">No versions selected yet.</div>';
+  if (documentComparisonSourceDropzone) {
+    if (!sourceVersion) {
+      documentComparisonSourceDropzone.innerHTML = buildComparisonEmptyState(
+        'Drop a workspace version or chat upload here, or use "Use as Source".'
+      );
+    } else {
+      const sourceActions = [
+        targetVersions.length > 0
+          ? `<button type="button" class="btn btn-outline-secondary btn-sm" data-comparison-set-target-id="${escapeHtml(sourceVersion.id)}">Move to Target</button>`
+          : '',
+        `<button type="button" class="btn btn-outline-danger btn-sm" data-comparison-remove-id="${escapeHtml(sourceVersion.id)}">Remove</button>`,
+      ].filter(Boolean).join('');
+      documentComparisonSourceDropzone.innerHTML = renderComparisonSelectionCard(
+        sourceVersion,
+        'Source',
+        'text-bg-primary',
+        sourceActions,
+      );
+    }
+  }
+
+  if (!documentComparisonSelectionList) {
     return;
   }
 
-  documentComparisonSelectionList.innerHTML = selectedVersions.map((version, index) => {
-    const sideLabel = index === 0 ? 'Left' : `Right ${index}`;
-    const sideBadgeClass = index === 0 ? 'text-bg-primary' : 'text-bg-light border';
-    const detailText = buildComparisonVersionDetails(version) || 'Selected version';
-    const promoteButton = index === 0
-      ? ''
-      : `<button type="button"
-                 class="btn btn-link btn-sm text-muted p-0 comparison-selection-promote"
-                 data-comparison-promote-id="${escapeHtml(version.id)}"
-                 aria-label="Use ${escapeHtml(version.label)} as the left-side baseline"
-                 title="Use as left-side baseline">
-                  <i class="bi bi-arrow-left-circle"></i>
-              </button>`;
+  if (!targetVersions.length) {
+    documentComparisonSelectionList.innerHTML = buildComparisonEmptyState(
+      'Drop one or more items here, or use "Add to Target".'
+    );
+    return;
+  }
 
-    return `<div class="border rounded-3 px-2 py-2 bg-body-tertiary d-inline-flex align-items-start gap-2"
-                 data-comparison-selection-item
-                 data-comparison-id="${escapeHtml(version.id)}"
-                 data-comparison-role="${index === 0 ? 'left' : 'right'}"
-                 role="listitem">
-            <span class="badge ${sideBadgeClass} mt-1">${escapeHtml(sideLabel)}</span>
-            <div class="d-flex flex-column" style="min-width: 0;">
-                <span class="small fw-semibold text-body">${escapeHtml(version.groupLabel)}</span>
-                <span class="small text-muted">${escapeHtml(detailText)}</span>
-            </div>
-            <div class="d-flex align-items-center gap-2 ms-1">
-                ${promoteButton}
-                <button type="button"
-                        class="btn btn-link btn-sm text-danger p-0 comparison-selection-remove"
-                        data-comparison-remove-id="${escapeHtml(version.id)}"
-                        aria-label="Remove ${escapeHtml(version.label)} from the comparison"
-                        title="Remove from comparison">
-                    <i class="bi bi-x-circle-fill"></i>
-                </button>
-            </div>
-        </div>`;
-  }).join('');
+  documentComparisonSelectionList.innerHTML = targetVersions.map((version, index) => renderComparisonSelectionCard(
+    version,
+    `Target ${index + 1}`,
+    'text-bg-secondary',
+    [
+      `<button type="button" class="btn btn-outline-primary btn-sm" data-comparison-promote-id="${escapeHtml(version.id)}">Use as Source</button>`,
+      `<button type="button" class="btn btn-outline-danger btn-sm" data-comparison-remove-id="${escapeHtml(version.id)}">Remove</button>`,
+    ].join(''),
+  )).join('');
 }
 
-function renderComparisonTargetPicker() {
-  if (!documentComparisonTargetsSelect) {
-    return;
-  }
-
-  const availableVersions = comparisonVersionCatalog.filter(version => !selectedComparisonTargetIds.includes(version.id));
-  documentComparisonTargetsSelect.innerHTML = '';
-
-  const placeholderOption = document.createElement('option');
-  placeholderOption.value = '';
-  placeholderOption.textContent = availableVersions.length > 0
-    ? 'Add a version to compare...'
-    : 'All available versions are already selected';
-  placeholderOption.selected = true;
-  documentComparisonTargetsSelect.appendChild(placeholderOption);
-
-  const versionGroups = new Map();
-  availableVersions.forEach(version => {
-    if (!versionGroups.has(version.groupLabel)) {
-      versionGroups.set(version.groupLabel, []);
-    }
-    versionGroups.get(version.groupLabel).push(version);
-  });
-
-  versionGroups.forEach((versions, groupLabel) => {
-    const optionGroup = document.createElement('optgroup');
-    optionGroup.label = groupLabel;
-
-    versions.forEach(version => {
-      const option = document.createElement('option');
-      option.value = version.id;
-      option.textContent = version.label;
-      optionGroup.appendChild(option);
-    });
-
-    documentComparisonTargetsSelect.appendChild(optionGroup);
-  });
-
-  documentComparisonTargetsSelect.disabled = availableVersions.length === 0;
-  documentComparisonTargetsSelect.value = '';
+function syncComparisonSelectionState(preferredSelection = '') {
+  const availableIds = new Set(getComparisonCandidateCatalog().map(version => version.id));
+  selectedComparisonTargetIds = selectedComparisonTargetIds.filter(versionId => availableIds.has(versionId));
+  syncComparisonLeftOptions(preferredSelection);
+  renderComparisonAvailableList();
+  renderComparisonSelectionList();
 }
 
 function clearComparisonVersionTargets(resetSelections = true) {
   comparisonVersionCatalog = [];
   comparisonSelectedDocumentIdsSnapshot = [];
   if (resetSelections) {
-    selectedComparisonTargetIds = [];
+    const availableChatUploadIds = new Set(comparisonChatUploadCatalog.map(version => version.id));
+    selectedComparisonTargetIds = selectedComparisonTargetIds.filter(versionId => availableChatUploadIds.has(versionId));
   }
 
-  if (documentComparisonTargetsSelect) {
-    documentComparisonTargetsSelect.innerHTML = '';
-    documentComparisonTargetsSelect.disabled = true;
-  }
-
-  if (documentComparisonLeftSelect) {
-    documentComparisonLeftSelect.innerHTML = '';
-    documentComparisonLeftSelect.disabled = true;
-  }
-
-  if (documentComparisonSelectionSummary) {
-    documentComparisonSelectionSummary.textContent = 'Select a baseline version, then add versions to compare to the right.';
-  }
-
-  if (documentComparisonSelectionList) {
-    documentComparisonSelectionList.innerHTML = '<div class="text-muted small">No versions selected yet.</div>';
-  }
+  syncComparisonSelectionState();
 }
 
 function getDocumentActionType() {
@@ -397,15 +638,7 @@ function syncComparisonLeftOptions(preferredSelection = '') {
 }
 
 function addSelectedComparisonTarget(versionId) {
-  const normalizedVersionId = String(versionId || '').trim();
-  if (!normalizedVersionId || selectedComparisonTargetIds.includes(normalizedVersionId)) {
-    return;
-  }
-
-  selectedComparisonTargetIds = [...selectedComparisonTargetIds, normalizedVersionId];
-  syncComparisonLeftOptions();
-  renderComparisonTargetPicker();
-  renderComparisonSelectionList();
+  assignComparisonTarget(versionId);
 }
 
 function removeSelectedComparisonTarget(versionId) {
@@ -416,14 +649,16 @@ function removeSelectedComparisonTarget(versionId) {
 
   const preferredLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
   selectedComparisonTargetIds = selectedComparisonTargetIds.filter(targetId => targetId !== normalizedVersionId);
-  syncComparisonLeftOptions(preferredLeftSelection === normalizedVersionId ? '' : preferredLeftSelection);
-  renderComparisonTargetPicker();
-  renderComparisonSelectionList();
+  syncComparisonSelectionState(preferredLeftSelection === normalizedVersionId ? '' : preferredLeftSelection);
 }
 
 function promoteComparisonTarget(versionId) {
+  assignComparisonSource(versionId);
+}
+
+function assignComparisonSource(versionId) {
   const normalizedVersionId = String(versionId || '').trim();
-  if (!normalizedVersionId || !selectedComparisonTargetIds.includes(normalizedVersionId)) {
+  if (!normalizedVersionId) {
     return;
   }
 
@@ -431,13 +666,52 @@ function promoteComparisonTarget(versionId) {
     normalizedVersionId,
     ...selectedComparisonTargetIds.filter(targetId => targetId !== normalizedVersionId),
   ];
-  syncComparisonLeftOptions(normalizedVersionId);
-  renderComparisonTargetPicker();
-  renderComparisonSelectionList();
+  syncComparisonSelectionState(normalizedVersionId);
+}
+
+function assignComparisonTarget(versionId) {
+  const normalizedVersionId = String(versionId || '').trim();
+  if (!normalizedVersionId) {
+    return;
+  }
+
+  if (selectedComparisonTargetIds.includes(normalizedVersionId)) {
+    if (getCurrentComparisonSourceId() === normalizedVersionId && selectedComparisonTargetIds.length > 1) {
+      const reorderedIds = [
+        ...selectedComparisonTargetIds.filter(targetId => targetId !== normalizedVersionId),
+        normalizedVersionId,
+      ];
+      selectedComparisonTargetIds = reorderedIds;
+      syncComparisonSelectionState(reorderedIds[0] || '');
+    }
+    return;
+  }
+
+  selectedComparisonTargetIds = [...selectedComparisonTargetIds, normalizedVersionId];
+  syncComparisonSelectionState();
+}
+
+function toggleComparisonDropzoneHighlight(dropzone, isHighlighted) {
+  if (!dropzone) {
+    return;
+  }
+
+  dropzone.classList.toggle('border-primary', isHighlighted);
+  dropzone.classList.toggle('bg-primary-subtle', isHighlighted);
+}
+
+function updateComparisonChatUploadCatalog(messages = []) {
+  const preferredLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
+  comparisonChatUploadCatalog = buildComparisonChatUploadCatalog(messages);
+  syncComparisonSelectionState(preferredLeftSelection);
+
+  updateDocumentActionControls().catch(error => {
+    console.error('Failed to refresh comparison board after loading chat uploads:', error);
+  });
 }
 
 async function loadComparisonVersionTargets() {
-  if (!documentComparisonTargetsSelect) {
+  if (!documentComparisonLeftSelect) {
     return;
   }
 
@@ -446,15 +720,10 @@ async function loadComparisonVersionTargets() {
   const requestToken = ++comparisonVersionLoadToken;
 
   if (!selectedDocumentIds.length) {
-    clearComparisonVersionTargets();
+    comparisonVersionCatalog = [];
+    comparisonSelectedDocumentIdsSnapshot = [];
+    syncComparisonSelectionState(previousLeftSelection);
     return;
-  }
-
-  documentComparisonTargetsSelect.disabled = true;
-  documentComparisonTargetsSelect.innerHTML = '<option value="" disabled>Loading versions...</option>';
-  if (documentComparisonLeftSelect) {
-    documentComparisonLeftSelect.disabled = true;
-    documentComparisonLeftSelect.innerHTML = '';
   }
 
   const comparisonGroups = await Promise.all(selectedDocumentIds.map(async (documentId) => {
@@ -497,13 +766,11 @@ async function loadComparisonVersionTargets() {
         ...version,
         documentId,
         groupLabel,
+        sourceType: 'workspace_document',
         label: buildDocumentVersionLabel(version, groupLabel),
       });
     });
   });
-
-  const availableVersionIds = new Set(comparisonVersionCatalog.map(version => version.id));
-  selectedComparisonTargetIds = selectedComparisonTargetIds.filter(versionId => availableVersionIds.has(versionId));
 
   const addedDocumentIds = selectedDocumentIds.filter(documentId => !comparisonSelectedDocumentIdsSnapshot.includes(documentId));
   if (comparisonSelectedDocumentIdsSnapshot.length === 0 && selectedComparisonTargetIds.length === 0) {
@@ -524,31 +791,39 @@ async function loadComparisonVersionTargets() {
   }
 
   comparisonSelectedDocumentIdsSnapshot = [...selectedDocumentIds];
-  syncComparisonLeftOptions(previousLeftSelection);
-  renderComparisonTargetPicker();
-  renderComparisonSelectionList();
+  syncComparisonSelectionState(previousLeftSelection);
 }
 
 async function updateDocumentActionControls() {
   const actionType = getDocumentActionType();
   const selectedDocumentIds = getSelectedDocumentIds();
-  const showComparisonLeftSelector = actionType === DOCUMENT_ACTION_COMPARISON && selectedDocumentIds.length > 0;
+  const showComparisonUi = actionType === DOCUMENT_ACTION_COMPARISON;
 
   syncDocumentActionTooltip();
 
-  if (documentComparisonTargetsContainer) {
-    documentComparisonTargetsContainer.classList.toggle('d-none', !showComparisonLeftSelector);
+  if (documentComparisonSummaryBar) {
+    documentComparisonSummaryBar.classList.toggle('d-none', !showComparisonUi);
   }
 
-  if (documentComparisonLeftContainer) {
-    documentComparisonLeftContainer.classList.toggle('d-none', !showComparisonLeftSelector);
+  if (documentComparisonBoard) {
+    documentComparisonBoard.classList.toggle('d-none', !showComparisonUi);
   }
 
-  if (showComparisonLeftSelector) {
+  if (showComparisonUi) {
     await loadComparisonVersionTargets();
   } else if (!selectedDocumentIds.length) {
     clearComparisonVersionTargets();
   }
+
+  if (!showComparisonUi) {
+    documentComparisonModal?.hide();
+  }
+
+  renderComparisonInlineSummary(
+    getSelectedComparisonTargetIds()
+      .map(versionId => getComparisonVersionEntry(versionId))
+      .filter(Boolean),
+  );
 }
 
 documentActionSelect?.addEventListener('change', () => {
@@ -556,16 +831,21 @@ documentActionSelect?.addEventListener('change', () => {
     console.error('Failed to update document action controls:', error);
   });
 });
-documentComparisonTargetsSelect?.addEventListener('change', event => {
-  const selectedVersionId = String(event.target?.value || '').trim();
-  if (!selectedVersionId) {
+documentComparisonBoard?.addEventListener('click', event => {
+  const sourceButton = event.target.closest('[data-comparison-set-source-id]');
+  if (sourceButton) {
+    event.preventDefault();
+    assignComparisonSource(sourceButton.getAttribute('data-comparison-set-source-id'));
     return;
   }
 
-  addSelectedComparisonTarget(selectedVersionId);
-  documentComparisonTargetsSelect.value = '';
-});
-documentComparisonSelectionList?.addEventListener('click', event => {
+  const targetButton = event.target.closest('[data-comparison-set-target-id]');
+  if (targetButton) {
+    event.preventDefault();
+    assignComparisonTarget(targetButton.getAttribute('data-comparison-set-target-id'));
+    return;
+  }
+
   const removeButton = event.target.closest('[data-comparison-remove-id]');
   if (removeButton) {
     event.preventDefault();
@@ -579,6 +859,56 @@ documentComparisonSelectionList?.addEventListener('click', event => {
     promoteComparisonTarget(promoteButton.getAttribute('data-comparison-promote-id'));
   }
 });
+
+documentComparisonBoard?.addEventListener('dragstart', event => {
+  const dragCard = event.target.closest('[data-comparison-drag-id]');
+  if (!dragCard || !event.dataTransfer) {
+    return;
+  }
+
+  const dragId = String(dragCard.getAttribute('data-comparison-drag-id') || '').trim();
+  if (!dragId) {
+    return;
+  }
+
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', dragId);
+});
+
+documentComparisonBoard?.addEventListener('dragend', () => {
+  toggleComparisonDropzoneHighlight(documentComparisonSourceDropzone, false);
+  toggleComparisonDropzoneHighlight(documentComparisonSelectionList, false);
+});
+
+[documentComparisonSourceDropzone, documentComparisonSelectionList].forEach(dropzone => {
+  dropzone?.addEventListener('dragover', event => {
+    event.preventDefault();
+    toggleComparisonDropzoneHighlight(dropzone, true);
+  });
+
+  dropzone?.addEventListener('dragleave', event => {
+    if (!dropzone.contains(event.relatedTarget)) {
+      toggleComparisonDropzoneHighlight(dropzone, false);
+    }
+  });
+
+  dropzone?.addEventListener('drop', event => {
+    event.preventDefault();
+    toggleComparisonDropzoneHighlight(dropzone, false);
+    const draggedId = String(event.dataTransfer?.getData('text/plain') || '').trim();
+    if (!draggedId) {
+      return;
+    }
+
+    if (dropzone === documentComparisonSourceDropzone) {
+      assignComparisonSource(draggedId);
+      return;
+    }
+
+    assignComparisonTarget(draggedId);
+  });
+});
+
 window.addEventListener('chat:document-selection-changed', event => {
   const orderedDocumentIds = Array.isArray(event.detail?.documentIds)
     ? event.detail.documentIds.map(documentId => String(documentId || '').trim()).filter(Boolean)
@@ -1109,6 +1439,7 @@ export function loadMessages(conversationId) {
 
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
+      updateComparisonChatUploadCatalog(Array.isArray(data.messages) ? data.messages : []);
       data.messages.forEach((msg) => {
         // Skip deleted messages (when conversation archiving is enabled)
         if (msg.metadata && msg.metadata.is_deleted === true) {
@@ -1169,6 +1500,7 @@ export function loadMessages(conversationId) {
     })
     .catch((error) => {
       console.error("Error loading messages:", error);
+      updateComparisonChatUploadCatalog([]);
       if (chatbox) chatbox.innerHTML = `<div class="text-center p-3 text-danger">Error loading messages.</div>`;
     })
     .finally(() => {
@@ -1561,6 +1893,214 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     };
   }
 
+  function getLatestUserPromptText() {
+    if (!chatbox) {
+      return '';
+    }
+
+    const userMessages = Array.from(chatbox.querySelectorAll('.message.user-message'));
+    for (let index = userMessages.length - 1; index >= 0; index -= 1) {
+      const userMessage = userMessages[index];
+      const previewText = String(userMessage?.dataset?.replyPreviewText || '').trim();
+      if (previewText) {
+        return previewText;
+      }
+
+      const messageText = userMessage.querySelector('.message-text');
+      const visibleText = String(messageText?.innerText || messageText?.textContent || '').trim();
+      if (visibleText) {
+        return visibleText;
+      }
+    }
+
+    return '';
+  }
+
+  function getMostRecentRenderedMessage() {
+    if (!chatbox) {
+      return null;
+    }
+
+    const renderedMessages = Array.from(chatbox.children).filter(child => {
+      return child instanceof HTMLElement && child.classList.contains('message');
+    });
+
+    return renderedMessages.length ? renderedMessages[renderedMessages.length - 1] : null;
+  }
+
+  function getInlineAssistantExportActionTypes(promptText) {
+    const normalizedPromptText = String(promptText || '').trim();
+    if (!normalizedPromptText || !INLINE_ASSISTANT_EXPORT_VERB_PATTERN.test(normalizedPromptText)) {
+      return [];
+    }
+
+    const actionTypes = new Set();
+    const hasPowerPointIntent = INLINE_ASSISTANT_EXPORT_PATTERNS.powerpoint.test(normalizedPromptText);
+    const hasPresentationIntent = INLINE_ASSISTANT_EXPORT_PATTERNS.presentation.test(normalizedPromptText);
+
+    if (hasPowerPointIntent) {
+      actionTypes.add('powerpoint');
+    }
+
+    if (INLINE_ASSISTANT_EXPORT_PATTERNS.word.test(normalizedPromptText)) {
+      actionTypes.add('word');
+    }
+
+    if (INLINE_ASSISTANT_EXPORT_PATTERNS.markdown.test(normalizedPromptText)) {
+      actionTypes.add('markdown');
+    }
+
+    if (INLINE_ASSISTANT_EXPORT_PATTERNS.email.test(normalizedPromptText)) {
+      actionTypes.add('email');
+    }
+
+    if (hasPresentationIntent && !hasPowerPointIntent) {
+      actionTypes.add('powerpoint');
+      actionTypes.add('word');
+    }
+
+    return INLINE_ASSISTANT_EXPORT_ACTION_ORDER.filter(actionType => actionTypes.has(actionType));
+  }
+
+  function buildInlineAssistantExportActionsHtml(messageId) {
+    const previousMessage = getMostRecentRenderedMessage();
+    if (!(previousMessage instanceof HTMLElement) || !previousMessage.classList.contains('user-message')) {
+      return '';
+    }
+
+    const actionTypes = getInlineAssistantExportActionTypes(getLatestUserPromptText());
+    if (!actionTypes.length) {
+      return '';
+    }
+
+    const buttonsHtml = actionTypes.map(actionType => {
+      const actionConfig = INLINE_ASSISTANT_EXPORT_ACTIONS[actionType];
+      if (!actionConfig) {
+        return '';
+      }
+
+      return `
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-primary ${actionConfig.buttonClass}"
+          data-message-id="${messageId}"
+          data-default-label="${actionConfig.label}"
+          data-pending-label="${actionConfig.pendingLabel || actionConfig.label}"
+          data-icon-class="${actionConfig.iconClass}"
+          data-default-title="${actionConfig.title}"
+          title="${actionConfig.title}">
+          <i class="${actionConfig.iconClass} me-1"></i>${actionConfig.label}
+        </button>`;
+    }).join('');
+
+    if (!buttonsHtml) {
+      return '';
+    }
+
+    return `
+      <div class="inline-assistant-export-actions d-flex flex-wrap gap-2 mt-3" aria-label="Quick export actions">
+        ${buttonsHtml}
+      </div>`;
+  }
+
+  function renderInlineExportButtonContent(button, labelText, iconHtml) {
+    button.innerHTML = `${iconHtml || ''}${labelText}`;
+  }
+
+  function setInlineExportButtonPendingState(button, isPending, actionName) {
+    if (!(button instanceof HTMLElement) || !button.dataset.pendingLabel) {
+      return;
+    }
+
+    const actionConfig = INLINE_ASSISTANT_EXPORT_ACTIONS_BY_NAME[actionName] || {};
+    const defaultLabel = button.dataset.defaultLabel || actionConfig.label || button.textContent.trim();
+    const pendingLabel = button.dataset.pendingLabel || actionConfig.pendingLabel || defaultLabel;
+    const iconClass = button.dataset.iconClass || actionConfig.iconClass || '';
+    const defaultTitle = button.dataset.defaultTitle || actionConfig.title || '';
+
+    button.disabled = isPending;
+    button.setAttribute('aria-busy', isPending ? 'true' : 'false');
+    button.title = isPending ? pendingLabel : defaultTitle;
+
+    if (isPending) {
+      renderInlineExportButtonContent(
+        button,
+        pendingLabel,
+        '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>'
+      );
+      return;
+    }
+
+    const iconHtml = iconClass ? `<i class="${iconClass} me-1"></i>` : '';
+    renderInlineExportButtonContent(button, defaultLabel, iconHtml);
+  }
+
+  function waitForUiPaint() {
+    return new Promise(resolve => {
+      requestAnimationFrame(() => resolve());
+    });
+  }
+
+  async function triggerMessageExportAction(messageDiv, role, actionName, actionButton = null) {
+    const currentMessageId = messageDiv.getAttribute('data-message-id');
+    const shouldShowPendingState = actionButton instanceof HTMLElement && actionButton.dataset.pendingLabel;
+
+    try {
+      if (shouldShowPendingState) {
+        setInlineExportButtonPendingState(actionButton, true, actionName);
+        await waitForUiPaint();
+      }
+
+      const module = await import('./chat-message-export.js');
+      const actionHandler = module[actionName];
+      if (typeof actionHandler === 'function') {
+        await Promise.resolve(actionHandler(messageDiv, currentMessageId, role));
+      }
+    } catch (err) {
+      console.error('Error loading message export module:', err);
+    } finally {
+      if (shouldShowPendingState) {
+        setInlineExportButtonPendingState(actionButton, false, actionName);
+      }
+    }
+  }
+
+  function attachMessageExportActionListeners(messageDiv, role) {
+    const actionMappings = [
+      {
+        selectors: ['.dropdown-export-md-btn', '.inline-export-md-btn'],
+        actionName: 'exportMessageAsMarkdown',
+      },
+      {
+        selectors: ['.dropdown-export-word-btn', '.inline-export-word-btn'],
+        actionName: 'exportMessageAsWord',
+      },
+      {
+        selectors: ['.dropdown-export-ppt-btn', '.inline-export-ppt-btn'],
+        actionName: 'exportMessageAsPowerPoint',
+      },
+      {
+        selectors: ['.dropdown-copy-prompt-btn'],
+        actionName: 'copyAsPrompt',
+      },
+      {
+        selectors: ['.dropdown-open-email-btn', '.inline-open-email-btn'],
+        actionName: 'openInEmail',
+      },
+    ];
+
+    actionMappings.forEach(({ selectors, actionName }) => {
+      selectors.forEach(selector => {
+        messageDiv.querySelectorAll(selector).forEach(button => {
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            void triggerMessageExportAction(messageDiv, role, actionName, button);
+          });
+        });
+      });
+    });
+  }
+
 export function appendMessage(
   sender,
   messageContent,
@@ -1627,6 +2167,7 @@ export function appendMessage(
 
     const renderedAiContent = renderAiMessageContent(messageContent);
     const htmlContent = renderedAiContent.htmlContent;
+  const inlineAssistantExportActionsHtml = buildInlineAssistantExportActionsHtml(messageId);
 
     const mainMessageHtml = `<div class="message-text">${htmlContent}</div>`; // Renamed for clarity
 
@@ -1675,6 +2216,7 @@ export function appendMessage(
                     <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                     <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                    <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
                     <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                     <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
                 </ul>
@@ -1777,6 +2319,7 @@ export function appendMessage(
                 <div class="message-bubble">
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
+                  ${inlineAssistantExportActionsHtml}
             <div class="inline-visualizations-container d-none"></div>
                     ${citationContentContainerHtml}
                     ${thoughtsHtml.containerHtml}
@@ -1820,7 +2363,7 @@ export function appendMessage(
         messageConversationId
       );
     })();
-    
+
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
       const match = block.className.match(/language-([a-zA-Z0-9]+)/);
@@ -1837,7 +2380,7 @@ export function appendMessage(
 
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));
-    
+
     const metadataBtn = messageDiv.querySelector(".metadata-info-btn");
     if (metadataBtn) {
       metadataBtn.addEventListener("click", () => {
@@ -1847,13 +2390,13 @@ export function appendMessage(
           metadataContainer.style.display = isVisible ? 'none' : 'block';
           metadataBtn.setAttribute('aria-expanded', !isVisible);
           metadataBtn.title = isVisible ? 'Show metadata' : 'Hide metadata';
-          
+
           // Toggle icon
           const icon = metadataBtn.querySelector('i');
           if (icon) {
             icon.className = isVisible ? 'bi bi-info-circle' : 'bi bi-chevron-up';
           }
-          
+
           // Load metadata if container is empty (first open)
           if (!isVisible && metadataContainer.innerHTML.includes('Loading metadata')) {
             loadMessageMetadataForDisplay(messageId, metadataContainer);
@@ -1862,7 +2405,7 @@ export function appendMessage(
       });
     }
 
-    // Attach thoughts toggle listener
+    attachMessageExportActionListeners(messageDiv, 'assistant');
     attachThoughtsToggleListener(messageDiv, messageId, currentConversationId);
     
     const maskBtn = messageDiv.querySelector(".mask-btn");
@@ -1897,50 +2440,6 @@ export function appendMessage(
         const currentMessageId = messageDiv.getAttribute('data-message-id');
         console.log(`🔄 AI Retry button clicked - using message ID from DOM: ${currentMessageId}`);
         handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
-      });
-    }
-
-    const dropdownExportMdBtn = messageDiv.querySelector(".dropdown-export-md-btn");
-    if (dropdownExportMdBtn) {
-      dropdownExportMdBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const currentMessageId = messageDiv.getAttribute('data-message-id');
-        import('./chat-message-export.js').then(module => {
-          module.exportMessageAsMarkdown(messageDiv, currentMessageId, 'assistant');
-        }).catch(err => console.error('Error loading message export module:', err));
-      });
-    }
-
-    const dropdownExportWordBtn = messageDiv.querySelector(".dropdown-export-word-btn");
-    if (dropdownExportWordBtn) {
-      dropdownExportWordBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const currentMessageId = messageDiv.getAttribute('data-message-id');
-        import('./chat-message-export.js').then(module => {
-          module.exportMessageAsWord(messageDiv, currentMessageId, 'assistant');
-        }).catch(err => console.error('Error loading message export module:', err));
-      });
-    }
-
-    const dropdownCopyPromptBtn = messageDiv.querySelector(".dropdown-copy-prompt-btn");
-    if (dropdownCopyPromptBtn) {
-      dropdownCopyPromptBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const currentMessageId = messageDiv.getAttribute('data-message-id');
-        import('./chat-message-export.js').then(module => {
-          module.copyAsPrompt(messageDiv, currentMessageId, 'assistant');
-        }).catch(err => console.error('Error loading message export module:', err));
-      });
-    }
-
-    const dropdownOpenEmailBtn = messageDiv.querySelector(".dropdown-open-email-btn");
-    if (dropdownOpenEmailBtn) {
-      dropdownOpenEmailBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const currentMessageId = messageDiv.getAttribute('data-message-id');
-        import('./chat-message-export.js').then(module => {
-          module.openInEmail(messageDiv, currentMessageId, 'assistant');
-        }).catch(err => console.error('Error loading message export module:', err));
       });
     }
     
@@ -2195,6 +2694,7 @@ export function appendMessage(
                 <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                 <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
                 <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                 <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
@@ -3365,49 +3865,7 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
     });
   }
 
-  const dropdownExportMdBtn = messageDiv.querySelector(".dropdown-export-md-btn");
-  if (dropdownExportMdBtn) {
-    dropdownExportMdBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const currentMessageId = messageDiv.getAttribute('data-message-id');
-      import('./chat-message-export.js').then(module => {
-        module.exportMessageAsMarkdown(messageDiv, currentMessageId, 'user');
-      }).catch(err => console.error('Error loading message export module:', err));
-    });
-  }
-
-  const dropdownExportWordBtn = messageDiv.querySelector(".dropdown-export-word-btn");
-  if (dropdownExportWordBtn) {
-    dropdownExportWordBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const currentMessageId = messageDiv.getAttribute('data-message-id');
-      import('./chat-message-export.js').then(module => {
-        module.exportMessageAsWord(messageDiv, currentMessageId, 'user');
-      }).catch(err => console.error('Error loading message export module:', err));
-    });
-  }
-
-  const dropdownCopyPromptBtn = messageDiv.querySelector(".dropdown-copy-prompt-btn");
-  if (dropdownCopyPromptBtn) {
-    dropdownCopyPromptBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const currentMessageId = messageDiv.getAttribute('data-message-id');
-      import('./chat-message-export.js').then(module => {
-        module.copyAsPrompt(messageDiv, currentMessageId, 'user');
-      }).catch(err => console.error('Error loading message export module:', err));
-    });
-  }
-
-  const dropdownOpenEmailBtn = messageDiv.querySelector(".dropdown-open-email-btn");
-  if (dropdownOpenEmailBtn) {
-    dropdownOpenEmailBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const currentMessageId = messageDiv.getAttribute('data-message-id');
-      import('./chat-message-export.js').then(module => {
-        module.openInEmail(messageDiv, currentMessageId, 'user');
-      }).catch(err => console.error('Error loading message export module:', err));
-    });
-  }
+  attachMessageExportActionListeners(messageDiv, 'user');
   
   // Handle dropdown positioning manually for user messages - move to chatbox
   const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");

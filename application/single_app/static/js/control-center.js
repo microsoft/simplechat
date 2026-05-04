@@ -2507,6 +2507,7 @@ class ControlCenter {
     formatActivityType(activityType) {
         const typeMap = {
             'user_login': 'User Login',
+            'chat_activity': 'Chat Activity',
             'conversation_creation': 'Conversation Created',
             'conversation_deletion': 'Conversation Deleted',
             'conversation_archival': 'Conversation Archived',
@@ -2521,7 +2522,17 @@ class ControlCenter {
             'delete_group_approved': 'Delete Group (Approved)',
             'delete_all_documents_approved': 'Delete All Documents (Approved)'
         };
-        return typeMap[activityType] || activityType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        return typeMap[activityType] || this.formatActivityValue(activityType);
+    }
+
+    formatActivityValue(value) {
+        if (!value) {
+            return 'N/A';
+        }
+
+        return String(value)
+            .replace(/[_-]/g, ' ')
+            .replace(/\b\w/g, letter => letter.toUpperCase());
     }
 
     formatActivityDetails(log) {
@@ -2530,6 +2541,45 @@ class ControlCenter {
         switch (activityType) {
             case 'user_login':
                 return `Login method: ${log.login_method || log.details?.login_method || 'N/A'}`;
+
+            case 'chat_activity':
+                const conversationSource = log.additional_context?.conversation_source || '';
+                const conversationSourceMap = {
+                    'document_action_chat': 'Document Action',
+                    'collaboration_chat': 'Multi-User Collaboration',
+                    'standard_chat': 'Standard Chat'
+                };
+                const messageLabel = this.formatActivityValue(log.message_type || 'message');
+                const sourceLabel = log.additional_context?.document_action_type
+                    ? this.formatActivityValue(log.additional_context.document_action_type)
+                    : (conversationSourceMap[conversationSource] || this.formatActivityValue(conversationSource));
+                const contextLabel = this.formatActivityValue(log.chat_context || log.workspace_type || '');
+                const chatSummaryParts = [messageLabel];
+                const chatMetadataParts = [];
+
+                if (sourceLabel !== 'N/A') {
+                    chatSummaryParts.push(sourceLabel);
+                }
+                if (contextLabel !== 'N/A') {
+                    chatSummaryParts.push(contextLabel);
+                }
+                if (log.conversation_id) {
+                    chatMetadataParts.push(`Conversation: ${this.escapeHtml(log.conversation_id)}`);
+                }
+                if (log.additional_context?.visibility_mode) {
+                    chatMetadataParts.push(`Visibility: ${this.escapeHtml(this.formatActivityValue(log.additional_context.visibility_mode))}`);
+                }
+                if (log.group_id) {
+                    chatMetadataParts.push(`Group: ${this.escapeHtml(log.group_id)}`);
+                }
+                if (log.public_workspace_id) {
+                    chatMetadataParts.push(`Public Workspace: ${this.escapeHtml(log.public_workspace_id)}`);
+                }
+                if (Number(log.message_length || 0) > 0) {
+                    chatMetadataParts.push(`${Number(log.message_length).toLocaleString()} chars`);
+                }
+
+                return `${chatSummaryParts.map(part => this.escapeHtml(part)).join(' · ')}${chatMetadataParts.length ? `<br><small class="text-muted">${chatMetadataParts.join(' · ')}</small>` : ''}`;
                 
             case 'conversation_creation':
                 const convTitle = log.conversation?.title || 'Untitled';
