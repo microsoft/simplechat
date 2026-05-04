@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -39,11 +39,25 @@ if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_
 }
 
 const documentActionSelect = document.getElementById('document-action-select');
+const documentComparisonTargetsContainer = document.getElementById('document-comparison-targets-container');
+const documentComparisonTargetsSelect = document.getElementById('document-comparison-targets-select');
 const documentComparisonLeftContainer = document.getElementById('document-comparison-left-container');
 const documentComparisonLeftSelect = document.getElementById('document-comparison-left-select');
+const documentComparisonSelectionSummary = document.getElementById('document-comparison-selection-summary');
+const documentComparisonSelectionList = document.getElementById('document-comparison-selection-list');
+let comparisonVersionLoadToken = 0;
+let comparisonVersionCatalog = [];
+let comparisonSelectedDocumentIdsSnapshot = [];
+let comparisonDocumentSelectionOrder = [];
+let selectedComparisonTargetIds = [];
 const DOCUMENT_ACTION_NONE = 'none';
 const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = 'exhaustive_review';
 const DOCUMENT_ACTION_COMPARISON = 'comparison';
+const DOCUMENT_ACTION_DESCRIPTIONS = {
+  [DOCUMENT_ACTION_NONE]: 'Find relevant information in the selected documents.',
+  [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: 'Perform an in-depth analysis across all selected documents based on your request.',
+  [DOCUMENT_ACTION_COMPARISON]: 'Compare one selected document against the others to explain differences, relationships, or downstream impact.',
+};
 const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
   [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: {
     enabled: true,
@@ -87,12 +101,32 @@ function getDocumentActionMaxDocuments(actionType, executionContext) {
 
 function getDocumentActionLabel(actionType) {
   if (actionType === DOCUMENT_ACTION_COMPARISON) {
-    return 'document comparison';
+    return 'compare';
   }
   if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
-    return 'exhaustive review';
+    return 'review';
   }
-  return 'document action';
+  return 'search';
+}
+
+function getDocumentActionDescription(actionType) {
+  return DOCUMENT_ACTION_DESCRIPTIONS[actionType] || DOCUMENT_ACTION_DESCRIPTIONS[DOCUMENT_ACTION_NONE];
+}
+
+function syncDocumentActionTooltip() {
+  if (!documentActionSelect) {
+    return;
+  }
+
+  const selectedOption = documentActionSelect.selectedOptions?.[0] || null;
+  const description = String(
+    selectedOption?.dataset.actionDescription
+    || selectedOption?.getAttribute('title')
+    || getDocumentActionDescription(getDocumentActionType())
+  ).trim();
+
+  documentActionSelect.title = description;
+  documentActionSelect.setAttribute('aria-description', description);
 }
 
 function getSelectedDocumentIds() {
@@ -106,47 +140,460 @@ function getSelectedDocumentIds() {
     .filter(value => value);
 }
 
+function getSelectedComparisonTargetIds() {
+  return selectedComparisonTargetIds.filter(Boolean);
+}
+
+function formatDocumentVersionDate(uploadDate) {
+  const parsedTime = Date.parse(String(uploadDate || '').trim());
+  if (Number.isNaN(parsedTime)) {
+    return '';
+  }
+
+  return new Date(parsedTime).toLocaleDateString();
+}
+
+function buildDocumentVersionLabel(version, fallbackName) {
+  const baseName = String(
+    version?.title
+    || version?.file_name
+    || fallbackName
+    || version?.id
+    || 'Document version'
+  ).trim() || 'Document version';
+  const versionNumber = Number.parseInt(version?.version, 10);
+  const detailParts = [];
+
+  if (Number.isFinite(versionNumber)) {
+    detailParts.push(`v${versionNumber}`);
+  }
+  if (version?.is_current_version) {
+    detailParts.push('current');
+  }
+
+  const formattedDate = formatDocumentVersionDate(version?.upload_date);
+  if (formattedDate) {
+    detailParts.push(formattedDate);
+  }
+
+  return detailParts.length ? `${baseName} (${detailParts.join(' | ')})` : baseName;
+}
+
+function buildFallbackComparisonVersion(documentId) {
+  const metadata = getDocumentMetadata(documentId) || {};
+  return [{
+    id: documentId,
+    title: metadata.title || '',
+    file_name: metadata.file_name || metadata.name || metadata.filename || '',
+    version: metadata.version,
+    upload_date: metadata.upload_date,
+    is_current_version: true,
+  }];
+}
+
+function getOrderedSelectedDocumentIds() {
+  const selectedDocumentIds = getSelectedDocumentIds();
+  const orderedSelectedDocumentIds = comparisonDocumentSelectionOrder.filter(documentId => selectedDocumentIds.includes(documentId));
+
+  selectedDocumentIds.forEach(documentId => {
+    if (!orderedSelectedDocumentIds.includes(documentId)) {
+      orderedSelectedDocumentIds.push(documentId);
+    }
+  });
+
+  return orderedSelectedDocumentIds;
+}
+
+function getComparisonVersionEntry(versionId) {
+  return comparisonVersionCatalog.find(version => version.id === versionId) || null;
+}
+
+function buildComparisonVersionDetails(version) {
+  const detailParts = [];
+  const versionNumber = Number.parseInt(version?.version, 10);
+
+  if (Number.isFinite(versionNumber)) {
+    detailParts.push(`v${versionNumber}`);
+  }
+  if (version?.is_current_version) {
+    detailParts.push('Current');
+  }
+
+  const formattedDate = formatDocumentVersionDate(version?.upload_date);
+  if (formattedDate) {
+    detailParts.push(formattedDate);
+  }
+
+  return detailParts.join(' | ');
+}
+
+function buildComparisonOrderSummary(selectedVersions) {
+  if (!selectedVersions.length) {
+    return 'Select a baseline version, then add versions to compare to the right.';
+  }
+
+  if (selectedVersions.length === 1) {
+    return 'Pick one or more additional versions to compare against the left-side baseline.';
+  }
+
+  const sequence = selectedVersions.map(version => {
+    const detailText = buildComparisonVersionDetails(version);
+    return detailText
+      ? `${version.groupLabel} ${detailText}`
+      : version.groupLabel;
+  });
+
+  return `Comparison order: ${sequence.join(' -> ')}`;
+}
+
+function renderComparisonSelectionList() {
+  if (!documentComparisonSelectionList) {
+    return;
+  }
+
+  const selectedVersions = getSelectedComparisonTargetIds()
+    .map(versionId => getComparisonVersionEntry(versionId))
+    .filter(Boolean);
+
+  if (documentComparisonSelectionSummary) {
+    documentComparisonSelectionSummary.textContent = buildComparisonOrderSummary(selectedVersions);
+  }
+
+  if (!selectedVersions.length) {
+    documentComparisonSelectionList.innerHTML = '<div class="text-muted small">No versions selected yet.</div>';
+    return;
+  }
+
+  documentComparisonSelectionList.innerHTML = selectedVersions.map((version, index) => {
+    const sideLabel = index === 0 ? 'Left' : `Right ${index}`;
+    const sideBadgeClass = index === 0 ? 'text-bg-primary' : 'text-bg-light border';
+    const detailText = buildComparisonVersionDetails(version) || 'Selected version';
+    const promoteButton = index === 0
+      ? ''
+      : `<button type="button"
+                 class="btn btn-link btn-sm text-muted p-0 comparison-selection-promote"
+                 data-comparison-promote-id="${escapeHtml(version.id)}"
+                 aria-label="Use ${escapeHtml(version.label)} as the left-side baseline"
+                 title="Use as left-side baseline">
+                  <i class="bi bi-arrow-left-circle"></i>
+              </button>`;
+
+    return `<div class="border rounded-3 px-2 py-2 bg-body-tertiary d-inline-flex align-items-start gap-2"
+                 data-comparison-selection-item
+                 data-comparison-id="${escapeHtml(version.id)}"
+                 data-comparison-role="${index === 0 ? 'left' : 'right'}"
+                 role="listitem">
+            <span class="badge ${sideBadgeClass} mt-1">${escapeHtml(sideLabel)}</span>
+            <div class="d-flex flex-column" style="min-width: 0;">
+                <span class="small fw-semibold text-body">${escapeHtml(version.groupLabel)}</span>
+                <span class="small text-muted">${escapeHtml(detailText)}</span>
+            </div>
+            <div class="d-flex align-items-center gap-2 ms-1">
+                ${promoteButton}
+                <button type="button"
+                        class="btn btn-link btn-sm text-danger p-0 comparison-selection-remove"
+                        data-comparison-remove-id="${escapeHtml(version.id)}"
+                        aria-label="Remove ${escapeHtml(version.label)} from the comparison"
+                        title="Remove from comparison">
+                    <i class="bi bi-x-circle-fill"></i>
+                </button>
+            </div>
+        </div>`;
+  }).join('');
+}
+
+function renderComparisonTargetPicker() {
+  if (!documentComparisonTargetsSelect) {
+    return;
+  }
+
+  const availableVersions = comparisonVersionCatalog.filter(version => !selectedComparisonTargetIds.includes(version.id));
+  documentComparisonTargetsSelect.innerHTML = '';
+
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.textContent = availableVersions.length > 0
+    ? 'Add a version to compare...'
+    : 'All available versions are already selected';
+  placeholderOption.selected = true;
+  documentComparisonTargetsSelect.appendChild(placeholderOption);
+
+  const versionGroups = new Map();
+  availableVersions.forEach(version => {
+    if (!versionGroups.has(version.groupLabel)) {
+      versionGroups.set(version.groupLabel, []);
+    }
+    versionGroups.get(version.groupLabel).push(version);
+  });
+
+  versionGroups.forEach((versions, groupLabel) => {
+    const optionGroup = document.createElement('optgroup');
+    optionGroup.label = groupLabel;
+
+    versions.forEach(version => {
+      const option = document.createElement('option');
+      option.value = version.id;
+      option.textContent = version.label;
+      optionGroup.appendChild(option);
+    });
+
+    documentComparisonTargetsSelect.appendChild(optionGroup);
+  });
+
+  documentComparisonTargetsSelect.disabled = availableVersions.length === 0;
+  documentComparisonTargetsSelect.value = '';
+}
+
+function clearComparisonVersionTargets(resetSelections = true) {
+  comparisonVersionCatalog = [];
+  comparisonSelectedDocumentIdsSnapshot = [];
+  if (resetSelections) {
+    selectedComparisonTargetIds = [];
+  }
+
+  if (documentComparisonTargetsSelect) {
+    documentComparisonTargetsSelect.innerHTML = '';
+    documentComparisonTargetsSelect.disabled = true;
+  }
+
+  if (documentComparisonLeftSelect) {
+    documentComparisonLeftSelect.innerHTML = '';
+    documentComparisonLeftSelect.disabled = true;
+  }
+
+  if (documentComparisonSelectionSummary) {
+    documentComparisonSelectionSummary.textContent = 'Select a baseline version, then add versions to compare to the right.';
+  }
+
+  if (documentComparisonSelectionList) {
+    documentComparisonSelectionList.innerHTML = '<div class="text-muted small">No versions selected yet.</div>';
+  }
+}
+
 function getDocumentActionType() {
   return String(documentActionSelect?.value || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
 }
 
-function syncComparisonLeftOptions() {
+function syncComparisonLeftOptions(preferredSelection = '') {
   if (!documentComparisonLeftSelect) {
     return;
   }
 
-  const selectedDocumentIds = getSelectedDocumentIds();
-  const previousSelection = String(documentComparisonLeftSelect.value || '').trim();
+  const previousSelection = String(preferredSelection || documentComparisonLeftSelect.value || '').trim();
   documentComparisonLeftSelect.innerHTML = '';
 
-  selectedDocumentIds.forEach((documentId, index) => {
-    const metadata = getDocumentMetadata(documentId) || {};
+  getSelectedComparisonTargetIds().forEach((targetId, index) => {
+    const version = getComparisonVersionEntry(targetId);
     const option = document.createElement('option');
-    option.value = documentId;
-    option.textContent = metadata.name || metadata.file_name || metadata.filename || documentId;
-    if ((previousSelection && previousSelection === documentId) || (!previousSelection && index === 0)) {
+    option.value = targetId;
+    option.textContent = version?.label || targetId;
+    if ((previousSelection && previousSelection === targetId) || (!previousSelection && index === 0)) {
       option.selected = true;
     }
     documentComparisonLeftSelect.appendChild(option);
   });
+
+  documentComparisonLeftSelect.disabled = getSelectedComparisonTargetIds().length === 0;
 }
 
-function updateDocumentActionControls() {
+function addSelectedComparisonTarget(versionId) {
+  const normalizedVersionId = String(versionId || '').trim();
+  if (!normalizedVersionId || selectedComparisonTargetIds.includes(normalizedVersionId)) {
+    return;
+  }
+
+  selectedComparisonTargetIds = [...selectedComparisonTargetIds, normalizedVersionId];
+  syncComparisonLeftOptions();
+  renderComparisonTargetPicker();
+  renderComparisonSelectionList();
+}
+
+function removeSelectedComparisonTarget(versionId) {
+  const normalizedVersionId = String(versionId || '').trim();
+  if (!normalizedVersionId) {
+    return;
+  }
+
+  const preferredLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
+  selectedComparisonTargetIds = selectedComparisonTargetIds.filter(targetId => targetId !== normalizedVersionId);
+  syncComparisonLeftOptions(preferredLeftSelection === normalizedVersionId ? '' : preferredLeftSelection);
+  renderComparisonTargetPicker();
+  renderComparisonSelectionList();
+}
+
+function promoteComparisonTarget(versionId) {
+  const normalizedVersionId = String(versionId || '').trim();
+  if (!normalizedVersionId || !selectedComparisonTargetIds.includes(normalizedVersionId)) {
+    return;
+  }
+
+  selectedComparisonTargetIds = [
+    normalizedVersionId,
+    ...selectedComparisonTargetIds.filter(targetId => targetId !== normalizedVersionId),
+  ];
+  syncComparisonLeftOptions(normalizedVersionId);
+  renderComparisonTargetPicker();
+  renderComparisonSelectionList();
+}
+
+async function loadComparisonVersionTargets() {
+  if (!documentComparisonTargetsSelect) {
+    return;
+  }
+
+  const selectedDocumentIds = getOrderedSelectedDocumentIds();
+  const previousLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
+  const requestToken = ++comparisonVersionLoadToken;
+
+  if (!selectedDocumentIds.length) {
+    clearComparisonVersionTargets();
+    return;
+  }
+
+  documentComparisonTargetsSelect.disabled = true;
+  documentComparisonTargetsSelect.innerHTML = '<option value="" disabled>Loading versions...</option>';
+  if (documentComparisonLeftSelect) {
+    documentComparisonLeftSelect.disabled = true;
+    documentComparisonLeftSelect.innerHTML = '';
+  }
+
+  const comparisonGroups = await Promise.all(selectedDocumentIds.map(async (documentId) => {
+    const metadata = getDocumentMetadata(documentId) || {};
+    let versions = [];
+
+    try {
+      versions = await fetchDocumentVersions(documentId);
+    } catch (error) {
+      console.warn('Unable to load comparison versions for document:', documentId, error);
+    }
+
+    if (!Array.isArray(versions) || versions.length === 0) {
+      versions = buildFallbackComparisonVersion(documentId);
+    }
+
+    return {
+      documentId,
+      groupLabel: String(
+        metadata.title
+        || metadata.file_name
+        || metadata.name
+        || metadata.filename
+        || versions[0]?.title
+        || versions[0]?.file_name
+        || documentId
+      ).trim() || documentId,
+      versions,
+    };
+  }));
+
+  if (requestToken !== comparisonVersionLoadToken) {
+    return;
+  }
+
+  comparisonVersionCatalog = [];
+  comparisonGroups.forEach(({ documentId, groupLabel, versions }) => {
+    versions.forEach(version => {
+      comparisonVersionCatalog.push({
+        ...version,
+        documentId,
+        groupLabel,
+        label: buildDocumentVersionLabel(version, groupLabel),
+      });
+    });
+  });
+
+  const availableVersionIds = new Set(comparisonVersionCatalog.map(version => version.id));
+  selectedComparisonTargetIds = selectedComparisonTargetIds.filter(versionId => availableVersionIds.has(versionId));
+
+  const addedDocumentIds = selectedDocumentIds.filter(documentId => !comparisonSelectedDocumentIdsSnapshot.includes(documentId));
+  if (comparisonSelectedDocumentIdsSnapshot.length === 0 && selectedComparisonTargetIds.length === 0) {
+    comparisonGroups.forEach(({ versions }) => {
+      const defaultVersionId = versions.find(version => version.is_current_version)?.id || versions[0]?.id;
+      if (defaultVersionId) {
+        selectedComparisonTargetIds.push(defaultVersionId);
+      }
+    });
+  } else {
+    addedDocumentIds.forEach(documentId => {
+      const comparisonGroup = comparisonGroups.find(group => group.documentId === documentId);
+      const defaultVersionId = comparisonGroup?.versions.find(version => version.is_current_version)?.id || comparisonGroup?.versions?.[0]?.id;
+      if (defaultVersionId && !selectedComparisonTargetIds.includes(defaultVersionId)) {
+        selectedComparisonTargetIds.push(defaultVersionId);
+      }
+    });
+  }
+
+  comparisonSelectedDocumentIdsSnapshot = [...selectedDocumentIds];
+  syncComparisonLeftOptions(previousLeftSelection);
+  renderComparisonTargetPicker();
+  renderComparisonSelectionList();
+}
+
+async function updateDocumentActionControls() {
   const actionType = getDocumentActionType();
   const selectedDocumentIds = getSelectedDocumentIds();
   const showComparisonLeftSelector = actionType === DOCUMENT_ACTION_COMPARISON && selectedDocumentIds.length > 0;
+
+  syncDocumentActionTooltip();
+
+  if (documentComparisonTargetsContainer) {
+    documentComparisonTargetsContainer.classList.toggle('d-none', !showComparisonLeftSelector);
+  }
 
   if (documentComparisonLeftContainer) {
     documentComparisonLeftContainer.classList.toggle('d-none', !showComparisonLeftSelector);
   }
 
   if (showComparisonLeftSelector) {
-    syncComparisonLeftOptions();
+    await loadComparisonVersionTargets();
+  } else if (!selectedDocumentIds.length) {
+    clearComparisonVersionTargets();
   }
 }
 
-documentActionSelect?.addEventListener('change', updateDocumentActionControls);
-window.addEventListener('chat:document-selection-changed', updateDocumentActionControls);
+documentActionSelect?.addEventListener('change', () => {
+  updateDocumentActionControls().catch(error => {
+    console.error('Failed to update document action controls:', error);
+  });
+});
+documentComparisonTargetsSelect?.addEventListener('change', event => {
+  const selectedVersionId = String(event.target?.value || '').trim();
+  if (!selectedVersionId) {
+    return;
+  }
+
+  addSelectedComparisonTarget(selectedVersionId);
+  documentComparisonTargetsSelect.value = '';
+});
+documentComparisonSelectionList?.addEventListener('click', event => {
+  const removeButton = event.target.closest('[data-comparison-remove-id]');
+  if (removeButton) {
+    event.preventDefault();
+    removeSelectedComparisonTarget(removeButton.getAttribute('data-comparison-remove-id'));
+    return;
+  }
+
+  const promoteButton = event.target.closest('[data-comparison-promote-id]');
+  if (promoteButton) {
+    event.preventDefault();
+    promoteComparisonTarget(promoteButton.getAttribute('data-comparison-promote-id'));
+  }
+});
+window.addEventListener('chat:document-selection-changed', event => {
+  const orderedDocumentIds = Array.isArray(event.detail?.documentIds)
+    ? event.detail.documentIds.map(documentId => String(documentId || '').trim()).filter(Boolean)
+    : [];
+  if (orderedDocumentIds.length > 0) {
+    comparisonDocumentSelectionOrder = orderedDocumentIds;
+  }
+
+  updateDocumentActionControls().catch(error => {
+    console.error('Failed to refresh comparison target options:', error);
+  });
+});
+updateDocumentActionControls().catch(error => {
+  console.error('Failed to initialize document action controls:', error);
+});
 
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
@@ -598,6 +1045,51 @@ function createCitationsHtml(
   } else {
     return "";
   }
+}
+
+function createCitationDetailsSectionHtml(
+  hybridCitations = [],
+  webCitations = [],
+  agentCitations = [],
+  messageId = "",
+  messageConversationId = ""
+) {
+  const documentCitationCount = Array.isArray(hybridCitations) ? hybridCitations.length : 0;
+  const webCitationCount = Array.isArray(webCitations) ? webCitations.length : 0;
+  const agentCitationCount = Array.isArray(agentCitations) ? agentCitations.length : 0;
+  const totalCitationCount = documentCitationCount + webCitationCount + agentCitationCount;
+
+  if (totalCitationCount === 0) {
+    return "";
+  }
+
+  const countBadges = [];
+  if (documentCitationCount > 0) {
+    countBadges.push(`<span class="badge bg-info-subtle text-info-emphasis">Documents ${documentCitationCount}</span>`);
+  }
+  if (webCitationCount > 0) {
+    countBadges.push(`<span class="badge bg-primary-subtle text-primary-emphasis">Web ${webCitationCount}</span>`);
+  }
+  if (agentCitationCount > 0) {
+    countBadges.push(`<span class="badge bg-warning-subtle text-warning-emphasis">Agent ${agentCitationCount}</span>`);
+  }
+
+  const citationsHtml = createCitationsHtml(
+    hybridCitations,
+    webCitations,
+    agentCitations,
+    messageId,
+    messageConversationId
+  );
+
+  return `
+    <div class="mb-3">
+      <div class="fw-bold mb-2"><i class="bi bi-journal-text me-2"></i>Citations</div>
+      <div class="ms-3 small">
+        <div class="d-flex flex-wrap gap-2 mb-2">${countBadges.join("")}</div>
+        ${citationsHtml}
+      </div>
+    </div>`;
 }
 
 export function loadMessages(conversationId) {
@@ -1246,11 +1738,12 @@ export function appendMessage(
     console.log("Hybrid Check Result:", hybridCheck);
     console.log("Web Check Result:", webCheck);
     console.log("Agent Check Result:", agentCheck);
-    const overallCondition = augmented && (hybridCheck || webCheck || agentCheck);
+    const hasAnyCitations = hybridCheck || webCheck || agentCheck;
+    const overallCondition = hasAnyCitations;
     console.log("Overall Condition Result:", overallCondition);
-    const shouldShowCitations = (augmented && citationsButtonsHtml) || agentCheck;
+    const shouldShowCitations = Boolean(citationsButtonsHtml) && hasAnyCitations;
     console.log(
-      `Condition check ((augmented && citationsButtonsHtml) || agentCheck): ${shouldShowCitations}`
+      `Condition check (Boolean(citationsButtonsHtml) && hasAnyCitations): ${shouldShowCitations}`
     );
 
     if (shouldShowCitations) {
@@ -2400,15 +2893,20 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
   const selectedTags = getSelectedTags();
   const documentActionType = getDocumentActionType();
+  const comparisonTargetIds = documentActionType === DOCUMENT_ACTION_COMPARISON
+    ? getSelectedComparisonTargetIds()
+    : [];
   const comparisonLeftDocumentId = documentActionType === DOCUMENT_ACTION_COMPARISON
-    ? String(documentComparisonLeftSelect?.value || selectedDocumentId || '').trim()
+    ? String(documentComparisonLeftSelect?.value || comparisonTargetIds[0] || '').trim()
     : '';
   const comparisonRightDocumentIds = documentActionType === DOCUMENT_ACTION_COMPARISON
-    ? selectedDocumentIds.filter(documentId => documentId !== comparisonLeftDocumentId)
+    ? comparisonTargetIds.filter(documentId => documentId !== comparisonLeftDocumentId)
     : [];
   const documentAction = {
     type: documentActionType,
-    document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? selectedDocumentIds : [],
+    document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW
+      ? selectedDocumentIds
+      : comparisonTargetIds,
     left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : '',
     right_document_ids: comparisonRightDocumentIds,
     doc_scope: effectiveDocScope,
@@ -2579,18 +3077,20 @@ export function actuallySendMessage(finalMessageToSend) {
   const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
   const actionType = String(messageData.document_action?.type || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
   const useDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
-  const totalSelectedDocuments = Array.isArray(messageData.selected_document_ids) ? messageData.selected_document_ids.length : 0;
+  const totalSelectedDocuments = actionType === DOCUMENT_ACTION_COMPARISON
+    ? (Array.isArray(messageData.document_action?.document_ids) ? messageData.document_action.document_ids.length : 0)
+    : (Array.isArray(messageData.selected_document_ids) ? messageData.selected_document_ids.length : 0);
 
   if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW && totalSelectedDocuments === 0) {
-    showToast('Select one or more documents before starting an exhaustive review.', 'warning');
+    showToast('Select one or more documents before starting a review.', 'warning');
     return;
   }
   if (actionType === DOCUMENT_ACTION_COMPARISON && totalSelectedDocuments < 2) {
-    showToast('Select at least two documents before starting a comparison.', 'warning');
+    showToast('Select at least two documents before starting compare.', 'warning');
     return;
   }
   if (actionType === DOCUMENT_ACTION_COMPARISON && (!messageData.document_action?.left_document_id || !Array.isArray(messageData.document_action?.right_document_ids) || messageData.document_action.right_document_ids.length === 0)) {
-    showToast('Choose one left document and at least one right document for comparison.', 'warning');
+    showToast('Choose one left document and at least one right document for compare.', 'warning');
     return;
   }
   if (useDocumentAction && !isDocumentActionEnabled(actionType)) {
@@ -3859,10 +4359,21 @@ function loadMessageMetadataForDisplay(messageId, container) {
           if (metadata.augmented !== undefined) html += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2 badge ${metadata.augmented ? 'bg-success' : 'bg-secondary'}">${metadata.augmented ? 'Yes' : 'No'}</span></div>`;
           if (metadata.metadata?.reasoning_effort) html += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${metadata.metadata.reasoning_effort}</code></div>`;
           if (metadata.hybrid_citations && metadata.hybrid_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Document Citations:</span> <span class="ms-2 badge bg-info">${metadata.hybrid_citations.length}</span></div>`;
+          if (metadata.web_search_citations && metadata.web_search_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Web Citations:</span> <span class="ms-2 badge bg-info">${metadata.web_search_citations.length}</span></div>`;
           if (metadata.agent_citations && metadata.agent_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${metadata.agent_citations.length}</span></div>`;
         }
         
         html += '</div></div>';
+      }
+
+      if (metadata.role === 'assistant') {
+        html += createCitationDetailsSectionHtml(
+          Array.isArray(metadata.hybrid_citations) ? metadata.hybrid_citations : [],
+          Array.isArray(metadata.web_search_citations) ? metadata.web_search_citations : [],
+          Array.isArray(metadata.agent_citations) ? metadata.agent_citations : [],
+          metadata.id || messageId,
+          metadata.conversation_id || ''
+        );
       }
 
       if (metadata.role === 'assistant' && historyContext) {

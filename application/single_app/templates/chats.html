@@ -534,6 +534,28 @@
                 <div id="search-documents-container" class="card p-2 mb-2" style="display: none; border-radius: 0.5rem;">
                     
                      <div class="d-flex flex-wrap align-items-end gap-2">
+                         <div class="flex-shrink-0" style="min-width: 180px; max-width: 240px;">
+                             <label class="form-label mb-1 small text-muted" for="document-action-select">Action</label>
+                             <select class="form-select form-select-sm" id="document-action-select" title="Find relevant information in the selected documents.">
+                                        <option value="none" data-action-description="Find relevant information in the selected documents." title="Find relevant information in the selected documents.">Search</option>
+                                 {% if settings.document_action_capabilities.exhaustive_review.enabled %}
+                                 <option value="exhaustive_review" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Review</option>
+                                 {% endif %}
+                                 {% if settings.document_action_capabilities.comparison.enabled %}
+                                 <option value="comparison" data-action-description="Compare one selected document against the others to explain differences, relationships, or downstream impact." title="Compare one selected document against the others to explain differences, relationships, or downstream impact.">Compare</option>
+                                 {% endif %}
+                             </select>
+                             <div id="document-comparison-targets-container" class="mt-2 d-none">
+                                 <label class="form-label mb-1 small text-muted" for="document-comparison-targets-select">Comparison Versions</label>
+                                 <select class="form-select form-select-sm" id="document-comparison-targets-select" multiple size="6"></select>
+                                 <div class="form-text small">Choose one or more versions from the selected documents. The current version of each selected document is preselected.</div>
+                             </div>
+                             <div id="document-comparison-left-container" class="mt-2 d-none">
+                                 <label class="form-label mb-1 small text-muted" for="document-comparison-left-select">Left Version</label>
+                                 <select class="form-select form-select-sm" id="document-comparison-left-select"></select>
+                                 <div class="form-text small">Every other selected version becomes a right-side comparison target.</div>
+                             </div>
+                         </div>
                          <div class="flex-shrink-0" style="min-width: 120px; max-width: 250px;">
                              <label class="form-label mb-1 small text-muted d-flex align-items-center gap-1">
                                 Scope
@@ -620,24 +642,6 @@
                                 <select class="d-none" id="document-select" multiple></select>
                              </div>
                          </div>
-                         <div class="flex-shrink-0" style="min-width: 220px; max-width: 260px;">
-                             <label class="form-label mb-1 small text-muted" for="document-action-select">Action</label>
-                             <select class="form-select form-select-sm" id="document-action-select" title="Choose how chat should use the selected documents">
-                                        <option value="none">Search Documents</option>
-                                 {% if settings.document_action_capabilities.exhaustive_review.enabled %}
-                                 <option value="exhaustive_review">Exhaustive Review</option>
-                                 {% endif %}
-                                 {% if settings.document_action_capabilities.comparison.enabled %}
-                                 <option value="comparison">Compare Documents</option>
-                                 {% endif %}
-                             </select>
-                             <div id="document-comparison-left-container" class="mt-2 d-none">
-                                 <label class="form-label mb-1 small text-muted" for="document-comparison-left-select">Left Document</label>
-                                 <select class="form-select form-select-sm" id="document-comparison-left-select"></select>
-                                 <div class="form-text small">All other selected documents become right-side comparison targets.</div>
-                             </div>
-                         </div>
-
                      </div>
                 </div>
                 {% endif %}

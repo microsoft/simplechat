@@ -9,8 +9,13 @@ import olefile
 
 from functions_debug import debug_print
 from config import *
+import functions_settings
 from functions_settings import *
 from functions_logging import *
+
+
+def get_settings(*args, **kwargs):
+    return functions_settings.get_settings(*args, **kwargs)
 
 def extract_text_file(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:

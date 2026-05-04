@@ -23,3 +23,4 @@ category: Version History
 - [Exhaustive Document Review](v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md)
 - [Exhaustive Review Progress And Limits](v0.241.071/EXHAUSTIVE_REVIEW_PROGRESS_AND_LIMITS.md)
 - [Document Actions And Comparison](v0.241.072/DOCUMENT_ACTIONS_AND_COMPARISON.md)
+- [Document Version Comparison](v0.241.097/DOCUMENT_VERSION_COMPARISON.md)

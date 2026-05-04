@@ -3187,13 +3187,23 @@ def get_document_versions(user_id, document_id, group_id=None, public_workspace_
             public_workspace_id=public_workspace_id,
         )
         sorted_family = sorted(family_documents, key=_document_revision_sort_key, reverse=True)
+        current_document = _choose_current_document(family_documents)
+        current_document_id = current_document.get('id') if current_document else None
+        revision_family_id = (
+            target_document.get('revision_family_id')
+            or (current_document.get('revision_family_id') if current_document else None)
+            or current_document_id
+            or document_id
+        )
         return [
             {
                 'id': doc.get('id'),
                 'file_name': doc.get('file_name'),
+                'title': doc.get('title'),
                 'version': doc.get('version'),
                 'upload_date': doc.get('upload_date'),
-                'is_current_version': doc.get('id') == _choose_current_document(family_documents).get('id'),
+                'revision_family_id': doc.get('revision_family_id') or revision_family_id,
+                'is_current_version': doc.get('id') == current_document_id,
             }
             for doc in sorted_family
         ]

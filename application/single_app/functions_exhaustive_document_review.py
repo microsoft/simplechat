@@ -59,6 +59,88 @@ def _calculate_progress_percent(completed_value, total_value, fallback_complete=
     return 100 if fallback_complete else 0
 
 
+def _normalize_progress_percent(value, default_value=0):
+    try:
+        return max(0, min(100, int(round(float(value)))))
+    except (TypeError, ValueError):
+        return max(0, min(100, int(default_value or 0)))
+
+
+def _scale_progress_percent(value, start_percent, end_percent):
+    normalized_value = _normalize_progress_percent(value)
+    normalized_start = _normalize_progress_percent(start_percent)
+    normalized_end = _normalize_progress_percent(end_percent)
+
+    if normalized_end <= normalized_start:
+        return normalized_start
+
+    return normalized_start + int(round((normalized_value / 100) * (normalized_end - normalized_start)))
+
+
+def _calculate_coverage_completion_percent(coverage):
+    coverage = coverage if isinstance(coverage, dict) else {}
+
+    completed_windows = coverage.get('processed_windows', 0) + coverage.get('failed_windows', 0)
+    completed_chunks = coverage.get('processed_chunks', 0) + coverage.get('failed_chunks', 0)
+    total_chunks = coverage.get('total_chunks', 0)
+    total_windows = coverage.get('total_windows', 0)
+    overall_total = total_chunks or total_windows
+    overall_completed = completed_chunks if total_chunks else completed_windows
+
+    return _calculate_progress_percent(overall_completed, overall_total)
+
+
+def _get_progress_meta(coverage):
+    if not isinstance(coverage, dict):
+        return {}
+
+    progress_meta = coverage.get('progress_meta')
+    return progress_meta if isinstance(progress_meta, dict) else {}
+
+
+def _set_progress_meta(
+    coverage,
+    *,
+    phase,
+    phase_label,
+    phase_detail=None,
+    status='running',
+    percent_override=None,
+    phase_step=None,
+    phase_total_steps=None,
+):
+    if not isinstance(coverage, dict):
+        return {}
+
+    progress_meta = {
+        'phase': str(phase or '').strip().lower() or 'running',
+        'phase_label': str(phase_label or '').strip() or 'Running document review',
+        'phase_detail': str(phase_detail or '').strip() or None,
+        'status': str(status or '').strip().lower() or 'running',
+        'percent_override': None if percent_override is None else _normalize_progress_percent(percent_override),
+        'phase_step': _coerce_int(phase_step, None, min_value=0),
+        'phase_total_steps': _coerce_int(phase_total_steps, None, min_value=0),
+    }
+    coverage['progress_meta'] = progress_meta
+    return progress_meta
+
+
+def _estimate_reduction_step_total(item_count, batch_size, max_reduction_rounds):
+    remaining_items = _coerce_int(item_count, 0, min_value=0)
+    resolved_batch_size = _coerce_int(batch_size, DEFAULT_REDUCTION_BATCH_SIZE, min_value=2)
+    resolved_round_limit = _coerce_int(max_reduction_rounds, DEFAULT_MAX_REDUCTION_ROUNDS, min_value=1)
+    total_steps = 0
+    reduction_round = 0
+
+    while remaining_items > 1 and reduction_round < resolved_round_limit:
+        batch_count = (remaining_items + resolved_batch_size - 1) // resolved_batch_size
+        total_steps += batch_count
+        remaining_items = batch_count
+        reduction_round += 1
+
+    return total_steps
+
+
 def _resolve_document_file_name(document_payload):
     if not isinstance(document_payload, dict):
         return ''
@@ -85,6 +167,7 @@ def _resolve_document_name(document_payload):
 
 def _build_progress_snapshot(coverage):
     coverage = coverage if isinstance(coverage, dict) else {}
+    progress_meta = _get_progress_meta(coverage)
     document_summaries = coverage.get('documents', []) if isinstance(coverage.get('documents'), list) else []
     completed_documents = 0
     running_documents = 0
@@ -138,6 +221,20 @@ def _build_progress_snapshot(coverage):
     completed_chunks = coverage.get('processed_chunks', 0) + coverage.get('failed_chunks', 0)
     overall_total = coverage.get('total_chunks', 0) or coverage.get('total_windows', 0)
     overall_completed = completed_chunks if coverage.get('total_chunks', 0) else completed_windows
+    derived_overall_status = (
+        'completed_with_failures'
+        if bool(coverage.get('document_count')) and completed_documents >= coverage.get('document_count', 0) and coverage.get('failed_windows', 0)
+        else 'completed'
+        if bool(coverage.get('document_count')) and completed_documents >= coverage.get('document_count', 0)
+        else 'running'
+    )
+    overall_percent = _calculate_progress_percent(
+        overall_completed,
+        overall_total,
+        fallback_complete=bool(coverage.get('document_count')) and completed_documents >= coverage.get('document_count', 0),
+    )
+    if progress_meta.get('percent_override') is not None:
+        overall_percent = _normalize_progress_percent(progress_meta.get('percent_override'), default_value=overall_percent)
 
     return {
         'overall': {
@@ -155,11 +252,13 @@ def _build_progress_snapshot(coverage):
             'completed_chunks': completed_chunks,
             'retries': coverage.get('retries', 0),
             'window_unit': coverage.get('window_unit'),
-            'percent': _calculate_progress_percent(
-                overall_completed,
-                overall_total,
-                fallback_complete=bool(coverage.get('document_count')) and completed_documents >= coverage.get('document_count', 0),
-            ),
+            'status': str(progress_meta.get('status') or derived_overall_status).strip().lower() or derived_overall_status,
+            'phase': progress_meta.get('phase'),
+            'phase_label': progress_meta.get('phase_label'),
+            'phase_detail': progress_meta.get('phase_detail'),
+            'phase_step': progress_meta.get('phase_step'),
+            'phase_total_steps': progress_meta.get('phase_total_steps'),
+            'percent': overall_percent,
         },
         'documents': documents,
     }
@@ -439,6 +538,14 @@ def run_exhaustive_document_review(
         'window_unit': targets.get('window_unit'),
         'documents': [],
     }
+    _set_progress_meta(
+        coverage,
+        phase='queued',
+        phase_label='Queued for review',
+        phase_detail='Preparing selected documents',
+        status='running',
+        percent_override=1,
+    )
     document_runs = []
     reduction_items = []
     failed_range_labels = []
@@ -519,6 +626,14 @@ def run_exhaustive_document_review(
         )
         document_summary['status'] = 'running'
         document_summary['status_text'] = f"Starting document {document_index} of {coverage.get('document_count', 0)}"
+        _set_progress_meta(
+            coverage,
+            phase='reviewing',
+            phase_label='Reviewing document windows',
+            phase_detail=f'Document {document_index} of {coverage.get("document_count", 0)}: {document_name}',
+            status='running',
+            percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
+        )
         if callable(activity_callback):
             activity_callback({
                 'type': 'document_started',
@@ -548,6 +663,17 @@ def run_exhaustive_document_review(
             document_summary['active_attempt_number'] = 1
             document_summary['status_text'] = (
                 f"Reviewing window {window_range.get('window_number')} of {document_summary.get('total_windows', 0)}"
+            )
+            _set_progress_meta(
+                coverage,
+                phase='reviewing',
+                phase_label='Reviewing document windows',
+                phase_detail=(
+                    f'{document_name} window {window_range.get("window_number")} '
+                    f'of {document_summary.get("total_windows", 0)}'
+                ),
+                status='running',
+                percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
             )
 
             if callable(activity_callback):
@@ -604,6 +730,18 @@ def run_exhaustive_document_review(
                         if attempt_number < max_attempts
                         else f"Window {window_range.get('window_number')} failed"
                     )
+                    _set_progress_meta(
+                        coverage,
+                        phase='reviewing',
+                        phase_label='Reviewing document windows',
+                        phase_detail=(
+                            f'{document_name} window {window_range.get("window_number")} '
+                            f'of {document_summary.get("total_windows", 0)} '
+                            f'(attempt {attempt_number})'
+                        ),
+                        status='running',
+                        percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
+                    )
                     if callable(activity_callback):
                         activity_callback({
                             'type': 'window_retry' if attempt_number < max_attempts else 'window_failed',
@@ -633,6 +771,17 @@ def run_exhaustive_document_review(
                     f"Completed window {window_range.get('window_number')} of {document_summary.get('total_windows', 0)}"
                 )
                 document_summary['active_attempt_number'] = None
+                _set_progress_meta(
+                    coverage,
+                    phase='reviewing',
+                    phase_label='Reviewing document windows',
+                    phase_detail=(
+                        f'{document_name} window {window_range.get("window_number")} '
+                        f'of {document_summary.get("total_windows", 0)} completed'
+                    ),
+                    status='running',
+                    percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
+                )
                 reduction_items.append({
                     'label': window_label,
                     'text': review_text,
@@ -665,6 +814,17 @@ def run_exhaustive_document_review(
                     f"Failed window {window_range.get('window_number')} of {document_summary.get('total_windows', 0)}"
                 )
                 document_summary['active_attempt_number'] = None
+                _set_progress_meta(
+                    coverage,
+                    phase='reviewing',
+                    phase_label='Reviewing document windows',
+                    phase_detail=(
+                        f'{document_name} window {window_range.get("window_number")} '
+                        f'of {document_summary.get("total_windows", 0)} failed'
+                    ),
+                    status='running',
+                    percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
+                )
                 failed_range_labels.append(window_label)
 
         document_summary['active_window_number'] = None
@@ -674,6 +834,14 @@ def run_exhaustive_document_review(
             'Completed with some failed windows'
             if document_summary.get('failed_windows', 0)
             else 'Completed'
+        )
+        _set_progress_meta(
+            coverage,
+            phase='reviewing',
+            phase_label='Reviewing document windows',
+            phase_detail=f'Completed document {document_index} of {coverage.get("document_count", 0)}: {document_name}',
+            status='running',
+            percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
         )
         if callable(activity_callback):
             activity_callback({
@@ -706,16 +874,51 @@ def run_exhaustive_document_review(
 
     current_items = reduction_items
     reduction_round = 1
+    reduction_step_total = _estimate_reduction_step_total(
+        len(current_items),
+        reduction_batch_size,
+        max_reduction_rounds,
+    )
+    completed_reduction_steps = 0
     while len(current_items) > 1 and reduction_round <= max_reduction_rounds:
         next_items = []
         batches = _build_reduction_batches(current_items, reduction_batch_size)
         for batch_index, batch_items in enumerate(batches, start=1):
+            reduction_step_index = completed_reduction_steps + 1
+            reduction_progress_percent = 90
+            if reduction_step_total > 0:
+                reduction_progress_percent = _scale_progress_percent(
+                    int(round(((reduction_step_index - 1) / reduction_step_total) * 100)),
+                    90,
+                    99,
+                )
+            _set_progress_meta(
+                coverage,
+                phase='reducing',
+                phase_label='Combining review findings',
+                phase_detail=f'Reduction batch {reduction_step_index} of {reduction_step_total}',
+                status='running',
+                percent_override=reduction_progress_percent,
+                phase_step=reduction_step_index,
+                phase_total_steps=reduction_step_total,
+            )
             debug_print(
                 '[ExhaustiveReview] Starting reduction batch | '
                 f'round={reduction_round} | '
                 f'batch={batch_index}/{len(batches)} | '
                 f'items={len(batch_items)}'
             )
+            if callable(activity_callback):
+                activity_callback({
+                    'type': 'reduction_started',
+                    'reduction_round': reduction_round,
+                    'batch_index': batch_index,
+                    'batch_count': len(batches),
+                    'reduction_step_index': reduction_step_index,
+                    'reduction_step_total': reduction_step_total,
+                    'item_count': len(batch_items),
+                    'progress': _build_progress_snapshot(coverage),
+                })
             reduction_prompt = _build_reduction_prompt(
                 normalized_review_prompt,
                 batch_items,
@@ -753,13 +956,30 @@ def run_exhaustive_document_review(
                 'text': reduced_text,
                 'source_labels': source_labels,
             })
+            completed_reduction_steps += 1
         current_items = next_items
         reduction_round += 1
+
+    _set_progress_meta(
+        coverage,
+        phase='completed',
+        phase_label='Review complete',
+        phase_detail='Preparing final response',
+        status='completed',
+        percent_override=100,
+    )
 
     final_reply = current_items[0].get('text', '').strip()
     coverage_summary = _format_coverage_summary(coverage)
     if include_coverage_summary and coverage_summary:
         final_reply = f"{final_reply}\n\n{coverage_summary}".strip()
+
+    if callable(activity_callback):
+        activity_callback({
+            'type': 'reduction_completed',
+            'document_count': coverage.get('document_count', 0),
+            'progress': _build_progress_snapshot(coverage),
+        })
 
     log_event(
         '[ExhaustiveReview] Completed exhaustive document review',

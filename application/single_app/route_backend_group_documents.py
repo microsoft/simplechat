@@ -379,6 +379,46 @@ def register_route_backend_group_documents(app):
 
         return get_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
 
+    @app.route('/api/group_documents/<document_id>/versions', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_get_group_document_versions(document_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        requested_group_id = str(request.args.get('group_id') or '').strip()
+        if not requested_group_id:
+            return jsonify({'error': 'group_id is required'}), 400
+
+        try:
+            assert_group_role(
+                user_id,
+                requested_group_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+
+        versions = get_document_versions(
+            user_id=user_id,
+            document_id=document_id,
+            group_id=requested_group_id,
+        )
+        if not versions:
+            return jsonify({'error': 'Document versions not found'}), 404
+
+        return jsonify({
+            'document_id': document_id,
+            'group_id': requested_group_id,
+            'revision_family_id': versions[0].get('revision_family_id'),
+            'versions': versions,
+        }), 200
+
     @app.route('/api/group_documents/<document_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required

@@ -1,14 +1,14 @@
 # functions_group.py
 
 from config import *
-from functions_authentication import *
-from functions_settings import *
+import functions_authentication
+import functions_settings
 from typing import Iterable
 
 
 def create_group(name, description):
     """Creates a new group. The creator is the Owner by default."""
-    user_info = get_current_user_info()
+    user_info = functions_authentication.get_current_user_info()
     if not user_info:
         raise Exception("No user in session")
 
@@ -104,11 +104,11 @@ def find_group_by_id(group_id):
         return None
 
 def update_active_group_for_user(group_id):
-    user_id = get_current_user_id()
+    user_id = functions_authentication.get_current_user_id()
     new_settings = {
         "activeGroupOid": group_id
     }
-    update_user_settings(user_id, new_settings)
+    functions_settings.update_user_settings(user_id, new_settings)
 
 def get_user_role_in_group(group_doc, user_id):
     """Determine the user's role in the given group doc."""
@@ -131,7 +131,7 @@ def get_user_role_in_group(group_doc, user_id):
 
 def require_active_group(user_id: str) -> str:
     """Return the active group id for a user or raise ValueError if missing."""
-    settings = get_user_settings(user_id)
+    settings = functions_settings.get_user_settings(user_id)
     active_group_id = settings.get("settings", {}).get("activeGroupOid")
     if not active_group_id:
         raise ValueError("No active group selected")

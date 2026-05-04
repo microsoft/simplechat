@@ -6156,6 +6156,17 @@ def register_route_backend_chats(app):
             return f'Completed window {window_number} of {total_windows} for {document_name}'
         if event_type == 'document_completed':
             return f'Completed exhaustive review for {document_name}'
+        if event_type == 'reduction_started':
+            reduction_step_index = event.get('reduction_step_index')
+            reduction_step_total = event.get('reduction_step_total')
+            if reduction_step_index is not None and reduction_step_total:
+                return (
+                    'Combining review findings into the final response '
+                    f'({reduction_step_index}/{reduction_step_total})'
+                )
+            return 'Combining review findings into the final response'
+        if event_type == 'reduction_completed':
+            return 'Completed exhaustive review across the selected documents'
         if event_type == 'comparison_started':
             right_document_name = str(event.get('right_document_name') or 'Document').strip() or 'Document'
             return f'Comparing {document_name} to {right_document_name}'
@@ -6163,10 +6174,24 @@ def register_route_backend_chats(app):
             right_document_name = str(event.get('right_document_name') or 'Document').strip() or 'Document'
             return f'Completed comparison of {document_name} to {right_document_name}'
         if event_type == 'comparison_reduction_started':
-            return 'Combining comparison findings across the selected documents'
+            comparison_count = event.get('comparison_count')
+            if comparison_count:
+                return f'Combining {comparison_count} pairwise comparisons into the final response'
+            return 'Combining comparison findings into the final response'
+        if event_type == 'comparison_reduction_completed':
+            comparison_count = event.get('comparison_count')
+            if comparison_count:
+                return f'Completed comparison across {comparison_count} document pairs'
+            return 'Completed comparison across the selected documents'
         return 'Running exhaustive review across the selected documents'
 
     def _build_document_action_hybrid_citations(execution_result):
+        def _coerce_metric_int(value, default_value=0):
+            try:
+                return int(value if value not in (None, '') else default_value)
+            except (TypeError, ValueError):
+                return int(default_value or 0)
+
         review_result = execution_result.get('review_result') if isinstance(execution_result, dict) else {}
         review_result = review_result if isinstance(review_result, dict) else {}
         review_coverage = execution_result.get('review_coverage') if isinstance(execution_result, dict) else {}
@@ -6177,6 +6202,64 @@ def register_route_backend_chats(app):
             document_summaries = review_coverage.get('documents') if isinstance(review_coverage.get('documents'), list) else []
 
         citations = []
+        is_comparison = bool(review_result.get('left_document') or review_result.get('right_documents'))
+        left_document = review_result.get('left_document') if isinstance(review_result.get('left_document'), dict) else {}
+        right_documents = review_result.get('right_documents') if isinstance(review_result.get('right_documents'), list) else []
+        document_count = _coerce_metric_int(review_coverage.get('document_count'), len(document_summaries))
+        total_windows = _coerce_metric_int(review_coverage.get('total_windows'))
+        processed_windows = _coerce_metric_int(review_coverage.get('processed_windows'))
+        failed_windows = _coerce_metric_int(review_coverage.get('failed_windows'))
+        total_chunks = _coerce_metric_int(review_coverage.get('total_chunks'))
+        processed_chunks = _coerce_metric_int(review_coverage.get('processed_chunks'))
+        failed_chunks = _coerce_metric_int(review_coverage.get('failed_chunks'))
+        retries_used = _coerce_metric_int(review_coverage.get('retries'))
+        window_unit = str(review_coverage.get('window_unit') or 'pages').strip() or 'pages'
+
+        has_coverage_summary = bool(document_summaries) or any([
+            document_count,
+            total_windows,
+            processed_windows,
+            failed_windows,
+            total_chunks,
+            processed_chunks,
+            failed_chunks,
+            retries_used,
+        ])
+
+        if has_coverage_summary:
+            coverage_lines = [
+                'Coverage',
+                f'Documents reviewed: {document_count}',
+                f'Total windows: {total_windows}',
+                f'Processed windows: {processed_windows}',
+                f'Failed windows: {failed_windows}',
+                f'Total chunks: {total_chunks}',
+                f'Processed chunks: {processed_chunks}',
+                f'Failed chunks: {failed_chunks}',
+                f'Retries used: {retries_used}',
+                f'Window unit: {window_unit}',
+            ]
+
+            left_document_name = str(left_document.get('document_name') or left_document.get('document_id') or '').strip()
+            if is_comparison and left_document_name:
+                coverage_lines.append(f'Left document: {left_document_name}')
+            if is_comparison:
+                coverage_lines.append(f'Right documents compared: {len(right_documents)}')
+
+            citations.append({
+                'file_name': 'Coverage',
+                'document_id': None,
+                'citation_id': 'document_action_coverage',
+                'page_number': 'Metadata',
+                'chunk_id': 'document_action_coverage',
+                'chunk_sequence': 20000,
+                'score': 0.0,
+                'metadata_type': 'document_comparison_coverage' if is_comparison else 'document_review_coverage',
+                'metadata_content': '\n'.join(coverage_lines),
+                'location_label': 'Coverage',
+                'location_value': 'Overall summary',
+            })
+
         seen_document_ids = set()
         for index, document_summary in enumerate(document_summaries, start=1):
             if not isinstance(document_summary, dict):
@@ -6196,13 +6279,13 @@ def register_route_backend_chats(app):
             ).strip() or 'Document'
             role_label = str(document_summary.get('role_label') or '').strip().lower()
             status_text = str(document_summary.get('status_text') or document_summary.get('status') or 'Completed').strip()
-            processed_windows = int(document_summary.get('processed_windows') or 0)
-            total_windows = int(document_summary.get('total_windows') or 0)
-            failed_windows = int(document_summary.get('failed_windows') or 0)
-            processed_chunks = int(document_summary.get('processed_chunks') or 0)
-            total_chunks = int(document_summary.get('total_chunks') or 0)
-            failed_chunks = int(document_summary.get('failed_chunks') or 0)
-            total_pages = int(document_summary.get('total_pages') or 0)
+            processed_windows = _coerce_metric_int(document_summary.get('processed_windows'))
+            total_windows = _coerce_metric_int(document_summary.get('total_windows'))
+            failed_windows = _coerce_metric_int(document_summary.get('failed_windows'))
+            processed_chunks = _coerce_metric_int(document_summary.get('processed_chunks'))
+            total_chunks = _coerce_metric_int(document_summary.get('total_chunks'))
+            failed_chunks = _coerce_metric_int(document_summary.get('failed_chunks'))
+            total_pages = _coerce_metric_int(document_summary.get('total_pages'))
             failed_ranges = [
                 str(range_label).strip()
                 for range_label in (document_summary.get('failed_ranges') or [])
@@ -6639,6 +6722,35 @@ def register_route_backend_chats(app):
             'metadata': user_metadata,
         })
         cosmos_messages_container.upsert_item(user_message_doc)
+
+        try:
+            document_action_activity_context = {
+                key: value
+                for key, value in {
+                    'conversation_source': 'document_action_chat',
+                    'document_action_type': normalized_action.get('type'),
+                    'selected_document_count': len(selected_document_ids),
+                    'streaming_enabled': bool(callable(publish_background_event)),
+                    'runner_type': runner_type,
+                }.items()
+                if value not in (None, '', [])
+            }
+            log_chat_activity(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_type='user_message',
+                message_length=len(user_message) if user_message else 0,
+                has_document_search=False,
+                has_image_generation=False,
+                document_scope=document_scope,
+                chat_context=(user_metadata.get('chat_context') or {}).get('chat_type'),
+                workspace_type=(user_metadata.get('chat_context') or {}).get('chat_type'),
+                group_id=active_group_ids[0] if document_scope == 'group' and active_group_ids else None,
+                public_workspace_id=active_public_workspace_ids[0] if document_scope == 'public' and active_public_workspace_ids else None,
+                additional_context=document_action_activity_context,
+            )
+        except Exception as e:
+            debug_print(f"Activity logging error: {e}")
 
         assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
             conversation_id=conversation_id,
@@ -7610,7 +7722,10 @@ def register_route_backend_chats(app):
                         has_document_search=hybrid_search_enabled,
                         has_image_generation=image_gen_enabled,
                         document_scope=document_scope,
-                        chat_context=actual_chat_type
+                        chat_context=actual_chat_type,
+                        workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
+                        group_id=active_group_id if actual_chat_type == 'group' else None,
+                        public_workspace_id=active_public_workspace_id if actual_chat_type == 'public' else None,
                     )
                 except Exception as e:
                     # Don't let activity logging errors interrupt chat flow
@@ -10539,7 +10654,10 @@ def register_route_backend_chats(app):
                         has_document_search=hybrid_search_enabled,
                         has_image_generation=False,
                         document_scope=document_scope,
-                        chat_context=actual_chat_type
+                        chat_context=actual_chat_type,
+                        workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
+                        group_id=active_group_id if actual_chat_type == 'group' else None,
+                        public_workspace_id=active_public_workspace_id if actual_chat_type == 'public' else None,
                     )
                 except Exception as e:
                     debug_print(f"Activity logging error: {e}")

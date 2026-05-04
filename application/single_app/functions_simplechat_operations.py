@@ -976,6 +976,7 @@ def _persist_personal_conversation_message(
         has_document_search=False,
         has_image_generation=False,
         chat_context=normalized_chat_type,
+        workspace_type="personal",
     )
 
     return message_doc, conversation_item

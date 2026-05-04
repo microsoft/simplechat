@@ -37,11 +37,14 @@ def log_chat_activity(
     has_document_search: bool = False,
     has_image_generation: bool = False,
     document_scope: Optional[str] = None,
-    chat_context: Optional[str] = None
+    chat_context: Optional[str] = None,
+    workspace_type: Optional[str] = None,
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
+    additional_context: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
-    Log chat activity for monitoring. 
-    Chat data is already stored in conversations/messages containers.
+    Log chat activity to activity_logs and App Insights.
     
     Args:
         user_id (str): The ID of the user performing the action
@@ -52,9 +55,55 @@ def log_chat_activity(
         has_image_generation (bool, optional): Whether image generation was used
         document_scope (str, optional): Scope of document search if used
         chat_context (str, optional): Context or type of chat session
+        workspace_type (str, optional): Workspace category for the message
+        group_id (str, optional): Group id for group-scoped conversations
+        public_workspace_id (str, optional): Public workspace id when applicable
+        additional_context (dict, optional): Additional message context for analytics
     """
-    
-    try:        
+
+    try:
+        normalized_document_scope = str(document_scope or '').strip() or None
+        normalized_chat_context = str(chat_context or '').strip() or None
+        normalized_workspace_type = str(workspace_type or '').strip() or None
+        normalized_group_id = str(group_id or '').strip() or None
+        normalized_public_workspace_id = str(public_workspace_id or '').strip() or None
+        normalized_additional_context = dict(additional_context or {}) if isinstance(additional_context, dict) else None
+
+        if not normalized_workspace_type and normalized_document_scope in {'personal', 'group', 'public'}:
+            normalized_workspace_type = normalized_document_scope
+
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'chat_activity',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'conversation_id': conversation_id,
+            'message_type': message_type,
+            'message_length': max(0, int(message_length or 0)),
+            'has_document_search': bool(has_document_search),
+            'has_image_generation': bool(has_image_generation),
+            'document_scope': normalized_document_scope,
+            'chat_context': normalized_chat_context,
+        }
+
+        if normalized_workspace_type:
+            activity_record['workspace_type'] = normalized_workspace_type
+        if normalized_group_id:
+            activity_record['group_id'] = normalized_group_id
+        if normalized_public_workspace_id:
+            activity_record['public_workspace_id'] = normalized_public_workspace_id
+        if normalized_additional_context:
+            activity_record['additional_context'] = normalized_additional_context
+
+        activity_log_persisted = False
+        activity_log_error = None
+        try:
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            activity_log_persisted = True
+        except Exception as persistence_error:
+            activity_log_error = str(persistence_error)
+            debug_print(f"Error persisting chat activity for user {user_id}: {activity_log_error}")
+
         # Log to Application Insights for monitoring
         log_event(
             message=f"Chat activity: {message_type} for user {user_id}",
@@ -62,16 +111,26 @@ def log_chat_activity(
                 'user_id': user_id,
                 'conversation_id': conversation_id,
                 'message_type': message_type,
-                'message_length': message_length,
+                'message_length': activity_record['message_length'],
                 'has_document_search': has_document_search,
                 'has_image_generation': has_image_generation,
-                'document_scope': document_scope,
-                'chat_context': chat_context,
-                'activity_type': 'chat_activity'
+                'document_scope': normalized_document_scope,
+                'chat_context': normalized_chat_context,
+                'workspace_type': normalized_workspace_type,
+                'group_id': normalized_group_id,
+                'public_workspace_id': normalized_public_workspace_id,
+                'activity_type': 'chat_activity',
+                'activity_record_id': activity_record['id'],
+                'activity_log_persisted': activity_log_persisted,
+                'activity_log_error': activity_log_error,
+                'additional_context': normalized_additional_context,
             },
-            level=logging.INFO
+            level=logging.INFO if activity_log_persisted else logging.WARNING
         )
-        debug_print(f"Logged chat activity: {message_type} for user {user_id}")
+        debug_print(
+            f"Logged chat activity: {message_type} for user {user_id} "
+            f"(persisted={activity_log_persisted})"
+        )
         
     except Exception as e:
         # Log error but don't break the chat flow

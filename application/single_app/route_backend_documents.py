@@ -605,6 +605,26 @@ def register_route_backend_documents(app):
         
         return get_document(user_id, document_id)
 
+    @app.route('/api/documents/<document_id>/versions', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_get_user_document_versions(document_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        versions = get_document_versions(user_id=user_id, document_id=document_id)
+        if not versions:
+            return jsonify({'error': 'Document versions not found'}), 404
+
+        return jsonify({
+            'document_id': document_id,
+            'revision_family_id': versions[0].get('revision_family_id'),
+            'versions': versions,
+        }), 200
+
     @app.route('/api/documents/<document_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required

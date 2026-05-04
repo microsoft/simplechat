@@ -80,14 +80,29 @@ function renderExhaustiveReviewProgress(thoughtData) {
     const overall = progress.overall && typeof progress.overall === 'object' ? progress.overall : {};
     const documents = Array.isArray(progress.documents) ? progress.documents : [];
     const overallPercent = normalizeProgressPercent(overall.percent);
-    const overallStatus = Number(overall.completed_documents || 0) >= Number(overall.document_count || 0) && Number(overall.document_count || 0) > 0
+    const derivedOverallStatus = Number(overall.completed_documents || 0) >= Number(overall.document_count || 0) && Number(overall.document_count || 0) > 0
         ? (Number(overall.failed_windows || 0) > 0 ? 'completed_with_failures' : 'completed')
         : 'running';
+    const overallStatus = String(overall.status || '').trim().toLowerCase() || derivedOverallStatus;
+    const overallPhaseLabel = String(overall.phase_label || '').trim();
+    const overallPhaseDetail = String(overall.phase_detail || '').trim();
     const overallSummary = [
         buildProgressSummaryLabel(overall.completed_chunks, overall.total_chunks, 'chunk'),
         buildProgressSummaryLabel(overall.completed_windows, overall.total_windows, 'window'),
         buildProgressSummaryLabel(overall.completed_documents, overall.document_count, 'document'),
     ].join(' | ');
+    const overallTitle = String(thoughtData.content || overallPhaseLabel || 'Running exhaustive review across the selected documents').trim();
+    const overallDetailParts = [];
+    if (overallPhaseLabel && overallPhaseLabel.toLowerCase() !== overallTitle.toLowerCase()) {
+        overallDetailParts.push(overallPhaseLabel);
+    }
+    if (overallPhaseDetail) {
+        overallDetailParts.push(overallPhaseDetail);
+    }
+    if (overallSummary) {
+        overallDetailParts.push(overallSummary);
+    }
+    const overallDetailText = overallDetailParts.join(' | ') || overallSummary;
     const documentsHtml = documents.map(document => {
         const documentPercent = normalizeProgressPercent(document.percent);
         const documentName = document.document_name || document.document_id || 'Document';
@@ -113,8 +128,8 @@ function renderExhaustiveReviewProgress(thoughtData) {
                     <div class="d-flex align-items-start gap-2 flex-grow-1">
                         <i class="bi bi-journal-richtext text-info mt-1"></i>
                         <div>
-                            <div class="small fw-semibold text-body">${escapeHtml(thoughtData.content || 'Running exhaustive review across the selected documents')}</div>
-                            <div class="text-muted small">${escapeHtml(overallSummary)}</div>
+                            <div class="small fw-semibold text-body">${escapeHtml(overallTitle || 'Running exhaustive review across the selected documents')}</div>
+                            <div class="text-muted small">${escapeHtml(overallDetailText)}</div>
                         </div>
                     </div>
                     <span class="badge text-bg-light border">${overallPercent}%</span>
@@ -257,7 +272,7 @@ function buildAgentActivityStateFromThoughts(thoughts) {
     return state;
 }
 
-function computeAgentActivityPercent(state, counters) {
+function computeAgentActivityPercent(state, counters, forceCompleted = false) {
     let percent = state.dispatchStarted ? 15 : 0;
 
     if (state.latestStepType === 'generation') {
@@ -276,7 +291,7 @@ function computeAgentActivityPercent(state, counters) {
         }
     }
 
-    if (state.completed) {
+    if (state.completed || forceCompleted) {
         percent = 100;
     } else {
         percent = Math.min(percent, 95);
@@ -290,8 +305,9 @@ function computeAgentActivityPercent(state, counters) {
 function renderAgentActivityProgress(state, options = {}) {
     const isLive = options.live === true;
     const counters = getAgentActivityCounters(state);
-    const percent = computeAgentActivityPercent(state, counters);
-    const status = state.completed
+    const isCompleted = state.completed || (counters.totalCount > 0 && counters.runningCount === 0);
+    const percent = computeAgentActivityPercent(state, counters, isCompleted);
+    const status = isCompleted
         ? (counters.failedCount > 0 ? 'completed_with_failures' : 'completed')
         : 'running';
     const runningActivity = [...counters.activities].reverse().find(activity => getNormalizedActivityStatus(activity) === 'running');
@@ -306,7 +322,7 @@ function renderAgentActivityProgress(state, options = {}) {
     if (counters.failedCount > 0) {
         summaryParts.push(`${counters.failedCount} failed`);
     }
-    if (state.completed) {
+    if (isCompleted) {
         summaryParts.push('Response ready');
     }
 
@@ -316,6 +332,30 @@ function renderAgentActivityProgress(state, options = {}) {
         : (isLive
             ? (state.latestContent || 'Connecting to the selected agent')
             : 'Agent activity captured for this response');
+
+    if (!isLive && isCompleted) {
+        const summaryIconClass = counters.failedCount > 0 ? 'bi-exclamation-triangle text-warning' : 'bi-check-circle text-success';
+        const summaryBadgeClass = counters.failedCount > 0 ? 'text-bg-warning text-dark' : 'text-bg-success';
+
+        return `<div class="streaming-thought-display agent-progress-card" data-agent-progress-state="${escapeHtml(status)}" data-agent-progress-percent="${percent}">
+        <div class="card border-success-subtle shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="d-flex align-items-start gap-2 flex-grow-1">
+                        <i class="bi ${summaryIconClass} mt-1"></i>
+                        <div>
+                            <div class="small fw-semibold text-body">Agent activity complete</div>
+                            <div class="text-muted small">${escapeHtml(currentActivityText)}</div>
+                        </div>
+                    </div>
+                    <span class="badge ${summaryBadgeClass}">${counters.failedCount > 0 ? 'Completed with issues' : 'Completed'}</span>
+                </div>
+                <div class="text-muted small mb-2">${escapeHtml(summaryText)}</div>
+                <div class="small text-body">${escapeHtml(state.latestContent || 'Response ready')}</div>
+            </div>
+        </div>
+    </div>`;
+    }
 
     return `<div class="streaming-thought-display agent-progress-card" data-agent-progress-state="${escapeHtml(status)}" data-agent-progress-percent="${percent}">
         <div class="card border-info-subtle shadow-sm">

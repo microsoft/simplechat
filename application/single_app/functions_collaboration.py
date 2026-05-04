@@ -33,6 +33,7 @@ from collaboration_models import (
     remove_personal_participant,
     utc_now_iso,
 )
+from functions_activity_logging import log_chat_activity
 from functions_appinsights import log_event
 from functions_group import (
     assert_group_role,
@@ -1649,6 +1650,7 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
     sender_summary = normalize_collaboration_user(
         ((message_doc or {}).get('metadata', {}) or {}).get('sender') or {},
     )
+    sender_user_id = str((sender_summary or {}).get('user_id') or '').strip()
 
     if is_group_collaboration_conversation(conversation_doc):
         sender_user_id = str((sender_summary or {}).get('user_id') or '').strip()
@@ -1681,6 +1683,43 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
         refresh_personal_participant_indexes(conversation_doc)
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+
+    if sender_user_id and sender_user_id != 'assistant' and str(message_doc.get('role') or '').strip().lower() == 'user':
+        try:
+            collaboration_activity_context = {
+                key: value
+                for key, value in {
+                    'conversation_source': 'collaboration_chat',
+                    'conversation_kind': conversation_doc.get('conversation_kind'),
+                    'visibility_mode': get_collaboration_visibility_mode(conversation_doc),
+                    'message_kind': str(message_doc.get('message_kind') or '').strip() or None,
+                    'source_conversation_id': str(
+                        (((message_doc.get('metadata') or {}) if isinstance(message_doc.get('metadata'), dict) else {}).get('source_conversation_id'))
+                        or conversation_doc.get('source_conversation_id')
+                        or ''
+                    ).strip() or None,
+                }.items()
+                if value not in (None, '', [])
+            }
+            log_chat_activity(
+                user_id=sender_user_id,
+                conversation_id=conversation_doc.get('id'),
+                message_type='user_message',
+                message_length=len(str(message_doc.get('content') or '')),
+                has_document_search=False,
+                has_image_generation=False,
+                chat_context=str(conversation_doc.get('chat_type') or '').strip() or 'collaboration',
+                workspace_type='group' if is_group_collaboration_conversation(conversation_doc) else 'personal',
+                group_id=str(conversation_doc.get('group_id') or '').strip() or None,
+                additional_context=collaboration_activity_context,
+            )
+        except Exception as exc:
+            log_event(
+                f'[Collaboration] Failed to log chat activity for {conversation_doc.get("id")}: {exc}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
     return message_doc, conversation_doc
 
 

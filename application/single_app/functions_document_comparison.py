@@ -12,6 +12,80 @@ from functions_exhaustive_document_review import (
 )
 
 
+def _normalize_progress_percent(value, default_value=0):
+    try:
+        return max(0, min(100, int(round(float(value)))))
+    except (TypeError, ValueError):
+        return max(0, min(100, int(default_value or 0)))
+
+
+def _scale_progress_percent(value, start_percent, end_percent):
+    normalized_value = _normalize_progress_percent(value)
+    normalized_start = _normalize_progress_percent(start_percent)
+    normalized_end = _normalize_progress_percent(end_percent)
+
+    if normalized_end <= normalized_start:
+        return normalized_start
+
+    return normalized_start + int(round((normalized_value / 100) * (normalized_end - normalized_start)))
+
+
+def _calculate_progress_percent(completed_value, total_value, fallback_complete=False):
+    try:
+        resolved_total = int(total_value or 0)
+        resolved_completed = int(completed_value or 0)
+    except (TypeError, ValueError):
+        resolved_total = 0
+        resolved_completed = 0
+
+    if resolved_total > 0:
+        return max(0, min(100, int(round((resolved_completed / resolved_total) * 100))))
+    return 100 if fallback_complete else 0
+
+
+def _calculate_document_state_percent(document_state):
+    document_state = document_state if isinstance(document_state, dict) else {}
+    completed_windows = document_state.get('processed_windows', 0) + document_state.get('failed_windows', 0)
+    completed_chunks = document_state.get('processed_chunks', 0) + document_state.get('failed_chunks', 0)
+    total_chunks = document_state.get('total_chunks', 0)
+    total_windows = document_state.get('total_windows', 0)
+    overall_total = total_chunks or total_windows
+    overall_completed = completed_chunks if total_chunks else completed_windows
+
+    return _calculate_progress_percent(
+        overall_completed,
+        overall_total,
+        fallback_complete=str(document_state.get('status') or '').strip().lower() in {'completed', 'completed_with_failures'},
+    )
+
+
+def _set_comparison_progress_meta(
+    coverage,
+    *,
+    phase,
+    phase_label,
+    phase_detail=None,
+    status='running',
+    percent_override=None,
+    phase_step=None,
+    phase_total_steps=None,
+):
+    if not isinstance(coverage, dict):
+        return {}
+
+    progress_meta = {
+        'phase': str(phase or '').strip().lower() or 'running',
+        'phase_label': str(phase_label or '').strip() or 'Running document comparison',
+        'phase_detail': str(phase_detail or '').strip() or None,
+        'status': str(status or '').strip().lower() or 'running',
+        'percent_override': None if percent_override is None else _normalize_progress_percent(percent_override),
+        'phase_step': None if phase_step is None else max(0, int(phase_step)),
+        'phase_total_steps': None if phase_total_steps is None else max(0, int(phase_total_steps)),
+    }
+    coverage['progress_meta'] = progress_meta
+    return progress_meta
+
+
 def _create_document_state(document_id, role_label):
     return {
         'document_id': document_id,
@@ -195,6 +269,14 @@ def run_document_comparison(
         'window_unit': action_config.get('window_unit', 'pages'),
         'documents': [],
     }
+    _set_comparison_progress_meta(
+        coverage,
+        phase='queued',
+        phase_label='Queued for comparison',
+        phase_detail='Preparing selected documents',
+        status='running',
+        percent_override=1,
+    )
     document_order = [left_document_id, *right_document_ids]
     document_states = {
         left_document_id: _create_document_state(left_document_id, 'left'),
@@ -217,10 +299,27 @@ def run_document_comparison(
         document_state['status_text'] = f"Preparing {role_label}-side document {document_index} of {len(document_order)}"
         _refresh_comparison_coverage(coverage, document_order, document_states)
 
-        def summary_activity_callback(event, current_document_id=document_id):
+        def summary_activity_callback(event, current_document_id=document_id, current_document_index=document_index):
             current_document_state = document_states[current_document_id]
             _apply_summary_progress_event(current_document_state, event)
             _refresh_comparison_coverage(coverage, document_order, document_states)
+            current_document_percent = _calculate_document_state_percent(current_document_state)
+            summary_progress_percent = 0
+            if document_order:
+                summary_progress_percent = ((current_document_index - 1) + (current_document_percent / 100)) / len(document_order) * 100
+            _set_comparison_progress_meta(
+                coverage,
+                phase='summarizing',
+                phase_label='Summarizing documents for comparison',
+                phase_detail=(
+                    f'Document {current_document_index} of {len(document_order)}: '
+                    f'{current_document_state.get("document_name") or current_document_id}'
+                ),
+                status='running',
+                percent_override=max(1, _scale_progress_percent(summary_progress_percent, 5, 70)),
+                phase_step=current_document_index,
+                phase_total_steps=len(document_order),
+            )
             if callable(activity_callback):
                 forwarded_event = dict(event or {})
                 forwarded_event['comparison_role'] = current_document_state.get('role_label')
@@ -270,6 +369,17 @@ def run_document_comparison(
     comparison_items = []
     for comparison_index, right_document_id in enumerate(right_document_ids, start=1):
         right_document_name = document_states[right_document_id].get('document_name') or right_document_id
+        comparison_progress_percent = ((comparison_index - 1) / len(right_document_ids)) * 100 if right_document_ids else 0
+        _set_comparison_progress_meta(
+            coverage,
+            phase='comparing',
+            phase_label='Comparing summarized documents',
+            phase_detail=f'Comparison {comparison_index} of {len(right_document_ids)}: {left_document_name} vs {right_document_name}',
+            status='running',
+            percent_override=_scale_progress_percent(comparison_progress_percent, 70, 95),
+            phase_step=comparison_index,
+            phase_total_steps=len(right_document_ids),
+        )
         debug_print(
             '[DocumentComparison] Starting pairwise comparison | '
             f'comparison_index={comparison_index}/{len(right_document_ids)} | '
@@ -322,6 +432,17 @@ def run_document_comparison(
             'right_document_name': right_document_name,
             'text': pairwise_text,
         })
+        comparison_progress_percent = (comparison_index / len(right_document_ids)) * 100 if right_document_ids else 100
+        _set_comparison_progress_meta(
+            coverage,
+            phase='comparing',
+            phase_label='Comparing summarized documents',
+            phase_detail=f'Completed comparison {comparison_index} of {len(right_document_ids)}: {left_document_name} vs {right_document_name}',
+            status='running',
+            percent_override=_scale_progress_percent(comparison_progress_percent, 70, 95),
+            phase_step=comparison_index,
+            phase_total_steps=len(right_document_ids),
+        )
         debug_print(
             '[DocumentComparison] Completed pairwise comparison | '
             f'comparison_index={comparison_index}/{len(right_document_ids)} | '
@@ -343,6 +464,16 @@ def run_document_comparison(
     if len(comparison_items) == 1:
         final_reply = comparison_items[0].get('text', '').strip()
     else:
+        _set_comparison_progress_meta(
+            coverage,
+            phase='reducing',
+            phase_label='Combining comparison findings',
+            phase_detail=f'Preparing final comparison from {len(comparison_items)} pairwise analyses',
+            status='running',
+            percent_override=96,
+            phase_step=1,
+            phase_total_steps=1,
+        )
         debug_print(
             '[DocumentComparison] Starting comparison reduction | '
             f'left_document_id={left_document_id} | '
@@ -380,6 +511,16 @@ def run_document_comparison(
             f'comparison_count={len(comparison_items)}'
         )
 
+    _set_comparison_progress_meta(
+        coverage,
+        phase='completed',
+        phase_label='Comparison complete',
+        phase_detail='Preparing final response',
+        status='completed',
+        percent_override=100,
+    )
+
+    analysis_reply = final_reply.strip()
     coverage_summary = _format_comparison_coverage_summary(
         coverage,
         left_document_name,
@@ -387,6 +528,15 @@ def run_document_comparison(
     )
     if coverage_summary:
         final_reply = f"{final_reply}\n\n{coverage_summary}".strip()
+
+    if callable(activity_callback):
+        activity_callback({
+            'type': 'comparison_reduction_completed',
+            'left_document_id': left_document_id,
+            'left_document_name': left_document_name,
+            'comparison_count': len(comparison_items),
+            'progress': build_document_review_progress_snapshot(coverage),
+        })
 
     log_event(
         '[DocumentComparison] Completed deterministic document comparison',
@@ -414,6 +564,7 @@ def run_document_comparison(
 
     return {
         'reply': final_reply,
+        'analysis_reply': analysis_reply,
         'coverage': coverage,
         'documents': coverage.get('documents', []),
         'left_document': {

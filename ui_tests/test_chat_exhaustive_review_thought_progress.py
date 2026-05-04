@@ -1,11 +1,12 @@
 # test_chat_exhaustive_review_thought_progress.py
 """
 UI test for exhaustive review streaming thought progress.
-Version: 0.241.071
-Implemented in: 0.241.071
+Version: 0.241.096
+Implemented in: 0.241.096
 
-This test ensures the streaming thought placeholder renders overall and
-per-document progress bars for exhaustive review updates.
+This test ensures the streaming thought placeholder keeps the overall
+progress bar below 100 percent while the final reduction step is still
+running, even after the per-document review bars have completed.
 """
 
 import os
@@ -27,7 +28,7 @@ def _require_ui_env():
 
 @pytest.mark.ui
 def test_chat_exhaustive_review_thought_progress(playwright):
-    """Validate that exhaustive review thought updates render live progress bars."""
+    """Validate that exhaustive review thought updates render reduction-phase progress."""
     _require_ui_env()
 
     browser = playwright.chromium.launch()
@@ -59,15 +60,19 @@ def test_chat_exhaustive_review_thought_progress(playwright):
                     message_id: 'assistant-progress',
                     step_index: 2,
                     step_type: 'document_review',
-                    content: 'Reviewing window 4 of 9 for Policy Handbook',
+                    content: 'Combining review findings into the final response (1/2)',
                     progress: {
                         overall: {
-                            percent: 45,
-                            completed_chunks: 81,
+                            percent: 90,
+                            status: 'running',
+                            phase: 'reducing',
+                            phase_label: 'Combining review findings',
+                            phase_detail: 'Reduction batch 1 of 2',
+                            completed_chunks: 180,
                             total_chunks: 180,
-                            completed_windows: 7,
+                            completed_windows: 16,
                             total_windows: 16,
-                            completed_documents: 0,
+                            completed_documents: 2,
                             document_count: 2,
                             failed_windows: 0,
                         },
@@ -75,24 +80,24 @@ def test_chat_exhaustive_review_thought_progress(playwright):
                             {
                                 document_id: 'doc-1',
                                 document_name: 'Policy Handbook',
-                                percent: 63,
-                                status: 'running',
-                                status_text: 'Reviewing window 4 of 9',
-                                completed_chunks: 63,
+                                percent: 100,
+                                status: 'completed',
+                                status_text: 'Completed',
+                                completed_chunks: 100,
                                 total_chunks: 100,
-                                completed_windows: 4,
+                                completed_windows: 9,
                                 total_windows: 9,
                                 failed_windows: 0,
                             },
                             {
                                 document_id: 'doc-2',
                                 document_name: 'Vendor Contract',
-                                percent: 20,
-                                status: 'pending',
-                                status_text: 'Queued',
-                                completed_chunks: 18,
+                                percent: 100,
+                                status: 'completed',
+                                status_text: 'Completed',
+                                completed_chunks: 80,
                                 total_chunks: 80,
-                                completed_windows: 3,
+                                completed_windows: 7,
                                 total_windows: 7,
                                 failed_windows: 0,
                             },
@@ -116,12 +121,14 @@ def test_chat_exhaustive_review_thought_progress(playwright):
             """
         )
 
+        assert 'Combining review findings into the final response (1/2)' in result['textContent']
+        assert 'Reduction batch 1 of 2' in result['textContent']
         assert 'Policy Handbook' in result['textContent']
         assert 'Vendor Contract' in result['textContent']
-        assert '81/180 chunks' in result['textContent']
+        assert '180/180 chunks' in result['textContent']
         assert result['progressBarCount'] == 3
-        assert result['widths'] == ['45%', '63%', '20%']
-        assert result['labels'] == ['45%', '63%', '20%']
+        assert result['widths'] == ['90%', '100%', '100%']
+        assert result['labels'] == ['90%', '100%', '100%']
     finally:
         context.close()
         browser.close()

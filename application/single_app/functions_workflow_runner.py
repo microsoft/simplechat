@@ -1620,10 +1620,52 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 step_type='document',
                 content=f'Started exhaustive review for {document_name}',
                 detail=f"windows={event.get('window_count', 0)}",
-                activity_key=f'review:{run_id}:{document_id}:start',
+                activity_key=f'review:{run_id}:{document_id}',
                 kind='document_review',
                 title='Document review',
                 status='running',
+            )
+        elif event_type == 'window_started':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content=f'Reviewing window {window_number} for {document_name}',
+                detail=f"attempt={event.get('attempt_number', 1)}",
+                activity_key=f'review:{run_id}:{document_id}:window:{window_number}',
+                kind='document_review',
+                title='Document review',
+                status='running',
+            )
+        elif event_type == 'window_retry':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content=f'Retrying window {window_number} for {document_name}',
+                detail=f"attempt={event.get('attempt_number', 1)}",
+                activity_key=f'review:{run_id}:{document_id}:window:{window_number}',
+                kind='document_review',
+                title='Document review',
+                status='running',
+            )
+        elif event_type == 'window_completed':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content=f'Completed window {window_number} for {document_name}',
+                detail=(
+                    f"processed={event.get('processed_windows', 0)} | "
+                    f"failed={event.get('failed_windows', 0)}"
+                ),
+                activity_key=f'review:{run_id}:{document_id}:window:{window_number}',
+                kind='document_review',
+                title='Document review',
+                status='completed',
             )
         elif event_type == 'document_completed':
             _add_workflow_activity_thought(
@@ -1636,7 +1678,7 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                     f"processed={event.get('processed_windows', 0)} | "
                     f"failed={event.get('failed_windows', 0)}"
                 ),
-                activity_key=f'review:{run_id}:{document_id}:complete',
+                activity_key=f'review:{run_id}:{document_id}',
                 kind='document_review',
                 title='Document review',
                 status='completed',
@@ -1654,6 +1696,38 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 title='Document review',
                 status='failed',
             )
+        elif event_type == 'reduction_started':
+            reduction_step_index = event.get('reduction_step_index')
+            reduction_step_total = event.get('reduction_step_total')
+            reduction_detail = None
+            if reduction_step_index is not None and reduction_step_total:
+                reduction_detail = f'batch={reduction_step_index}/{reduction_step_total}'
+
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content='Combining review findings into the final response',
+                detail=reduction_detail,
+                activity_key=f'review:{run_id}:reduction',
+                kind='document_review',
+                title='Document review',
+                status='running',
+            )
+        elif event_type == 'reduction_completed':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content='Finished combining review findings into the final response',
+                detail=f"documents={event.get('document_count', 0)}",
+                activity_key=f'review:{run_id}:reduction',
+                kind='document_review',
+                title='Document review',
+                status='completed',
+            )
         elif event_type == 'comparison_started':
             right_document_name = str((event or {}).get('right_document_name') or 'Document').strip() or 'Document'
             _add_workflow_activity_thought(
@@ -1665,7 +1739,7 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 detail=(
                     f"pair={event.get('comparison_index', 0)}/{event.get('comparison_count', 0)}"
                 ),
-                activity_key=f"compare:{run_id}:{document_id}:{event.get('right_document_id')}:start",
+                activity_key=f"compare:{run_id}:{document_id}:{event.get('right_document_id')}",
                 kind='document_review',
                 title='Document comparison',
                 status='running',
@@ -1681,7 +1755,7 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 detail=(
                     f"pair={event.get('comparison_index', 0)}/{event.get('comparison_count', 0)}"
                 ),
-                activity_key=f"compare:{run_id}:{document_id}:{event.get('right_document_id')}:complete",
+                activity_key=f"compare:{run_id}:{document_id}:{event.get('right_document_id')}",
                 kind='document_review',
                 title='Document comparison',
                 status='completed',
@@ -1699,8 +1773,29 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 title='Document comparison',
                 status='running',
             )
+        elif event_type == 'comparison_reduction_completed':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content='Finished combining comparison findings across the selected documents',
+                detail=f"pairs={event.get('comparison_count', 0)}",
+                activity_key=f'compare:{run_id}:reduction',
+                kind='document_review',
+                title='Document comparison',
+                status='completed',
+            )
 
     return callback
+
+
+def _resolve_document_action_reply(result):
+    result = result if isinstance(result, dict) else {}
+    analysis_reply = str(result.get('analysis_reply') or '').strip()
+    if analysis_reply:
+        return analysis_reply
+    return str(result.get('reply') or '').strip()
 
 
 def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None):
@@ -1846,7 +1941,7 @@ def _execute_exhaustive_review_workflow(
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
 
                 return {
-                    'reply': review_result.get('reply', ''),
+                    'reply': _resolve_document_action_reply(review_result),
                     'review_result': review_result,
                     'review_coverage': review_result.get('coverage') or {},
                     'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
@@ -1915,7 +2010,7 @@ def _execute_exhaustive_review_workflow(
         f"failed_windows={(review_result.get('coverage') or {}).get('failed_windows', 0)}"
     )
     return {
-        'reply': review_result.get('reply', ''),
+        'reply': _resolve_document_action_reply(review_result),
         'review_result': review_result,
         'review_coverage': review_result.get('coverage') or {},
         'model_deployment_name': deployment_name,
@@ -2007,7 +2102,7 @@ def _execute_document_comparison_workflow(
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
 
                 return {
-                    'reply': comparison_result.get('reply', ''),
+                    'reply': _resolve_document_action_reply(comparison_result),
                     'review_result': comparison_result,
                     'review_coverage': comparison_result.get('coverage') or {},
                     'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
@@ -2068,7 +2163,7 @@ def _execute_document_comparison_workflow(
         f"failed_windows={(comparison_result.get('coverage') or {}).get('failed_windows', 0)}"
     )
     return {
-        'reply': comparison_result.get('reply', ''),
+        'reply': _resolve_document_action_reply(comparison_result),
         'review_result': comparison_result,
         'review_coverage': comparison_result.get('coverage') or {},
         'model_deployment_name': deployment_name,

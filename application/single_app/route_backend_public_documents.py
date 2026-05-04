@@ -309,6 +309,43 @@ def register_route_backend_public_documents(app):
             return jsonify({'error':'Access denied'}), 403
         return get_document(user_id=user_id, document_id=doc_id, public_workspace_id=active_ws)
 
+    @app.route('/api/public_workspace_documents/<document_id>/versions', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_get_public_workspace_document_versions(document_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        workspace_id = str(request.args.get('workspace_id') or '').strip()
+        if not workspace_id:
+            return jsonify({'error': 'workspace_id is required'}), 400
+
+        ws_doc = find_public_workspace_by_id(workspace_id)
+        if not ws_doc:
+            return jsonify({'error': 'Public workspace not found'}), 404
+
+        from functions_public_workspaces import get_user_role_in_public_workspace
+        if not get_user_role_in_public_workspace(ws_doc, user_id):
+            return jsonify({'error': 'Access denied'}), 403
+
+        versions = get_document_versions(
+            user_id=user_id,
+            document_id=document_id,
+            public_workspace_id=workspace_id,
+        )
+        if not versions:
+            return jsonify({'error': 'Document versions not found'}), 404
+
+        return jsonify({
+            'document_id': document_id,
+            'public_workspace_id': workspace_id,
+            'revision_family_id': versions[0].get('revision_family_id'),
+            'versions': versions,
+        }), 200
+
     @app.route('/api/public_documents/<doc_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required

@@ -1253,13 +1253,13 @@
             <div class="row g-3 mb-2">
               <div class="col-md-6">
                 <label for="workflow-document-action-type" class="form-label">Action Type</label>
-                <select class="form-select" id="workflow-document-action-type">
-                  <option value="none">Standard Prompt Run</option>
+                <select class="form-select" id="workflow-document-action-type" title="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.">
+                  <option value="none" data-action-description="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets." title="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.">Search</option>
                   {% if settings.document_action_capabilities.exhaustive_review.enabled %}
-                  <option value="exhaustive_review">Exhaustive Review</option>
+                  <option value="exhaustive_review" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Review</option>
                   {% endif %}
                   {% if settings.document_action_capabilities.comparison.enabled %}
-                  <option value="comparison">Compare Documents</option>
+                  <option value="comparison" data-action-description="Compare one baseline document against the others to explain differences, relationships, or downstream impact." title="Compare one baseline document against the others to explain differences, relationships, or downstream impact.">Compare</option>
                   {% endif %}
                 </select>
               </div>
@@ -1268,7 +1268,7 @@
                 <input type="number" class="form-control" id="workflow-review-retries" min="0" max="5" value="1" />
               </div>
             </div>
-            <div class="form-text mt-2" id="workflow-document-action-help">Use the standard prompt flow or bind the workflow to a deterministic document action.</div>
+            <div class="form-text mt-2" id="workflow-document-action-help">Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.</div>
 
             <div id="workflow-document-targets-fields" class="mt-3 d-none">
               <div class="row g-3 mb-3">
@@ -1298,14 +1298,15 @@
 
               <div id="workflow-comparison-target-fields" class="d-none">
                 <div class="mb-3">
-                  <label for="workflow-comparison-left-document-id" class="form-label mb-2">Left Document ID</label>
-                  <input type="text" class="form-control" id="workflow-comparison-left-document-id" placeholder="Enter the baseline document id." />
-                  <div class="form-text">The left document becomes the comparison baseline for every right-side document.</div>
+                  <label for="workflow-comparison-target-document-ids" class="form-label">Comparison Versions</label>
+                  <select class="form-select" id="workflow-comparison-target-document-ids" multiple size="8"></select>
+                  <div class="form-text">Use selected workspace documents to load available versions. The current version of each selected document is preselected.</div>
                 </div>
 
                 <div class="mb-3">
-                  <label for="workflow-comparison-right-document-ids" class="form-label">Right Document IDs</label>
-                  <textarea class="form-control" id="workflow-comparison-right-document-ids" rows="3" placeholder="Enter one or more comparison document ids separated by commas."></textarea>
+                  <label for="workflow-comparison-left-document-id" class="form-label mb-2">Left Version</label>
+                  <select class="form-select" id="workflow-comparison-left-document-id"></select>
+                  <div class="form-text">Every other selected version becomes a right-side comparison target.</div>
                 </div>
               </div>
 

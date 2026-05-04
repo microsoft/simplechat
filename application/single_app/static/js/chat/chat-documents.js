@@ -38,6 +38,7 @@ export let personalDocs = [];
 export let groupDocs = [];
 export let publicDocs = [];
 const citationMetadataCache = new Map();
+const documentVersionsCache = new Map();
 
 // Items removed from the DOM by tag filtering (stored so they can be re-added)
 // Each entry: { element, nextSibling }
@@ -910,6 +911,87 @@ export function getDocumentMetadata(docId) {
   return null; // Not found in any list
 }
 
+function resolveDocumentScopeContext(docId, metadata = null) {
+  const resolvedMetadata = metadata || getDocumentMetadata(docId);
+  if (!resolvedMetadata) {
+    return null;
+  }
+
+  if (resolvedMetadata.group_id) {
+    return {
+      scope: 'group',
+      groupId: resolvedMetadata.group_id,
+      publicWorkspaceId: null,
+      metadata: resolvedMetadata,
+    };
+  }
+
+  if (resolvedMetadata.public_workspace_id) {
+    return {
+      scope: 'public',
+      groupId: null,
+      publicWorkspaceId: resolvedMetadata.public_workspace_id,
+      metadata: resolvedMetadata,
+    };
+  }
+
+  return {
+    scope: 'personal',
+    groupId: null,
+    publicWorkspaceId: null,
+    metadata: resolvedMetadata,
+  };
+}
+
+function buildDocumentVersionsCacheKey(docId, scopeContext) {
+  return [
+    scopeContext?.scope || 'personal',
+    scopeContext?.groupId || '',
+    scopeContext?.publicWorkspaceId || '',
+    docId,
+  ].join(':');
+}
+
+export async function fetchDocumentVersions(docId) {
+  const scopeContext = resolveDocumentScopeContext(docId);
+  if (!scopeContext) {
+    return [];
+  }
+
+  const cacheKey = buildDocumentVersionsCacheKey(docId, scopeContext);
+  if (documentVersionsCache.has(cacheKey)) {
+    return documentVersionsCache.get(cacheKey);
+  }
+
+  let requestUrl = `/api/documents/${encodeURIComponent(docId)}/versions`;
+  if (scopeContext.scope === 'group') {
+    requestUrl = `/api/group_documents/${encodeURIComponent(docId)}/versions?group_id=${encodeURIComponent(scopeContext.groupId)}`;
+  } else if (scopeContext.scope === 'public') {
+    requestUrl = `/api/public_workspace_documents/${encodeURIComponent(docId)}/versions?workspace_id=${encodeURIComponent(scopeContext.publicWorkspaceId)}`;
+  }
+
+  const response = await fetch(requestUrl, {
+    credentials: 'same-origin',
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Unable to load document versions.');
+  }
+
+  const versions = Array.isArray(data.versions) ? data.versions : [];
+  const normalizedVersions = versions.map((version) => ({
+    ...version,
+    title: version.title || scopeContext.metadata?.title || '',
+    file_name: version.file_name || scopeContext.metadata?.file_name || scopeContext.metadata?.name || '',
+    group_id: scopeContext.groupId,
+    public_workspace_id: scopeContext.publicWorkspaceId,
+    scope: scopeContext.scope,
+  }));
+
+  documentVersionsCache.set(cacheKey, normalizedVersions);
+  return normalizedVersions;
+}
+
 export async function fetchDocumentMetadata(docId) {
   if (!docId) {
     return null;
@@ -1045,6 +1127,7 @@ export function loadAllDocs() {
   }
 
   const scopes = getEffectiveScopes();
+  documentVersionsCache.clear();
 
   // Build parallel load promises based on selected scopes
   const promises = [];
