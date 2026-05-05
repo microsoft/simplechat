@@ -8,6 +8,7 @@ let lastSeenThoughtIndex = -1;
 let lastSeenThoughtMessageId = null;
 let activeStreamingThoughtTargetId = null;
 let activeStreamingServerMessageId = null;
+const streamingAgentActivityStates = new Map();
 
 // ---------------------------------------------------------------------------
 // Icon map: step_type → Bootstrap Icon class
@@ -19,11 +20,364 @@ function getThoughtIcon(stepType) {
         'search': 'bi-search',
         'tabular_analysis': 'bi-table',
         'web_search': 'bi-globe',
+        'document_review': 'bi-journal-richtext',
         'agent_tool_call': 'bi-robot',
         'generation': 'bi-lightning',
         'content_safety': 'bi-shield-check'
     };
     return iconMap[stepType] || 'bi-stars';
+}
+
+function normalizeProgressPercent(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(100, Math.round(numericValue)));
+}
+
+function getProgressBarClasses(status, failedWindows = 0) {
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    const hasFailures = Number(failedWindows || 0) > 0;
+
+    if (normalizedStatus === 'completed' && !hasFailures) {
+        return 'progress-bar bg-success';
+    }
+    if (normalizedStatus === 'completed_with_failures' || hasFailures) {
+        return 'progress-bar bg-warning text-dark';
+    }
+    if (normalizedStatus === 'running') {
+        return 'progress-bar progress-bar-striped progress-bar-animated bg-info';
+    }
+
+    return 'progress-bar bg-secondary';
+}
+
+function buildProgressSummaryLabel(completedCount, totalCount, singularLabel, pluralLabel = `${singularLabel}s`) {
+    const safeCompleted = Number(completedCount || 0);
+    const safeTotal = Number(totalCount || 0);
+    const label = safeTotal === 1 ? singularLabel : pluralLabel;
+
+    if (safeTotal > 0) {
+        return `${safeCompleted}/${safeTotal} ${label}`;
+    }
+
+    return `${safeCompleted} ${label}`;
+}
+
+function renderProgressBar(percent, status, failedWindows, ariaLabel) {
+    const safePercent = normalizeProgressPercent(percent);
+    const progressBarClasses = getProgressBarClasses(status, failedWindows);
+
+    return `<div class="progress" role="progressbar" aria-label="${escapeHtml(ariaLabel)}" aria-valuenow="${safePercent}" aria-valuemin="0" aria-valuemax="100">
+        <div class="${progressBarClasses}" style="width: ${safePercent}%;">${safePercent}%</div>
+    </div>`;
+}
+
+function renderExhaustiveReviewProgress(thoughtData) {
+    const progress = thoughtData.progress && typeof thoughtData.progress === 'object' ? thoughtData.progress : {};
+    const overall = progress.overall && typeof progress.overall === 'object' ? progress.overall : {};
+    const documents = Array.isArray(progress.documents) ? progress.documents : [];
+    const overallPercent = normalizeProgressPercent(overall.percent);
+    const derivedOverallStatus = Number(overall.completed_documents || 0) >= Number(overall.document_count || 0) && Number(overall.document_count || 0) > 0
+        ? (Number(overall.failed_windows || 0) > 0 ? 'completed_with_failures' : 'completed')
+        : 'running';
+    const overallStatus = String(overall.status || '').trim().toLowerCase() || derivedOverallStatus;
+    const overallPhaseLabel = String(overall.phase_label || '').trim();
+    const overallPhaseDetail = String(overall.phase_detail || '').trim();
+    const overallSummary = [
+        buildProgressSummaryLabel(overall.completed_chunks, overall.total_chunks, 'chunk'),
+        buildProgressSummaryLabel(overall.completed_windows, overall.total_windows, 'window'),
+        buildProgressSummaryLabel(overall.completed_documents, overall.document_count, 'document'),
+    ].join(' | ');
+    const overallTitle = String(thoughtData.content || overallPhaseLabel || 'Running exhaustive review across the selected documents').trim();
+    const overallDetailParts = [];
+    if (overallPhaseLabel && overallPhaseLabel.toLowerCase() !== overallTitle.toLowerCase()) {
+        overallDetailParts.push(overallPhaseLabel);
+    }
+    if (overallPhaseDetail) {
+        overallDetailParts.push(overallPhaseDetail);
+    }
+    if (overallSummary) {
+        overallDetailParts.push(overallSummary);
+    }
+    const overallDetailText = overallDetailParts.join(' | ') || overallSummary;
+    const documentsHtml = documents.map(document => {
+        const documentPercent = normalizeProgressPercent(document.percent);
+        const documentName = document.document_name || document.document_id || 'Document';
+        const documentStatusText = document.status_text || [
+            buildProgressSummaryLabel(document.completed_chunks, document.total_chunks, 'chunk'),
+            buildProgressSummaryLabel(document.completed_windows, document.total_windows, 'window'),
+        ].join(' | ');
+
+        return `<div class="border rounded-3 p-2 bg-body-tertiary mb-2">
+            <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                <div class="small fw-semibold text-body">${escapeHtml(documentName)}</div>
+                <span class="badge text-bg-light border">${documentPercent}%</span>
+            </div>
+            <div class="text-muted small mb-2">${escapeHtml(documentStatusText)}</div>
+            ${renderProgressBar(documentPercent, document.status, document.failed_windows, `${documentName} exhaustive review progress`)}
+        </div>`;
+    }).join('');
+
+    return `<div class="streaming-thought-display">
+        <div class="card border-info-subtle shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="d-flex align-items-start gap-2 flex-grow-1">
+                        <i class="bi bi-journal-richtext text-info mt-1"></i>
+                        <div>
+                            <div class="small fw-semibold text-body">${escapeHtml(overallTitle || 'Running exhaustive review across the selected documents')}</div>
+                            <div class="text-muted small">${escapeHtml(overallDetailText)}</div>
+                        </div>
+                    </div>
+                    <span class="badge text-bg-light border">${overallPercent}%</span>
+                </div>
+                <div class="mb-3">
+                    ${renderProgressBar(overallPercent, overallStatus, overall.failed_windows, 'Overall exhaustive review progress')}
+                </div>
+                ${documentsHtml || '<div class="text-muted small">Preparing document progress...</div>'}
+            </div>
+        </div>
+    </div>`;
+}
+
+function createAgentActivityState() {
+    return {
+        activities: new Map(),
+        dispatchStarted: false,
+        latestContent: '',
+        latestDetail: '',
+        latestStepType: '',
+        completed: false,
+        maxPercent: 0,
+    };
+}
+
+function resetStreamingAgentActivityState(targetMessageId = null) {
+    if (!targetMessageId) {
+        return;
+    }
+
+    streamingAgentActivityStates.delete(targetMessageId);
+}
+
+function getStreamingAgentActivityState(targetMessageId) {
+    if (!targetMessageId) {
+        return null;
+    }
+
+    if (!streamingAgentActivityStates.has(targetMessageId)) {
+        streamingAgentActivityStates.set(targetMessageId, createAgentActivityState());
+    }
+
+    return streamingAgentActivityStates.get(targetMessageId);
+}
+
+function getNormalizedActivityStatus(activity) {
+    return String(activity?.status || activity?.state || '').trim().toLowerCase();
+}
+
+function isTerminalActivityStatus(status) {
+    return status === 'completed' || status === 'failed';
+}
+
+function getAgentActivityCounters(state) {
+    const activities = Array.from(state.activities.values());
+    let completedCount = 0;
+    let failedCount = 0;
+    let runningCount = 0;
+
+    activities.forEach(activity => {
+        const normalizedStatus = getNormalizedActivityStatus(activity);
+        if (normalizedStatus === 'failed') {
+            failedCount += 1;
+            return;
+        }
+        if (normalizedStatus === 'completed') {
+            completedCount += 1;
+            return;
+        }
+        runningCount += 1;
+    });
+
+    return {
+        activities,
+        completedCount,
+        failedCount,
+        runningCount,
+        finishedCount: completedCount + failedCount,
+        totalCount: activities.length,
+    };
+}
+
+function hasAgentActivity(state) {
+    if (!state) {
+        return false;
+    }
+
+    return state.dispatchStarted || state.activities.size > 0;
+}
+
+function updateAgentActivityState(state, thoughtData, preserveMaxPercent = true) {
+    if (!state || !thoughtData) {
+        return state;
+    }
+
+    const content = String(thoughtData.content || '').trim();
+    const normalizedContent = content.toLowerCase();
+    const stepType = String(thoughtData.step_type || '').trim().toLowerCase();
+
+    if (stepType === 'agent_tool_call' || normalizedContent.startsWith('sending to agent')) {
+        state.dispatchStarted = true;
+    }
+
+    if (content) {
+        state.latestContent = content;
+    }
+    if (thoughtData.detail) {
+        state.latestDetail = String(thoughtData.detail);
+    }
+    if (stepType) {
+        state.latestStepType = stepType;
+    }
+
+    if (thoughtData.activity && typeof thoughtData.activity === 'object') {
+        const activityPayload = thoughtData.activity;
+        const activityKey = activityPayload.activity_key || activityPayload.title || `${thoughtData.step_index || state.activities.size}`;
+        const previousActivity = state.activities.get(activityKey) || {};
+        state.activities.set(activityKey, {
+            ...previousActivity,
+            ...activityPayload,
+            content: content || previousActivity.content || '',
+            detail: thoughtData.detail || previousActivity.detail || '',
+        });
+
+        if (preserveMaxPercent && isTerminalActivityStatus(getNormalizedActivityStatus(activityPayload))) {
+            state.maxPercent = Math.max(state.maxPercent, 45);
+        }
+    }
+
+    if (stepType === 'generation' && normalizedContent.includes('responded')) {
+        state.completed = true;
+    }
+
+    return state;
+}
+
+function buildAgentActivityStateFromThoughts(thoughts) {
+    const state = createAgentActivityState();
+    (thoughts || []).forEach(thought => updateAgentActivityState(state, thought, false));
+    return state;
+}
+
+function computeAgentActivityPercent(state, counters, forceCompleted = false) {
+    let percent = state.dispatchStarted ? 15 : 0;
+
+    if (state.latestStepType === 'generation') {
+        percent = Math.max(percent, 25);
+    }
+
+    if (counters.totalCount > 0) {
+        percent = Math.max(percent, 35 + Math.round((counters.finishedCount / counters.totalCount) * 45));
+
+        if (counters.runningCount > 0) {
+            percent = Math.max(percent, 45);
+        }
+
+        if (counters.finishedCount === counters.totalCount) {
+            percent = Math.max(percent, 80);
+        }
+    }
+
+    if (state.completed || forceCompleted) {
+        percent = 100;
+    } else {
+        percent = Math.min(percent, 95);
+        percent = Math.max(percent, state.maxPercent);
+        state.maxPercent = percent;
+    }
+
+    return normalizeProgressPercent(percent);
+}
+
+function renderAgentActivityProgress(state, options = {}) {
+    const isLive = options.live === true;
+    const counters = getAgentActivityCounters(state);
+    const isCompleted = state.completed || (counters.totalCount > 0 && counters.runningCount === 0);
+    const percent = computeAgentActivityPercent(state, counters, isCompleted);
+    const status = isCompleted
+        ? (counters.failedCount > 0 ? 'completed_with_failures' : 'completed')
+        : 'running';
+    const runningActivity = [...counters.activities].reverse().find(activity => getNormalizedActivityStatus(activity) === 'running');
+    const summaryParts = [];
+
+    if (counters.totalCount > 0) {
+        summaryParts.push(buildProgressSummaryLabel(counters.finishedCount, counters.totalCount, 'tool'));
+    }
+    if (counters.runningCount > 0) {
+        summaryParts.push(`${counters.runningCount} running`);
+    }
+    if (counters.failedCount > 0) {
+        summaryParts.push(`${counters.failedCount} failed`);
+    }
+    if (isCompleted) {
+        summaryParts.push('Response ready');
+    }
+
+    const summaryText = summaryParts.join(' | ') || 'Connecting to the selected agent';
+    const currentActivityText = runningActivity?.title
+        ? `Current tool: ${runningActivity.title}`
+        : (isLive
+            ? (state.latestContent || 'Connecting to the selected agent')
+            : 'Agent activity captured for this response');
+
+    if (!isLive && isCompleted) {
+        const summaryIconClass = counters.failedCount > 0 ? 'bi-exclamation-triangle text-warning' : 'bi-check-circle text-success';
+        const summaryBadgeClass = counters.failedCount > 0 ? 'text-bg-warning text-dark' : 'text-bg-success';
+
+        return `<div class="streaming-thought-display agent-progress-card" data-agent-progress-state="${escapeHtml(status)}" data-agent-progress-percent="${percent}">
+        <div class="card border-success-subtle shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="d-flex align-items-start gap-2 flex-grow-1">
+                        <i class="bi ${summaryIconClass} mt-1"></i>
+                        <div>
+                            <div class="small fw-semibold text-body">Agent activity complete</div>
+                            <div class="text-muted small">${escapeHtml(currentActivityText)}</div>
+                        </div>
+                    </div>
+                    <span class="badge ${summaryBadgeClass}">${counters.failedCount > 0 ? 'Completed with issues' : 'Completed'}</span>
+                </div>
+                <div class="text-muted small mb-2">${escapeHtml(summaryText)}</div>
+                <div class="small text-body">${escapeHtml(state.latestContent || 'Response ready')}</div>
+            </div>
+        </div>
+    </div>`;
+    }
+
+    return `<div class="streaming-thought-display agent-progress-card" data-agent-progress-state="${escapeHtml(status)}" data-agent-progress-percent="${percent}">
+        <div class="card border-info-subtle shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="d-flex align-items-start gap-2 flex-grow-1">
+                        <i class="bi bi-robot text-info mt-1"></i>
+                        <div>
+                            <div class="small fw-semibold text-body">Agent progress</div>
+                            <div class="text-muted small">${escapeHtml(currentActivityText)}</div>
+                        </div>
+                    </div>
+                    <span class="badge text-bg-light border">${percent}%</span>
+                </div>
+                <div class="text-muted small mb-2">${escapeHtml(summaryText)}</div>
+                <div class="mb-2">
+                    ${renderProgressBar(percent, status, counters.failedCount, 'Agent progress')}
+                </div>
+                <div class="small text-body">${escapeHtml(state.latestContent || 'Connecting to the selected agent')}</div>
+            </div>
+        </div>
+    </div>`;
 }
 
 function buildPendingThoughtsUrl(conversationId, messageId = null) {
@@ -121,6 +475,7 @@ export function beginStreamingThoughtSession(targetMessageId) {
     activeStreamingThoughtTargetId = targetMessageId || null;
     activeStreamingServerMessageId = null;
 
+    resetStreamingAgentActivityState(activeStreamingThoughtTargetId);
     resetStreamingPlaceholderState(getStreamingMessageElement(activeStreamingThoughtTargetId));
 }
 
@@ -130,6 +485,7 @@ export function clearStreamingThoughtSession(targetMessageId = null) {
     }
 
     const messageIdToReset = targetMessageId || activeStreamingThoughtTargetId;
+    resetStreamingAgentActivityState(messageIdToReset);
     resetStreamingPlaceholderState(getStreamingMessageElement(messageIdToReset));
 
     activeStreamingThoughtTargetId = null;
@@ -142,6 +498,7 @@ export function markStreamingThoughtContentStarted(targetMessageId) {
         return;
     }
 
+    resetStreamingAgentActivityState(targetMessageId);
     messageElement.dataset.streamingHasContent = 'true';
     delete messageElement.dataset.streamingThoughtIndex;
     delete messageElement.dataset.streamingThoughtSignature;
@@ -200,7 +557,10 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
         thoughtData.message_id || '',
         Number.isFinite(thoughtStepIndex) ? thoughtStepIndex : '',
         thoughtData.step_type || '',
-        thoughtData.content || ''
+        thoughtData.content || '',
+        thoughtData.activity ? JSON.stringify(thoughtData.activity) : '',
+        thoughtData.detail || '',
+        thoughtData.progress ? JSON.stringify(thoughtData.progress) : ''
     ].join('::');
 
     if (thoughtData.message_id && messageElement.dataset.streamingServerMessageId && messageElement.dataset.streamingServerMessageId !== thoughtData.message_id) {
@@ -228,6 +588,18 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
 
     const contentElement = messageElement.querySelector('.message-text');
     if (!contentElement) return;
+
+    if (thoughtData.progress && typeof thoughtData.progress === 'object') {
+        contentElement.innerHTML = renderExhaustiveReviewProgress(thoughtData);
+        return;
+    }
+
+    const activityState = getStreamingAgentActivityState(activeStreamingThoughtTargetId);
+    updateAgentActivityState(activityState, thoughtData);
+    if (hasAgentActivity(activityState)) {
+        contentElement.innerHTML = renderAgentActivityProgress(activityState, { live: true });
+        return;
+    }
 
     const icon = getThoughtIcon(thoughtData.step_type);
     // Replace entire content with styled thought indicator (visually distinct from AI response)
@@ -346,6 +718,22 @@ function loadThoughtsForMessage(conversationId, messageId, container) {
  */
 function renderThoughtsList(thoughts) {
     let html = '<div class="thoughts-list">';
+    const summaryCards = [];
+    const latestProgressThought = [...thoughts].reverse().find(thought => thought.progress && typeof thought.progress === 'object');
+    const agentActivityState = buildAgentActivityStateFromThoughts(thoughts);
+
+    if (hasAgentActivity(agentActivityState)) {
+        summaryCards.push(renderAgentActivityProgress(agentActivityState));
+    }
+
+    if (latestProgressThought) {
+        summaryCards.push(renderExhaustiveReviewProgress(latestProgressThought));
+    }
+
+    if (summaryCards.length > 0) {
+        html += `<div class="mb-2">${summaryCards.join('')}</div>`;
+    }
+
     thoughts.forEach(t => {
         const icon = getThoughtIcon(t.step_type);
         const durationStr = t.duration_ms != null ? `<span class="text-muted ms-2">(${t.duration_ms}ms)</span>` : '';

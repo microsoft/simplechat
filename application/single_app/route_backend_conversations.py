@@ -2,13 +2,22 @@
 
 from config import *
 from functions_authentication import *
+from functions_collaboration import (
+    assert_user_can_view_collaboration_conversation,
+    assert_user_can_participate_in_collaboration_conversation,
+    ensure_collaboration_source_conversation,
+    get_collaboration_conversation,
+    list_collaboration_messages,
+)
 from functions_settings import *
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
+from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_external_image_url
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request
 from functions_debug import debug_print
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_simplechat_operations import create_personal_conversation_for_current_user
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
@@ -81,11 +90,51 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
             partition_key=conversation_id,
         )
     except CosmosResourceNotFoundError as exc:
+        if conversation_item.get('user_id') != user_id:
+            raise PermissionError('Forbidden')
+    except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
 
     if conversation_item.get('user_id') != user_id:
         raise PermissionError('Forbidden')
 
+    return conversation_item
+
+
+def _load_scope_lock_conversation(conversation_id, user_id):
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+        if conversation_item.get('user_id') != user_id:
+            raise PermissionError('Forbidden')
+        return conversation_item, 'personal'
+    except CosmosResourceNotFoundError:
+        pass
+
+    try:
+        conversation_item = get_collaboration_conversation(conversation_id)
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError('Conversation not found') from exc
+
+    assert_user_can_participate_in_collaboration_conversation(user_id, conversation_item)
+    return conversation_item, 'collaboration'
+
+
+def _persist_scope_lock_update(conversation_item, conversation_kind, user_id, new_value):
+    timestamp = datetime.utcnow().isoformat()
+    conversation_item['scope_locked'] = new_value
+
+    if conversation_kind == 'collaboration':
+        conversation_item['updated_at'] = timestamp
+        cosmos_collaboration_conversations_container.upsert_item(conversation_item)
+        current_user = get_current_user_info() or {'userId': user_id}
+        _, conversation_item = ensure_collaboration_source_conversation(conversation_item, current_user)
+        return conversation_item
+
+    conversation_item['last_updated'] = timestamp
+    cosmos_conversations_container.upsert_item(conversation_item)
     return conversation_item
 
 def register_route_backend_conversations(app):
@@ -137,90 +186,12 @@ def register_route_backend_conversations(app):
             
             all_items = filtered_items
             debug_print(f"After filtering: {len(all_items)} items remaining")
-            
-            
-            # Process messages and reassemble chunked images
-            messages = []
-            chunked_images = {}  # Store image chunks by parent_message_id
-            
-            for item in all_items:
-                if item.get('role') == 'image_chunk':
-                    # This is a chunk, store it for reassembly
-                    parent_id = item.get('parent_message_id')
-                    if parent_id not in chunked_images:
-                        chunked_images[parent_id] = {}
-                    chunk_index = item.get('metadata', {}).get('chunk_index', 0)
-                    chunked_images[parent_id][chunk_index] = item.get('content', '')
-                else:
-                    # Regular message or main image document
-                    if item.get('role') == 'image' and item.get('metadata', {}).get('is_chunked'):
-                        # This is a chunked image main document
-                        image_id = item.get('id')
-                        total_chunks = item.get('metadata', {}).get('total_chunks', 1)
-                        
-                        # We'll reassemble after collecting all chunks
-                        messages.append(item)
-                    else:
-                        # Regular message
-                        messages.append(item)
-            
-            # Reassemble chunked images
-            for message in messages:
-                if (message.get('role') == 'image' and 
-                    message.get('metadata', {}).get('is_chunked')):
-                    
-                    image_id = message.get('id')
-                    total_chunks = message.get('metadata', {}).get('total_chunks', 1)
-                    
-                    debug_print(f"Reassembling chunked image {image_id} with {total_chunks} chunks")
-                    debug_print(f"Available chunks in chunked_images: {list(chunked_images.get(image_id, {}).keys())}")
-                    
-                    # Preserve extracted_text and vision_analysis from main message
-                    extracted_text = message.get('extracted_text')
-                    vision_analysis = message.get('vision_analysis')
-                    
-                    debug_print(f"Image has extracted_text: {bool(extracted_text)}, vision_analysis: {bool(vision_analysis)}")
-                    
-                    # Start with the content from the main message (chunk 0)
-                    complete_content = message.get('content', '')
-                    debug_print(f"Main message content length: {len(complete_content)} bytes")
-                    
-                    # Add remaining chunks in order (chunks 1, 2, 3, etc.)
-                    if image_id in chunked_images:
-                        chunks = chunked_images[image_id]
-                        for chunk_index in range(1, total_chunks):
-                            if chunk_index in chunks:
-                                chunk_content = chunks[chunk_index]
-                                complete_content += chunk_content
-                                debug_print(f"Added chunk {chunk_index}, length: {len(chunk_content)} bytes")
-                            else:
-                                print(f"WARNING: Missing chunk {chunk_index} for image {image_id}")
-                    else:
-                        print(f"WARNING: No chunks found for image {image_id} in chunked_images")
-                    
-                    debug_print(f"Final reassembled image total size: {len(complete_content)} bytes")
-                    
-                    # For large images (>1MB), use a URL reference instead of embedding in JSON
-                    if len(complete_content) > 1024 * 1024:  # 1MB threshold
-                        debug_print(f"Large image detected ({len(complete_content)} bytes), using URL reference")
-                        # Store the complete content temporarily and provide a URL reference
-                        message['content'] = f"/api/image/{image_id}"
-                        message['metadata']['is_large_image'] = True
-                        message['metadata']['image_size'] = len(complete_content)
-                        # Store the complete content in a way that can be retrieved by the image endpoint
-                        # For now, we'll modify the message in place but this could be optimized
-                        message['_complete_image_data'] = complete_content
-                    else:
-                        # Small enough to embed directly
-                        message['content'] = complete_content
-                    
-                    # IMPORTANT: Preserve extracted_text and vision_analysis in the final message
-                    # These fields are needed by the frontend to display the info drawer
-                    if extracted_text:
-                        message['extracted_text'] = extracted_text
-                    if vision_analysis:
-                        message['vision_analysis'] = vision_analysis
-            
+
+            messages = hydrate_image_messages(
+                all_items,
+                image_url_builder=lambda image_id: f"/api/image/{image_id}",
+            )
+
             return jsonify({'messages': messages})
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
@@ -257,106 +228,29 @@ def register_route_backend_conversations(app):
             debug_print(f"Serving image {image_id} from conversation {conversation_id}")
 
             _authorize_personal_conversation_read(user_id, conversation_id)
-            
-            # Query for the main image document and chunks
-            message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
-            all_items = list(cosmos_messages_container.query_items(
-                query=message_query,
-                partition_key=conversation_id
-            ))
-            
-            # Find the specific image and its chunks
-            main_image = None
-            chunks = {}
-            
-            debug_print(f"Searching through {len(all_items)} items for image {image_id}")
-            
-            for item in all_items:
-                item_id = item.get('id')
-                item_role = item.get('role')
-                debug_print(f"Checking item {item_id}, role: {item_role}")
-                
-                if item_id == image_id and item_role == 'image':
-                    main_image = item
-                    debug_print(f"✅ Found main image document: {item_id}")
-                    debug_print(f"Main image content length: {len(item.get('content', ''))} bytes")
-                    debug_print(f"Main image metadata: {item.get('metadata', {})}")
-                elif (item_role == 'image_chunk' and 
-                      item.get('parent_message_id') == image_id):
-                    chunk_index = item.get('metadata', {}).get('chunk_index', 0)
-                    chunk_content = item.get('content', '')
-                    chunks[chunk_index] = chunk_content
-                    debug_print(f"✅ Found chunk {chunk_index}: {len(chunk_content)} bytes")
-                    debug_print(f"Chunk {chunk_index} starts with: {chunk_content[:50]}...")
-                    debug_print(f"Chunk {chunk_index} ends with: ...{chunk_content[-20:]}")
-            
-            debug_print(f"Found main_image: {main_image is not None}")
-            debug_print(f"Found chunks: {list(chunks.keys())}")
-            
-            if not main_image:
-                print(f"ERROR: Main image not found for {image_id}")
-                return jsonify({'error': 'Image not found'}), 404
-            
-            # Reassemble the image
-            complete_content = main_image.get('content', '')
-            total_chunks = main_image.get('metadata', {}).get('total_chunks', 1)
-            
-            debug_print(f"Starting reassembly...")
-            debug_print(f"Main content length: {len(complete_content)} bytes")
-            debug_print(f"Expected total chunks: {total_chunks}")
-            debug_print(f"Available chunk indices: {list(chunks.keys())}")
-            debug_print(f"Main content starts with: {complete_content[:50]}...")
-            debug_print(f"Main content ends with: ...{complete_content[-20:]}")
-            
-            reassembly_log = []
-            original_length = len(complete_content)
-            
-            for chunk_index in range(1, total_chunks):
-                if chunk_index in chunks:
-                    chunk_content = chunks[chunk_index]
-                    complete_content += chunk_content
-                    reassembly_log.append(f"Added chunk {chunk_index}: {len(chunk_content)} bytes")
-                    debug_print(f"Added chunk {chunk_index}: {len(chunk_content)} bytes")
-                    debug_print(f"Total length now: {len(complete_content)} bytes")
-                else:
-                    error_msg = f"Missing chunk {chunk_index}"
-                    reassembly_log.append(f"❌ {error_msg}")
-                    print(f"WARNING: {error_msg}")
-            
-            final_length = len(complete_content)
-            debug_print(f"Reassembly complete!")
-            debug_print(f"Original length: {original_length} bytes")
-            debug_print(f"Final length: {final_length} bytes")
-            debug_print(f"Added: {final_length - original_length} bytes")
-            debug_print(f"Reassembly log: {reassembly_log}")
-            debug_print(f"Final content starts with: {complete_content[:50]}...")
-            debug_print(f"Final content ends with: ...{complete_content[-20:]}")
-            
-            # Return the image data with appropriate headers
-            if complete_content.startswith('data:image/'):
-                # Extract mime type and base64 data
-                header, base64_data = complete_content.split(',', 1)
-                mime_type = header.split(':')[1].split(';')[0]
-                
-                import base64
-                image_data = base64.b64decode(base64_data)
-                
-                return Response(
-                    image_data,
-                    mimetype=mime_type,
-                    headers={
-                        'Content-Length': len(image_data),
-                        'Cache-Control': 'public, max-age=3600'  # Cache for 1 hour
-                    }
-                )
-            else:
-                return jsonify({'error': 'Invalid image format'}), 400
+            _, complete_content = get_complete_image_content(
+                cosmos_messages_container,
+                conversation_id,
+                image_id,
+            )
+
+            if is_external_image_url(complete_content):
+                return redirect(complete_content)
+
+            mime_type, image_data = decode_image_content(complete_content)
+            return Response(
+                image_data,
+                mimetype=mime_type,
+                headers={
+                    'Content-Length': len(image_data),
+                    'Cache-Control': 'public, max-age=3600'
+                }
+            )
 
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
         except LookupError:
             return jsonify({'error': 'Image not found'}), 404
-                
         except Exception as e:
             print(f"ERROR: Failed to serve image {image_id}: {str(e)}")
             import traceback
@@ -388,39 +282,11 @@ def register_route_backend_conversations(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        conversation_id = str(uuid.uuid4())
-        conversation_item = {
-            'id': conversation_id,
-            'user_id': user_id,
-            'last_updated': datetime.utcnow().isoformat(),
-            'title': 'New Conversation',
-            'context': [],
-            'tags': [],
-            'strict': False,
-            'is_pinned': False,
-            'is_hidden': False,
-            'chat_type': 'new',
-            'has_unread_assistant_response': False,
-            'last_unread_assistant_message_id': None,
-            'last_unread_assistant_at': None,
-        }
-        cosmos_conversations_container.upsert_item(conversation_item)
-        
-        # Log conversation creation
-        log_conversation_creation(
-            user_id=user_id,
-            conversation_id=conversation_id,
-            title='New Conversation',
-            workspace_type='personal'
-        )
-        
-        # Mark as logged to activity logs to prevent duplicate migration
-        conversation_item['added_to_activity_log'] = True
-        cosmos_conversations_container.upsert_item(conversation_item)
+        conversation_item = create_personal_conversation_for_current_user()
 
         return jsonify({
-            'conversation_id': conversation_id,
-            'title': 'New Conversation'
+            'conversation_id': conversation_item.get('id'),
+            'title': conversation_item.get('title', 'New Conversation')
         }), 200
     
     @app.route('/api/conversations/<conversation_id>', methods=['PUT'])
@@ -916,6 +782,7 @@ def register_route_backend_conversations(app):
                 "scope_locked": conversation_item.get('scope_locked'),
                 "locked_contexts": conversation_item.get('locked_contexts', []),
                 "chat_type": conversation_item.get('chat_type'),
+                "workflow_id": conversation_item.get('workflow_id'),
                 "summary": conversation_item.get('summary')
             }), 200
             
@@ -985,6 +852,9 @@ def register_route_backend_conversations(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
+        conversation_item = None
+        is_collaboration_summary = False
+
         try:
             conversation_item = cosmos_conversations_container.read_item(
                 item=conversation_id,
@@ -993,7 +863,21 @@ def register_route_backend_conversations(app):
             if conversation_item.get('user_id') != user_id:
                 return jsonify({'error': 'Forbidden'}), 403
         except CosmosResourceNotFoundError:
-            return jsonify({'error': 'Conversation not found'}), 404
+            try:
+                conversation_item = get_collaboration_conversation(conversation_id)
+                assert_user_can_view_collaboration_conversation(
+                    user_id,
+                    conversation_item,
+                    allow_pending=True,
+                )
+                is_collaboration_summary = True
+            except CosmosResourceNotFoundError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError as exc:
+                return jsonify({'error': str(exc)}), 403
+            except Exception as e:
+                debug_print(f"Error reading collaborative conversation for summary: {e}")
+                return jsonify({'error': 'Failed to read conversation'}), 500
         except Exception as e:
             debug_print(f"Error reading conversation for summary: {e}")
             return jsonify({'error': 'Failed to read conversation'}), 500
@@ -1003,13 +887,16 @@ def register_route_backend_conversations(app):
 
         # Query messages for this conversation
         try:
-            query = "SELECT * FROM c WHERE c.conversation_id = @cid ORDER BY c.timestamp ASC"
-            params = [{"name": "@cid", "value": conversation_id}]
-            raw_messages = list(cosmos_messages_container.query_items(
-                query=query,
-                parameters=params,
-                enable_cross_partition_query=True
-            ))
+            if is_collaboration_summary:
+                raw_messages = list_collaboration_messages(conversation_id)
+            else:
+                query = "SELECT * FROM c WHERE c.conversation_id = @cid ORDER BY c.timestamp ASC"
+                params = [{"name": "@cid", "value": conversation_id}]
+                raw_messages = list(cosmos_messages_container.query_items(
+                    query=query,
+                    parameters=params,
+                    enable_cross_partition_query=True
+                ))
             raw_messages = filter_assistant_artifact_items(raw_messages)
         except Exception as e:
             debug_print(f"Error querying messages for summary: {e}")
@@ -1083,28 +970,25 @@ def register_route_backend_conversations(app):
                 return jsonify({'error': 'Scope unlock is disabled by administrator'}), 403
 
         try:
-            conversation_item = cosmos_conversations_container.read_item(
-                item=conversation_id, partition_key=conversation_id
+            conversation_item, conversation_kind = _load_scope_lock_conversation(conversation_id, user_id)
+            conversation_item = _persist_scope_lock_update(
+                conversation_item,
+                conversation_kind,
+                user_id,
+                new_value,
             )
-            if conversation_item.get('user_id') != user_id:
-                return jsonify({'error': 'Forbidden'}), 403
-
-            conversation_item['scope_locked'] = new_value
-            # locked_contexts are PRESERVED regardless — needed for re-locking
-
-            from datetime import datetime
-            conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
 
             return jsonify({
                 "success": True,
                 "scope_locked": new_value,
                 "locked_contexts": conversation_item.get('locked_contexts', [])
             }), 200
-        except CosmosResourceNotFoundError:
+        except PermissionError as exc:
+            return jsonify({'error': str(exc) or 'Forbidden'}), 403
+        except (CosmosResourceNotFoundError, LookupError):
             return jsonify({'error': 'Conversation not found'}), 404
         except Exception as e:
-            print(f"Error updating scope lock: {e}")
+            debug_print(f"Error updating scope lock: {e}")
             return jsonify({'error': 'Failed to update scope lock'}), 500
 
     @app.route('/api/conversations/classifications', methods=['GET'])

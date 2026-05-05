@@ -71,13 +71,18 @@ window.loadAllAdminAgentData = loadAllAdminAgentData; // Expose for reloading af
 
 function renderAdminAgentDropdown(agentsList, selectedAgentName) {
     const dropdown = document.getElementById('default-agent-select');
+    const statusMsg = document.getElementById('default-agent-select-msg');
     if (!dropdown) return;
     dropdown.innerHTML = '';
-    if (!agentsList.length) {
+    const enabledAgents = agentsList.filter(agent => agent.is_enabled !== false);
+    if (!enabledAgents.length) {
         dropdown.disabled = true;
+        if (statusMsg) {
+            statusMsg.textContent = 'No enabled global agents are available.';
+        }
         return;
     }
-    agentsList.forEach(agent => {
+    enabledAgents.forEach(agent => {
         const opt = document.createElement('option');
         opt.value = agent.name;
         opt.textContent = agent.display_name || agent.name;
@@ -85,6 +90,9 @@ function renderAdminAgentDropdown(agentsList, selectedAgentName) {
         dropdown.appendChild(opt);
     });
     dropdown.disabled = false;
+    if (statusMsg) {
+        statusMsg.textContent = '';
+    }
     // Attach change handler only once
     if (!dropdown._handlerAttached) {
         dropdown.addEventListener('change', async function () {
@@ -278,18 +286,23 @@ function renderAgentsTable() {
     agents.forEach((agent, idx) => {
         // Use global_selected_agent for badge logic (compare by name)
         const isSelected = selectedAgent && agent.name === selectedAgent;
+        const isEnabled = agent.is_enabled !== false;
         const tr = document.createElement('tr');
         let selectedBadge = isSelected ? '<span class="badge bg-primary ms-1">Selected</span>' : '';
         const safeName = escapeHtml(agent.name || '');
         const safeDisplayName = escapeHtml(agent.display_name || '');
         const safeDescription = escapeHtml(agent.description || '');
+        let enabledBadge = isEnabled
+            ? '<span class="badge bg-success-subtle text-success-emphasis border border-success-subtle ms-1">Enabled</span>'
+            : '<span class="badge bg-secondary ms-1">Disabled</span>';
         tr.innerHTML = `
-            <td>${safeName}</td>
+            <td>${safeName}${enabledBadge}</td>
             <td>${safeDisplayName}</td>
             <td>${safeDescription}</td>
             <td>${selectedBadge}</td>
             <td>
                 <button type="button" class="btn btn-sm btn-secondary edit-agent-btn" data-index="${idx}">Edit</button>
+                <button type="button" class="btn btn-sm ${isEnabled ? 'btn-warning' : 'btn-success'} toggle-agent-btn" data-index="${idx}">${isEnabled ? 'Disable' : 'Enable'}</button>
                 <button type="button" class="btn btn-sm btn-danger delete-agent-btn" data-index="${idx}" ${isSelected ? 'disabled' : ''}>Delete</button>
             </td>
         `;
@@ -301,15 +314,24 @@ function renderAgentsTable() {
 }
 
 function handleAgentTableClick(e) {
-    if (e.target.classList.contains('edit-agent-btn')) {
-        const idx = parseInt(e.target.getAttribute('data-index'), 10);
+    const editButton = e.target.closest('.edit-agent-btn');
+    const deleteButton = e.target.closest('.delete-agent-btn');
+    const toggleButton = e.target.closest('.toggle-agent-btn');
+
+    if (editButton) {
+        const idx = parseInt(editButton.getAttribute('data-index'), 10);
         if (!isNaN(idx) && Array.isArray(agents)) {
             openAgentModal(agents[idx]);
             window.editingAgentIndex = idx;
             window.editingAgentName = agents[idx].name;
         }
-    } else if (e.target.classList.contains('delete-agent-btn')) {
-        const idx = parseInt(e.target.getAttribute('data-index'), 10);
+    } else if (toggleButton) {
+        const idx = parseInt(toggleButton.getAttribute('data-index'), 10);
+        if (!isNaN(idx) && Array.isArray(agents)) {
+            toggleAgentEnabled(idx);
+        }
+    } else if (deleteButton) {
+        const idx = parseInt(deleteButton.getAttribute('data-index'), 10);
         if (!isNaN(idx) && Array.isArray(agents)) {
             // Confirm delete
             if (confirm(`Are you sure you want to delete agent '${agents[idx].name}'?`)) {
@@ -334,6 +356,35 @@ async function deleteAgent(idx) {
         await loadAllAdminAgentData();
     } catch (err) {
         showToast('Failed to delete agent.', 'danger');
+    }
+}
+
+async function toggleAgentEnabled(idx) {
+    const agent = agents[idx];
+    const nextEnabledState = agent.is_enabled === false;
+
+    try {
+        const resp = await fetch(`/api/admin/agents/${encodeURIComponent(agent.name)}/enabled`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_enabled: nextEnabledState }),
+        });
+
+        const data = await resp.json();
+        if (!resp.ok) {
+            showToast(data.error || 'Failed to update agent state.', 'danger');
+            return;
+        }
+
+        await loadAllAdminAgentData();
+        if (data.fallback_agent_name) {
+            showToast(`Agent ${nextEnabledState ? 'enabled' : 'disabled'}. Selected agent switched to ${data.fallback_agent_name}.`, 'success');
+            return;
+        }
+
+        showToast(`Agent ${nextEnabledState ? 'enabled' : 'disabled'}!`, 'success');
+    } catch (err) {
+        showToast('Failed to update agent state.', 'danger');
     }
 }
 

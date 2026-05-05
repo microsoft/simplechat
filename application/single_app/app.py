@@ -54,12 +54,14 @@ from route_frontend_support import *
 from route_frontend_notifications import *
 
 from route_backend_chats import *
+from route_backend_search import *
 from route_backend_conversations import *
 from route_backend_documents import *
 from route_backend_groups import *
 from route_backend_users import *
 from route_backend_group_documents import *
 from route_backend_models import *
+from route_backend_workflows import *
 from route_backend_safety import *
 from route_backend_feedback import *
 from route_backend_settings import *
@@ -79,6 +81,7 @@ from route_backend_conversation_export import register_route_backend_conversatio
 from route_backend_thoughts import register_route_backend_thoughts
 from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
+from route_backend_collaboration import register_route_backend_collaboration
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
@@ -873,8 +876,14 @@ register_route_frontend_notifications(app)
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
 
+# ------------------- API Search Routes ------------------
+register_route_backend_search(app)
+
 # ------------------- API Conversation Routes ------------
 register_route_backend_conversations(app)
+
+# ------------------- API Collaboration Routes -----------
+register_route_backend_collaboration(app)
 
 # ------------------- API Documents Routes ---------------
 register_route_backend_documents(app)
@@ -890,6 +899,9 @@ register_route_backend_group_documents(app)
 
 # ------------------- API Model Routes -------------------
 register_route_backend_models(app)
+
+# ------------------- API Workflow Routes ----------------
+register_route_backend_workflows(app)
 
 # ------------------- API Safety Logs Routes -------------
 register_route_backend_safety(app)

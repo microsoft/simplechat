@@ -4,6 +4,164 @@ import { showToast } from "./chat/chat-toast.js";
 import * as agentsCommon from "./agents_common.js";
 import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
+const ACTION_CAPABILITIES_KEY = 'action_capabilities';
+const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'create_group',
+    label: 'Create groups',
+    description: 'Allow the agent to create new group workspaces as the current user.'
+  },
+  {
+    key: 'add_group_member',
+    label: 'Add users to groups',
+    description: 'Allow the agent to add members directly to groups using the current user\'s permissions.'
+  },
+  {
+    key: 'make_group_inactive',
+    label: 'Make groups inactive',
+    description: 'Allow the agent to mark a group inactive when the current user has Control Center admin access.'
+  },
+  {
+    key: 'create_group_conversation',
+    label: 'Create group multi-user conversations',
+    description: 'Allow the agent to create invite-managed group multi-user conversations and then add current group members as participants.'
+  },
+  {
+    key: 'invite_group_conversation_members',
+    label: 'Invite group conversation members',
+    description: 'Allow the agent to invite current group members into an existing invite-managed group multi-user conversation.'
+  },
+  {
+    key: 'create_personal_conversation',
+    label: 'Create personal conversations',
+    description: 'Allow the agent to create standard one-user personal conversations.'
+  },
+  {
+    key: 'create_personal_workflow',
+    label: 'Create personal workflows',
+    description: 'Allow the agent to create personal workflows using the current user\'s own workflow permissions.'
+  },
+  {
+    key: 'add_conversation_message',
+    label: 'Add conversation messages',
+    description: 'Allow the agent to add a user-authored message to an existing personal or collaborative conversation.'
+  },
+  {
+    key: 'upload_markdown_document',
+    label: 'Upload markdown documents',
+    description: 'Allow the agent to create and upload Markdown documents into the current user\'s personal or allowed group workspaces.'
+  },
+  {
+    key: 'create_personal_collaboration_conversation',
+    label: 'Create personal collaborative conversations',
+    description: 'Allow the agent to create personal collaborative conversations and invite participants.'
+  }
+];
+const MSGRAPH_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'get_my_profile',
+    label: 'Read my profile',
+    description: 'Allow the agent to read the signed-in user\'s Microsoft 365 profile details.'
+  },
+  {
+    key: 'get_my_timezone',
+    label: 'Read my mailbox timezone',
+    description: 'Allow the agent to read mailbox time zone and time formatting settings.'
+  },
+  {
+    key: 'get_my_events',
+    label: 'Read my calendar events',
+    description: 'Allow the agent to read upcoming calendar events for the signed-in user.'
+  },
+  {
+    key: 'create_calendar_invite',
+    label: 'Create calendar invites',
+    description: 'Allow the agent to create calendar invites, add current group members as attendees, and create Microsoft Teams meetings.'
+  },
+  {
+    key: 'get_my_messages',
+    label: 'Read my mail',
+    description: 'Allow the agent to read recent mail messages for the signed-in user.'
+  },
+  {
+    key: 'mark_message_as_read',
+    label: 'Update message read state',
+    description: 'Allow the agent to mark mail messages as read or unread.'
+  },
+  {
+    key: 'search_users',
+    label: 'Search directory users',
+    description: 'Allow the agent to search Microsoft 365 directory users by name or email prefix.'
+  },
+  {
+    key: 'get_user_by_email',
+    label: 'Lookup user by email',
+    description: 'Allow the agent to look up a directory user by exact email address or UPN.'
+  },
+  {
+    key: 'list_drive_items',
+    label: 'List OneDrive items',
+    description: 'Allow the agent to list items from the signed-in user\'s OneDrive.'
+  },
+  {
+    key: 'get_my_security_alerts',
+    label: 'Read my security alerts',
+    description: 'Allow the agent to read recent security alerts available to the signed-in user.'
+  }
+];
+const CHART_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'line',
+    label: 'Line charts',
+    description: 'Allow the agent to generate line charts.'
+  },
+  {
+    key: 'bar',
+    label: 'Bar charts',
+    description: 'Allow the agent to generate bar charts.'
+  },
+  {
+    key: 'pie',
+    label: 'Pie charts',
+    description: 'Allow the agent to generate pie charts.'
+  },
+  {
+    key: 'doughnut',
+    label: 'Doughnut charts',
+    description: 'Allow the agent to generate doughnut charts.'
+  },
+  {
+    key: 'scatter',
+    label: 'Scatter plots',
+    description: 'Allow the agent to generate scatter plots.'
+  },
+  {
+    key: 'area',
+    label: 'Area charts',
+    description: 'Allow the agent to generate area charts.'
+  },
+  {
+    key: 'bubble',
+    label: 'Bubble charts',
+    description: 'Allow the agent to generate bubble charts.'
+  },
+  {
+    key: 'radar',
+    label: 'Radar charts',
+    description: 'Allow the agent to generate radar charts.'
+  },
+  {
+    key: 'stacked_bar',
+    label: 'Stacked bar charts',
+    description: 'Allow the agent to generate stacked bar charts.'
+  },
+  {
+    key: 'stacked_line',
+    label: 'Stacked line charts',
+    description: 'Allow the agent to generate stacked line charts.'
+  }
+];
+
 export class AgentModalStepper {
   constructor(isAdmin = false, options = {}) {
     this.currentStep = 1;
@@ -15,6 +173,7 @@ export class AgentModalStepper {
     this.currentAgentType = 'local';
     this.originalAgent = null;  // Track original state for change detection
     this.actionsToSelect = null; // Store actions to select when they're loaded
+    this.availableActions = [];
     this.updateStepIndicatorTimeout = null; // For debouncing step indicator updates
     this.templateSubmitButton = document.getElementById('agent-modal-submit-template-btn');
     this.foundryPlaceholderInstructions = 'Placeholder instructions: Azure AI Foundry agent manages its own prompt.';
@@ -572,6 +731,7 @@ export class AgentModalStepper {
     const foundryActivityApiVersionInput = document.getElementById('agent-new-foundry-activity-api-version');
     const foundryNotesInput = document.getElementById('agent-foundry-notes');
     const foundryStatus = document.getElementById('agent-foundry-fetch-status');
+    const additionalSettings = document.getElementById('agent-additional-settings');
     
     if (displayName) displayName.value = '';
     if (generatedName) generatedName.value = '';
@@ -595,16 +755,22 @@ export class AgentModalStepper {
     if (foundryActivityApiVersionInput) foundryActivityApiVersionInput.value = '';
     if (foundryNotesInput) foundryNotesInput.value = '';
     if (foundryStatus) foundryStatus.textContent = '';
+    if (additionalSettings) additionalSettings.value = '{}';
     
     // Clear any selected actions
     this.clearSelectedActions();
   }
 
   clearSelectedActions() {
-    const actionCards = document.querySelectorAll('.action-card.border-primary');
+    const actionCards = document.querySelectorAll('.action-card');
     actionCards.forEach(card => {
-      card.classList.remove('border-primary', 'bg-primary-subtle');
+      card.classList.remove('border-primary', 'bg-light');
+      const checkIcon = card.querySelector('.action-check-icon');
+      if (checkIcon) {
+        checkIcon.classList.add('d-none');
+      }
     });
+    this.updateSelectedActionsDisplay();
   }
 
   async loadModelsForModal() {
@@ -1298,6 +1464,7 @@ export class AgentModalStepper {
         const nameB = (b.display_name || b.name || '').toLowerCase();
         return nameA.localeCompare(nameB);
       });
+      this.availableActions = filteredActions;
       
       // Clear container
       container.innerHTML = '';
@@ -1638,6 +1805,390 @@ export class AgentModalStepper {
     } else {
       if (summaryDiv) summaryDiv.classList.add('d-none');
     }
+
+    this.renderSimpleChatCapabilitySections();
+    this.renderMsGraphCapabilitySections();
+    this.renderChartCapabilitySections();
+  }
+
+  getDefaultSimpleChatCapabilities(actionId = '', actionName = '') {
+    const defaults = {};
+    SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+
+    const action = (this.availableActions || []).find(candidate => {
+      const candidateId = String(candidate?.id || candidate?.name || '').trim();
+      const candidateName = String(candidate?.name || candidate?.display_name || '').trim();
+      return (actionId && candidateId === actionId) || (actionName && candidateName === actionName);
+    });
+
+    const rawCapabilities = action?.additionalFields?.simplechat_capabilities
+      || action?.additional_fields?.simplechat_capabilities
+      || action?.simplechat_capabilities;
+
+    if (rawCapabilities && typeof rawCapabilities === 'object' && !Array.isArray(rawCapabilities)) {
+      SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+        if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+          defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+        }
+      });
+    }
+
+    return defaults;
+  }
+
+  getParsedAdditionalSettings() {
+    const settingsField = document.getElementById('agent-additional-settings');
+    const rawValue = settingsField?.value?.trim() || '{}';
+
+    try {
+      const parsed = JSON.parse(rawValue);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+      console.warn('Unable to parse agent additional settings while rendering capabilities:', error);
+      return {};
+    }
+  }
+
+  setParsedAdditionalSettings(settings) {
+    const settingsField = document.getElementById('agent-additional-settings');
+    if (!settingsField) {
+      return;
+    }
+    settingsField.value = JSON.stringify(settings || {}, null, 2);
+  }
+
+  getActionCapabilityMap() {
+    const otherSettings = this.getParsedAdditionalSettings();
+    const capabilityMap = otherSettings[ACTION_CAPABILITIES_KEY];
+    return capabilityMap && typeof capabilityMap === 'object' && !Array.isArray(capabilityMap)
+      ? capabilityMap
+      : {};
+  }
+
+  getSimpleChatCapabilitiesForAction(actionId, actionName) {
+    const defaults = this.getDefaultSimpleChatCapabilities(actionId, actionName);
+    const capabilityMap = this.getActionCapabilityMap();
+    const storedCapabilities = capabilityMap[actionId] || capabilityMap[actionName] || {};
+
+    SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(storedCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(storedCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  updateSimpleChatCapabilities(actionId, actionName, nextCapabilities) {
+    const otherSettings = this.getParsedAdditionalSettings();
+    const capabilityMap = this.getActionCapabilityMap();
+    capabilityMap[actionId || actionName] = { ...nextCapabilities };
+    otherSettings[ACTION_CAPABILITIES_KEY] = capabilityMap;
+    this.setParsedAdditionalSettings(otherSettings);
+  }
+
+  renderSimpleChatCapabilitySections() {
+    const container = document.getElementById('agent-simplechat-capabilities');
+    const list = document.getElementById('agent-simplechat-capabilities-list');
+    if (!container || !list) {
+      return;
+    }
+
+    const selectedSimpleChatCards = Array.from(document.querySelectorAll('.action-card.border-primary')).filter(card => {
+      return (card.getAttribute('data-action-type') || '').toLowerCase() === 'simplechat';
+    });
+
+    if (!selectedSimpleChatCards.length || this.isAnyFoundryType()) {
+      container.classList.add('d-none');
+      list.innerHTML = '';
+      return;
+    }
+
+    container.classList.remove('d-none');
+    list.innerHTML = '';
+
+    selectedSimpleChatCards.forEach(card => {
+      const actionId = card.getAttribute('data-action-id') || card.getAttribute('data-action-name') || '';
+      const actionName = card.getAttribute('data-action-name') || actionId;
+      const capabilities = this.getSimpleChatCapabilitiesForAction(actionId, actionName);
+
+      const section = document.createElement('div');
+      section.className = 'border rounded p-3 bg-light';
+
+      const heading = document.createElement('div');
+      heading.className = 'fw-semibold mb-1';
+      heading.textContent = actionName;
+      section.appendChild(heading);
+
+      const helperText = document.createElement('div');
+      helperText.className = 'text-muted small mb-3';
+      helperText.textContent = 'These capability toggles apply only to this agent assignment.';
+      section.appendChild(helperText);
+
+      SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-check mb-2';
+
+        const checkbox = document.createElement('input');
+        checkbox.className = 'form-check-input';
+        checkbox.type = 'checkbox';
+        checkbox.id = `simplechat-capability-${actionId}-${definition.key}`;
+        checkbox.checked = Boolean(capabilities[definition.key]);
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.setAttribute('for', checkbox.id);
+        label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+        checkbox.addEventListener('change', () => {
+          const updatedCapabilities = this.getSimpleChatCapabilitiesForAction(actionId, actionName);
+          updatedCapabilities[definition.key] = checkbox.checked;
+          this.updateSimpleChatCapabilities(actionId, actionName, updatedCapabilities);
+        });
+
+        wrapper.appendChild(checkbox);
+        wrapper.appendChild(label);
+        section.appendChild(wrapper);
+      });
+
+      list.appendChild(section);
+    });
+  }
+
+  getDefaultMsGraphCapabilities(actionId = '', actionName = '') {
+    const defaults = {};
+    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+
+    const action = (this.availableActions || []).find(candidate => {
+      const candidateId = String(candidate?.id || candidate?.name || '').trim();
+      const candidateName = String(candidate?.name || candidate?.display_name || '').trim();
+      return (actionId && candidateId === actionId) || (actionName && candidateName === actionName);
+    });
+
+    const rawCapabilities = action?.additionalFields?.msgraph_capabilities
+      || action?.additional_fields?.msgraph_capabilities
+      || action?.msgraph_capabilities;
+
+    if (rawCapabilities && typeof rawCapabilities === 'object' && !Array.isArray(rawCapabilities)) {
+      MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+        if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+          defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+        }
+      });
+    }
+
+    return defaults;
+  }
+
+  getMsGraphCapabilitiesForAction(actionId, actionName) {
+    const defaults = this.getDefaultMsGraphCapabilities(actionId, actionName);
+    const capabilityMap = this.getActionCapabilityMap();
+    const storedCapabilities = capabilityMap[actionId] || capabilityMap[actionName] || {};
+
+    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(storedCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(storedCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  updateMsGraphCapabilities(actionId, actionName, nextCapabilities) {
+    const otherSettings = this.getParsedAdditionalSettings();
+    const capabilityMap = this.getActionCapabilityMap();
+    capabilityMap[actionId || actionName] = { ...nextCapabilities };
+    otherSettings[ACTION_CAPABILITIES_KEY] = capabilityMap;
+    this.setParsedAdditionalSettings(otherSettings);
+  }
+
+  renderMsGraphCapabilitySections() {
+    const container = document.getElementById('agent-msgraph-capabilities');
+    const list = document.getElementById('agent-msgraph-capabilities-list');
+    if (!container || !list) {
+      return;
+    }
+
+    const selectedMsGraphCards = Array.from(document.querySelectorAll('.action-card.border-primary')).filter(card => {
+      return (card.getAttribute('data-action-type') || '').toLowerCase() === 'msgraph';
+    });
+
+    if (!selectedMsGraphCards.length || this.isAnyFoundryType()) {
+      container.classList.add('d-none');
+      list.innerHTML = '';
+      return;
+    }
+
+    container.classList.remove('d-none');
+    list.innerHTML = '';
+
+    selectedMsGraphCards.forEach(card => {
+      const actionId = card.getAttribute('data-action-id') || card.getAttribute('data-action-name') || '';
+      const actionName = card.getAttribute('data-action-name') || actionId;
+      const capabilities = this.getMsGraphCapabilitiesForAction(actionId, actionName);
+
+      const section = document.createElement('div');
+      section.className = 'border rounded p-3 bg-light';
+
+      const heading = document.createElement('div');
+      heading.className = 'fw-semibold mb-1';
+      heading.textContent = actionName;
+      section.appendChild(heading);
+
+      const helperText = document.createElement('div');
+      helperText.className = 'text-muted small mb-3';
+      helperText.textContent = 'These capability toggles apply only to this agent assignment.';
+      section.appendChild(helperText);
+
+      MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-check mb-2';
+
+        const checkbox = document.createElement('input');
+        checkbox.className = 'form-check-input';
+        checkbox.type = 'checkbox';
+        checkbox.id = `msgraph-capability-${actionId}-${definition.key}`;
+        checkbox.checked = Boolean(capabilities[definition.key]);
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.setAttribute('for', checkbox.id);
+        label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+        checkbox.addEventListener('change', () => {
+          const updatedCapabilities = this.getMsGraphCapabilitiesForAction(actionId, actionName);
+          updatedCapabilities[definition.key] = checkbox.checked;
+          this.updateMsGraphCapabilities(actionId, actionName, updatedCapabilities);
+        });
+
+        wrapper.appendChild(checkbox);
+        wrapper.appendChild(label);
+        section.appendChild(wrapper);
+      });
+
+      list.appendChild(section);
+    });
+  }
+
+  getDefaultChartCapabilities(actionId = '', actionName = '') {
+    const defaults = {};
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+
+    const action = (this.availableActions || []).find(candidate => {
+      const candidateId = String(candidate?.id || candidate?.name || '').trim();
+      const candidateName = String(candidate?.name || candidate?.display_name || '').trim();
+      return (actionId && candidateId === actionId) || (actionName && candidateName === actionName);
+    });
+
+    const rawCapabilities = action?.additionalFields?.chart_capabilities
+      || action?.additional_fields?.chart_capabilities
+      || action?.chart_capabilities;
+
+    if (rawCapabilities && typeof rawCapabilities === 'object' && !Array.isArray(rawCapabilities)) {
+      CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+        if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+          defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+        }
+      });
+    }
+
+    return defaults;
+  }
+
+  getChartCapabilitiesForAction(actionId, actionName) {
+    const defaults = this.getDefaultChartCapabilities(actionId, actionName);
+    const capabilityMap = this.getActionCapabilityMap();
+    const storedCapabilities = capabilityMap[actionId] || capabilityMap[actionName] || {};
+
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(storedCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(storedCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  updateChartCapabilities(actionId, actionName, nextCapabilities) {
+    const otherSettings = this.getParsedAdditionalSettings();
+    const capabilityMap = this.getActionCapabilityMap();
+    capabilityMap[actionId || actionName] = { ...nextCapabilities };
+    otherSettings[ACTION_CAPABILITIES_KEY] = capabilityMap;
+    this.setParsedAdditionalSettings(otherSettings);
+  }
+
+  renderChartCapabilitySections() {
+    const container = document.getElementById('agent-chart-capabilities');
+    const list = document.getElementById('agent-chart-capabilities-list');
+    if (!container || !list) {
+      return;
+    }
+
+    const selectedChartCards = Array.from(document.querySelectorAll('.action-card.border-primary')).filter(card => {
+      return (card.getAttribute('data-action-type') || '').toLowerCase() === 'chart';
+    });
+
+    if (!selectedChartCards.length || this.isAnyFoundryType()) {
+      container.classList.add('d-none');
+      list.innerHTML = '';
+      return;
+    }
+
+    container.classList.remove('d-none');
+    list.innerHTML = '';
+
+    selectedChartCards.forEach(card => {
+      const actionId = card.getAttribute('data-action-id') || card.getAttribute('data-action-name') || '';
+      const actionName = card.getAttribute('data-action-name') || actionId;
+      const capabilities = this.getChartCapabilitiesForAction(actionId, actionName);
+
+      const section = document.createElement('div');
+      section.className = 'border rounded p-3 bg-light';
+
+      const heading = document.createElement('div');
+      heading.className = 'fw-semibold mb-1';
+      heading.textContent = actionName;
+      section.appendChild(heading);
+
+      const helperText = document.createElement('div');
+      helperText.className = 'text-muted small mb-3';
+      helperText.textContent = 'These chart type toggles apply only to this agent assignment.';
+      section.appendChild(helperText);
+
+      CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-check mb-2';
+
+        const checkbox = document.createElement('input');
+        checkbox.className = 'form-check-input';
+        checkbox.type = 'checkbox';
+        checkbox.id = `chart-capability-${actionId}-${definition.key}`;
+        checkbox.checked = Boolean(capabilities[definition.key]);
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.setAttribute('for', checkbox.id);
+        label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+        checkbox.addEventListener('change', () => {
+          const updatedCapabilities = this.getChartCapabilitiesForAction(actionId, actionName);
+          updatedCapabilities[definition.key] = checkbox.checked;
+          this.updateChartCapabilities(actionId, actionName, updatedCapabilities);
+        });
+
+        wrapper.appendChild(checkbox);
+        wrapper.appendChild(label);
+        section.appendChild(wrapper);
+      });
+
+      list.appendChild(section);
+    });
   }
 
   initializeActionSearch(actions) {

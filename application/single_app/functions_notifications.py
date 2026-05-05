@@ -25,12 +25,43 @@ from functions_public_workspaces import find_public_workspace_by_id, get_user_pu
 # Constants
 TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
 ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY = 'assignment-notifications'
+WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'
+WORKFLOW_ALERT_PRIORITY_CONFIG = {
+    'low': {
+        'icon': 'bi-bell',
+        'color': 'info',
+    },
+    'medium': {
+        'icon': 'bi-exclamation-circle',
+        'color': 'warning',
+    },
+    'high': {
+        'icon': 'bi-exclamation-triangle',
+        'color': 'danger',
+    },
+}
 
 # Notification type registry for extensibility
 NOTIFICATION_TYPES = {
     'document_processing_complete': {
         'icon': 'bi-file-earmark-check',
         'color': 'success'
+    },
+    'group_created': {
+        'icon': 'bi-people-fill',
+        'color': 'success'
+    },
+    'group_member_added': {
+        'icon': 'bi-person-plus',
+        'color': 'info'
+    },
+    'conversation_created': {
+        'icon': 'bi-chat-square-text',
+        'color': 'info'
+    },
+    'collaboration_message_received': {
+        'icon': 'bi-people-fill',
+        'color': 'info'
     },
     'chat_response_complete': {
         'icon': 'bi-chat-dots',
@@ -91,6 +122,10 @@ NOTIFICATION_TYPES = {
     'agent_template_deleted': {
         'icon': 'bi-trash',
         'color': 'secondary'
+    },
+    WORKFLOW_ALERT_NOTIFICATION_TYPE: {
+        'icon': 'bi-bell',
+        'color': 'secondary'
     }
 }
 
@@ -125,6 +160,28 @@ def _get_notification_display_message(notification):
         return f"Reason provided: {reason}"
 
     return message
+
+
+def _get_workflow_alert_priority(notification):
+    metadata = notification.get('metadata') or {}
+    priority = str(metadata.get('priority') or 'medium').strip().lower()
+    if priority not in WORKFLOW_ALERT_PRIORITY_CONFIG:
+        return 'medium'
+    return priority
+
+
+def _get_notification_type_config(notification):
+    notification_type = notification.get('notification_type')
+    if notification_type == WORKFLOW_ALERT_NOTIFICATION_TYPE:
+        return WORKFLOW_ALERT_PRIORITY_CONFIG.get(
+            _get_workflow_alert_priority(notification),
+            NOTIFICATION_TYPES[WORKFLOW_ALERT_NOTIFICATION_TYPE],
+        )
+
+    return NOTIFICATION_TYPES.get(
+        notification_type,
+        NOTIFICATION_TYPES['system_announcement'],
+    )
 
 
 def get_notifications_by_metadata(metadata_filters=None, notification_types=None):
@@ -395,6 +452,86 @@ def create_chat_response_notification(
     )
 
 
+def create_collaboration_message_notification(
+    user_id,
+    conversation_id,
+    message_id,
+    conversation_title='',
+    sender_display_name='',
+    message_preview='',
+    chat_type='',
+    group_id=None,
+    mentioned_user=False,
+):
+    """Create a personal notification when another participant posts in a shared conversation."""
+    normalized_title = str(conversation_title or '').strip() or 'Shared Conversation'
+    normalized_sender = str(sender_display_name or '').strip() or 'A participant'
+    normalized_preview = str(message_preview or '').strip()
+    if len(normalized_preview) > 160:
+        normalized_preview = f"{normalized_preview[:157]}..."
+
+    notification_title = f"New shared message in {normalized_title}"
+    if mentioned_user:
+        notification_title = f"{normalized_sender} tagged you in {normalized_title}"
+
+    notification_message = normalized_preview or f"{normalized_sender} posted in {normalized_title}."
+
+    return create_notification(
+        user_id=user_id,
+        notification_type='collaboration_message_received',
+        title=notification_title,
+        message=notification_message,
+        link_url=f'/chats?conversationId={conversation_id}',
+        link_context={
+            'workspace_type': 'group' if str(chat_type or '').strip().lower().startswith('group') else 'personal',
+            'conversation_id': conversation_id,
+            'group_id': group_id,
+            'conversation_kind': 'collaborative',
+        },
+        metadata={
+            'conversation_id': conversation_id,
+            'message_id': message_id,
+            'sender_display_name': normalized_sender,
+            'mentioned_user': bool(mentioned_user),
+            'conversation_kind': 'collaborative',
+            'chat_type': chat_type,
+            'group_id': group_id,
+        }
+    )
+
+
+def create_workflow_priority_notification(
+    user_id,
+    workflow_id,
+    workflow_name,
+    priority,
+    title,
+    message,
+    link_url='',
+    link_context=None,
+    metadata=None,
+):
+    """Create a personal workflow alert notification with a priority-aware display."""
+    normalized_priority = str(priority or 'medium').strip().lower()
+    if normalized_priority not in WORKFLOW_ALERT_PRIORITY_CONFIG:
+        normalized_priority = 'medium'
+
+    alert_metadata = dict(metadata or {})
+    alert_metadata.setdefault('priority', normalized_priority)
+    alert_metadata.setdefault('workflow_id', workflow_id)
+    alert_metadata.setdefault('workflow_name', workflow_name)
+
+    return create_notification(
+        user_id=user_id,
+        notification_type=WORKFLOW_ALERT_NOTIFICATION_TYPE,
+        title=title,
+        message=message,
+        link_url=link_url,
+        link_context=link_context or {},
+        metadata=alert_metadata,
+    )
+
+
 def get_user_notifications(user_id, page=1, per_page=20, include_read=True, include_dismissed=False, user_roles=None):
     """
     Fetch notifications visible to a user from personal, group, and public workspace scopes.
@@ -518,10 +655,9 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
             notif['message'] = _get_notification_display_message(notif)
             notif['is_read'] = user_id in read_by
             notif['is_dismissed'] = user_id in dismissed_by
-            notif['type_config'] = NOTIFICATION_TYPES.get(
-                notif.get('notification_type'),
-                NOTIFICATION_TYPES['system_announcement']
-            )
+            notif['type_config'] = _get_notification_type_config(notif)
+            if notif.get('notification_type') == WORKFLOW_ALERT_NOTIFICATION_TYPE:
+                notif['priority'] = _get_workflow_alert_priority(notif)
             
             filtered_notifications.append(notif)
         
@@ -581,6 +717,51 @@ def get_unread_notification_count(user_id):
     except Exception as e:
         debug_print(f"Error counting unread notifications for {user_id}: {e}")
         return 0
+
+
+def get_unread_workflow_priority_notifications(user_id, limit=5):
+    """Return the most recent unread workflow alert notifications for a user."""
+    try:
+        normalized_limit = max(1, min(int(limit or 5), 10))
+    except (TypeError, ValueError):
+        normalized_limit = 5
+
+    try:
+        notifications = list(cosmos_notifications_container.query_items(
+            query=(
+                'SELECT * FROM c '
+                'WHERE c.user_id = @user_id '
+                'AND c.notification_type = @notification_type '
+                'ORDER BY c.created_at DESC'
+            ),
+            parameters=[
+                {'name': '@user_id', 'value': user_id},
+                {'name': '@notification_type', 'value': WORKFLOW_ALERT_NOTIFICATION_TYPE},
+            ],
+            partition_key=user_id,
+        ))
+
+        unread_notifications = []
+        for notification in notifications:
+            if user_id in notification.get('dismissed_by', []):
+                continue
+            if user_id in notification.get('read_by', []):
+                continue
+
+            notification['message'] = _get_notification_display_message(notification)
+            notification['is_read'] = False
+            notification['is_dismissed'] = False
+            notification['priority'] = _get_workflow_alert_priority(notification)
+            notification['type_config'] = _get_notification_type_config(notification)
+            unread_notifications.append(notification)
+
+            if len(unread_notifications) >= normalized_limit:
+                break
+
+        return unread_notifications
+    except Exception as e:
+        debug_print(f"Error fetching unread workflow alerts for {user_id}: {e}")
+        return []
 
 
 def mark_notification_read(notification_id, user_id):
@@ -670,6 +851,46 @@ def mark_chat_response_notifications_read_for_conversation(user_id, conversation
     except Exception as e:
         debug_print(
             f"Error marking chat response notifications as read for conversation {conversation_id}: {e}"
+        )
+        return 0
+
+
+def mark_collaboration_message_notifications_read_for_conversation(user_id, conversation_id):
+    """Mark personal collaboration-message notifications read for a conversation."""
+    try:
+        query = """
+            SELECT * FROM c
+            WHERE c.user_id = @user_id
+            AND c.notification_type = @notification_type
+            AND c.metadata.conversation_id = @conversation_id
+        """
+        params = [
+            {'name': '@user_id', 'value': user_id},
+            {'name': '@notification_type', 'value': 'collaboration_message_received'},
+            {'name': '@conversation_id', 'value': conversation_id},
+        ]
+
+        notifications = list(cosmos_notifications_container.query_items(
+            query=query,
+            parameters=params,
+            partition_key=user_id
+        ))
+
+        marked_count = 0
+        for notification in notifications:
+            read_by = notification.get('read_by', [])
+            if user_id in read_by:
+                continue
+
+            read_by.append(user_id)
+            notification['read_by'] = read_by
+            cosmos_notifications_container.upsert_item(notification)
+            marked_count += 1
+
+        return marked_count
+    except Exception as e:
+        debug_print(
+            f"Error marking collaboration notifications as read for conversation {conversation_id}: {e}"
         )
         return 0
 

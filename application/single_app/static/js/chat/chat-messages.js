@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -21,6 +21,10 @@ import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
+import { extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { renderInlineVideoGalleries } from './chat-inline-videos.js';
+import { renderInlineImageGalleries } from './chat-inline-images.js';
+import { renderInlineAzureMaps } from './chat-inline-maps.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -33,6 +37,893 @@ if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_
         console.error('Failed to load TTS module:', error);
     });
 }
+
+const documentActionSelect = document.getElementById('document-action-select');
+const documentComparisonSummaryBar = document.getElementById('document-comparison-summary-bar');
+const documentComparisonInlineSourceTags = document.getElementById('document-comparison-inline-source-tags');
+const documentComparisonInlineTargetTags = document.getElementById('document-comparison-inline-target-tags');
+const documentComparisonEditButtonLabel = document.getElementById('document-comparison-edit-btn-label');
+const documentComparisonModalEl = document.getElementById('document-comparison-modal');
+const documentComparisonModal = documentComparisonModalEl && window.bootstrap
+  ? bootstrap.Modal.getOrCreateInstance(documentComparisonModalEl)
+  : null;
+const documentComparisonBoard = document.getElementById('document-comparison-board');
+const documentComparisonAvailableList = document.getElementById('document-comparison-available-list');
+const documentComparisonSourceDropzone = document.getElementById('document-comparison-source-dropzone');
+const documentComparisonLeftSelect = document.getElementById('document-comparison-left-select');
+const documentComparisonSelectionSummary = document.getElementById('document-comparison-selection-summary');
+const documentComparisonSelectionList = document.getElementById('document-comparison-selection-list');
+let comparisonVersionLoadToken = 0;
+let comparisonVersionCatalog = [];
+let comparisonChatUploadCatalog = [];
+let comparisonSelectedDocumentIdsSnapshot = [];
+let comparisonDocumentSelectionOrder = [];
+let selectedComparisonTargetIds = [];
+const DOCUMENT_ACTION_NONE = 'none';
+const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = 'exhaustive_review';
+const DOCUMENT_ACTION_COMPARISON = 'comparison';
+const DOCUMENT_ACTION_DESCRIPTIONS = {
+  [DOCUMENT_ACTION_NONE]: 'Find relevant information in the selected documents.',
+  [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: 'Perform an in-depth analysis across all selected documents based on your request.',
+  [DOCUMENT_ACTION_COMPARISON]: 'Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact.',
+};
+const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
+  [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: {
+    enabled: true,
+    chat_max_documents: 3,
+    workflow_max_documents: 10,
+  },
+  [DOCUMENT_ACTION_COMPARISON]: {
+    enabled: true,
+    chat_max_documents: 3,
+    workflow_max_documents: 10,
+  },
+};
+
+function getDocumentActionCapability(actionType) {
+  const defaultCapability = DEFAULT_DOCUMENT_ACTION_CAPABILITIES[actionType] || {
+    enabled: false,
+    chat_max_documents: 3,
+    workflow_max_documents: 10,
+  };
+  const configuredCapability = window.appSettings?.documentActionCapabilities?.[actionType] || {};
+  return {
+    ...defaultCapability,
+    ...configuredCapability,
+  };
+}
+
+function isDocumentActionEnabled(actionType) {
+  if (actionType === DOCUMENT_ACTION_NONE) {
+    return true;
+  }
+
+  return Boolean(getDocumentActionCapability(actionType).enabled);
+}
+
+function getDocumentActionMaxDocuments(actionType, executionContext) {
+  const capability = getDocumentActionCapability(actionType);
+  return executionContext === 'workflow'
+    ? Number.parseInt(capability.workflow_max_documents || 10, 10)
+    : Number.parseInt(capability.chat_max_documents || 3, 10);
+}
+
+function getDocumentActionLabel(actionType) {
+  if (actionType === DOCUMENT_ACTION_COMPARISON) {
+    return 'compare';
+  }
+  if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
+    return 'review';
+  }
+  return 'search';
+}
+
+function getDocumentActionDescription(actionType) {
+  return DOCUMENT_ACTION_DESCRIPTIONS[actionType] || DOCUMENT_ACTION_DESCRIPTIONS[DOCUMENT_ACTION_NONE];
+}
+
+function syncDocumentActionTooltip() {
+  if (!documentActionSelect) {
+    return;
+  }
+
+  const selectedOption = documentActionSelect.selectedOptions?.[0] || null;
+  const description = String(
+    selectedOption?.dataset.actionDescription
+    || selectedOption?.getAttribute('title')
+    || getDocumentActionDescription(getDocumentActionType())
+  ).trim();
+
+  documentActionSelect.title = description;
+  documentActionSelect.setAttribute('aria-description', description);
+}
+
+const INLINE_ASSISTANT_EXPORT_ACTIONS = Object.freeze({
+  powerpoint: {
+    actionName: 'exportMessageAsPowerPoint',
+    buttonClass: 'inline-export-ppt-btn',
+    iconClass: 'bi bi-file-earmark-slides',
+    label: 'Create PowerPoint Presentation',
+    pendingLabel: 'Creating PowerPoint Presentation...',
+    title: 'Create PowerPoint Presentation',
+  },
+  word: {
+    actionName: 'exportMessageAsWord',
+    buttonClass: 'inline-export-word-btn',
+    iconClass: 'bi bi-file-earmark-word',
+    label: 'Create Word Document',
+    pendingLabel: 'Creating Word Document...',
+    title: 'Create Word Document',
+  },
+  markdown: {
+    actionName: 'exportMessageAsMarkdown',
+    buttonClass: 'inline-export-md-btn',
+    iconClass: 'bi bi-markdown',
+    label: 'Create Markdown Document',
+    pendingLabel: 'Creating Markdown Document...',
+    title: 'Create Markdown Document',
+  },
+  email: {
+    actionName: 'openInEmail',
+    buttonClass: 'inline-open-email-btn',
+    iconClass: 'bi bi-envelope',
+    label: 'Send an Email',
+    pendingLabel: 'Opening Email Draft...',
+    title: 'Opens Message in your default mail program',
+  },
+});
+
+const INLINE_ASSISTANT_EXPORT_ACTIONS_BY_NAME = Object.freeze(
+  Object.values(INLINE_ASSISTANT_EXPORT_ACTIONS).reduce((actionsByName, actionConfig) => {
+    if (actionConfig?.actionName) {
+      actionsByName[actionConfig.actionName] = actionConfig;
+    }
+    return actionsByName;
+  }, {})
+);
+
+const INLINE_ASSISTANT_EXPORT_ACTION_ORDER = ['powerpoint', 'word', 'markdown', 'email'];
+const INLINE_ASSISTANT_EXPORT_VERB_PATTERN = /\b(create|make|generate|draft|write|prepare|compose|build|send|export)\b/i;
+const INLINE_ASSISTANT_EXPORT_PATTERNS = Object.freeze({
+  powerpoint: /\b(powerpoint|pptx|slide deck|slides?)\b/i,
+  presentation: /\bpresentation\b/i,
+  word: /\b(word document|word doc|docx|microsoft word|word file)\b|\b(?:in|as)\s+word\b/i,
+  markdown: /\b(markdown|markdown document|\.md|md file)\b/i,
+  email: /\b(e-?mail|email)\b/i,
+});
+
+function getSelectedDocumentIds() {
+  const docSel = document.getElementById('document-select');
+  if (!docSel) {
+    return [];
+  }
+
+  return Array.from(docSel.selectedOptions)
+    .map(option => option.value)
+    .filter(value => value);
+}
+
+function getSelectedComparisonTargetIds() {
+  return selectedComparisonTargetIds.filter(Boolean);
+}
+
+function formatDocumentVersionDate(uploadDate) {
+  const parsedTime = Date.parse(String(uploadDate || '').trim());
+  if (Number.isNaN(parsedTime)) {
+    return '';
+  }
+
+  return new Date(parsedTime).toLocaleDateString();
+}
+
+function buildDocumentVersionLabel(version, fallbackName) {
+  const baseName = String(
+    version?.title
+    || version?.file_name
+    || fallbackName
+    || version?.id
+    || 'Document version'
+  ).trim() || 'Document version';
+  const versionNumber = Number.parseInt(version?.version, 10);
+  const detailParts = [];
+
+  if (Number.isFinite(versionNumber)) {
+    detailParts.push(`v${versionNumber}`);
+  }
+  if (version?.is_current_version) {
+    detailParts.push('current');
+  }
+
+  const formattedDate = formatDocumentVersionDate(version?.upload_date);
+  if (formattedDate) {
+    detailParts.push(formattedDate);
+  }
+
+  return detailParts.length ? `${baseName} (${detailParts.join(' | ')})` : baseName;
+}
+
+function buildFallbackComparisonVersion(documentId) {
+  const metadata = getDocumentMetadata(documentId) || {};
+  return [{
+    id: documentId,
+    title: metadata.title || '',
+    file_name: metadata.file_name || metadata.name || metadata.filename || '',
+    version: metadata.version,
+    upload_date: metadata.upload_date,
+    is_current_version: true,
+  }];
+}
+
+function getOrderedSelectedDocumentIds() {
+  const selectedDocumentIds = getSelectedDocumentIds();
+  const orderedSelectedDocumentIds = comparisonDocumentSelectionOrder.filter(documentId => selectedDocumentIds.includes(documentId));
+
+  selectedDocumentIds.forEach(documentId => {
+    if (!orderedSelectedDocumentIds.includes(documentId)) {
+      orderedSelectedDocumentIds.push(documentId);
+    }
+  });
+
+  return orderedSelectedDocumentIds;
+}
+
+function getComparisonCandidateCatalog() {
+  return [...comparisonVersionCatalog, ...comparisonChatUploadCatalog];
+}
+
+function getCurrentComparisonSourceId() {
+  return String(selectedComparisonTargetIds[0] || '').trim();
+}
+
+function getCurrentComparisonTargetIds() {
+  const sourceId = getCurrentComparisonSourceId();
+  return getSelectedComparisonTargetIds().filter(versionId => versionId !== sourceId);
+}
+
+function getComparisonVersionEntry(versionId) {
+  return getComparisonCandidateCatalog().find(version => version.id === versionId) || null;
+}
+
+function buildComparisonVersionDetails(version) {
+  if (version?.sourceType === 'chat_upload') {
+    const detailParts = [String(version.kindLabel || 'Chat upload').trim() || 'Chat upload'];
+    const formattedUploadDate = formatDocumentVersionDate(version?.upload_date || version?.timestamp);
+    if (formattedUploadDate) {
+      detailParts.push(formattedUploadDate);
+    }
+    return detailParts.join(' | ');
+  }
+
+  const detailParts = [];
+  const versionNumber = Number.parseInt(version?.version, 10);
+
+  if (Number.isFinite(versionNumber)) {
+    detailParts.push(`v${versionNumber}`);
+  }
+  if (version?.is_current_version) {
+    detailParts.push('Current');
+  }
+
+  const formattedDate = formatDocumentVersionDate(version?.upload_date);
+  if (formattedDate) {
+    detailParts.push(formattedDate);
+  }
+
+  return detailParts.join(' | ');
+}
+
+function buildComparisonOrderSummary(selectedVersions) {
+  if (!selectedVersions.length) {
+    return 'Choose one Source and at least one Target. Workspace versions come from the document picker, and chat uploads appear here after upload.';
+  }
+
+  const sourceVersion = selectedVersions[0];
+  const targetCount = Math.max(0, selectedVersions.length - 1);
+  if (targetCount === 0) {
+    return `Source ready: ${sourceVersion.label || sourceVersion.groupLabel || sourceVersion.id}. Add one or more Targets to compare.`;
+  }
+
+  return `Source ready: ${sourceVersion.label || sourceVersion.groupLabel || sourceVersion.id}. ${targetCount} Target${targetCount === 1 ? '' : 's'} selected.`;
+}
+
+function buildComparisonChatUploadCatalog(messages = []) {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+
+  return messages
+    .map(message => {
+      const roleName = String(message?.role || '').trim().toLowerCase();
+      const isUserUploadedImage = roleName === 'image' && Boolean(message?.metadata?.is_user_upload);
+      if (roleName !== 'file' && !isUserUploadedImage) {
+        return null;
+      }
+
+      const hasInlineText = typeof message?.file_content === 'string' && message.file_content.trim().length > 0;
+      const hasExtractedText = typeof message?.extracted_text === 'string' && message.extracted_text.trim().length > 0;
+      const hasBlobBackedContent = String(message?.file_content_source || '').trim().toLowerCase() === 'blob';
+      const hasVisionAnalysis = message?.vision_analysis !== null
+        && message?.vision_analysis !== undefined
+        && message?.vision_analysis !== ''
+        && (!Array.isArray(message.vision_analysis) || message.vision_analysis.length > 0);
+
+      if (!hasInlineText && !hasExtractedText && !hasBlobBackedContent && !hasVisionAnalysis) {
+        return null;
+      }
+
+      const label = String(
+        message?.filename
+        || (isUserUploadedImage ? 'Uploaded image' : '')
+        || message?.id
+        || 'Chat upload'
+      ).trim() || 'Chat upload';
+      const uploadDate = message?.timestamp || message?.created_at || '';
+
+      return {
+        id: String(message.id || '').trim(),
+        label,
+        groupLabel: 'Chat Uploads',
+        sourceType: 'chat_upload',
+        upload_date: uploadDate,
+        timestamp: uploadDate,
+        kindLabel: isUserUploadedImage
+          ? 'Image upload'
+          : (message?.is_table ? 'Table upload' : 'Chat upload'),
+      };
+    })
+    .filter(upload => upload?.id)
+    .sort((leftUpload, rightUpload) => {
+      const timestampComparison = String(rightUpload.timestamp || '').localeCompare(String(leftUpload.timestamp || ''));
+      if (timestampComparison !== 0) {
+        return timestampComparison;
+      }
+      return String(leftUpload.label || '').localeCompare(String(rightUpload.label || ''));
+    });
+}
+
+function buildComparisonEmptyState(messageText) {
+  return `<div class="h-100 d-flex align-items-center justify-content-center text-center text-muted small px-3">${escapeHtml(messageText)}</div>`;
+}
+
+function truncateComparisonSummaryLabel(label, maxLength = 28) {
+  const normalizedLabel = String(label || '').trim();
+  if (normalizedLabel.length <= maxLength) {
+    return normalizedLabel;
+  }
+
+  return `${normalizedLabel.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function buildComparisonSummaryLabel(candidate) {
+  if (!candidate) {
+    return '';
+  }
+
+  const baseName = String(
+    candidate.groupLabel
+    || candidate.title
+    || candidate.file_name
+    || candidate.label
+    || candidate.id
+    || 'Document'
+  ).trim() || 'Document';
+  const versionNumber = Number.parseInt(candidate.version, 10);
+
+  if (candidate.sourceType === 'workspace_document' && Number.isFinite(versionNumber)) {
+    return `${baseName} v${versionNumber}`;
+  }
+
+  return baseName;
+}
+
+function renderComparisonSummaryBadge(candidate, badgeClass) {
+  const fullLabel = buildComparisonSummaryLabel(candidate);
+  const compactLabel = truncateComparisonSummaryLabel(fullLabel);
+  return `<span class="badge rounded-pill ${badgeClass} text-truncate" style="max-width: 14rem;" title="${escapeHtml(fullLabel)}">${escapeHtml(compactLabel)}</span>`;
+}
+
+function renderComparisonSummaryPlaceholder(labelText) {
+  return `<span class="badge rounded-pill text-bg-light border text-body-secondary">${escapeHtml(labelText)}</span>`;
+}
+
+function renderComparisonInlineSummary(selectedVersions = []) {
+  const sourceVersion = selectedVersions[0] || null;
+  const targetVersions = selectedVersions.slice(1);
+
+  if (documentComparisonInlineSourceTags) {
+    documentComparisonInlineSourceTags.innerHTML = sourceVersion
+      ? renderComparisonSummaryBadge(sourceVersion, 'text-bg-primary')
+      : renderComparisonSummaryPlaceholder('Not set');
+  }
+
+  if (documentComparisonInlineTargetTags) {
+    documentComparisonInlineTargetTags.innerHTML = targetVersions.length
+      ? targetVersions.map(targetVersion => renderComparisonSummaryBadge(targetVersion, 'text-bg-secondary')).join('')
+      : renderComparisonSummaryPlaceholder('None selected');
+  }
+
+  if (documentComparisonEditButtonLabel) {
+    documentComparisonEditButtonLabel.textContent = selectedVersions.length ? 'Edit Compare' : 'Set Up Compare';
+  }
+}
+
+function renderComparisonAvailableCard(candidate, currentSourceId, targetIdSet) {
+  const isSource = candidate.id === currentSourceId;
+  const isTarget = targetIdSet.has(candidate.id);
+  const canMoveSourceToTarget = isSource && selectedComparisonTargetIds.length > 1;
+  const sourceButtonLabel = isSource ? 'Source selected' : 'Use as Source';
+  const targetButtonLabel = isSource
+    ? (canMoveSourceToTarget ? 'Move to Target' : 'Source selected')
+    : (isTarget ? 'Added to Target' : 'Add to Target');
+  const badgeClass = isSource
+    ? 'text-bg-primary'
+    : (isTarget ? 'text-bg-info' : 'text-bg-light border text-body-secondary');
+  const badgeText = isSource
+    ? 'Source'
+    : (isTarget ? 'Target' : (candidate.sourceType === 'chat_upload' ? 'Chat' : 'Version'));
+
+  return `<div class="border rounded-3 p-2 bg-body d-flex flex-column gap-2"
+              draggable="true"
+              data-comparison-drag-id="${escapeHtml(candidate.id)}"
+              aria-grabbed="false">
+          <div class="d-flex align-items-start justify-content-between gap-2">
+              <div class="flex-grow-1" style="min-width: 0;">
+                  <div class="small fw-semibold text-body">${escapeHtml(candidate.label || candidate.groupLabel || candidate.id)}</div>
+                  <div class="small text-muted">${escapeHtml(buildComparisonVersionDetails(candidate) || 'Ready to compare')}</div>
+              </div>
+              <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+          </div>
+          <div class="d-flex flex-wrap gap-2">
+              <button type="button"
+                      class="btn btn-outline-primary btn-sm"
+                      data-comparison-set-source-id="${escapeHtml(candidate.id)}"
+                      ${isSource ? 'disabled' : ''}>${escapeHtml(sourceButtonLabel)}</button>
+              <button type="button"
+                      class="btn btn-outline-secondary btn-sm"
+                      data-comparison-set-target-id="${escapeHtml(candidate.id)}"
+                      ${(isTarget && !canMoveSourceToTarget) ? 'disabled' : ''}>${escapeHtml(targetButtonLabel)}</button>
+          </div>
+      </div>`;
+}
+
+function renderComparisonSelectionCard(candidate, roleLabel, badgeClass, actionsHtml = '') {
+  return `<div class="border rounded-3 p-2 bg-body d-flex flex-column gap-2"
+              draggable="true"
+              data-comparison-drag-id="${escapeHtml(candidate.id)}"
+              role="listitem"
+              aria-grabbed="false">
+          <div class="d-flex align-items-start justify-content-between gap-2">
+              <div class="flex-grow-1" style="min-width: 0;">
+                  <div class="small fw-semibold text-body">${escapeHtml(candidate.label || candidate.groupLabel || candidate.id)}</div>
+                  <div class="small text-muted">${escapeHtml(buildComparisonVersionDetails(candidate) || 'Selected item')}</div>
+              </div>
+              <span class="badge ${badgeClass}">${escapeHtml(roleLabel)}</span>
+          </div>
+          ${actionsHtml ? `<div class="d-flex flex-wrap gap-2">${actionsHtml}</div>` : ''}
+      </div>`;
+}
+
+function renderComparisonAvailableList() {
+  if (!documentComparisonAvailableList) {
+    return;
+  }
+
+  const candidateGroups = [
+    {
+      heading: 'Workspace Versions',
+      items: comparisonVersionCatalog,
+    },
+    {
+      heading: 'Chat Uploads',
+      items: comparisonChatUploadCatalog,
+    },
+  ].filter(group => group.items.length > 0);
+
+  if (!candidateGroups.length) {
+    documentComparisonAvailableList.innerHTML = buildComparisonEmptyState(
+      'Select workspace documents or upload files to this chat to start building a comparison.'
+    );
+    return;
+  }
+
+  const currentSourceId = getCurrentComparisonSourceId();
+  const targetIdSet = new Set(getCurrentComparisonTargetIds());
+  documentComparisonAvailableList.innerHTML = candidateGroups.map(group => `
+      <div class="d-flex flex-column gap-2">
+          <div class="small text-uppercase text-muted fw-semibold">${escapeHtml(group.heading)}</div>
+          ${group.items.map(candidate => renderComparisonAvailableCard(candidate, currentSourceId, targetIdSet)).join('')}
+      </div>
+  `).join('');
+}
+
+function renderComparisonSelectionList() {
+  const selectedVersions = getSelectedComparisonTargetIds()
+    .map(versionId => getComparisonVersionEntry(versionId))
+    .filter(Boolean);
+  const sourceVersion = selectedVersions[0] || null;
+  const targetVersions = selectedVersions.slice(1);
+
+  renderComparisonInlineSummary(selectedVersions);
+
+  if (documentComparisonSelectionSummary) {
+    documentComparisonSelectionSummary.textContent = buildComparisonOrderSummary(selectedVersions);
+  }
+
+  if (documentComparisonSourceDropzone) {
+    if (!sourceVersion) {
+      documentComparisonSourceDropzone.innerHTML = buildComparisonEmptyState(
+        'Drop a workspace version or chat upload here, or use "Use as Source".'
+      );
+    } else {
+      const sourceActions = [
+        targetVersions.length > 0
+          ? `<button type="button" class="btn btn-outline-secondary btn-sm" data-comparison-set-target-id="${escapeHtml(sourceVersion.id)}">Move to Target</button>`
+          : '',
+        `<button type="button" class="btn btn-outline-danger btn-sm" data-comparison-remove-id="${escapeHtml(sourceVersion.id)}">Remove</button>`,
+      ].filter(Boolean).join('');
+      documentComparisonSourceDropzone.innerHTML = renderComparisonSelectionCard(
+        sourceVersion,
+        'Source',
+        'text-bg-primary',
+        sourceActions,
+      );
+    }
+  }
+
+  if (!documentComparisonSelectionList) {
+    return;
+  }
+
+  if (!targetVersions.length) {
+    documentComparisonSelectionList.innerHTML = buildComparisonEmptyState(
+      'Drop one or more items here, or use "Add to Target".'
+    );
+    return;
+  }
+
+  documentComparisonSelectionList.innerHTML = targetVersions.map((version, index) => renderComparisonSelectionCard(
+    version,
+    `Target ${index + 1}`,
+    'text-bg-secondary',
+    [
+      `<button type="button" class="btn btn-outline-primary btn-sm" data-comparison-promote-id="${escapeHtml(version.id)}">Use as Source</button>`,
+      `<button type="button" class="btn btn-outline-danger btn-sm" data-comparison-remove-id="${escapeHtml(version.id)}">Remove</button>`,
+    ].join(''),
+  )).join('');
+}
+
+function syncComparisonSelectionState(preferredSelection = '') {
+  const availableIds = new Set(getComparisonCandidateCatalog().map(version => version.id));
+  selectedComparisonTargetIds = selectedComparisonTargetIds.filter(versionId => availableIds.has(versionId));
+  syncComparisonLeftOptions(preferredSelection);
+  renderComparisonAvailableList();
+  renderComparisonSelectionList();
+}
+
+function clearComparisonVersionTargets(resetSelections = true) {
+  comparisonVersionCatalog = [];
+  comparisonSelectedDocumentIdsSnapshot = [];
+  if (resetSelections) {
+    const availableChatUploadIds = new Set(comparisonChatUploadCatalog.map(version => version.id));
+    selectedComparisonTargetIds = selectedComparisonTargetIds.filter(versionId => availableChatUploadIds.has(versionId));
+  }
+
+  syncComparisonSelectionState();
+}
+
+function getDocumentActionType() {
+  return String(documentActionSelect?.value || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
+}
+
+function syncComparisonLeftOptions(preferredSelection = '') {
+  if (!documentComparisonLeftSelect) {
+    return;
+  }
+
+  const previousSelection = String(preferredSelection || documentComparisonLeftSelect.value || '').trim();
+  documentComparisonLeftSelect.innerHTML = '';
+
+  getSelectedComparisonTargetIds().forEach((targetId, index) => {
+    const version = getComparisonVersionEntry(targetId);
+    const option = document.createElement('option');
+    option.value = targetId;
+    option.textContent = version?.label || targetId;
+    if ((previousSelection && previousSelection === targetId) || (!previousSelection && index === 0)) {
+      option.selected = true;
+    }
+    documentComparisonLeftSelect.appendChild(option);
+  });
+
+  documentComparisonLeftSelect.disabled = getSelectedComparisonTargetIds().length === 0;
+}
+
+function addSelectedComparisonTarget(versionId) {
+  assignComparisonTarget(versionId);
+}
+
+function removeSelectedComparisonTarget(versionId) {
+  const normalizedVersionId = String(versionId || '').trim();
+  if (!normalizedVersionId) {
+    return;
+  }
+
+  const preferredLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
+  selectedComparisonTargetIds = selectedComparisonTargetIds.filter(targetId => targetId !== normalizedVersionId);
+  syncComparisonSelectionState(preferredLeftSelection === normalizedVersionId ? '' : preferredLeftSelection);
+}
+
+function promoteComparisonTarget(versionId) {
+  assignComparisonSource(versionId);
+}
+
+function assignComparisonSource(versionId) {
+  const normalizedVersionId = String(versionId || '').trim();
+  if (!normalizedVersionId) {
+    return;
+  }
+
+  selectedComparisonTargetIds = [
+    normalizedVersionId,
+    ...selectedComparisonTargetIds.filter(targetId => targetId !== normalizedVersionId),
+  ];
+  syncComparisonSelectionState(normalizedVersionId);
+}
+
+function assignComparisonTarget(versionId) {
+  const normalizedVersionId = String(versionId || '').trim();
+  if (!normalizedVersionId) {
+    return;
+  }
+
+  if (selectedComparisonTargetIds.includes(normalizedVersionId)) {
+    if (getCurrentComparisonSourceId() === normalizedVersionId && selectedComparisonTargetIds.length > 1) {
+      const reorderedIds = [
+        ...selectedComparisonTargetIds.filter(targetId => targetId !== normalizedVersionId),
+        normalizedVersionId,
+      ];
+      selectedComparisonTargetIds = reorderedIds;
+      syncComparisonSelectionState(reorderedIds[0] || '');
+    }
+    return;
+  }
+
+  selectedComparisonTargetIds = [...selectedComparisonTargetIds, normalizedVersionId];
+  syncComparisonSelectionState();
+}
+
+function toggleComparisonDropzoneHighlight(dropzone, isHighlighted) {
+  if (!dropzone) {
+    return;
+  }
+
+  dropzone.classList.toggle('border-primary', isHighlighted);
+  dropzone.classList.toggle('bg-primary-subtle', isHighlighted);
+}
+
+function updateComparisonChatUploadCatalog(messages = []) {
+  const preferredLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
+  comparisonChatUploadCatalog = buildComparisonChatUploadCatalog(messages);
+  syncComparisonSelectionState(preferredLeftSelection);
+
+  updateDocumentActionControls().catch(error => {
+    console.error('Failed to refresh comparison board after loading chat uploads:', error);
+  });
+}
+
+async function loadComparisonVersionTargets() {
+  if (!documentComparisonLeftSelect) {
+    return;
+  }
+
+  const selectedDocumentIds = getOrderedSelectedDocumentIds();
+  const previousLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
+  const requestToken = ++comparisonVersionLoadToken;
+
+  if (!selectedDocumentIds.length) {
+    comparisonVersionCatalog = [];
+    comparisonSelectedDocumentIdsSnapshot = [];
+    syncComparisonSelectionState(previousLeftSelection);
+    return;
+  }
+
+  const comparisonGroups = await Promise.all(selectedDocumentIds.map(async (documentId) => {
+    const metadata = getDocumentMetadata(documentId) || {};
+    let versions = [];
+
+    try {
+      versions = await fetchDocumentVersions(documentId);
+    } catch (error) {
+      console.warn('Unable to load comparison versions for document:', documentId, error);
+    }
+
+    if (!Array.isArray(versions) || versions.length === 0) {
+      versions = buildFallbackComparisonVersion(documentId);
+    }
+
+    return {
+      documentId,
+      groupLabel: String(
+        metadata.title
+        || metadata.file_name
+        || metadata.name
+        || metadata.filename
+        || versions[0]?.title
+        || versions[0]?.file_name
+        || documentId
+      ).trim() || documentId,
+      versions,
+    };
+  }));
+
+  if (requestToken !== comparisonVersionLoadToken) {
+    return;
+  }
+
+  comparisonVersionCatalog = [];
+  comparisonGroups.forEach(({ documentId, groupLabel, versions }) => {
+    versions.forEach(version => {
+      comparisonVersionCatalog.push({
+        ...version,
+        documentId,
+        groupLabel,
+        sourceType: 'workspace_document',
+        label: buildDocumentVersionLabel(version, groupLabel),
+      });
+    });
+  });
+
+  const addedDocumentIds = selectedDocumentIds.filter(documentId => !comparisonSelectedDocumentIdsSnapshot.includes(documentId));
+  if (comparisonSelectedDocumentIdsSnapshot.length === 0 && selectedComparisonTargetIds.length === 0) {
+    comparisonGroups.forEach(({ versions }) => {
+      const defaultVersionId = versions.find(version => version.is_current_version)?.id || versions[0]?.id;
+      if (defaultVersionId) {
+        selectedComparisonTargetIds.push(defaultVersionId);
+      }
+    });
+  } else {
+    addedDocumentIds.forEach(documentId => {
+      const comparisonGroup = comparisonGroups.find(group => group.documentId === documentId);
+      const defaultVersionId = comparisonGroup?.versions.find(version => version.is_current_version)?.id || comparisonGroup?.versions?.[0]?.id;
+      if (defaultVersionId && !selectedComparisonTargetIds.includes(defaultVersionId)) {
+        selectedComparisonTargetIds.push(defaultVersionId);
+      }
+    });
+  }
+
+  comparisonSelectedDocumentIdsSnapshot = [...selectedDocumentIds];
+  syncComparisonSelectionState(previousLeftSelection);
+}
+
+async function updateDocumentActionControls() {
+  const actionType = getDocumentActionType();
+  const selectedDocumentIds = getSelectedDocumentIds();
+  const showComparisonUi = actionType === DOCUMENT_ACTION_COMPARISON;
+
+  syncDocumentActionTooltip();
+
+  if (documentComparisonSummaryBar) {
+    documentComparisonSummaryBar.classList.toggle('d-none', !showComparisonUi);
+  }
+
+  if (documentComparisonBoard) {
+    documentComparisonBoard.classList.toggle('d-none', !showComparisonUi);
+  }
+
+  if (showComparisonUi) {
+    await loadComparisonVersionTargets();
+  } else if (!selectedDocumentIds.length) {
+    clearComparisonVersionTargets();
+  }
+
+  if (!showComparisonUi) {
+    documentComparisonModal?.hide();
+  }
+
+  renderComparisonInlineSummary(
+    getSelectedComparisonTargetIds()
+      .map(versionId => getComparisonVersionEntry(versionId))
+      .filter(Boolean),
+  );
+}
+
+documentActionSelect?.addEventListener('change', () => {
+  updateDocumentActionControls().catch(error => {
+    console.error('Failed to update document action controls:', error);
+  });
+});
+documentComparisonBoard?.addEventListener('click', event => {
+  const sourceButton = event.target.closest('[data-comparison-set-source-id]');
+  if (sourceButton) {
+    event.preventDefault();
+    assignComparisonSource(sourceButton.getAttribute('data-comparison-set-source-id'));
+    return;
+  }
+
+  const targetButton = event.target.closest('[data-comparison-set-target-id]');
+  if (targetButton) {
+    event.preventDefault();
+    assignComparisonTarget(targetButton.getAttribute('data-comparison-set-target-id'));
+    return;
+  }
+
+  const removeButton = event.target.closest('[data-comparison-remove-id]');
+  if (removeButton) {
+    event.preventDefault();
+    removeSelectedComparisonTarget(removeButton.getAttribute('data-comparison-remove-id'));
+    return;
+  }
+
+  const promoteButton = event.target.closest('[data-comparison-promote-id]');
+  if (promoteButton) {
+    event.preventDefault();
+    promoteComparisonTarget(promoteButton.getAttribute('data-comparison-promote-id'));
+  }
+});
+
+documentComparisonBoard?.addEventListener('dragstart', event => {
+  const dragCard = event.target.closest('[data-comparison-drag-id]');
+  if (!dragCard || !event.dataTransfer) {
+    return;
+  }
+
+  const dragId = String(dragCard.getAttribute('data-comparison-drag-id') || '').trim();
+  if (!dragId) {
+    return;
+  }
+
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', dragId);
+});
+
+documentComparisonBoard?.addEventListener('dragend', () => {
+  toggleComparisonDropzoneHighlight(documentComparisonSourceDropzone, false);
+  toggleComparisonDropzoneHighlight(documentComparisonSelectionList, false);
+});
+
+[documentComparisonSourceDropzone, documentComparisonSelectionList].forEach(dropzone => {
+  dropzone?.addEventListener('dragover', event => {
+    event.preventDefault();
+    toggleComparisonDropzoneHighlight(dropzone, true);
+  });
+
+  dropzone?.addEventListener('dragleave', event => {
+    if (!dropzone.contains(event.relatedTarget)) {
+      toggleComparisonDropzoneHighlight(dropzone, false);
+    }
+  });
+
+  dropzone?.addEventListener('drop', event => {
+    event.preventDefault();
+    toggleComparisonDropzoneHighlight(dropzone, false);
+    const draggedId = String(event.dataTransfer?.getData('text/plain') || '').trim();
+    if (!draggedId) {
+      return;
+    }
+
+    if (dropzone === documentComparisonSourceDropzone) {
+      assignComparisonSource(draggedId);
+      return;
+    }
+
+    assignComparisonTarget(draggedId);
+  });
+});
+
+window.addEventListener('chat:document-selection-changed', event => {
+  const orderedDocumentIds = Array.isArray(event.detail?.documentIds)
+    ? event.detail.documentIds.map(documentId => String(documentId || '').trim()).filter(Boolean)
+    : [];
+  if (orderedDocumentIds.length > 0) {
+    comparisonDocumentSelectionOrder = orderedDocumentIds;
+  }
+
+  updateDocumentActionControls().catch(error => {
+    console.error('Failed to refresh comparison target options:', error);
+  });
+});
+updateDocumentActionControls().catch(error => {
+  console.error('Failed to initialize document action controls:', error);
+});
 
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
@@ -359,11 +1250,31 @@ export function updateSendButtonVisibility() {
 // Make function available globally for inline oninput handler
 window.handleInputChange = updateSendButtonVisibility;
 
+function resolveMessageConversationId(fullMessageObject = null) {
+  const conversationCandidates = [
+    fullMessageObject?.conversation_id,
+    fullMessageObject?.metadata?.source_conversation_id,
+    fullMessageObject?.source_conversation_id,
+    window.chatConversations?.getCurrentConversationId?.(),
+    window.currentConversationId,
+  ];
+
+  for (const candidate of conversationCandidates) {
+    const normalizedConversationId = String(candidate || '').trim();
+    if (normalizedConversationId) {
+      return normalizedConversationId;
+    }
+  }
+
+  return '';
+}
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
   agentCitations = [],
-  messageId
+  messageId,
+  messageConversationId = ""
 ) {
   let citationsHtml = "";
   let hasCitations = false;
@@ -449,7 +1360,7 @@ function createCitationsHtml(
                  data-tool-args="${escapeHtml(toolArgs)}"
                  data-tool-result="${escapeHtml(toolResult)}"
                  data-artifact-id="${escapeHtml(cite.artifact_id || '')}"
-                 data-conversation-id="${escapeHtml(window.currentConversationId || '')}"
+                 data-conversation-id="${escapeHtml(messageConversationId)}"
                  title="Agent tool: ${escapeHtml(displayText)} - Click to view details">
                   <i class="bi bi-cpu me-1"></i>${escapeHtml(displayText)}
               </a>`;
@@ -466,11 +1377,61 @@ function createCitationsHtml(
   }
 }
 
+function createCitationDetailsSectionHtml(
+  hybridCitations = [],
+  webCitations = [],
+  agentCitations = [],
+  messageId = "",
+  messageConversationId = ""
+) {
+  const documentCitationCount = Array.isArray(hybridCitations) ? hybridCitations.length : 0;
+  const webCitationCount = Array.isArray(webCitations) ? webCitations.length : 0;
+  const agentCitationCount = Array.isArray(agentCitations) ? agentCitations.length : 0;
+  const totalCitationCount = documentCitationCount + webCitationCount + agentCitationCount;
+
+  if (totalCitationCount === 0) {
+    return "";
+  }
+
+  const countBadges = [];
+  if (documentCitationCount > 0) {
+    countBadges.push(`<span class="badge bg-info-subtle text-info-emphasis">Documents ${documentCitationCount}</span>`);
+  }
+  if (webCitationCount > 0) {
+    countBadges.push(`<span class="badge bg-primary-subtle text-primary-emphasis">Web ${webCitationCount}</span>`);
+  }
+  if (agentCitationCount > 0) {
+    countBadges.push(`<span class="badge bg-warning-subtle text-warning-emphasis">Agent ${agentCitationCount}</span>`);
+  }
+
+  const citationsHtml = createCitationsHtml(
+    hybridCitations,
+    webCitations,
+    agentCitations,
+    messageId,
+    messageConversationId
+  );
+
+  return `
+    <div class="mb-3">
+      <div class="fw-bold mb-2"><i class="bi bi-journal-text me-2"></i>Citations</div>
+      <div class="ms-3 small">
+        <div class="d-flex flex-wrap gap-2 mb-2">${countBadges.join("")}</div>
+        ${citationsHtml}
+      </div>
+    </div>`;
+}
+
 export function loadMessages(conversationId) {
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
-  
-  return fetch(`/conversation/${conversationId}/messages`)
+
+  return fetch(`/conversation/${conversationId}/messages?ts=${Date.now()}`, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache",
+    },
+  })
     .then(async (response) => {
       const data = await response.json().catch(() => ({}));
 
@@ -488,6 +1449,7 @@ export function loadMessages(conversationId) {
 
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
+      updateComparisonChatUploadCatalog(Array.isArray(data.messages) ? data.messages : []);
       data.messages.forEach((msg) => {
         // Skip deleted messages (when conversation archiving is enabled)
         if (msg.metadata && msg.metadata.is_deleted === true) {
@@ -519,7 +1481,7 @@ export function loadMessages(conversationId) {
           console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}, agent_len: ${arg8?.length}, agent_display: ${arg9}`);
           console.log(`  [loadMessages Loop] Message metadata:`, msg.metadata);
 
-          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, msg); 
+          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, msg);
           console.log(`[loadMessages Loop] -------- END Message ID: ${msg.id} --------`);
         } else if (msg.role === "file") {
           // Pass file message with proper parameters including message ID
@@ -548,6 +1510,7 @@ export function loadMessages(conversationId) {
     })
     .catch((error) => {
       console.error("Error loading messages:", error);
+      updateComparisonChatUploadCatalog([]);
       const chatbox = document.getElementById("chatbox");
       let errorMessage = "Error loading messages.";
 
@@ -578,6 +1541,590 @@ export function loadMessages(conversationId) {
     });
 }
 
+const collaboratorProfileImageCache = new Map();
+
+function stripHtmlTags(value) {
+  const tempElement = document.createElement("div");
+  tempElement.innerHTML = String(value ?? "");
+  return tempElement.textContent || tempElement.innerText || "";
+}
+
+function buildPlainTextPreview(value, maxLength = 160) {
+  const normalizedValue = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!normalizedValue) {
+    return "No message content";
+  }
+  if (normalizedValue.length <= maxLength) {
+    return normalizedValue;
+  }
+  return `${normalizedValue.slice(0, maxLength - 3)}...`;
+}
+
+function getMessageSenderUserId(fullMessageObject = null) {
+  const senderUserId = String(
+    fullMessageObject?.sender?.user_id || fullMessageObject?.metadata?.sender?.user_id || ""
+  ).trim();
+  return senderUserId || null;
+}
+
+function getMessageSenderDisplayName(fullMessageObject = null, fallbackLabel = "Participant") {
+  const senderDisplayName = String(
+    fullMessageObject?.sender?.display_name
+      || fullMessageObject?.metadata?.sender?.display_name
+      || fallbackLabel
+  ).trim();
+  return senderDisplayName || fallbackLabel;
+}
+
+function getInitials(name) {
+  const words = String(name ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0) {
+    return "?";
+  }
+
+  return words
+    .slice(0, 2)
+    .map(word => word.charAt(0).toUpperCase())
+    .join("");
+}
+
+function createCollaboratorAvatarHtml(fullMessageObject, senderLabel) {
+  const senderUserId = getMessageSenderUserId(fullMessageObject);
+  const cachedProfileImage = senderUserId ? collaboratorProfileImageCache.get(senderUserId) : null;
+  const altText = `${senderLabel} Avatar`;
+
+  if (cachedProfileImage) {
+    return `<img src="${cachedProfileImage}" alt="${escapeHtml(altText)}" class="avatar collaborator-avatar" data-avatar-user-id="${escapeHtml(senderUserId || "")}" />`;
+  }
+
+  return `
+    <div class="avatar avatar-initials collaborator-avatar" data-avatar-user-id="${escapeHtml(senderUserId || "")}" aria-label="${escapeHtml(altText)}">
+      ${escapeHtml(getInitials(senderLabel))}
+    </div>`;
+}
+
+function hydrateCollaboratorAvatar(messageDiv, senderUserId, senderLabel) {
+  if (!messageDiv || !senderUserId) {
+    return;
+  }
+
+  const avatarElement = messageDiv.querySelector(".collaborator-avatar");
+  if (!avatarElement) {
+    return;
+  }
+
+  const cachedProfileImage = collaboratorProfileImageCache.get(senderUserId);
+  if (cachedProfileImage) {
+    if (avatarElement.tagName === "IMG") {
+      avatarElement.src = cachedProfileImage;
+      avatarElement.alt = `${senderLabel} Avatar`;
+    } else {
+      const imageElement = document.createElement("img");
+      imageElement.src = cachedProfileImage;
+      imageElement.alt = `${senderLabel} Avatar`;
+      imageElement.className = "avatar collaborator-avatar";
+      imageElement.dataset.avatarUserId = senderUserId;
+      avatarElement.replaceWith(imageElement);
+    }
+    return;
+  }
+
+  fetch(`/api/user/profile-image/${encodeURIComponent(senderUserId)}`, {
+    credentials: "same-origin",
+  })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error("Failed to load user profile image");
+      }
+      return response.json();
+    })
+    .then(userData => {
+      const profileImage = String(userData?.profile_image || "").trim();
+      if (!profileImage) {
+        return;
+      }
+
+      collaboratorProfileImageCache.set(senderUserId, profileImage);
+      if (avatarElement.tagName === "IMG") {
+        avatarElement.src = profileImage;
+        avatarElement.alt = `${senderLabel} Avatar`;
+      } else {
+        const imageElement = document.createElement("img");
+        imageElement.src = profileImage;
+        imageElement.alt = `${senderLabel} Avatar`;
+        imageElement.className = "avatar collaborator-avatar";
+        imageElement.dataset.avatarUserId = senderUserId;
+        avatarElement.replaceWith(imageElement);
+      }
+    })
+    .catch(() => {
+      console.debug("Could not load profile image for collaborator:", senderUserId);
+    });
+}
+
+function buildReplyContextFromMessage(message = null) {
+  if (!message) {
+    return null;
+  }
+
+  const messageId = String(message.id || "").trim();
+  if (!messageId) {
+    return null;
+  }
+
+  return {
+    message_id: messageId,
+    sender_display_name: getMessageSenderDisplayName(
+      message,
+      message.role === "assistant" ? "AI" : "Participant"
+    ),
+    content_preview: buildPlainTextPreview(
+      message.content || message.metadata?.last_message_preview || ""
+    ),
+  };
+}
+
+function resolveReplyContextFromDom(messageId) {
+  if (!messageId) {
+    return null;
+  }
+
+  const replyElement = document.querySelector(`[data-message-id="${messageId}"]`);
+  if (!replyElement) {
+    return null;
+  }
+
+  const senderDisplayName = String(
+    replyElement.dataset.replySenderName
+      || replyElement.querySelector(".message-sender")?.textContent
+      || "Participant"
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+  const contentPreview = String(
+    replyElement.dataset.replyPreviewText
+      || buildPlainTextPreview(replyElement.querySelector(".message-text")?.textContent || "")
+  ).trim();
+
+  return {
+    message_id: messageId,
+    sender_display_name: senderDisplayName || "Participant",
+    content_preview: contentPreview || "No message content",
+  };
+}
+
+function resolveReplyContext(fullMessageObject = null) {
+  const replyMessageContext = buildReplyContextFromMessage(fullMessageObject?.reply_message);
+  if (replyMessageContext) {
+    return replyMessageContext;
+  }
+
+  const metadataReplyContext = fullMessageObject?.metadata?.reply_context;
+  if (metadataReplyContext) {
+    return {
+      message_id: String(metadataReplyContext.message_id || "").trim(),
+      sender_display_name: String(metadataReplyContext.sender_display_name || "Participant").trim() || "Participant",
+      content_preview: buildPlainTextPreview(metadataReplyContext.content_preview || ""),
+    };
+  }
+
+  const replyToMessageId = String(fullMessageObject?.reply_to_message_id || "").trim();
+  if (!replyToMessageId) {
+    return null;
+  }
+
+  return resolveReplyContextFromDom(replyToMessageId);
+}
+
+function renderReplyQuoteHtml(fullMessageObject = null) {
+  const replyContext = resolveReplyContext(fullMessageObject);
+  if (!replyContext) {
+    return "";
+  }
+
+  return `
+    <div class="collaboration-quote-block" data-reply-to-message-id="${escapeHtml(replyContext.message_id || "")}">
+      <div class="collaboration-quote-label">Replying to ${escapeHtml(replyContext.sender_display_name || "Participant")}</div>
+      <div class="collaboration-quote-text">${escapeHtml(replyContext.content_preview || "No message content")}</div>
+    </div>`;
+}
+
+  function escapeMentionPattern(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function buildAtMentionPattern(displayName) {
+    return new RegExp(
+      `(^|\\s)@${escapeMentionPattern(displayName)}(?=$|\\s|[.,!?;:])`,
+      "gi"
+    );
+  }
+
+  function normalizeStructuredMessageContent(messageContent) {
+    return String(messageContent ?? "")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\s+\n/g, "\n")
+      .replace(/\n\s+/g, "\n")
+      .replace(/\s+([.,!?;:])/g, "$1")
+      .trim();
+  }
+
+  function stripInlineAzureMapsBlocks(messageContent) {
+    const normalizedContent = String(messageContent ?? "");
+    if (!normalizedContent.includes("{{map:")) {
+      return normalizedContent;
+    }
+
+    return normalizeStructuredMessageContent(
+      normalizedContent
+        .replace(/\n?\{\{map:[\s\S]*?\}\}\n?/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+    );
+  }
+
+  function getMentionedParticipants(fullMessageObject = null) {
+    const rawMentions = Array.isArray(fullMessageObject?.metadata?.mentioned_participants)
+      ? fullMessageObject.metadata.mentioned_participants
+      : [];
+
+    return rawMentions
+      .map(participant => ({
+        user_id: String(participant?.user_id || "").trim(),
+        display_name: String(participant?.display_name || participant?.name || participant?.email || "").trim(),
+        email: String(participant?.email || "").trim(),
+      }))
+      .filter(participant => participant.user_id && participant.display_name);
+  }
+
+  function stripMentionTextFromMessageContent(messageContent, fullMessageObject = null) {
+    let normalizedMessageContent = String(messageContent ?? "");
+    if (!normalizedMessageContent.trim()) {
+      return normalizedMessageContent;
+    }
+
+    const mentions = getMentionedParticipants(fullMessageObject)
+      .slice()
+      .sort((left, right) => right.display_name.length - left.display_name.length);
+    if (mentions.length === 0) {
+      return normalizedMessageContent;
+    }
+
+    mentions.forEach(participant => {
+      const displayName = String(participant.display_name || "").trim();
+      if (!displayName) {
+        return;
+      }
+
+      const mentionPattern = buildAtMentionPattern(displayName);
+      normalizedMessageContent = normalizedMessageContent.replace(
+        mentionPattern,
+        (match, leadingWhitespace) => leadingWhitespace || ""
+      );
+    });
+
+    const invocationTarget = getInvocationTarget(fullMessageObject);
+    if (invocationTarget?.display_name) {
+      normalizedMessageContent = normalizedMessageContent.replace(
+        buildAtMentionPattern(invocationTarget.display_name),
+        (match, leadingWhitespace) => leadingWhitespace || ""
+      );
+    }
+
+    return normalizeStructuredMessageContent(normalizedMessageContent);
+  }
+
+  function renderMentionTagsHtml(fullMessageObject = null) {
+    const mentions = getMentionedParticipants(fullMessageObject);
+    if (mentions.length === 0) {
+      return "";
+    }
+
+    const currentUserId = String(window.currentUser?.id || window.currentUser?.user_id || "").trim();
+    const mentionChipsHtml = mentions.map(participant => {
+      const isCurrentUser = currentUserId && participant.user_id === currentUserId;
+      const currentUserClass = isCurrentUser ? " collaboration-mention-chip-current-user" : "";
+      return `<span class="collaboration-mention-chip${currentUserClass}" data-mentioned-user-id="${escapeHtml(participant.user_id)}">@${escapeHtml(participant.display_name)}</span>`;
+    }).join("");
+
+    return `
+      <div class="collaboration-mentions-block" aria-label="Tagged participants">
+        <div class="collaboration-mentions-label">Tagged</div>
+        <div class="collaboration-mentions-list">${mentionChipsHtml}</div>
+      </div>`;
+  }
+
+  function getInvocationTarget(fullMessageObject = null) {
+    const target = fullMessageObject?.metadata?.ai_invocation_target;
+    if (!target || typeof target !== "object") {
+      return null;
+    }
+
+    const displayName = String(target.display_name || target.label || "").trim();
+    if (!displayName) {
+      return null;
+    }
+
+    const targetType = String(target.target_type || target.type || "model").trim() || "model";
+    const sourceMode = String(target.source_mode || target.mode || "").trim() || null;
+    return {
+      target_type: targetType,
+      display_name: displayName,
+      mention_text: String(target.mention_text || `@${displayName}`).trim() || `@${displayName}`,
+      source_mode: sourceMode,
+    };
+  }
+
+  function renderInvocationTargetHtml(fullMessageObject = null) {
+    const invocationTarget = getInvocationTarget(fullMessageObject);
+    if (!invocationTarget) {
+      return "";
+    }
+
+    const targetTypeClass = ` collaboration-mention-chip-target-${String(invocationTarget.target_type || "model")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "") || "model"}`;
+
+    return `
+      <div class="collaboration-mentions-block" aria-label="AI invocation target">
+        <div class="collaboration-mentions-list">
+          <span class="collaboration-mention-chip collaboration-mention-chip-target${targetTypeClass}" data-target-type="${escapeHtml(invocationTarget.target_type)}">${escapeHtml(invocationTarget.mention_text)}</span>
+        </div>
+      </div>`;
+  }
+
+  export function renderAiMessageContent(messageContent) {
+    let cleaned = stripInlineAzureMapsBlocks(messageContent).trim().replace(/\n{3,}/g, "\n\n");
+    cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
+
+    const chartExtraction = extractInlineChartBlocks(cleaned);
+    const withInlineCitations = parseCitations(chartExtraction.markdown);
+    const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
+    const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
+    const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
+    const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
+    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
+    const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
+
+    return {
+      htmlContent: addTargetBlankToExternalLinks(htmlWithCharts),
+      copyMarkdown: restoreInlineChartTokens(withInlineCitations, chartExtraction.blocks),
+      previewMarkdown: chartExtraction.markdown,
+    };
+  }
+
+  function getLatestUserPromptText() {
+    if (!chatbox) {
+      return '';
+    }
+
+    const userMessages = Array.from(chatbox.querySelectorAll('.message.user-message'));
+    for (let index = userMessages.length - 1; index >= 0; index -= 1) {
+      const userMessage = userMessages[index];
+      const previewText = String(userMessage?.dataset?.replyPreviewText || '').trim();
+      if (previewText) {
+        return previewText;
+      }
+
+      const messageText = userMessage.querySelector('.message-text');
+      const visibleText = String(messageText?.innerText || messageText?.textContent || '').trim();
+      if (visibleText) {
+        return visibleText;
+      }
+    }
+
+    return '';
+  }
+
+  function getMostRecentRenderedMessage() {
+    if (!chatbox) {
+      return null;
+    }
+
+    const renderedMessages = Array.from(chatbox.children).filter(child => {
+      return child instanceof HTMLElement && child.classList.contains('message');
+    });
+
+    return renderedMessages.length ? renderedMessages[renderedMessages.length - 1] : null;
+  }
+
+  function getInlineAssistantExportActionTypes(promptText) {
+    const normalizedPromptText = String(promptText || '').trim();
+    if (!normalizedPromptText || !INLINE_ASSISTANT_EXPORT_VERB_PATTERN.test(normalizedPromptText)) {
+      return [];
+    }
+
+    const actionTypes = new Set();
+    const hasPowerPointIntent = INLINE_ASSISTANT_EXPORT_PATTERNS.powerpoint.test(normalizedPromptText);
+    const hasPresentationIntent = INLINE_ASSISTANT_EXPORT_PATTERNS.presentation.test(normalizedPromptText);
+
+    if (hasPowerPointIntent) {
+      actionTypes.add('powerpoint');
+    }
+
+    if (INLINE_ASSISTANT_EXPORT_PATTERNS.word.test(normalizedPromptText)) {
+      actionTypes.add('word');
+    }
+
+    if (INLINE_ASSISTANT_EXPORT_PATTERNS.markdown.test(normalizedPromptText)) {
+      actionTypes.add('markdown');
+    }
+
+    if (INLINE_ASSISTANT_EXPORT_PATTERNS.email.test(normalizedPromptText)) {
+      actionTypes.add('email');
+    }
+
+    if (hasPresentationIntent && !hasPowerPointIntent) {
+      actionTypes.add('powerpoint');
+      actionTypes.add('word');
+    }
+
+    return INLINE_ASSISTANT_EXPORT_ACTION_ORDER.filter(actionType => actionTypes.has(actionType));
+  }
+
+  function buildInlineAssistantExportActionsHtml(messageId) {
+    const previousMessage = getMostRecentRenderedMessage();
+    if (!(previousMessage instanceof HTMLElement) || !previousMessage.classList.contains('user-message')) {
+      return '';
+    }
+
+    const actionTypes = getInlineAssistantExportActionTypes(getLatestUserPromptText());
+    if (!actionTypes.length) {
+      return '';
+    }
+
+    const buttonsHtml = actionTypes.map(actionType => {
+      const actionConfig = INLINE_ASSISTANT_EXPORT_ACTIONS[actionType];
+      if (!actionConfig) {
+        return '';
+      }
+
+      return `
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-primary ${actionConfig.buttonClass}"
+          data-message-id="${messageId}"
+          data-default-label="${actionConfig.label}"
+          data-pending-label="${actionConfig.pendingLabel || actionConfig.label}"
+          data-icon-class="${actionConfig.iconClass}"
+          data-default-title="${actionConfig.title}"
+          title="${actionConfig.title}">
+          <i class="${actionConfig.iconClass} me-1"></i>${actionConfig.label}
+        </button>`;
+    }).join('');
+
+    if (!buttonsHtml) {
+      return '';
+    }
+
+    return `
+      <div class="inline-assistant-export-actions d-flex flex-wrap gap-2 mt-3" aria-label="Quick export actions">
+        ${buttonsHtml}
+      </div>`;
+  }
+
+  function renderInlineExportButtonContent(button, labelText, iconHtml) {
+    button.innerHTML = `${iconHtml || ''}${labelText}`;
+  }
+
+  function setInlineExportButtonPendingState(button, isPending, actionName) {
+    if (!(button instanceof HTMLElement) || !button.dataset.pendingLabel) {
+      return;
+    }
+
+    const actionConfig = INLINE_ASSISTANT_EXPORT_ACTIONS_BY_NAME[actionName] || {};
+    const defaultLabel = button.dataset.defaultLabel || actionConfig.label || button.textContent.trim();
+    const pendingLabel = button.dataset.pendingLabel || actionConfig.pendingLabel || defaultLabel;
+    const iconClass = button.dataset.iconClass || actionConfig.iconClass || '';
+    const defaultTitle = button.dataset.defaultTitle || actionConfig.title || '';
+
+    button.disabled = isPending;
+    button.setAttribute('aria-busy', isPending ? 'true' : 'false');
+    button.title = isPending ? pendingLabel : defaultTitle;
+
+    if (isPending) {
+      renderInlineExportButtonContent(
+        button,
+        pendingLabel,
+        '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>'
+      );
+      return;
+    }
+
+    const iconHtml = iconClass ? `<i class="${iconClass} me-1"></i>` : '';
+    renderInlineExportButtonContent(button, defaultLabel, iconHtml);
+  }
+
+  function waitForUiPaint() {
+    return new Promise(resolve => {
+      requestAnimationFrame(() => resolve());
+    });
+  }
+
+  async function triggerMessageExportAction(messageDiv, role, actionName, actionButton = null) {
+    const currentMessageId = messageDiv.getAttribute('data-message-id');
+    const shouldShowPendingState = actionButton instanceof HTMLElement && actionButton.dataset.pendingLabel;
+
+    try {
+      if (shouldShowPendingState) {
+        setInlineExportButtonPendingState(actionButton, true, actionName);
+        await waitForUiPaint();
+      }
+
+      const module = await import('./chat-message-export.js');
+      const actionHandler = module[actionName];
+      if (typeof actionHandler === 'function') {
+        await Promise.resolve(actionHandler(messageDiv, currentMessageId, role));
+      }
+    } catch (err) {
+      console.error('Error loading message export module:', err);
+    } finally {
+      if (shouldShowPendingState) {
+        setInlineExportButtonPendingState(actionButton, false, actionName);
+      }
+    }
+  }
+
+  function attachMessageExportActionListeners(messageDiv, role) {
+    const actionMappings = [
+      {
+        selectors: ['.dropdown-export-md-btn', '.inline-export-md-btn'],
+        actionName: 'exportMessageAsMarkdown',
+      },
+      {
+        selectors: ['.dropdown-export-word-btn', '.inline-export-word-btn'],
+        actionName: 'exportMessageAsWord',
+      },
+      {
+        selectors: ['.dropdown-export-ppt-btn', '.inline-export-ppt-btn'],
+        actionName: 'exportMessageAsPowerPoint',
+      },
+      {
+        selectors: ['.dropdown-copy-prompt-btn'],
+        actionName: 'copyAsPrompt',
+      },
+      {
+        selectors: ['.dropdown-open-email-btn', '.inline-open-email-btn'],
+        actionName: 'openInEmail',
+      },
+    ];
+
+    actionMappings.forEach(({ selectors, actionName }) => {
+      selectors.forEach(selector => {
+        messageDiv.querySelectorAll(selector).forEach(button => {
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            void triggerMessageExportAction(messageDiv, role, actionName, button);
+          });
+        });
+      });
+    });
+  }
+
 export function appendMessage(
   sender,
   messageContent,
@@ -600,6 +2147,7 @@ export function appendMessage(
 
   let avatarImg = "";
   let avatarAltText = "";
+  let avatarHtml = "";
   let messageClass = ""; // <<< ENSURE THIS IS DECLARED HERE
   let senderLabel = "";
   let messageContentHtml = "";
@@ -639,16 +2187,11 @@ export function appendMessage(
       senderLabel = "AI";
     }
 
-    // Parse content with comprehensive table processing
-    let cleaned = messageContent.trim().replace(/\n{3,}/g, "\n\n");
-    cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
-    const withInlineCitations = parseCitations(cleaned);
-    const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
-    const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
-    const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
-    const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
-    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
-    const htmlContent = addTargetBlankToExternalLinks(sanitizedHtml);
+    const messageConversationId = resolveMessageConversationId(fullMessageObject);
+
+    const renderedAiContent = renderAiMessageContent(messageContent);
+    const htmlContent = renderedAiContent.htmlContent;
+  const inlineAssistantExportActionsHtml = buildInlineAssistantExportActionsHtml(messageId);
 
     const mainMessageHtml = `<div class="message-text">${htmlContent}</div>`; // Renamed for clarity
 
@@ -676,7 +2219,7 @@ export function appendMessage(
                 <i class="bi bi-copy"></i>
             </button>
             <textarea id="${hiddenTextId}" style="display:none;">${escapeHtml(
-      withInlineCitations
+          renderedAiContent.copyMarkdown
     )}</textarea>
         `;
     
@@ -697,6 +2240,7 @@ export function appendMessage(
                     <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                     <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                    <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
                     <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                     <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
                 </ul>
@@ -716,7 +2260,8 @@ export function appendMessage(
       hybridCitations,
       webCitations,
       agentCitations,
-      messageId
+      messageId,
+      messageConversationId
     );
     console.log(
       `Generated citationsButtonsHtml (length ${
@@ -759,11 +2304,12 @@ export function appendMessage(
     console.log("Hybrid Check Result:", hybridCheck);
     console.log("Web Check Result:", webCheck);
     console.log("Agent Check Result:", agentCheck);
-    const overallCondition = augmented && (hybridCheck || webCheck || agentCheck);
+    const hasAnyCitations = hybridCheck || webCheck || agentCheck;
+    const overallCondition = hasAnyCitations;
     console.log("Overall Condition Result:", overallCondition);
-    const shouldShowCitations = (augmented && citationsButtonsHtml) || agentCheck;
+    const shouldShowCitations = Boolean(citationsButtonsHtml) && hasAnyCitations;
     console.log(
-      `Condition check ((augmented && citationsButtonsHtml) || agentCheck): ${shouldShowCitations}`
+      `Condition check (Boolean(citationsButtonsHtml) && hasAnyCitations): ${shouldShowCitations}`
     );
 
     if (shouldShowCitations) {
@@ -797,6 +2343,8 @@ export function appendMessage(
                 <div class="message-bubble">
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
+                  ${inlineAssistantExportActionsHtml}
+            <div class="inline-visualizations-container d-none"></div>
                     ${citationContentContainerHtml}
                     ${thoughtsHtml.containerHtml}
                     ${metadataContainerHtml}
@@ -804,14 +2352,42 @@ export function appendMessage(
                 </div>
             </div>`;
 
+              messageDiv.dataset.replySenderName = stripHtmlTags(senderLabel).replace(/\s+/g, " ").trim() || "AI";
+              messageDiv.dataset.replyPreviewText = buildPlainTextPreview(renderedAiContent.previewMarkdown);
+
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
     
     // Auto-play TTS if enabled (only for new messages, not when loading history)
     if (isNewMessage && typeof autoplayTTSIfEnabled === 'function') {
-        autoplayTTSIfEnabled(messageId, messageContent);
+      autoplayTTSIfEnabled(messageId, renderedAiContent.previewMarkdown || messageContent);
     }
-    
+
+    hydrateInlineCharts(messageDiv);
+    void (async () => {
+      await renderInlineVideoGalleries(
+        messageDiv,
+        hybridCitations || [],
+        webCitations || [],
+        agentCitations || [],
+        messageConversationId
+      );
+      await renderInlineImageGalleries(
+        messageDiv,
+        hybridCitations || [],
+        webCitations || [],
+        agentCitations || [],
+        messageId,
+        messageConversationId
+      );
+      await renderInlineAzureMaps(
+        messageDiv,
+        agentCitations || [],
+        messageId,
+        messageConversationId
+      );
+    })();
+
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
       const match = block.className.match(/language-([a-zA-Z0-9]+)/);
@@ -823,15 +2399,12 @@ export function appendMessage(
 
     // Apply masked state if message has masking
     if (fullMessageObject?.metadata) {
-      console.log('Applying masked state for AI message:', messageId, fullMessageObject.metadata);
       applyMaskedState(messageDiv, fullMessageObject.metadata);
-    } else {
-      console.log('No metadata found for AI message:', messageId, 'fullMessageObject:', fullMessageObject);
     }
 
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));
-    
+
     const metadataBtn = messageDiv.querySelector(".metadata-info-btn");
     if (metadataBtn) {
       metadataBtn.addEventListener("click", () => {
@@ -841,13 +2414,13 @@ export function appendMessage(
           metadataContainer.style.display = isVisible ? 'none' : 'block';
           metadataBtn.setAttribute('aria-expanded', !isVisible);
           metadataBtn.title = isVisible ? 'Show metadata' : 'Hide metadata';
-          
+
           // Toggle icon
           const icon = metadataBtn.querySelector('i');
           if (icon) {
             icon.className = isVisible ? 'bi bi-info-circle' : 'bi bi-chevron-up';
           }
-          
+
           // Load metadata if container is empty (first open)
           if (!isVisible && metadataContainer.innerHTML.includes('Loading metadata')) {
             loadMessageMetadataForDisplay(messageId, metadataContainer);
@@ -856,7 +2429,7 @@ export function appendMessage(
       });
     }
 
-    // Attach thoughts toggle listener
+    attachMessageExportActionListeners(messageDiv, 'assistant');
     attachThoughtsToggleListener(messageDiv, messageId, currentConversationId);
     
     const maskBtn = messageDiv.querySelector(".mask-btn");
@@ -891,50 +2464,6 @@ export function appendMessage(
         const currentMessageId = messageDiv.getAttribute('data-message-id');
         console.log(`🔄 AI Retry button clicked - using message ID from DOM: ${currentMessageId}`);
         handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
-      });
-    }
-
-    const dropdownExportMdBtn = messageDiv.querySelector(".dropdown-export-md-btn");
-    if (dropdownExportMdBtn) {
-      dropdownExportMdBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const currentMessageId = messageDiv.getAttribute('data-message-id');
-        import('./chat-message-export.js').then(module => {
-          module.exportMessageAsMarkdown(messageDiv, currentMessageId, 'assistant');
-        }).catch(err => console.error('Error loading message export module:', err));
-      });
-    }
-
-    const dropdownExportWordBtn = messageDiv.querySelector(".dropdown-export-word-btn");
-    if (dropdownExportWordBtn) {
-      dropdownExportWordBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const currentMessageId = messageDiv.getAttribute('data-message-id');
-        import('./chat-message-export.js').then(module => {
-          module.exportMessageAsWord(messageDiv, currentMessageId, 'assistant');
-        }).catch(err => console.error('Error loading message export module:', err));
-      });
-    }
-
-    const dropdownCopyPromptBtn = messageDiv.querySelector(".dropdown-copy-prompt-btn");
-    if (dropdownCopyPromptBtn) {
-      dropdownCopyPromptBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const currentMessageId = messageDiv.getAttribute('data-message-id');
-        import('./chat-message-export.js').then(module => {
-          module.copyAsPrompt(messageDiv, currentMessageId, 'assistant');
-        }).catch(err => console.error('Error loading message export module:', err));
-      });
-    }
-
-    const dropdownOpenEmailBtn = messageDiv.querySelector(".dropdown-open-email-btn");
-    if (dropdownOpenEmailBtn) {
-      dropdownOpenEmailBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const currentMessageId = messageDiv.getAttribute('data-message-id');
-        import('./chat-message-export.js').then(module => {
-          module.openInEmail(messageDiv, currentMessageId, 'assistant');
-        }).catch(err => console.error('Error loading message export module:', err));
       });
     }
     
@@ -1059,11 +2588,24 @@ export function appendMessage(
       } else {
         avatarImg = "/static/images/user-avatar.png";
       }
-      
+
+      const renderedMessageContent = stripMentionTextFromMessageContent(messageContent, fullMessageObject);
       const sanitizedUserHtml = DOMPurify.sanitize(
-        marked.parse(escapeHtml(messageContent))
+        marked.parse(escapeHtml(renderedMessageContent))
       );
       messageContentHtml = addTargetBlankToExternalLinks(sanitizedUserHtml);
+    } else if (sender === "Collaborator") {
+      messageClass = "collaborator-message";
+      senderLabel = fullMessageObject?.sender?.display_name
+        || fullMessageObject?.metadata?.sender?.display_name
+        || "Participant";
+      avatarAltText = `${senderLabel} Avatar`;
+      avatarHtml = createCollaboratorAvatarHtml(fullMessageObject, senderLabel);
+      const renderedMessageContent = stripMentionTextFromMessageContent(messageContent, fullMessageObject);
+      const sanitizedCollaboratorHtml = DOMPurify.sanitize(
+        marked.parse(escapeHtml(renderedMessageContent))
+      );
+      messageContentHtml = addTargetBlankToExternalLinks(sanitizedCollaboratorHtml);
     } else if (sender === "File") {
       messageClass = "file-message";
       senderLabel = "File Added";
@@ -1145,6 +2687,17 @@ export function appendMessage(
     // Create message footer for user, image, and file messages
     let messageFooterHtml = "";
     let metadataContainerHtml = "";
+    const replyQuoteHtml = (sender === "You" || sender === "Collaborator")
+      ? renderReplyQuoteHtml(fullMessageObject)
+      : "";
+    const invocationTargetHtml = (sender === "You" || sender === "Collaborator")
+      ? renderInvocationTargetHtml(fullMessageObject)
+      : "";
+    const mentionTagsHtml = (sender === "You" || sender === "Collaborator")
+      ? renderMentionTagsHtml(fullMessageObject)
+      : "";
+    const hasVisibleMessageText = sender === "image"
+      || Boolean(stripHtmlTags(messageContentHtml || "").replace(/\s+/g, " ").trim());
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
@@ -1165,6 +2718,7 @@ export function appendMessage(
                 <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                 <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
                 <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                 <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
@@ -1181,6 +2735,28 @@ export function appendMessage(
             <button class="carousel-next-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Next attempt" style="display: none;">
               <i class="bi bi-box-arrow-in-right"></i>
             </button>
+          </div>
+          <div class="d-flex align-items-center"></div>
+          <div class="d-flex align-items-center">
+            <button class="btn btn-sm btn-link text-muted metadata-toggle-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+              <i class="bi bi-info-circle"></i>
+            </button>
+          </div>
+        </div>`;
+      metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
+    } else if (sender === "Collaborator") {
+      const metadataContainerId = `metadata-${messageId || Date.now()}`;
+      messageFooterHtml = `
+        <div class="message-footer d-flex justify-content-between align-items-center mt-2">
+          <div class="d-flex align-items-center gap-2">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
+                <i class="bi bi-three-dots"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-start">
+                <li><a class="dropdown-item dropdown-reply-btn" href="#" data-message-id="${messageId}"><i class="bi bi-reply me-2"></i>Reply</a></li>
+              </ul>
+            </div>
           </div>
           <div class="d-flex align-items-center"></div>
           <div class="d-flex align-items-center">
@@ -1237,9 +2813,11 @@ export function appendMessage(
               sender === "You" || sender === "File" ? "flex-row-reverse" : ""
             }">
                 ${
-                  avatarImg
-                    ? `<img src="${avatarImg}" alt="${avatarAltText}" class="avatar">`
-                    : ""
+                  avatarHtml
+                    ? avatarHtml
+                    : avatarImg
+                      ? `<img src="${avatarImg}" alt="${avatarAltText}" class="avatar">`
+                      : ""
                 }
                 <div class="message-bubble">
                     <div class="message-sender">
@@ -1247,11 +2825,19 @@ export function appendMessage(
                         ${fullMessageObject?.metadata?.edited ? '<span class="badge bg-secondary ms-2">Edited</span>' : ''}
                         ${fullMessageObject?.metadata?.retried ? '<span class="badge bg-info ms-2">Retried</span>' : ''}
                     </div>
-                    <div class="message-text">${messageContentHtml}</div>
+                    ${replyQuoteHtml}
+                    ${invocationTargetHtml}
+                    ${mentionTagsHtml}
+                    ${hasVisibleMessageText ? `<div class="message-text">${messageContentHtml}</div>` : ""}
                     ${metadataContainerHtml}
                     ${messageFooterHtml}
                 </div>
             </div>`;
+
+    messageDiv.dataset.replySenderName = stripHtmlTags(senderLabel).replace(/\s+/g, " ").trim() || "Participant";
+    if (typeof messageContent === "string") {
+      messageDiv.dataset.replyPreviewText = buildPlainTextPreview(messageContent);
+    }
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
@@ -1277,6 +2863,11 @@ export function appendMessage(
       } else {
         console.log('No metadata found for user message:', messageId, 'fullMessageObject:', fullMessageObject);
       }
+    }
+
+    if (sender === "Collaborator") {
+      attachCollaboratorMessageEventListeners(messageDiv, fullMessageObject, messageContent);
+      hydrateCollaboratorAvatar(messageDiv, getMessageSenderUserId(fullMessageObject), senderLabel);
     }
 
     // Add event listener for image info button (uploaded images)
@@ -1431,21 +3022,12 @@ export function sendMessage() {
   userInput.focus();
 }
 
-export function actuallySendMessage(finalMessageToSend) {
-  // Generate a temporary message ID for the user message
-  const tempUserMessageId = `temp_user_${Date.now()}`;
-  
-  // Append user message first with temporary ID
-  appendMessage("You", finalMessageToSend, null, tempUserMessageId);
-  userInput.value = "";
-  userInput.style.height = "";
-  // Update send button visibility after clearing input
-  updateSendButtonVisibility();
-
+function getCurrentModelSelection() {
   let modelDeployment = modelSelect?.value;
   let modelId = null;
   let modelEndpointId = null;
   let modelProvider = null;
+
   if (window.appSettings?.enable_multi_model_endpoints && modelSelect) {
     const selectedOption = modelSelect.options[modelSelect.selectedIndex];
     modelId = selectedOption?.dataset?.modelId || selectedOption?.value || null;
@@ -1454,35 +3036,323 @@ export function actuallySendMessage(finalMessageToSend) {
     modelDeployment = selectedOption?.dataset?.deploymentName || null;
   }
 
-  // ... (keep existing logic for hybridSearchEnabled, selectedDocumentId, classificationsToSend, imageGenEnabled)
+  return {
+    modelDeployment,
+    modelId,
+    modelEndpointId,
+    modelProvider,
+    modelDisplayName: String(
+      modelSelect?.options?.[modelSelect.selectedIndex]?.dataset?.displayName
+      || modelSelect?.options?.[modelSelect.selectedIndex]?.textContent
+      || modelDeployment
+      || 'Model'
+    ).trim() || 'Model',
+  };
+}
+
+function getCurrentAgentSelection() {
+  const agentSelectContainer = document.getElementById('agent-select-container');
+  const agentSelect = document.getElementById('agent-select');
+  if (!areAgentsEnabled() || !agentSelectContainer || agentSelectContainer.style.display === 'none' || !agentSelect) {
+    return null;
+  }
+
+  const selectedAgentOption = agentSelect.options[agentSelect.selectedIndex];
+  if (!selectedAgentOption) {
+    return null;
+  }
+
+  return {
+    id: selectedAgentOption.dataset.agentId || null,
+    name: selectedAgentOption.dataset.name || selectedAgentOption.value || '',
+    display_name: selectedAgentOption.dataset.displayName || selectedAgentOption.textContent,
+    is_global: selectedAgentOption.dataset.isGlobal === 'true',
+    is_group: selectedAgentOption.dataset.isGroup === 'true',
+    group_id: selectedAgentOption.dataset.groupId || null,
+    group_name: selectedAgentOption.dataset.groupName || null,
+  };
+}
+
+function normalizeCollaborativeTargetLabel(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function getCollaborativeModelDisplayName(option = {}) {
+  const dataset = option?.dataset || {};
+  return String(
+    dataset.displayName
+    || option.display_name
+    || option.model_id
+    || dataset.modelId
+    || dataset.deploymentName
+    || option.deployment_name
+    || option.textContent
+    || option.label
+    || option.value
+    || ''
+  ).trim();
+}
+
+function getCollaborativeAgentDisplayName(option = {}) {
+  const dataset = option?.dataset || {};
+  return String(
+    dataset.displayName
+    || option.display_name
+    || option.displayName
+    || option.textContent
+    || option.label
+    || option.name
+    || option.value
+    || ''
+  ).trim();
+}
+
+function buildCollaborativeModelTarget(option = {}) {
+  const dataset = option?.dataset || {};
+  const displayName = getCollaborativeModelDisplayName(option);
+  const hasModelIdentity = Boolean(
+    dataset.modelId
+    || option.model_id
+    || dataset.deploymentName
+    || option.deployment_name
+    || dataset.endpointId
+    || option.endpoint_id
+    || option.display_name
+  );
+  if (!displayName) {
+    return null;
+  }
+
+  if (!hasModelIdentity && String(option.value || '').trim() === '') {
+    return null;
+  }
+
+  const modelDeployment = String(dataset.deploymentName || option.deployment_name || option.value || '').trim() || null;
+  const modelId = String(dataset.modelId || option.model_id || option.value || '').trim() || null;
+  const modelEndpointId = String(dataset.endpointId || option.endpoint_id || '').trim() || null;
+  const modelProvider = String(dataset.provider || option.provider || '').trim() || null;
+  const selectionKey = String(
+    dataset.selectionKey
+    || option.selection_key
+    || modelDeployment
+    || modelId
+    || displayName
+  ).trim();
+
+  return {
+    action: 'ai_tag',
+    target_type: 'model',
+    display_name: displayName,
+    mention_text: `@${displayName}`,
+    source_mode: 'explicit_tag',
+    selection_key: selectionKey,
+    model_deployment: modelDeployment,
+    model_id: modelId,
+    model_endpoint_id: modelEndpointId,
+    model_provider: modelProvider,
+    subtitle: modelDeployment && modelDeployment !== displayName
+      ? modelDeployment
+      : modelProvider
+      ? `${modelProvider} model`
+      : 'Model deployment',
+    search_text: [displayName, modelDeployment, modelId, modelProvider].filter(Boolean).join(' '),
+  };
+}
+
+function buildCollaborativeAgentTarget(option = {}) {
+  const dataset = option?.dataset || {};
+  const displayName = getCollaborativeAgentDisplayName(option);
+  const agentId = String(dataset.agentId || option.id || '').trim() || null;
+  const agentName = String(dataset.name || option.name || option.value || '').trim() || null;
+  if (!displayName || (!agentId && !agentName)) {
+    return null;
+  }
+
+  const isGlobal = String(dataset.isGlobal || option.is_global || '').trim() === 'true' || option.is_global === true;
+  const isGroup = String(dataset.isGroup || option.is_group || '').trim() === 'true' || option.is_group === true;
+  const groupName = String(dataset.groupName || option.group_name || '').trim() || null;
+
+  return {
+    action: 'ai_tag',
+    target_type: 'agent',
+    display_name: displayName,
+    mention_text: `@${displayName}`,
+    source_mode: 'explicit_tag',
+    agent_info: {
+      id: agentId,
+      name: agentName || displayName,
+      display_name: displayName,
+      is_global: isGlobal,
+      is_group: isGroup,
+      group_id: String(dataset.groupId || option.group_id || '').trim() || null,
+      group_name: groupName,
+    },
+    subtitle: isGroup && groupName
+      ? `Group agent · ${groupName}`
+      : isGlobal
+      ? 'Global agent'
+      : 'Personal agent',
+    search_text: [displayName, agentName, agentId, groupName].filter(Boolean).join(' '),
+  };
+}
+
+function getAvailableCollaborativeModelTargets() {
+  const modelOptions = modelSelect?.options ? Array.from(modelSelect.options) : [];
+  const mappedSelectTargets = modelOptions
+    .map(option => buildCollaborativeModelTarget(option))
+    .filter(Boolean);
+
+  if (mappedSelectTargets.length > 0) {
+    return mappedSelectTargets;
+  }
+
+  return (Array.isArray(window.chatModelOptions) ? window.chatModelOptions : [])
+    .map(option => buildCollaborativeModelTarget(option))
+    .filter(Boolean);
+}
+
+function getAvailableCollaborativeAgentTargets() {
+  const agentSelect = document.getElementById('agent-select');
+  const agentOptions = agentSelect?.options ? Array.from(agentSelect.options) : [];
+  const mappedSelectTargets = agentOptions
+    .map(option => buildCollaborativeAgentTarget(option))
+    .filter(Boolean);
+
+  if (mappedSelectTargets.length > 0) {
+    return mappedSelectTargets;
+  }
+
+  return (Array.isArray(window.chatAgentOptions) ? window.chatAgentOptions : [])
+    .map(option => buildCollaborativeAgentTarget(option))
+    .filter(Boolean);
+}
+
+export function getCollaborativeTagSuggestions(query = '') {
+  const normalizedQuery = normalizeCollaborativeTargetLabel(query);
+  const matchesQuery = target => {
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    const haystack = normalizeCollaborativeTargetLabel([
+      target.display_name,
+      target.subtitle,
+      target.search_text,
+      target.mention_text,
+    ].filter(Boolean).join(' '));
+    return haystack.includes(normalizedQuery);
+  };
+
+  return [
+    ...getAvailableCollaborativeAgentTargets().filter(matchesQuery),
+    ...getAvailableCollaborativeModelTargets().filter(matchesQuery),
+  ];
+}
+
+function resolveCollaborativeExplicitInvocationTarget(messageText = '') {
+  const normalizedMessageText = String(messageText || '');
+  if (!normalizedMessageText.includes('@')) {
+    return null;
+  }
+
+  const targets = getCollaborativeTagSuggestions('')
+    .slice()
+    .sort((leftTarget, rightTarget) => String(rightTarget.display_name || '').length - String(leftTarget.display_name || '').length);
+
+  for (const target of targets) {
+    const displayName = String(target.display_name || '').trim();
+    if (!displayName) {
+      continue;
+    }
+
+    if (buildAtMentionPattern(displayName).test(normalizedMessageText)) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+function stripExplicitCollaborativeTargetText(messageText = '', invocationTarget = null) {
+  if (!invocationTarget?.display_name) {
+    return String(messageText || '');
+  }
+
+  return normalizeStructuredMessageContent(
+    String(messageText || '').replace(
+      buildAtMentionPattern(invocationTarget.display_name),
+      (match, leadingWhitespace) => leadingWhitespace || ''
+    )
+  );
+}
+
+function buildCollaborativeSendContext(finalMessageToSend, conversationId = currentConversationId) {
+  const messageText = String(finalMessageToSend ?? '');
+  const explicitInvocationTarget = resolveCollaborativeExplicitInvocationTarget(messageText);
+  const messageData = buildChatRequestPayload(messageText, conversationId);
+
+  if (explicitInvocationTarget?.target_type === 'agent' && explicitInvocationTarget.agent_info) {
+    messageData.image_generation = false;
+    messageData.agent_info = { ...explicitInvocationTarget.agent_info };
+  }
+
+  if (explicitInvocationTarget?.target_type === 'model') {
+    messageData.image_generation = false;
+    messageData.agent_info = null;
+    messageData.model_deployment = explicitInvocationTarget.model_deployment || messageData.model_deployment;
+    messageData.model_id = explicitInvocationTarget.model_id || messageData.model_id;
+    messageData.model_endpoint_id = explicitInvocationTarget.model_endpoint_id || messageData.model_endpoint_id;
+    messageData.model_provider = explicitInvocationTarget.model_provider || messageData.model_provider;
+  }
+
+  const invocationTarget = buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget);
+  const displayMessageText = explicitInvocationTarget
+    ? stripExplicitCollaborativeTargetText(messageText, explicitInvocationTarget)
+    : messageText;
+
+  messageData.message = displayMessageText;
+
+  return {
+    messageData,
+    invocationTarget,
+    explicitInvocationTarget,
+    displayMessageText,
+  };
+}
+
+export function buildChatRequestPayload(finalMessageToSend, conversationId = currentConversationId) {
+  const {
+    modelDeployment,
+    modelId,
+    modelEndpointId,
+    modelProvider,
+  } = getCurrentModelSelection();
+
   let hybridSearchEnabled = false;
-  const sdbtn = document.getElementById("search-documents-btn");
-  if (sdbtn && sdbtn.classList.contains("active")) {
+  const sdbtn = document.getElementById('search-documents-btn');
+  if (sdbtn && sdbtn.classList.contains('active')) {
     hybridSearchEnabled = true;
   }
 
   let selectedDocumentId = null;
   let selectedDocumentIds = [];
-  const docSel = document.getElementById("document-select");
-
-  // Read all selected document IDs (multi-select support)
+  const docSel = document.getElementById('document-select');
   if (docSel) {
     selectedDocumentIds = Array.from(docSel.selectedOptions)
-      .map(o => o.value)
-      .filter(v => v); // Filter out empty strings
-    // For backwards compat, set single ID to first selected or null
+      .map(option => option.value)
+      .filter(value => value);
     selectedDocumentId = selectedDocumentIds.length > 0 ? selectedDocumentIds[0] : null;
   }
 
   let imageGenEnabled = false;
-  const igbtn = document.getElementById("image-generate-btn");
-  if (igbtn && igbtn.classList.contains("active")) {
+  const igbtn = document.getElementById('image-generate-btn');
+  if (igbtn && igbtn.classList.contains('active')) {
     imageGenEnabled = true;
   }
 
-  // --- Robust chat_type/group_id logic ---
-  // Assume: window.activeChatTabType = 'user' | 'group', window.activeGroupId = group id if group tab
-  // If you add a group chat tab, set window.activeChatTabType and window.activeGroupId accordingly when switching tabs
   let chat_type = 'user';
   let group_id = null;
   if (window.activeChatTabType === 'group' && window.activeGroupId) {
@@ -1490,95 +3360,89 @@ export function actuallySendMessage(finalMessageToSend) {
     group_id = window.activeGroupId;
   }
 
-  // Collect prompt information if a prompt is selected
   let promptInfo = null;
   if (
-    promptSelectionContainer &&
-    promptSelectionContainer.style.display !== "none" &&
-    promptSelect &&
-    promptSelect.selectedIndex > 0
+    promptSelectionContainer
+    && promptSelectionContainer.style.display !== 'none'
+    && promptSelect
+    && promptSelect.selectedIndex > 0
   ) {
     const selectedOpt = promptSelect.options[promptSelect.selectedIndex];
     if (selectedOpt) {
       promptInfo = {
         name: selectedOpt.textContent,
         id: selectedOpt.value,
-        content: selectedOpt.dataset?.promptContent || ""
+        content: selectedOpt.dataset?.promptContent || '',
       };
     }
   }
 
-  // Collect agent information if agents are enabled
-  let agentInfo = null;
-  const agentSelectContainer = document.getElementById("agent-select-container");
-  const agentSelect = document.getElementById("agent-select");
-  if (agentSelectContainer && agentSelectContainer.style.display !== "none" && agentSelect) {
-    const selectedAgentOption = agentSelect.options[agentSelect.selectedIndex];
-    if (selectedAgentOption) {
-      agentInfo = {
-        id: selectedAgentOption.dataset.agentId || null,
-        name: selectedAgentOption.dataset.name || selectedAgentOption.value || '',
-        display_name: selectedAgentOption.dataset.displayName || selectedAgentOption.textContent,
-        is_global: selectedAgentOption.dataset.isGlobal === 'true',
-        is_group: selectedAgentOption.dataset.isGroup === 'true',
-        group_id: selectedAgentOption.dataset.groupId || null,
-        group_name: selectedAgentOption.dataset.groupName || null
-      };
-    }
-  }
-
-  // Get effective scopes from multi-select scope dropdown
+  const agentInfo = getCurrentAgentSelection();
   const scopes = getEffectiveScopes();
 
-  // Determine the correct doc_scope based on selected scopes
-  let effectiveDocScope = "all";
+  let effectiveDocScope = 'all';
   if (scopes.personal && scopes.groupIds.length === 0 && scopes.publicWorkspaceIds.length === 0) {
-    effectiveDocScope = "personal";
+    effectiveDocScope = 'personal';
   } else if (!scopes.personal && scopes.groupIds.length > 0 && scopes.publicWorkspaceIds.length === 0) {
-    effectiveDocScope = "group";
+    effectiveDocScope = 'group';
   } else if (!scopes.personal && scopes.groupIds.length === 0 && scopes.publicWorkspaceIds.length > 0) {
-    effectiveDocScope = "public";
+    effectiveDocScope = 'public';
   }
 
-  // If documents are selected, determine the actual scope from the documents themselves
   if (selectedDocumentIds.length > 0) {
     const docScopes = new Set();
     selectedDocumentIds.forEach(docId => {
       if (personalDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
-        docScopes.add("personal");
+        docScopes.add('personal');
       } else if (groupDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
-        docScopes.add("group");
+        docScopes.add('group');
       } else if (publicDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
-        docScopes.add("public");
+        docScopes.add('public');
       }
     });
 
-    // Only narrow scope if ALL selected docs are from the same scope
     if (docScopes.size === 1) {
       effectiveDocScope = docScopes.values().next().value;
       console.log(`All selected documents are from scope: ${effectiveDocScope}`);
     } else if (docScopes.size > 1) {
-      effectiveDocScope = "all";
+      effectiveDocScope = 'all';
       console.log(`Selected documents span ${docScopes.size} scopes (${[...docScopes].join(', ')}), keeping scope as "all"`);
     }
   }
 
-  // Use group IDs from scope selector; fall back to window.activeGroupId for backwards compat
   const finalGroupIds = scopes.groupIds.length > 0 ? scopes.groupIds : (window.activeGroupId ? [window.activeGroupId] : []);
-  const finalGroupId = finalGroupIds[0] || window.activeGroupId || null;
-  const webSearchToggle = document.getElementById("search-web-btn");
-  const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains("active") : false;
-
-  // Prepare message data object
-  // Get public workspace IDs from scope selector; fall back to window.activePublicWorkspaceId
+  const finalGroupId = finalGroupIds[0] || group_id || null;
+  const webSearchToggle = document.getElementById('search-web-btn');
+  const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains('active') : false;
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
-
-  // Get selected tags from chat-documents module
   const selectedTags = getSelectedTags();
+  const documentActionType = getDocumentActionType();
+  const comparisonTargetIds = documentActionType === DOCUMENT_ACTION_COMPARISON
+    ? getSelectedComparisonTargetIds()
+    : [];
+  const comparisonLeftDocumentId = documentActionType === DOCUMENT_ACTION_COMPARISON
+    ? String(documentComparisonLeftSelect?.value || comparisonTargetIds[0] || '').trim()
+    : '';
+  const comparisonRightDocumentIds = documentActionType === DOCUMENT_ACTION_COMPARISON
+    ? comparisonTargetIds.filter(documentId => documentId !== comparisonLeftDocumentId)
+    : [];
+  const documentAction = {
+    type: documentActionType,
+    document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW
+      ? selectedDocumentIds
+      : comparisonTargetIds,
+    left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : '',
+    right_document_ids: comparisonRightDocumentIds,
+    doc_scope: effectiveDocScope,
+    active_group_ids: finalGroupIds,
+    active_public_workspace_id: scopes.publicWorkspaceIds,
+    window_unit: 'pages',
+    max_retries_per_window: 1,
+  };
 
-  const messageData = {
+  const requestPayload = {
     message: finalMessageToSend,
-    conversation_id: currentConversationId,
+    conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
     web_search_enabled: webSearchEnabled,
     selected_document_id: selectedDocumentId,
@@ -1587,7 +3451,7 @@ export function actuallySendMessage(finalMessageToSend) {
     tags: selectedTags,
     image_generation: imageGenEnabled,
     doc_scope: effectiveDocScope,
-    chat_type: chat_type,
+    chat_type,
     active_group_ids: finalGroupIds,
     active_group_id: finalGroupId,
     active_public_workspace_ids: scopes.publicWorkspaceIds,
@@ -1598,12 +3462,188 @@ export function actuallySendMessage(finalMessageToSend) {
     model_provider: modelProvider,
     prompt_info: promptInfo,
     agent_info: agentInfo,
-    reasoning_effort: getCurrentReasoningEffort()
+    reasoning_effort: getCurrentReasoningEffort(),
   };
+
+  if (documentActionType !== DOCUMENT_ACTION_NONE) {
+    requestPayload.document_action = documentAction;
+  }
+
+  if (documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
+    requestPayload.exhaustive_review = {
+      enabled: true,
+      document_ids: selectedDocumentIds,
+      doc_scope: effectiveDocScope,
+      active_group_ids: finalGroupIds,
+      active_public_workspace_id: scopes.publicWorkspaceIds,
+    };
+  }
+
+  return requestPayload;
+}
+
+export function buildCollaborativeInvocationTarget(messageData = {}, explicitInvocationTarget = null) {
+  if (!messageData || typeof messageData !== 'object') {
+    return null;
+  }
+
+  if (explicitInvocationTarget?.target_type === 'agent' || explicitInvocationTarget?.target_type === 'model') {
+    return {
+      ...explicitInvocationTarget,
+      source_mode: 'explicit_tag',
+      mention_text: explicitInvocationTarget.mention_text || `@${explicitInvocationTarget.display_name}`,
+    };
+  }
+
+  const hasAgentTarget = Boolean(
+    messageData.agent_info
+    && (messageData.agent_info.id || messageData.agent_info.name || messageData.agent_info.display_name)
+  );
+  const sourceMode = messageData.image_generation
+    ? 'image_generation'
+    : hasAgentTarget
+    ? 'agent'
+    : messageData.web_search_enabled
+    ? 'web_search'
+    : messageData.hybrid_search
+    ? 'workspace'
+    : messageData.prompt_info
+    ? 'prompt'
+    : null;
+
+  if (!sourceMode) {
+    return null;
+  }
+
+  if (messageData.image_generation) {
+    return {
+      target_type: 'image',
+      display_name: 'Image',
+      mention_text: '@Image',
+      source_mode: sourceMode,
+    };
+  }
+
+  if (hasAgentTarget) {
+    const agentLabel = String(
+      messageData.agent_info.display_name
+      || messageData.agent_info.name
+      || messageData.agent_info.id
+      || 'Agent'
+    ).trim() || 'Agent';
+    return {
+      target_type: 'agent',
+      display_name: agentLabel,
+      mention_text: `@${agentLabel}`,
+      source_mode: sourceMode,
+    };
+  }
+
+  const { modelDisplayName } = getCurrentModelSelection();
+  return {
+    target_type: 'model',
+    display_name: modelDisplayName,
+    mention_text: `@${modelDisplayName}`,
+    source_mode: sourceMode,
+  };
+}
+
+export function shouldUseCollaborativeAiWorkflow(messageData = {}, explicitInvocationTarget = null) {
+  return Boolean(buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget));
+}
+
+export function actuallySendMessage(finalMessageToSend) {
+  const isCollaborativeConversation = Boolean(
+    currentConversationId
+    && window.chatCollaboration?.isCollaborationConversation?.(currentConversationId)
+  );
+
+  if (isCollaborativeConversation) {
+    const tempUserMessageId = `temp_user_${Date.now()}`;
+    const {
+      messageData: collaborativeMessageData,
+      invocationTarget,
+      explicitInvocationTarget,
+      displayMessageText,
+    } = buildCollaborativeSendContext(finalMessageToSend, currentConversationId);
+    if (invocationTarget && !String(displayMessageText || '').trim()) {
+      showToast('Add a message after the selected @agent or @model tag.', 'warning');
+      return;
+    }
+
+    const pendingCollaborativeContext = window.chatCollaboration?.getPendingMessageContext?.({ invocationTarget }) || null;
+    appendMessage("You", displayMessageText, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext);
+    userInput.value = "";
+    userInput.style.height = "";
+    updateSendButtonVisibility();
+
+    const collaborativeSendOperation = shouldUseCollaborativeAiWorkflow(collaborativeMessageData, explicitInvocationTarget)
+      ? window.chatCollaboration.sendCollaborativeAiMessage?.(
+        displayMessageText,
+        tempUserMessageId,
+        collaborativeMessageData,
+        pendingCollaborativeContext,
+      )
+      : window.chatCollaboration.sendCollaborativeMessage(displayMessageText, tempUserMessageId);
+
+    Promise.resolve(collaborativeSendOperation).catch(error => {
+      const tempMessage = document.querySelector(`[data-message-id="${tempUserMessageId}"]`);
+      if (tempMessage) {
+        tempMessage.remove();
+      }
+      showToast(error.message || 'Failed to send shared message.', 'danger');
+    });
+    return;
+  }
+
+  // Generate a temporary message ID for the user message
+  const tempUserMessageId = `temp_user_${Date.now()}`;
+  const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
+  const actionType = String(messageData.document_action?.type || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
+  const useDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
+  const totalSelectedDocuments = actionType === DOCUMENT_ACTION_COMPARISON
+    ? (Array.isArray(messageData.document_action?.document_ids) ? messageData.document_action.document_ids.length : 0)
+    : (Array.isArray(messageData.selected_document_ids) ? messageData.selected_document_ids.length : 0);
+
+  if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW && totalSelectedDocuments === 0) {
+    showToast('Select one or more documents before starting a review.', 'warning');
+    return;
+  }
+  if (actionType === DOCUMENT_ACTION_COMPARISON && totalSelectedDocuments < 2) {
+    showToast('Select at least two documents before starting compare.', 'warning');
+    return;
+  }
+  if (actionType === DOCUMENT_ACTION_COMPARISON && (!messageData.document_action?.left_document_id || !Array.isArray(messageData.document_action?.right_document_ids) || messageData.document_action.right_document_ids.length === 0)) {
+    showToast('Choose one left document and at least one right document for compare.', 'warning');
+    return;
+  }
+  if (useDocumentAction && !isDocumentActionEnabled(actionType)) {
+    showToast(`${getDocumentActionLabel(actionType)} is currently disabled by an administrator.`, 'warning');
+    return;
+  }
+  const chatMaxDocuments = getDocumentActionMaxDocuments(actionType, 'chat');
+  const workflowMaxDocuments = getDocumentActionMaxDocuments(actionType, 'workflow');
+  if (useDocumentAction && totalSelectedDocuments > chatMaxDocuments) {
+    showToast(
+      `Chat ${getDocumentActionLabel(actionType)} supports up to ${chatMaxDocuments} documents. Use workflows for up to ${workflowMaxDocuments} documents.`,
+      'warning'
+    );
+    return;
+  }
+  
+  // Append user message first with temporary ID
+  appendMessage("You", finalMessageToSend, null, tempUserMessageId);
+  userInput.value = "";
+  userInput.style.height = "";
+  // Update send button visibility after clearing input
+  updateSendButtonVisibility();
   sendMessageWithStreaming(
     messageData,
     tempUserMessageId,
-    currentConversationId
+    currentConversationId,
+    {
+      endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
+    }
   );
 
   return;
@@ -1660,6 +3700,10 @@ if (sendBtn) {
 
 if (userInput) {
   userInput.addEventListener("keydown", function (e) {
+    if (window.chatCollaboration?.handleComposerKeydown?.(e)) {
+      return;
+    }
+
     // Check if Enter key is pressed
     if (e.key === "Enter") {
       // Check if Shift key is NOT pressed
@@ -1674,15 +3718,26 @@ if (userInput) {
   });
   
   // Monitor input changes for send button visibility
-  userInput.addEventListener("input", updateSendButtonVisibility);
-  userInput.addEventListener("focus", updateSendButtonVisibility);
-  userInput.addEventListener("blur", updateSendButtonVisibility);
+  userInput.addEventListener("input", () => {
+    updateSendButtonVisibility();
+    window.chatCollaboration?.handleComposerInput?.();
+  });
+  userInput.addEventListener("focus", () => {
+    updateSendButtonVisibility();
+    window.chatCollaboration?.handleComposerInput?.();
+  });
+  userInput.addEventListener("blur", () => {
+    updateSendButtonVisibility();
+    window.chatCollaboration?.handleComposerBlur?.();
+  });
 }
 
 // Monitor prompt selection changes
 if (promptSelect) {
   promptSelect.addEventListener("change", updateSendButtonVisibility);
 }
+
+updateDocumentActionControls();
 
 // Helper function to update user message ID after backend response
 export function updateUserMessageId(tempId, realId) {
@@ -1744,7 +3799,12 @@ export function updateUserMessageId(tempId, realId) {
       console.error(`❌ ID update verification failed: ${realId} not found in DOM`);
     }
   } else {
-    console.error(`❌ Message div with temp ID ${tempId} not found for update`);
+    const existingRealMessageDiv = document.querySelector(`[data-message-id="${realId}"]`);
+    if (existingRealMessageDiv) {
+      console.info(`ℹ️ Message div for temp ID ${tempId} was already reconciled to ${realId}`);
+    } else {
+      console.warn(`⚠️ Message div with temp ID ${tempId} not found for update`);
+    }
   }
 }
 
@@ -1829,49 +3889,7 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
     });
   }
 
-  const dropdownExportMdBtn = messageDiv.querySelector(".dropdown-export-md-btn");
-  if (dropdownExportMdBtn) {
-    dropdownExportMdBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const currentMessageId = messageDiv.getAttribute('data-message-id');
-      import('./chat-message-export.js').then(module => {
-        module.exportMessageAsMarkdown(messageDiv, currentMessageId, 'user');
-      }).catch(err => console.error('Error loading message export module:', err));
-    });
-  }
-
-  const dropdownExportWordBtn = messageDiv.querySelector(".dropdown-export-word-btn");
-  if (dropdownExportWordBtn) {
-    dropdownExportWordBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const currentMessageId = messageDiv.getAttribute('data-message-id');
-      import('./chat-message-export.js').then(module => {
-        module.exportMessageAsWord(messageDiv, currentMessageId, 'user');
-      }).catch(err => console.error('Error loading message export module:', err));
-    });
-  }
-
-  const dropdownCopyPromptBtn = messageDiv.querySelector(".dropdown-copy-prompt-btn");
-  if (dropdownCopyPromptBtn) {
-    dropdownCopyPromptBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const currentMessageId = messageDiv.getAttribute('data-message-id');
-      import('./chat-message-export.js').then(module => {
-        module.copyAsPrompt(messageDiv, currentMessageId, 'user');
-      }).catch(err => console.error('Error loading message export module:', err));
-    });
-  }
-
-  const dropdownOpenEmailBtn = messageDiv.querySelector(".dropdown-open-email-btn");
-  if (dropdownOpenEmailBtn) {
-    dropdownOpenEmailBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const currentMessageId = messageDiv.getAttribute('data-message-id');
-      import('./chat-message-export.js').then(module => {
-        module.openInEmail(messageDiv, currentMessageId, 'user');
-      }).catch(err => console.error('Error loading message export module:', err));
-    });
-  }
+  attachMessageExportActionListeners(messageDiv, 'user');
   
   // Handle dropdown positioning manually for user messages - move to chatbox
   const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
@@ -1912,6 +3930,59 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (carouselNextBtn) {
     carouselNextBtn.addEventListener("click", () => {
       handleCarouselClick(messageId, 'next');
+    });
+  }
+}
+
+function attachCollaboratorMessageEventListeners(messageDiv, fullMessageObject, messageContent) {
+  const dropdownReplyBtn = messageDiv.querySelector(".dropdown-reply-btn");
+  if (dropdownReplyBtn) {
+    dropdownReplyBtn.addEventListener("click", e => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute("data-message-id");
+      window.chatCollaboration?.replyToMessage?.({
+        ...(fullMessageObject || {}),
+        id: currentMessageId,
+        content: messageContent,
+        sender: fullMessageObject?.sender || fullMessageObject?.metadata?.sender || {
+          display_name: messageDiv.dataset.replySenderName || "Participant",
+        },
+      });
+    });
+  }
+
+  const metadataToggleBtn = messageDiv.querySelector(".metadata-toggle-btn");
+  if (metadataToggleBtn) {
+    metadataToggleBtn.addEventListener("click", () => {
+      const currentMessageId = messageDiv.getAttribute("data-message-id");
+      toggleUserMessageMetadata(messageDiv, currentMessageId);
+    });
+  }
+
+  const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
+  const dropdownMenu = messageDiv.querySelector(".message-footer .dropdown-menu");
+  if (dropdownToggle && dropdownMenu) {
+    dropdownToggle.addEventListener("show.bs.dropdown", () => {
+      const localChatbox = document.getElementById("chatbox");
+      if (localChatbox) {
+        dropdownMenu.remove();
+        localChatbox.appendChild(dropdownMenu);
+
+        const rect = dropdownToggle.getBoundingClientRect();
+        const chatboxRect = localChatbox.getBoundingClientRect();
+        dropdownMenu.style.position = "absolute";
+        dropdownMenu.style.top = `${rect.bottom - chatboxRect.top + localChatbox.scrollTop + 2}px`;
+        dropdownMenu.style.left = `${rect.left - chatboxRect.left}px`;
+        dropdownMenu.style.zIndex = "9999";
+      }
+    });
+
+    dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
+      const dropdown = messageDiv.querySelector(".message-footer .dropdown");
+      if (dropdown && dropdownMenu.parentElement !== dropdown) {
+        dropdownMenu.remove();
+        dropdown.appendChild(dropdownMenu);
+      }
     });
   }
 }
@@ -2107,6 +4178,144 @@ function formatMetadataForDrawer(metadata) {
       return `<span class="badge bg-warning text-dark" title="Category config not found">${escapeHtml(classification)} (?)</span>`;
     }
   }
+
+  if (metadata.message_details) {
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-chat-left-text me-2"></i>Message Details</div>';
+    content += '<div class="ms-3 small">';
+
+    if (metadata.message_details.message_id) {
+      content += `<div class="mb-1"><span class="text-muted">Message ID:</span> <code class="ms-2">${escapeHtml(metadata.message_details.message_id)}</code></div>`;
+    }
+    if (metadata.message_details.conversation_id) {
+      content += `<div class="mb-1"><span class="text-muted">Conversation ID:</span> <code class="ms-2">${escapeHtml(metadata.message_details.conversation_id)}</code></div>`;
+    }
+    if (metadata.message_details.role) {
+      content += `<div class="mb-1"><span class="text-muted">Stored Role:</span> <span class="ms-2">${createInfoBadge(metadata.message_details.role, 'primary')}</span></div>`;
+    }
+    if (metadata.message_details.display_role) {
+      content += `<div class="mb-1"><span class="text-muted">Display Role:</span> <span class="ms-2">${createInfoBadge(metadata.message_details.display_role, 'info')}</span></div>`;
+    }
+    if (metadata.message_details.message_kind) {
+      content += `<div class="mb-1"><span class="text-muted">Message Kind:</span> <span class="ms-2">${createInfoBadge(metadata.message_details.message_kind, 'secondary')}</span></div>`;
+    }
+    if (metadata.message_details.source_role) {
+      content += `<div class="mb-1"><span class="text-muted">Original Role:</span> <span class="ms-2">${createInfoBadge(metadata.message_details.source_role, 'warning')}</span></div>`;
+    }
+    if (metadata.message_details.timestamp) {
+      content += `<div class="mb-1"><span class="text-muted">Timestamp:</span> <code class="ms-2">${escapeHtml(new Date(metadata.message_details.timestamp).toLocaleString())}</code></div>`;
+    }
+    if (metadata.message_details.explicit_ai_invocation !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Explicit AI Invocation:</span> <span class="ms-2">${createStatusBadge(Boolean(metadata.message_details.explicit_ai_invocation))}</span></div>`;
+    }
+
+    content += '</div></div>';
+  }
+
+  if (metadata.reply_context) {
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-reply me-2"></i>Reply Context</div>';
+    content += '<div class="ms-3 small">';
+    if (metadata.reply_context.message_id) {
+      content += `<div class="mb-1"><span class="text-muted">Reply Message ID:</span> <code class="ms-2">${escapeHtml(metadata.reply_context.message_id)}</code></div>`;
+    }
+    if (metadata.reply_context.sender_display_name) {
+      content += `<div class="mb-1"><span class="text-muted">Replying To:</span> <span class="ms-2">${escapeHtml(metadata.reply_context.sender_display_name)}</span></div>`;
+    }
+    if (metadata.reply_context.content_preview) {
+      content += `<div class="mb-1"><span class="text-muted">Preview:</span><div class="mt-1 p-2 bg-light rounded small">${escapeHtml(metadata.reply_context.content_preview)}</div></div>`;
+    }
+    content += '</div></div>';
+  }
+
+  if (Array.isArray(metadata.mentions) && metadata.mentions.length > 0) {
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-at me-2"></i>Tagged Participants</div>';
+    content += '<div class="ms-3 small d-flex flex-wrap gap-2">';
+    metadata.mentions.forEach(participant => {
+      content += `<span class="badge bg-success-subtle text-success-emphasis">@${escapeHtml(participant.display_name || participant.email || participant.user_id || 'Participant')}</span>`;
+    });
+    content += '</div></div>';
+  }
+
+  if (metadata.collaboration) {
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-people me-2"></i>Shared Conversation</div>';
+    content += '<div class="ms-3 small">';
+    if (metadata.collaboration.conversation_title) {
+      content += `<div class="mb-1"><span class="text-muted">Conversation:</span> <span class="ms-2">${escapeHtml(metadata.collaboration.conversation_title)}</span></div>`;
+    }
+    if (metadata.collaboration.chat_type) {
+      content += `<div class="mb-1"><span class="text-muted">Collaboration Type:</span> <span class="ms-2">${createInfoBadge(metadata.collaboration.chat_type, 'success')}</span></div>`;
+    }
+    if (metadata.collaboration.participant_count !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Participants:</span> <span class="ms-2 badge bg-secondary">${escapeHtml(metadata.collaboration.participant_count)}</span></div>`;
+    }
+    content += '</div></div>';
+  }
+
+  if (metadata.file_details) {
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-file-earmark me-2"></i>File Details</div>';
+    content += '<div class="ms-3 small">';
+    if (metadata.file_details.filename) {
+      content += `<div class="mb-1"><span class="text-muted">Filename:</span> <code class="ms-2">${escapeHtml(metadata.file_details.filename)}</code></div>`;
+    }
+    if (metadata.file_details.source_message_id) {
+      content += `<div class="mb-1"><span class="text-muted">Source Message ID:</span> <code class="ms-2">${escapeHtml(metadata.file_details.source_message_id)}</code></div>`;
+    }
+    if (metadata.file_details.is_table !== undefined && metadata.file_details.is_table !== null) {
+      content += `<div class="mb-1"><span class="text-muted">Table Data:</span> <span class="ms-2">${createStatusBadge(Boolean(metadata.file_details.is_table))}</span></div>`;
+    }
+    content += '</div></div>';
+  }
+
+  if (metadata.image_details) {
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-image me-2"></i>Image Details</div>';
+    content += '<div class="ms-3 small">';
+    if (metadata.image_details.filename) {
+      content += `<div class="mb-1"><span class="text-muted">Filename:</span> <code class="ms-2">${escapeHtml(metadata.image_details.filename)}</code></div>`;
+    }
+    if (metadata.image_details.image_url) {
+      content += `<div class="mb-1"><span class="text-muted">Image URL:</span> <code class="ms-2 text-break">${escapeHtml(metadata.image_details.image_url)}</code></div>`;
+    }
+    if (metadata.image_details.is_user_upload !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">User Upload:</span> <span class="ms-2">${createStatusBadge(Boolean(metadata.image_details.is_user_upload))}</span></div>`;
+    }
+    if (metadata.image_details.extracted_text) {
+      content += `<div class="mb-1"><span class="text-muted">Extracted Text:</span><div class="mt-1 p-2 bg-light rounded small">${escapeHtml(metadata.image_details.extracted_text)}</div></div>`;
+    }
+    if (metadata.image_details.vision_analysis) {
+      content += `<div class="mb-1"><span class="text-muted">Vision Analysis:</span><div class="mt-1 p-2 bg-light rounded small">${escapeHtml(metadata.image_details.vision_analysis)}</div></div>`;
+    }
+    content += '</div></div>';
+  }
+
+  if (metadata.generation_details) {
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-cpu me-2"></i>Generation Details</div>';
+    content += '<div class="ms-3 small">';
+    if (metadata.generation_details.selected_model) {
+      content += `<div class="mb-1"><span class="text-muted">Model:</span> <code class="ms-2">${escapeHtml(metadata.generation_details.selected_model)}</code></div>`;
+    }
+    if (metadata.generation_details.agent_display_name || metadata.generation_details.agent_name) {
+      content += `<div class="mb-1"><span class="text-muted">Agent:</span> <span class="ms-2">${escapeHtml(metadata.generation_details.agent_display_name || metadata.generation_details.agent_name)}</span></div>`;
+    }
+    if (metadata.generation_details.augmented !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2">${createStatusBadge(Boolean(metadata.generation_details.augmented))}</span></div>`;
+    }
+    if (metadata.generation_details.document_citation_count !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Document Citations:</span> <span class="ms-2 badge bg-info">${escapeHtml(metadata.generation_details.document_citation_count)}</span></div>`;
+    }
+    if (metadata.generation_details.web_citation_count !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Web Citations:</span> <span class="ms-2 badge bg-info">${escapeHtml(metadata.generation_details.web_citation_count)}</span></div>`;
+    }
+    if (metadata.generation_details.agent_citation_count !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${escapeHtml(metadata.generation_details.agent_citation_count)}</span></div>`;
+    }
+    content += '</div></div>';
+  }
   
   // User Information Section
   if (metadata.user_info) {
@@ -2280,7 +4489,7 @@ function formatMetadataForDrawer(metadata) {
     content += '<div class="ms-3 small">';
     
     metadata.uploaded_images.forEach((image, index) => {
-      const imageId = `image-${messageId || Date.now()}-${index}`;
+      const imageId = `image-${metadata.message_details?.message_id || Date.now()}-${index}`;
       content += `<div class="metadata-item">`;
       content += `<div class="card">`;
       content += `<img src="${escapeHtml(image.url)}" alt="Uploaded Image" class="card-img-top" style="max-width: 100%; height: auto;" />`;
@@ -2538,6 +4747,11 @@ function loadMessageMetadataForDisplay(messageId, container) {
         thread_attempt: metadata.thread_attempt
       };
       const historyContext = metadata.metadata?.history_context || null;
+      const collaborationInfo = metadata.metadata?.collaboration || null;
+      const replyContext = metadata.metadata?.reply_context || null;
+      const mentionList = Array.isArray(metadata.metadata?.mentions)
+        ? metadata.metadata.mentions
+        : [];
       
       if (threadInfo.thread_id) {
         html += '<div class="mb-3">';
@@ -2557,8 +4771,40 @@ function loadMessageMetadataForDisplay(messageId, container) {
       if (metadata.id) html += `<div class="mb-1"><span class="text-muted">Message ID:</span> <code class="ms-2">${metadata.id}</code></div>`;
       if (metadata.conversation_id) html += `<div class="mb-1"><span class="text-muted">Conversation ID:</span> <code class="ms-2">${metadata.conversation_id}</code></div>`;
       if (metadata.role) html += `<div class="mb-1"><span class="text-muted">Role:</span> <span class="ms-2 badge bg-primary">${metadata.role}</span></div>`;
+      if (metadata.message_kind) html += `<div class="mb-1"><span class="text-muted">Message Kind:</span> <span class="ms-2 badge bg-secondary">${metadata.message_kind}</span></div>`;
+      if (metadata.metadata?.source_role) html += `<div class="mb-1"><span class="text-muted">Original Role:</span> <span class="ms-2 badge bg-warning text-dark">${metadata.metadata.source_role}</span></div>`;
       if (metadata.timestamp) html += `<div class="mb-1"><span class="text-muted">Timestamp:</span> <code class="ms-2">${new Date(metadata.timestamp).toLocaleString()}</code></div>`;
       html += '</div></div>';
+
+      if (replyContext) {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-reply me-2"></i>Reply Context</div>';
+        html += '<div class="ms-3 small">';
+        if (replyContext.message_id) html += `<div class="mb-1"><span class="text-muted">Reply Message ID:</span> <code class="ms-2">${escapeHtml(replyContext.message_id)}</code></div>`;
+        if (replyContext.sender_display_name) html += `<div class="mb-1"><span class="text-muted">Replying To:</span> <span class="ms-2">${escapeHtml(replyContext.sender_display_name)}</span></div>`;
+        if (replyContext.content_preview) html += `<div class="mb-1"><span class="text-muted">Preview:</span><div class="mt-1 p-2 bg-light rounded small">${escapeHtml(replyContext.content_preview)}</div></div>`;
+        html += '</div></div>';
+      }
+
+      if (mentionList.length > 0) {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-at me-2"></i>Tagged Participants</div>';
+        html += '<div class="ms-3 small d-flex flex-wrap gap-2">';
+        mentionList.forEach(participant => {
+          html += `<span class="badge bg-success-subtle text-success-emphasis">@${escapeHtml(participant.display_name || participant.email || participant.user_id || 'Participant')}</span>`;
+        });
+        html += '</div></div>';
+      }
+
+      if (collaborationInfo) {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-people me-2"></i>Shared Conversation</div>';
+        html += '<div class="ms-3 small">';
+        if (collaborationInfo.conversation_title) html += `<div class="mb-1"><span class="text-muted">Conversation:</span> <span class="ms-2">${escapeHtml(collaborationInfo.conversation_title)}</span></div>`;
+        if (collaborationInfo.chat_type) html += `<div class="mb-1"><span class="text-muted">Collaboration Type:</span> <span class="ms-2 badge bg-success">${escapeHtml(collaborationInfo.chat_type)}</span></div>`;
+        if (collaborationInfo.participant_count !== undefined) html += `<div class="mb-1"><span class="text-muted">Participants:</span> <span class="ms-2 badge bg-secondary">${escapeHtml(collaborationInfo.participant_count)}</span></div>`;
+        html += '</div></div>';
+      }
       
       // Image/File specific info
       if (metadata.role === 'image') {
@@ -2595,10 +4841,21 @@ function loadMessageMetadataForDisplay(messageId, container) {
           if (metadata.augmented !== undefined) html += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2 badge ${metadata.augmented ? 'bg-success' : 'bg-secondary'}">${metadata.augmented ? 'Yes' : 'No'}</span></div>`;
           if (metadata.metadata?.reasoning_effort) html += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${metadata.metadata.reasoning_effort}</code></div>`;
           if (metadata.hybrid_citations && metadata.hybrid_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Document Citations:</span> <span class="ms-2 badge bg-info">${metadata.hybrid_citations.length}</span></div>`;
+          if (metadata.web_search_citations && metadata.web_search_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Web Citations:</span> <span class="ms-2 badge bg-info">${metadata.web_search_citations.length}</span></div>`;
           if (metadata.agent_citations && metadata.agent_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${metadata.agent_citations.length}</span></div>`;
         }
         
         html += '</div></div>';
+      }
+
+      if (metadata.role === 'assistant') {
+        html += createCitationDetailsSectionHtml(
+          Array.isArray(metadata.hybrid_citations) ? metadata.hybrid_citations : [],
+          Array.isArray(metadata.web_search_citations) ? metadata.web_search_citations : [],
+          Array.isArray(metadata.agent_citations) ? metadata.agent_citations : [],
+          metadata.id || messageId,
+          metadata.conversation_id || ''
+        );
       }
 
       if (metadata.role === 'assistant' && historyContext) {
@@ -3144,16 +5401,23 @@ function unmaskMessage(messageDiv, messageId, maskBtn) {
  */
 function handleDeleteButtonClick(messageDiv, messageId, messageType) {
   console.log(`Delete button clicked for ${messageType} message: ${messageId}`);
+
+  const conversationId = window.chatConversations?.getCurrentConversationId?.() || window.currentConversationId || '';
+  const isCollaborativeConversation = Boolean(
+    conversationId && window.chatCollaboration?.isCollaborationConversation?.(conversationId)
+  );
   
   // Store message info for deletion confirmation
   window.pendingMessageDeletion = {
     messageDiv,
     messageId,
-    messageType
+    messageType,
+    conversationId,
+    isCollaborativeConversation,
   };
   
   // Show appropriate confirmation modal
-  if (messageType === 'user') {
+  if (messageType === 'user' && !isCollaborativeConversation) {
     // User message - offer thread deletion option
     const modal = document.getElementById('delete-message-modal');
     if (modal) {
@@ -3167,7 +5431,9 @@ function handleDeleteButtonClick(messageDiv, messageId, messageType) {
       // Update modal text based on message type
       const modalBody = modal.querySelector('.modal-body p');
       if (modalBody) {
-        if (messageType === 'assistant') {
+        if (isCollaborativeConversation && messageType === 'user') {
+          modalBody.textContent = 'Are you sure you want to delete this shared message? This action cannot be undone.';
+        } else if (messageType === 'assistant') {
           modalBody.textContent = 'Are you sure you want to delete this AI response? This action cannot be undone.';
         } else if (messageType === 'image') {
           modalBody.textContent = 'Are you sure you want to delete this image? This action cannot be undone.';
@@ -3191,20 +5457,31 @@ function executeMessageDeletion(deleteThread = false) {
     return;
   }
   
-  const { messageDiv, messageId, messageType } = pendingDeletion;
+  const {
+    messageDiv,
+    messageId,
+    messageType,
+    conversationId,
+    isCollaborativeConversation,
+  } = pendingDeletion;
+  const shouldDeleteThread = Boolean(deleteThread && !isCollaborativeConversation);
+  const deleteEndpoint = isCollaborativeConversation && conversationId
+    ? `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`
+    : `/api/message/${encodeURIComponent(messageId)}`;
   
-  console.log(`Executing deletion for message ${messageId}, deleteThread: ${deleteThread}`);
+  console.log(`Executing deletion for message ${messageId}, deleteThread: ${shouldDeleteThread}`);
   console.log(`Message div:`, messageDiv);
   console.log(`Message ID from DOM:`, messageDiv ? messageDiv.getAttribute('data-message-id') : 'N/A');
+  console.log(`Delete endpoint:`, deleteEndpoint);
   
   // Call delete API
-  fetch(`/api/message/${messageId}`, {
+  fetch(deleteEndpoint, {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      delete_thread: deleteThread
+      delete_thread: shouldDeleteThread
     })
   })
   .then(response => {

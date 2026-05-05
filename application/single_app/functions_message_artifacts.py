@@ -7,6 +7,8 @@ import numbers
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
+from functions_azure_maps import refresh_azure_maps_citation_payload
+
 
 ASSISTANT_ARTIFACT_ROLE = 'assistant_artifact'
 ASSISTANT_ARTIFACT_CHUNK_ROLE = 'assistant_artifact_chunk'
@@ -81,6 +83,298 @@ def make_json_serializable(value: Any) -> Any:
     if isinstance(value, (list, tuple, set)):
         return [make_json_serializable(item) for item in value]
     return str(value)
+
+
+def build_agent_citation_tool_label(
+    plugin_name: str,
+    function_name: str,
+    function_arguments: Any = None,
+    function_result: Any = None,
+) -> str:
+    """Return a user-facing label for agent tool citations."""
+    normalized_plugin_name = str(plugin_name or '').strip()
+    normalized_function_name = str(function_name or '').strip()
+    fallback_label = '.'.join(part for part in [normalized_plugin_name, normalized_function_name] if part)
+    if not fallback_label:
+        return 'Tool invocation'
+
+    parsed_arguments = _parse_json_if_possible(function_arguments)
+    parsed_result = _parse_json_if_possible(function_result)
+
+    if normalized_plugin_name == 'AzureMapsOpenLayersPlugin' and normalized_function_name == 'create_map_visualization':
+        title = _first_non_empty(
+            _get_mapping_value(parsed_arguments, 'title'),
+            _get_mapping_value(_get_mapping_value(parsed_result, 'map_payload'), 'title'),
+        )
+        return _format_tool_label('Map', title, fallback_label=fallback_label)
+
+    image_gallery_payload = _get_image_gallery_payload(parsed_result)
+    if image_gallery_payload:
+        title = _first_non_empty(
+            _get_mapping_value(image_gallery_payload, 'title'),
+            _get_mapping_value(parsed_arguments, 'title'),
+            _get_mapping_value(parsed_result, 'title'),
+        )
+        return _format_tool_label('Image gallery', title, fallback_label=fallback_label)
+
+    video_gallery_payload = _get_video_gallery_payload(parsed_result)
+    if video_gallery_payload:
+        title = _first_non_empty(
+            _get_mapping_value(video_gallery_payload, 'title'),
+            _get_mapping_value(parsed_arguments, 'title'),
+            _get_mapping_value(parsed_result, 'title'),
+        )
+        return _format_tool_label('Video gallery', title, fallback_label=fallback_label)
+
+    if _has_image_result(parsed_result):
+        title = _first_non_empty(
+            _get_mapping_value(parsed_result, 'title'),
+            _get_mapping_value(parsed_arguments, 'title'),
+            _get_mapping_value(parsed_result, 'summary'),
+        )
+        return _format_tool_label('Image', title, fallback_label=fallback_label)
+
+    if _has_video_result(parsed_result):
+        title = _first_non_empty(
+            _get_mapping_value(parsed_result, 'title'),
+            _get_mapping_value(parsed_arguments, 'title'),
+            _get_mapping_value(parsed_result, 'summary'),
+        )
+        return _format_tool_label('Video', title, fallback_label=fallback_label)
+
+    if normalized_plugin_name == 'SimpleChatPlugin':
+        simplechat_label = _build_simplechat_tool_label(
+            normalized_function_name,
+            parsed_arguments,
+            parsed_result,
+        )
+        if simplechat_label:
+            return simplechat_label
+
+    if normalized_plugin_name == 'MSGraphPlugin':
+        msgraph_label = _build_msgraph_tool_label(
+            normalized_function_name,
+            parsed_arguments,
+            parsed_result,
+        )
+        if msgraph_label:
+            return msgraph_label
+
+    return fallback_label
+
+
+def _build_simplechat_tool_label(function_name: str, arguments: Any, result: Any) -> str:
+    conversation_payload = _get_mapping_value(result, 'conversation')
+    group_payload = _get_mapping_value(result, 'group')
+    detail = ''
+
+    if function_name == 'create_group':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'name'),
+            _get_mapping_value(group_payload, 'name'),
+        )
+        return _format_tool_label('Group workspace', detail, fallback_label='SimpleChatPlugin.create_group')
+
+    if function_name == 'add_user_to_group':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'display_name'),
+            _get_mapping_value(arguments, 'email'),
+            _get_mapping_value(arguments, 'user_identifier'),
+        )
+        return _format_tool_label('Group member', detail, fallback_label='SimpleChatPlugin.add_user_to_group')
+
+    if function_name == 'create_group_conversation':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'title'),
+            _get_mapping_value(conversation_payload, 'title'),
+        )
+        return _format_tool_label('Group conversation', detail, fallback_label='SimpleChatPlugin.create_group_conversation')
+
+    if function_name == 'create_personal_conversation':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'title'),
+            _get_mapping_value(conversation_payload, 'title'),
+        )
+        return _format_tool_label('Personal conversation', detail, fallback_label='SimpleChatPlugin.create_personal_conversation')
+
+    if function_name == 'create_personal_collaboration_conversation':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'title'),
+            _get_mapping_value(conversation_payload, 'title'),
+        )
+        return _format_tool_label('Personal collaboration', detail, fallback_label='SimpleChatPlugin.create_personal_collaboration_conversation')
+
+    if function_name == 'invite_group_conversation_members':
+        detail = _first_non_empty(_get_mapping_value(conversation_payload, 'title'))
+        return _format_tool_label('Conversation participants', detail, fallback_label='SimpleChatPlugin.invite_group_conversation_members')
+
+    if function_name == 'upload_markdown_document':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'file_name'),
+            _get_mapping_value(result, 'file_name'),
+            _get_mapping_value(_get_mapping_value(result, 'document'), 'file_name'),
+        )
+        return _format_tool_label('Markdown file', detail, fallback_label='SimpleChatPlugin.upload_markdown_document')
+
+    if function_name == 'create_personal_workflow':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'name'),
+            _get_mapping_value(_get_mapping_value(result, 'workflow'), 'name'),
+        )
+        return _format_tool_label('Workflow', detail, fallback_label='SimpleChatPlugin.create_personal_workflow')
+
+    if function_name == 'add_conversation_message':
+        detail = _first_non_empty(_get_mapping_value(conversation_payload, 'title'))
+        return _format_tool_label('Conversation message', detail, fallback_label='SimpleChatPlugin.add_conversation_message')
+
+    if function_name == 'make_group_inactive':
+        detail = _first_non_empty(_get_mapping_value(group_payload, 'name'))
+        return _format_tool_label('Group status update', detail, fallback_label='SimpleChatPlugin.make_group_inactive')
+
+    return ''
+
+
+def _build_msgraph_tool_label(function_name: str, arguments: Any, result: Any) -> str:
+    if function_name == 'create_calendar_invite':
+        teams_meeting_requested = bool(
+            _get_mapping_value(arguments, 'make_teams_meeting')
+            or _get_mapping_value(result, 'teams_meeting_requested')
+            or _get_mapping_value(result, 'join_url')
+            or _get_mapping_value(_get_mapping_value(result, 'onlineMeeting'), 'joinUrl')
+        )
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'subject'),
+            _get_mapping_value(result, 'subject'),
+        )
+        base_label = 'Teams meeting' if teams_meeting_requested else 'Calendar invite'
+        return _format_tool_label(base_label, detail, fallback_label='MSGraphPlugin.create_calendar_invite')
+
+    if function_name == 'get_my_messages':
+        return 'Mail messages'
+
+    if function_name == 'mark_message_as_read':
+        return 'Mail status update'
+
+    if function_name in {'search_users', 'get_user_by_email'}:
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'query'),
+            _get_mapping_value(arguments, 'email'),
+        )
+        return _format_tool_label('User lookup', detail, fallback_label=f'MSGraphPlugin.{function_name}')
+
+    return ''
+
+
+def _format_tool_label(base_label: str, detail: str = '', fallback_label: str = '') -> str:
+    normalized_base = str(base_label or '').strip()
+    normalized_detail = str(detail or '').strip()
+    if normalized_base and normalized_detail:
+        return f'{normalized_base}: {normalized_detail}'
+    if normalized_base:
+        return normalized_base
+    return str(fallback_label or 'Tool invocation').strip() or 'Tool invocation'
+
+
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        normalized = str(value or '').strip()
+        if normalized:
+            return normalized
+    return ''
+
+
+def _get_mapping_value(candidate: Any, key: str) -> Any:
+    if isinstance(candidate, dict):
+        return candidate.get(key)
+    return None
+
+
+def _get_image_gallery_payload(candidate: Any) -> Any:
+    if not isinstance(candidate, dict):
+        return None
+
+    image_gallery_payload = _get_mapping_value(candidate, 'image_gallery')
+    if isinstance(image_gallery_payload, dict):
+        items = _get_mapping_value(image_gallery_payload, 'items')
+        if isinstance(items, list) and items:
+            return image_gallery_payload
+
+    candidate_items = _get_mapping_value(candidate, 'items')
+    if isinstance(candidate_items, list) and candidate_items:
+        return candidate
+
+    candidate_images = _get_mapping_value(candidate, 'images')
+    if isinstance(candidate_images, list) and candidate_images:
+        return candidate
+
+    candidate_image_urls = _get_mapping_value(candidate, 'image_urls')
+    if isinstance(candidate_image_urls, list) and candidate_image_urls:
+        return candidate
+
+    return None
+
+
+def _get_video_gallery_payload(candidate: Any) -> Any:
+    if not isinstance(candidate, dict):
+        return None
+
+    video_gallery_payload = _get_mapping_value(candidate, 'video_gallery')
+    if isinstance(video_gallery_payload, dict):
+        items = _get_mapping_value(video_gallery_payload, 'items')
+        if isinstance(items, list) and items:
+            return video_gallery_payload
+
+    candidate_items = _get_mapping_value(candidate, 'items')
+    if isinstance(candidate_items, list) and candidate_items:
+        return candidate
+
+    candidate_videos = _get_mapping_value(candidate, 'videos')
+    if isinstance(candidate_videos, list) and candidate_videos:
+        return candidate
+
+    candidate_video_urls = _get_mapping_value(candidate, 'video_urls')
+    if isinstance(candidate_video_urls, list) and candidate_video_urls:
+        return candidate
+
+    return None
+
+
+def _has_image_result(candidate: Any) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+
+    image_url = _get_mapping_value(candidate, 'image_url')
+    if isinstance(image_url, str) and image_url.strip():
+        return True
+
+    if isinstance(image_url, dict) and str(image_url.get('url') or '').strip():
+        return True
+
+    mime_type = str(_get_mapping_value(candidate, 'mime') or '').strip().lower()
+    if mime_type.startswith('image/'):
+        return True
+
+    result_type = str(_get_mapping_value(candidate, 'type') or '').strip().lower()
+    return result_type == 'image_url'
+
+
+def _has_video_result(candidate: Any) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+
+    video_url = _get_mapping_value(candidate, 'video_url')
+    if isinstance(video_url, str) and video_url.strip():
+        return True
+
+    if isinstance(video_url, dict) and str(video_url.get('url') or '').strip():
+        return True
+
+    mime_type = str(_get_mapping_value(candidate, 'mime') or '').strip().lower()
+    if mime_type.startswith('video/'):
+        return True
+
+    result_type = str(_get_mapping_value(candidate, 'type') or '').strip().lower()
+    return result_type == 'video_url'
 
 
 def build_agent_citation_artifact_documents(
@@ -187,7 +481,7 @@ def hydrate_agent_citations_from_artifacts(
             artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
             raw_citation = artifact_payload.get('citation') if isinstance(artifact_payload, dict) else None
             if isinstance(raw_citation, dict):
-                merged_citation = deepcopy(raw_citation)
+                merged_citation = refresh_azure_maps_citation_payload(deepcopy(raw_citation))
                 merged_citation.setdefault('artifact_id', artifact_id)
                 merged_citation.setdefault('raw_payload_externalized', True)
                 hydrated_citations.append(merged_citation)

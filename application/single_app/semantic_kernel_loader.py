@@ -22,6 +22,7 @@ from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
+from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled
 from foundry_agent_runtime import (
@@ -54,9 +55,29 @@ from functions_group import assert_group_role, get_group_model_endpoints, requir
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
+from functions_chart_operations import (
+    CHART_PLUGIN_TYPE,
+    get_enabled_chart_type_keys,
+    resolve_chart_action_capabilities,
+)
+from functions_blob_storage_operations import (
+    BLOB_STORAGE_PLUGIN_TYPE,
+    get_blob_storage_enabled_function_names,
+    resolve_blob_storage_action_capabilities,
+)
+from functions_msgraph_operations import (
+    MSGRAPH_PLUGIN_TYPE,
+    get_msgraph_enabled_function_names,
+    resolve_msgraph_action_capabilities,
+)
+from functions_simplechat_operations import (
+    SIMPLECHAT_PLUGIN_TYPE,
+    get_simplechat_enabled_function_names,
+    resolve_simplechat_action_capabilities,
+)
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
-from functions_agent_scope import find_agent_by_scope
+from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
 import app_settings_cache
 
 # Agent and Azure OpenAI chat service imports
@@ -801,6 +822,13 @@ def load_fact_memory_plugin(kernel: Kernel):
         description="Provides functions for managing persistent facts."
     )
 
+def load_document_search_plugin(kernel: Kernel):
+    kernel.add_plugin(
+        DocumentSearchPlugin(),
+        plugin_name="document_search",
+        description="Provides hybrid document search, exhaustive chunk retrieval, and hierarchical document summarization."
+    )
+
 def load_embedding_model_plugin(kernel: Kernel, settings):
     embedding_endpoint = settings.get('azure_openai_embedding_endpoint')
     embedding_key = settings.get('azure_openai_embedding_key')
@@ -832,6 +860,12 @@ def load_core_plugins_only(kernel: Kernel, settings):
     if settings.get('enable_fact_memory_plugin', True):
         load_fact_memory_plugin(kernel)
         log_event("[SK Loader] Loaded Fact Memory plugin.", level=logging.INFO)
+
+    try:
+        load_document_search_plugin(kernel)
+        log_event("[SK Loader] Loaded Document Search plugin.", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Failed to load Document Search plugin: {e}", level=logging.WARNING)
 
     if settings.get('enable_math_plugin', True):
         load_math_plugin(kernel)
@@ -911,7 +945,7 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     )
     debug_print(f"[SK Loader] Semantic Kernel Agent and Plugins loading completed.")
 
-def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None):
+def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None, agent_other_settings=None):
     """
     Load specific plugins by name for an agent with enhanced logging.
     
@@ -966,6 +1000,12 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             p for p in all_plugin_manifests 
             if p.get('name') in plugin_names or p.get('id') in plugin_names
         ]
+
+        plugin_manifests = _apply_agent_plugin_runtime_overlays(
+            plugin_manifests,
+            agent_other_settings=agent_other_settings,
+            group_id=group_id,
+        )
 
         debug_print(f"[SK Loader] Filtered to {len(plugin_manifests)} plugin manifests after matching names/IDs")
         debug_print(f"[SK Loader] Plugin manifests to load: {plugin_manifests}")
@@ -1052,7 +1092,12 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             else:
                 all_plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
 
-            plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
+            plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names or p.get('id') in plugin_names]
+            plugin_manifests = _apply_agent_plugin_runtime_overlays(
+                plugin_manifests,
+                agent_other_settings=agent_other_settings,
+                group_id=group_id,
+            )
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
         except Exception as fallback_error:
             log_event(
@@ -1062,6 +1107,88 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 exceptionTraceback=True
             )
             print(f"[SK Loader][Error] Fallback plugin loading also failed: {fallback_error}")
+
+
+def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=None, group_id=None):
+    action_capabilities = {}
+    if isinstance(agent_other_settings, dict):
+        raw_action_capabilities = agent_other_settings.get('action_capabilities')
+        if isinstance(raw_action_capabilities, dict):
+            action_capabilities = raw_action_capabilities
+
+    overlaid_manifests = []
+    for manifest in plugin_manifests or []:
+        manifest_copy = dict(manifest)
+        if group_id and not manifest_copy.get('group_id'):
+            manifest_copy['default_group_id'] = group_id
+
+        if manifest_copy.get('type') == SIMPLECHAT_PLUGIN_TYPE:
+            action_defaults = manifest_copy.get('simplechat_capabilities')
+            if action_defaults is None:
+                additional_fields = manifest_copy.get('additionalFields')
+                if isinstance(additional_fields, dict):
+                    action_defaults = additional_fields.get('simplechat_capabilities')
+
+            capabilities = resolve_simplechat_action_capabilities(
+                action_capabilities,
+                action_defaults=action_defaults,
+                action_id=manifest_copy.get('id'),
+                action_name=manifest_copy.get('name'),
+            )
+            manifest_copy['simplechat_capabilities'] = capabilities
+            manifest_copy['enabled_functions'] = get_simplechat_enabled_function_names(capabilities)
+
+        if manifest_copy.get('type') == CHART_PLUGIN_TYPE:
+            action_defaults = manifest_copy.get('chart_capabilities')
+            if action_defaults is None:
+                additional_fields = manifest_copy.get('additionalFields')
+                if isinstance(additional_fields, dict):
+                    action_defaults = additional_fields.get('chart_capabilities')
+
+            capabilities = resolve_chart_action_capabilities(
+                action_capability_map=action_capabilities,
+                default_capabilities=action_defaults,
+                action_id=manifest_copy.get('id'),
+                action_name=manifest_copy.get('name'),
+            )
+            manifest_copy['chart_capabilities'] = capabilities
+            manifest_copy['enabled_chart_types'] = get_enabled_chart_type_keys(capabilities)
+
+        if manifest_copy.get('type') == MSGRAPH_PLUGIN_TYPE:
+            action_defaults = manifest_copy.get('msgraph_capabilities')
+            if action_defaults is None:
+                additional_fields = manifest_copy.get('additionalFields')
+                if isinstance(additional_fields, dict):
+                    action_defaults = additional_fields.get('msgraph_capabilities')
+
+            capabilities = resolve_msgraph_action_capabilities(
+                action_capabilities,
+                action_defaults=action_defaults,
+                action_id=manifest_copy.get('id'),
+                action_name=manifest_copy.get('name'),
+            )
+            manifest_copy['msgraph_capabilities'] = capabilities
+            manifest_copy['enabled_functions'] = get_msgraph_enabled_function_names(capabilities)
+
+        if manifest_copy.get('type') == BLOB_STORAGE_PLUGIN_TYPE:
+            action_defaults = manifest_copy.get('blob_storage_capabilities')
+            if action_defaults is None:
+                additional_fields = manifest_copy.get('additionalFields')
+                if isinstance(additional_fields, dict):
+                    action_defaults = additional_fields.get('blob_storage_capabilities')
+
+            capabilities = resolve_blob_storage_action_capabilities(
+                action_capabilities,
+                action_defaults=action_defaults,
+                action_id=manifest_copy.get('id'),
+                action_name=manifest_copy.get('name'),
+            )
+            manifest_copy['blob_storage_capabilities'] = capabilities
+            manifest_copy['enabled_functions'] = get_blob_storage_enabled_function_names(capabilities)
+
+        overlaid_manifests.append(manifest_copy)
+
+    return overlaid_manifests
 
 
 def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="global"):
@@ -1326,6 +1453,52 @@ def _extract_sql_schema_for_instructions(kernel) -> str:
     return "\n".join(schema_parts)
 
 
+def _extract_cosmos_context_for_instructions(kernel) -> str:
+    """
+    Check if any Cosmos Query plugins are loaded in the kernel and extract
+    their configured container context for agent instructions.
+    """
+    from semantic_kernel_plugins.cosmos_query_plugin import CosmosQueryPlugin
+
+    cosmos_parts = []
+
+    try:
+        for plugin_name, plugin in kernel.plugins.items():
+            plugin_obj = None
+
+            if isinstance(plugin, CosmosQueryPlugin):
+                plugin_obj = plugin
+            elif hasattr(plugin, '_plugin_instance') and isinstance(plugin._plugin_instance, CosmosQueryPlugin):
+                plugin_obj = plugin._plugin_instance
+            else:
+                for _, func in plugin.functions.items():
+                    if hasattr(func, 'method') and hasattr(func.method, '__self__'):
+                        if isinstance(func.method.__self__, CosmosQueryPlugin):
+                            plugin_obj = func.method.__self__
+                            break
+
+            if plugin_obj is not None:
+                try:
+                    cosmos_parts.append(plugin_obj.build_instruction_context())
+                    print(f"[SK Loader] Extracted Cosmos context for plugin: {plugin_name}")
+                except Exception as e:
+                    print(f"[SK Loader] Warning: Failed to build Cosmos context from {plugin_name}: {e}")
+                    log_event(
+                        f"[SK Loader] Failed to build Cosmos context for injection: {e}",
+                        extra={"plugin_name": plugin_name, "error": str(e)},
+                        level=logging.WARNING,
+                    )
+    except Exception as e:
+        print(f"[SK Loader] Warning: Error iterating kernel plugins for Cosmos context: {e}")
+        log_event(
+            f"[SK Loader] Error iterating kernel plugins for Cosmos context: {e}",
+            extra={"error": str(e)},
+            level=logging.WARNING,
+        )
+
+    return "\n\n".join(cosmos_parts)
+
+
 def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global", group_scope_id=None):
     """
     DRY helper to load a single agent (default agent) for the kernel.
@@ -1524,6 +1697,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 plugin_mode,
                 user_id=resolved_user_id,
                 group_id=group_id,
+                agent_other_settings=agent_config.get("other_settings"),
             )
 
             # Auto-inject SQL database schema into agent instructions if SQL plugins are loaded
@@ -1547,6 +1721,26 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                          extra={"agent_name": agent_config["name"], "error": str(e)},
                          level=logging.WARNING)
 
+            try:
+                cosmos_context_summary = _extract_cosmos_context_for_instructions(kernel)
+                if cosmos_context_summary:
+                    agent_config["instructions"] = (
+                        agent_config.get("instructions", "") +
+                        "\n\n## Available Cosmos DB Containers\n"
+                        "The following Azure Cosmos DB for NoSQL containers are available through the Cosmos Query plugin. "
+                        "Use the configured container hints below when writing read-only SELECT queries, and pass the partition_key argument when the partition value is known.\n\n" +
+                        cosmos_context_summary +
+                        "\n\nWhen a user asks about data in one of these containers, construct a parameterized read-only Cosmos DB SQL query that matches the configured fields and partition key guidance."
+                    )
+                    print(f"[SK Loader] Injected Cosmos context into agent instructions for {agent_config['name']}")
+            except Exception as e:
+                print(f"[SK Loader] Warning: Failed to inject Cosmos context into instructions: {e}")
+                log_event(
+                    f"[SK Loader] Failed to inject Cosmos context into agent instructions: {e}",
+                    extra={"agent_name": agent_config["name"], "error": str(e)},
+                    level=logging.WARNING,
+                )
+
         try:
             kwargs = {
                 "name": agent_config["name"],
@@ -1560,7 +1754,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "deployment_name": agent_config["deployment"],
                 "azure_endpoint": agent_config["endpoint"],
                 "api_version": agent_config["api_version"],
-                "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=10)
+                "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
             }
             # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
@@ -1761,6 +1955,12 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             log_event("[SK Loader] Loaded Fact Memory Plugin.", level=logging.INFO)
         except Exception as e:
             log_event(f"[SK Loader] Failed to load Fact Memory Plugin: {e}", level=logging.WARNING)
+
+    try:
+        load_document_search_plugin(kernel)
+        log_event("[SK Loader] Loaded Document Search Plugin.", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Failed to load Document Search Plugin: {e}", level=logging.WARNING)
 
     # Register Tabular Processing Plugin if enabled (requires enhanced citations)
     if is_tabular_processing_enabled(settings):
@@ -1967,24 +2167,34 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
 
     # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
     selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}
+    selected_agent_is_global = selected_agent_data.get('is_global', False)
     selected_agent_is_group = selected_agent_data.get('is_group', False)
     selected_agent_group_id = selected_agent_data.get('group_id')
     conversation_group_id = getattr(g, "conversation_group_id", None)
     allow_user_agents = settings.get('allow_user_agents', False)
     allow_group_agents = settings.get('allow_group_agents', False)
 
-    if selected_agent_is_group and not allow_group_agents:
-        log_event(
-            "[SK Loader] Group agents are disabled; skipping group agent load.",
-            level=logging.WARNING
-        )
-        load_core_plugins_only(kernel, settings)
-        return kernel, None
-    if not selected_agent_is_group and not allow_user_agents:
-        log_event(
-            "[SK Loader] User agents are disabled; skipping personal agent load.",
-            level=logging.WARNING
-        )
+    if not is_selected_agent_scope_enabled(settings, selected_agent_data):
+        if selected_agent_is_group:
+            log_event(
+                "[SK Loader] Group agents are disabled; skipping group agent load.",
+                level=logging.WARNING,
+                extra={
+                    'agent_name': selected_agent_data.get('name'),
+                    'allow_group_agents': allow_group_agents,
+                    'is_global': selected_agent_is_global,
+                }
+            )
+        else:
+            log_event(
+                "[SK Loader] User agents are disabled; skipping personal agent load.",
+                level=logging.WARNING,
+                extra={
+                    'agent_name': selected_agent_data.get('name'),
+                    'allow_user_agents': allow_user_agents,
+                    'is_global': selected_agent_is_global,
+                }
+            )
         load_core_plugins_only(kernel, settings)
         return kernel, None
 
@@ -2423,7 +2633,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         "deployment_name": agent_config["deployment"],
                         "azure_endpoint": agent_config["endpoint"],
                         "api_version": agent_config["api_version"],
-                        "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=10)
+                        "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
                     }
                     if agent_config.get("actions_to_load"):
                         kwargs["plugins"] = agent_config["actions_to_load"]
@@ -2762,7 +2972,7 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
     if hasattr(prompt_exec_settings, 'function_choice_behavior'):
         if getattr(prompt_exec_settings, 'function_choice_behavior', None) is None:
             try:
-                prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=10)
+                prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
             except Exception:
                 # pass this to prevent additional future agent types from potentially failing
                 pass

@@ -5805,17 +5805,27 @@ def register_route_backend_control_center(app):
                     # Search in various fields
                     usage = log.get('usage', {})
                     workspace_context = log.get('workspace_context', {})
+                    additional_context = log.get('additional_context', {})
                     searchable_text = ' '.join([
                         str(log.get('activity_type', '')),
                         str(log.get('user_id', '')),
                         str(log.get('login_method', '')),
+                        str(log.get('conversation_id', '')),
+                        str(log.get('message_type', '')),
+                        str(log.get('chat_context', '')),
                         str(log.get('conversation', {}).get('title', '')),
                         str(log.get('document', {}).get('file_name', '')),
                         str(log.get('token_type', '')),
                         str(log.get('workspace_type', '')),
+                        str(log.get('group_id', '')),
+                        str(log.get('public_workspace_id', '')),
                         str(usage.get('model', '')),
                         str(workspace_context.get('group_id', '')),
-                        str(workspace_context.get('public_workspace_id', ''))
+                        str(workspace_context.get('public_workspace_id', '')),
+                        str(additional_context.get('conversation_source', '')),
+                        str(additional_context.get('document_action_type', '')),
+                        str(additional_context.get('conversation_kind', '')),
+                        str(additional_context.get('visibility_mode', '')),
                     ]).lower()
                     
                     if search_term in searchable_text:

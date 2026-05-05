@@ -1,12 +1,39 @@
 # route_frontend_conversations.py
 
+import logging
+import re
+
+import requests
+from flask import Response, jsonify, redirect, render_template, request
+
 from config import *
+from functions_appinsights import log_event
+from functions_azure_maps import (
+    AZURE_MAPS_DEFAULT_ENDPOINT,
+    AZURE_MAPS_DEFAULT_LANGUAGE,
+    AZURE_MAPS_DEFAULT_TILESET_ID,
+    AZURE_MAPS_DEFAULT_VIEW,
+    AZURE_MAPS_TILE_API_VERSION,
+    decode_tile_proxy_token,
+    refresh_azure_maps_citation_payload,
+    refresh_azure_maps_citation_payloads,
+    refresh_azure_maps_message_content,
+)
 from functions_authentication import *
 from functions_debug import debug_print
 from functions_chat import sort_messages_by_thread
+from functions_collaboration import (
+    assert_user_can_view_collaboration_conversation,
+    build_collaboration_message_metadata_payload,
+    get_collaboration_conversation,
+    get_collaboration_message,
+    list_collaboration_messages,
+)
+from functions_image_messages import hydrate_image_messages
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
+    hydrate_agent_citations_from_artifacts,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -27,6 +54,31 @@ def _authorize_frontend_personal_conversation_access(user_id, conversation_id):
     return conversation_item
 
 def register_route_frontend_conversations(app):
+    def _disable_response_caching(response):
+        response.headers['Cache-Control'] = 'no-store, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
+
+    def _refresh_azure_maps_message_payloads(messages):
+        refreshed_messages = []
+        for message in messages or []:
+            if not isinstance(message, dict):
+                refreshed_messages.append(message)
+                continue
+
+            refreshed_message = dict(message)
+            refreshed_message['agent_citations'] = refresh_azure_maps_citation_payloads(
+                refreshed_message.get('agent_citations')
+            )
+            if refreshed_message.get('role') == 'assistant':
+                refreshed_message['content'] = refresh_azure_maps_message_content(
+                    refreshed_message.get('content')
+                )
+            refreshed_messages.append(refreshed_message)
+
+        return refreshed_messages
+
     @app.route('/conversations')
     @swagger_route(security=get_auth_security())
     @login_required
@@ -72,7 +124,10 @@ def register_route_frontend_conversations(app):
             query=message_query,
             partition_key=conversation_id
         ))
+        artifact_payload_map = build_message_artifact_payload_map(messages)
         messages = filter_assistant_artifact_items(messages)
+        messages = hydrate_agent_citations_from_artifacts(messages, artifact_payload_map)
+        messages = _refresh_azure_maps_message_payloads(messages)
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
     @app.route('/conversation/<conversation_id>/messages', methods=['GET'])
@@ -100,7 +155,10 @@ def register_route_frontend_conversations(app):
             query=msg_query,
             partition_key=conversation_id
         ))
+        artifact_payload_map = build_message_artifact_payload_map(all_items)
         all_items = filter_assistant_artifact_items(all_items)
+        all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
+        all_items = _refresh_azure_maps_message_payloads(all_items)
 
         debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items (before filtering)")
         
@@ -143,75 +201,18 @@ def register_route_frontend_conversations(app):
             attempt = thread_info.get('thread_attempt', 'N/A')
             debug_print(f"  {i+1}. {item.get('id')}: thread_id={thread_id}, prev={prev_thread_id}, attempt={attempt}, timestamp={timestamp}")
 
-        # Process messages and reassemble chunked images
-        messages = []
-        chunked_images = {}  # Store image chunks by parent_message_id
-        
-        for item in all_items:
-            if item.get('role') == 'image_chunk':
-                # This is a chunk, store it for reassembly
-                parent_id = item.get('parent_message_id')
-                if parent_id not in chunked_images:
-                    chunked_images[parent_id] = {}
-                chunk_index = item.get('metadata', {}).get('chunk_index', 0)
-                chunked_images[parent_id][chunk_index] = item.get('content', '')
-                debug_print(f"Frontend endpoint - Stored chunk {chunk_index} for parent {parent_id}")
-            else:
-                # Regular message or main image document
-                if item.get('role') == 'image' and item.get('metadata', {}).get('is_chunked'):
-                    # This is a chunked image main document
-                    messages.append(item)
-                else:
-                    # Regular message
-                    messages.append(item)
-
-        # Reassemble chunked images
-        for message in messages:
-            if (message.get('role') == 'image' and 
-                message.get('metadata', {}).get('is_chunked')):
-                
-                image_id = message.get('id')
-                total_chunks = message.get('metadata', {}).get('total_chunks', 1)
-                
-                debug_print(f"Frontend endpoint - Reassembling chunked image {image_id} with {total_chunks} chunks")
-                debug_print(f"Frontend endpoint - Available chunks: {list(chunked_images.get(image_id, {}).keys())}")
-                
-                # Start with the content from the main message (chunk 0)
-                complete_content = message.get('content', '')
-                debug_print(f"Frontend endpoint - Main message content length: {len(complete_content)} bytes")
-                
-                # Add remaining chunks in order (chunks 1, 2, 3, etc.)
-                if image_id in chunked_images:
-                    chunks = chunked_images[image_id]
-                    for chunk_index in range(1, total_chunks):
-                        if chunk_index in chunks:
-                            chunk_content = chunks[chunk_index]
-                            complete_content += chunk_content
-                            debug_print(f"Frontend endpoint - Added chunk {chunk_index}, length: {len(chunk_content)} bytes")
-                        else:
-                            print(f"WARNING: Frontend endpoint - Missing chunk {chunk_index} for image {image_id}")
-                else:
-                    print(f"WARNING: Frontend endpoint - No chunks found for image {image_id}")
-                
-                debug_print(f"Frontend endpoint - Final reassembled image total size: {len(complete_content)} bytes")
-                
-                # For large images (>1MB), use a URL reference instead of embedding in JSON
-                if len(complete_content) > 1024 * 1024:  # 1MB threshold
-                    debug_print(f"Frontend endpoint - Large image detected ({len(complete_content)} bytes), using URL reference")
-                    # Store the complete content temporarily and provide a URL reference
-                    message['content'] = f"/api/image/{image_id}"
-                    message['metadata']['is_large_image'] = True
-                    message['metadata']['image_size'] = len(complete_content)
-                else:
-                    # Small enough to embed directly
-                    message['content'] = complete_content
+        messages = hydrate_image_messages(
+            all_items,
+            image_url_builder=lambda image_id: f"/api/image/{image_id}",
+        )
 
         # Remove file content for security
         for m in messages:
             if m.get('role') == 'file' and 'file_content' in m:
                 del m['file_content']
 
-        return jsonify({'messages': messages})
+        response = jsonify({'messages': messages})
+        return _disable_response_caching(response)
 
     @app.route('/api/conversation/<conversation_id>/agent-citation/<artifact_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -222,24 +223,49 @@ def register_route_frontend_conversations(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
+        artifact_lookup_conversation_id = conversation_id
+
         try:
             conversation = cosmos_conversations_container.read_item(
                 item=conversation_id,
                 partition_key=conversation_id,
             )
         except CosmosResourceNotFoundError:
-            return jsonify({'error': 'Conversation not found'}), 404
+            try:
+                conversation = get_collaboration_conversation(conversation_id)
+            except CosmosResourceNotFoundError:
+                return jsonify({'error': 'Conversation not found'}), 404
 
-        if conversation.get('user_id') != user_id:
-            return jsonify({'error': 'Unauthorized access to conversation'}), 403
+            try:
+                assert_user_can_view_collaboration_conversation(user_id, conversation)
+            except PermissionError:
+                return jsonify({'error': 'Unauthorized access to conversation'}), 403
 
-        conversation_messages = list(cosmos_messages_container.query_items(
-            query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
-            parameters=[{'name': '@conversation_id', 'value': conversation_id}],
-            partition_key=conversation_id,
-        ))
+            artifact_lookup_conversation_id = str(conversation.get('source_conversation_id') or '').strip()
+            if artifact_lookup_conversation_id:
+                conversation_messages = list(cosmos_messages_container.query_items(
+                    query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+                    parameters=[{'name': '@conversation_id', 'value': artifact_lookup_conversation_id}],
+                    partition_key=artifact_lookup_conversation_id,
+                ))
+            else:
+                conversation_messages = list_collaboration_messages(conversation_id)
+        else:
+            if conversation.get('user_id') != user_id:
+                return jsonify({'error': 'Unauthorized access to conversation'}), 403
+
+            conversation_messages = list(cosmos_messages_container.query_items(
+                query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+                parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+                partition_key=conversation_id,
+            ))
+
         artifact_payload_map = build_message_artifact_payload_map(conversation_messages)
         artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
+        if artifact_payload is None and artifact_lookup_conversation_id != conversation_id:
+            collaboration_messages = list_collaboration_messages(conversation_id)
+            artifact_payload_map = build_message_artifact_payload_map(collaboration_messages)
+            artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
         if not isinstance(artifact_payload, dict):
             return jsonify({'error': 'Agent citation artifact not found'}), 404
 
@@ -247,7 +273,81 @@ def register_route_frontend_conversations(app):
         if citation is None:
             return jsonify({'error': 'Agent citation payload not found'}), 404
 
-        return jsonify({'citation': citation})
+        response = jsonify({'citation': refresh_azure_maps_citation_payload(citation)})
+        return _disable_response_caching(response)
+
+    @app.route('/api/azure-maps/tile', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_azure_maps_tile():
+        tile_proxy_token = str(request.args.get('token') or '').strip()
+        token_payload = decode_tile_proxy_token(tile_proxy_token)
+        if not token_payload:
+            return jsonify({'error': 'Invalid or expired Azure Maps tile token.'}), 400
+
+        subscription_key = str(token_payload.get('subscription_key') or '').strip()
+        if not subscription_key:
+            return jsonify({'error': 'Azure Maps tile token is missing a subscription key.'}), 400
+
+        try:
+            zoom = int(str(request.args.get('zoom') or '').strip())
+            tile_x = int(str(request.args.get('x') or '').strip())
+            tile_y = int(str(request.args.get('y') or '').strip())
+        except ValueError:
+            return jsonify({'error': 'Tile requests must include numeric zoom, x, and y values.'}), 400
+
+        raw_tileset_id = str(request.args.get('tilesetId') or AZURE_MAPS_DEFAULT_TILESET_ID).strip()
+        raw_language = str(request.args.get('language') or AZURE_MAPS_DEFAULT_LANGUAGE).strip()
+        raw_view = str(request.args.get('view') or AZURE_MAPS_DEFAULT_VIEW).strip()
+        raw_tile_size = str(request.args.get('tileSize') or '256').strip()
+
+        if not re.fullmatch(r'[A-Za-z0-9._-]+', raw_tileset_id):
+            return jsonify({'error': 'tilesetId contains unsupported characters.'}), 400
+        if raw_language and not re.fullmatch(r'[A-Za-z0-9-]{2,16}', raw_language):
+            return jsonify({'error': 'language contains unsupported characters.'}), 400
+        if raw_view and not re.fullmatch(r'[A-Za-z]+', raw_view):
+            return jsonify({'error': 'view contains unsupported characters.'}), 400
+        if raw_tile_size not in {'256', '512'}:
+            return jsonify({'error': 'tileSize must be 256 or 512.'}), 400
+
+        upstream_params = {
+            'api-version': AZURE_MAPS_TILE_API_VERSION,
+            'tilesetId': raw_tileset_id,
+            'zoom': zoom,
+            'x': tile_x,
+            'y': tile_y,
+            'tileSize': raw_tile_size,
+            'language': raw_language or AZURE_MAPS_DEFAULT_LANGUAGE,
+            'view': raw_view or AZURE_MAPS_DEFAULT_VIEW,
+            'subscription-key': subscription_key,
+        }
+
+        try:
+            upstream_response = requests.get(
+                f'{AZURE_MAPS_DEFAULT_ENDPOINT}/map/tile',
+                params=upstream_params,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            log_event(
+                f"[AzureMaps] Tile proxy request failed: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Azure Maps tile request failed.'}), 502
+
+        proxy_response = Response(
+            upstream_response.content,
+            status=upstream_response.status_code,
+            content_type=upstream_response.headers.get('Content-Type', 'image/png'),
+        )
+
+        cache_control = upstream_response.headers.get('Cache-Control')
+        if cache_control:
+            proxy_response.headers['Cache-Control'] = cache_control
+        proxy_response.headers['X-Content-Type-Options'] = 'nosniff'
+        return proxy_response
 
     @app.route('/api/message/<message_id>/metadata', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -270,7 +370,14 @@ def register_route_frontend_conversations(app):
             ))
             
             if not messages:
-                return jsonify({'error': 'Message not found'}), 404
+                message = get_collaboration_message(message_id)
+                conversation = get_collaboration_conversation(message.get('conversation_id'))
+                assert_user_can_view_collaboration_conversation(
+                    user_id,
+                    conversation,
+                    allow_pending=True,
+                )
+                return jsonify(build_collaboration_message_metadata_payload(message, conversation))
                 
             message = messages[0]
             
@@ -299,7 +406,12 @@ def register_route_frontend_conversations(app):
             else:
                 # Assistant, image, file messages - return full document
                 return jsonify(message)
+
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
             
         except Exception as e:
-            print(f"Error fetching message metadata: {str(e)}")
+            log_event(f"get_message_metadata failed: {e}", level="WARNING")
             return jsonify({'error': 'Failed to fetch message metadata'}), 500

@@ -1,0 +1,52 @@
+{
+  "title": "Document Search Settings",
+  "description": "Default search, windowing, and summarization settings for SimpleChat internal document search.",
+  "type": "object",
+  "properties": {
+    "default_doc_scope": {
+      "type": "string",
+      "enum": [
+        "all",
+        "personal",
+        "group",
+        "public"
+      ],
+      "default": "all"
+    },
+    "default_top_n": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "default": 12
+    },
+    "default_window_unit": {
+      "type": "string",
+      "enum": [
+        "pages",
+        "chunks"
+      ],
+      "default": "pages"
+    },
+    "default_window_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "default_window_percent": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "default_focus_instructions": {
+      "type": "string"
+    },
+    "default_window_target_length": {
+      "type": "string",
+      "default": "2 pages"
+    },
+    "default_final_target_length": {
+      "type": "string",
+      "default": "2 pages"
+    }
+  }
+}

@@ -36,6 +36,7 @@ from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
+from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_debug import debug_print
@@ -46,13 +47,24 @@ from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
+    build_agent_citation_tool_label,
     build_agent_citation_artifact_documents,
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
     make_json_serializable,
 )
+from functions_document_actions import (
+    DOCUMENT_ACTION_CONTEXT_CHAT,
+    DOCUMENT_ACTION_TYPE_COMPARISON,
+    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+    DOCUMENT_ACTION_TYPE_NONE,
+    get_document_action_max_documents_by_type,
+    get_enabled_document_action_types,
+    normalize_document_action_config,
+)
 from functions_thoughts import ThoughtTracker
+from functions_workflow_runner import _execute_document_action_workflow
 
 
 def _strip_agent_citation_artifact_refs(agent_citations):
@@ -74,6 +86,69 @@ def _strip_agent_citation_artifact_refs(agent_citations):
 FACT_MEMORY_TYPE_FACT = 'fact'
 FACT_MEMORY_TYPE_INSTRUCTION = 'instruction'
 FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer'
+INLINE_CHART_ID_PATTERN_TEMPLATE = '"chartId":"{}"'
+
+
+def _normalize_inline_chart_markdown(chart_markdown):
+    block = str(chart_markdown or '').strip()
+    if not block.startswith(f'```{INLINE_CHART_BLOCK_LANGUAGE}'):
+        return None
+    return block
+
+
+def _collect_inline_chart_blocks(candidate, chart_blocks):
+    if isinstance(candidate, dict):
+        normalized_chart_markdown = _normalize_inline_chart_markdown(candidate.get('chart_markdown'))
+        if normalized_chart_markdown:
+            chart_blocks.append({
+                'chart_id': candidate.get('chart_payload', {}).get('chartId') if isinstance(candidate.get('chart_payload'), dict) else None,
+                'chart_markdown': normalized_chart_markdown,
+            })
+
+        for value in candidate.values():
+            _collect_inline_chart_blocks(value, chart_blocks)
+        return
+
+    if isinstance(candidate, list):
+        for item in candidate:
+            _collect_inline_chart_blocks(item, chart_blocks)
+
+
+def _append_inline_chart_blocks_to_message(message_content, agent_citations):
+    chart_blocks = []
+    _collect_inline_chart_blocks(agent_citations, chart_blocks)
+
+    if not chart_blocks:
+        return message_content
+
+    existing_content = str(message_content or '').strip()
+    appended_blocks = []
+    seen_chart_ids = set()
+
+    for chart_block in chart_blocks:
+        chart_id = str(chart_block.get('chart_id') or '').strip()
+        chart_markdown = chart_block.get('chart_markdown')
+        if not chart_markdown:
+            continue
+
+        if chart_id:
+            if chart_id in seen_chart_ids:
+                continue
+            if INLINE_CHART_ID_PATTERN_TEMPLATE.format(chart_id) in existing_content:
+                seen_chart_ids.add(chart_id)
+                continue
+            seen_chart_ids.add(chart_id)
+
+        if chart_markdown in existing_content:
+            continue
+
+        appended_blocks.append(chart_markdown)
+
+    if not appended_blocks:
+        return message_content
+
+    separator = '\n\n' if existing_content else ''
+    return f"{existing_content}{separator}{'\n\n'.join(appended_blocks)}"
 
 
 def normalize_fact_memory_type(memory_type):
@@ -1194,6 +1269,96 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
         "Do not say that you lack direct access to the data if the answer is present in these computed results. "
         "If a tool summary includes a full scalar value list, you may enumerate those values directly in the final answer. "
         "If a tool summary includes the full matching rows from a row or text search, use the surrounding cell context in those rows when deciding which content is relevant to the user's question."
+    )
+
+
+def user_requested_chart_visualization(user_message):
+    """Return True when the user is explicitly asking for a plotted visualization."""
+    normalized_message = re.sub(r'\s+', ' ', str(user_message or '').strip().lower())
+    if not normalized_message:
+        return False
+
+    non_visual_patterns = (
+        'chart of accounts',
+        'org chart',
+        'organization chart',
+        'organizational chart',
+        'chart out ',
+    )
+    if any(pattern in normalized_message for pattern in non_visual_patterns):
+        return False
+
+    if re.search(
+        r'\b(?:bar|line|pie|doughnut|scatter|bubble|radar|histogram|heatmap|area|stacked(?:\s+bar|\s+line)?)\s+chart\b',
+        normalized_message,
+    ):
+        return True
+
+    if 'table and chart' in normalized_message or 'chart and table' in normalized_message:
+        return True
+
+    if re.search(r'\b(?:graph|plot|visuali[sz]e?|visuali[sz]ation)\b', normalized_message):
+        return True
+
+    return bool(
+        re.search(
+            r'\b(?:include|with|show|create|generate|render|make|build|draw|produce)\b[^.!?\n]{0,80}\bchart\b',
+            normalized_message,
+        )
+    )
+
+
+def build_chart_tool_usage_system_message():
+    """Instruct the outer agent handoff to prefer the real chart action over ASCII output."""
+    return (
+        "If the user explicitly asks for a chart, graph, plot, or visualization and a chart action/tool is available, "
+        "use that chart action/tool to produce a real inline chart. "
+        "Do not substitute ASCII bars, text-only pseudo-charts, or a promise to create a chart later when the chart tool is available. "
+        "If computed tabular results are already present in system messages, use those tool-backed values as the chart data source whenever they are sufficient. "
+        "Still include a table when the user asked for one. "
+        "If no chart action/tool is available, say briefly that a real chart tool is unavailable instead of pretending an ASCII chart satisfies the request."
+    )
+
+
+def insert_system_message_after_existing_system_messages(conversation_history, system_message_content):
+    """Insert a system message after existing system messages while avoiding duplicates."""
+    if not isinstance(conversation_history, list):
+        return conversation_history
+
+    normalized_content = str(system_message_content or '').strip()
+    if not normalized_content:
+        return conversation_history
+
+    for message in conversation_history:
+        if (
+            isinstance(message, dict)
+            and message.get('role') == 'system'
+            and str(message.get('content') or '').strip() == normalized_content
+        ):
+            return conversation_history
+
+    insertion_index = 0
+    while insertion_index < len(conversation_history):
+        message = conversation_history[insertion_index]
+        if not isinstance(message, dict) or message.get('role') != 'system':
+            break
+        insertion_index += 1
+
+    conversation_history.insert(insertion_index, {
+        'role': 'system',
+        'content': normalized_content,
+    })
+    return conversation_history
+
+
+def maybe_append_chart_tool_system_message(conversation_history, user_message, selected_agent):
+    """Add chart-tool guidance only when an agent is active and the user asked for a chart."""
+    if not selected_agent or not user_requested_chart_visualization(user_message):
+        return conversation_history
+
+    return insert_system_message_after_existing_system_messages(
+        conversation_history,
+        build_chart_tool_usage_system_message(),
     )
 
 
@@ -4821,12 +4986,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 service_id="tabular-analysis",
                 function_choice_behavior=(
                     FunctionChoiceBehavior.Required(
-                        maximum_auto_invoke_attempts=8,
+                        maximum_auto_invoke_attempts=20,
                         filters=allowed_function_filters,
                     )
                     if force_tool_use else
                     FunctionChoiceBehavior.Auto(
-                        maximum_auto_invoke_attempts=7,
+                        maximum_auto_invoke_attempts=20,
                         filters=allowed_function_filters,
                     )
                 ),
@@ -5189,7 +5354,12 @@ def collect_tabular_sk_citations(user_id, conversation_id):
         parameters = getattr(inv, 'parameters', {}) or {}
         sheet_name = parameters.get('sheet_name')
         sheet_index = parameters.get('sheet_index')
-        tool_name = f"{inv.plugin_name}.{inv.function_name}"
+        tool_name = build_agent_citation_tool_label(
+            inv.plugin_name,
+            inv.function_name,
+            parameters,
+            inv.result,
+        )
         if sheet_name:
             tool_name = f"{tool_name} [{sheet_name}]"
         elif sheet_index not in (None, ''):
@@ -6171,6 +6341,979 @@ def register_route_backend_chats(app):
             conversation_history.insert(0, message)
         return prompt_payload
 
+    def normalize_terminal_chat_payload(payload):
+        return make_json_serializable({
+            'done': True,
+            'conversation_id': payload.get('conversation_id'),
+            'conversation_title': payload.get('conversation_title'),
+            'classification': payload.get('classification', []),
+            'model_deployment_name': payload.get('model_deployment_name'),
+            'message_id': payload.get('message_id'),
+            'user_message_id': payload.get('user_message_id'),
+            'augmented': payload.get('augmented', False),
+            'hybrid_citations': payload.get('hybrid_citations', []),
+            'web_search_citations': payload.get('web_search_citations', []),
+            'agent_citations': payload.get('agent_citations', []),
+            'agent_display_name': payload.get('agent_display_name'),
+            'agent_name': payload.get('agent_name'),
+            'full_content': payload.get('reply', ''),
+            'image_url': payload.get('image_url'),
+            'reload_messages': payload.get('reload_messages', False),
+            'kernel_fallback_notice': payload.get('kernel_fallback_notice'),
+            'thoughts_enabled': payload.get('thoughts_enabled', False),
+            'blocked': payload.get('blocked', False),
+            'review_coverage': payload.get('review_coverage', {}),
+            'document_action': payload.get('document_action', {}),
+        })
+
+    def _build_document_action_stream_content(event):
+        event = event if isinstance(event, dict) else {}
+        event_type = str(event.get('type') or '').strip().lower()
+        document_name = str(event.get('document_name') or 'Document').strip() or 'Document'
+        window_range = event.get('window_range') if isinstance(event.get('window_range'), dict) else {}
+        window_number = window_range.get('window_number')
+        progress = event.get('progress') if isinstance(event.get('progress'), dict) else {}
+        documents = progress.get('documents') if isinstance(progress.get('documents'), list) else []
+        document_progress = next(
+            (document for document in documents if document.get('document_id') == event.get('document_id')),
+            {},
+        )
+        total_windows = document_progress.get('total_windows') or event.get('window_count') or 0
+
+        if event_type == 'document_started':
+            return f'Starting exhaustive review for {document_name}'
+        if event_type == 'window_started' and window_number is not None:
+            return f'Reviewing window {window_number} of {total_windows} for {document_name}'
+        if event_type == 'window_retry' and window_number is not None:
+            return f'Retrying window {window_number} for {document_name} (attempt {event.get("attempt_number")})'
+        if event_type == 'window_failed' and window_number is not None:
+            return f'Window {window_number} failed for {document_name}'
+        if event_type == 'window_completed' and window_number is not None:
+            return f'Completed window {window_number} of {total_windows} for {document_name}'
+        if event_type == 'document_completed':
+            return f'Completed exhaustive review for {document_name}'
+        if event_type == 'reduction_started':
+            reduction_step_index = event.get('reduction_step_index')
+            reduction_step_total = event.get('reduction_step_total')
+            if reduction_step_index is not None and reduction_step_total:
+                return (
+                    'Combining review findings into the final response '
+                    f'({reduction_step_index}/{reduction_step_total})'
+                )
+            return 'Combining review findings into the final response'
+        if event_type == 'reduction_completed':
+            return 'Completed exhaustive review across the selected documents'
+        if event_type == 'comparison_started':
+            right_document_name = str(event.get('right_document_name') or 'Document').strip() or 'Document'
+            return f'Comparing {document_name} to {right_document_name}'
+        if event_type == 'comparison_completed':
+            right_document_name = str(event.get('right_document_name') or 'Document').strip() or 'Document'
+            return f'Completed comparison of {document_name} to {right_document_name}'
+        if event_type == 'comparison_reduction_started':
+            comparison_count = event.get('comparison_count')
+            if comparison_count:
+                return f'Combining {comparison_count} pairwise comparisons into the final response'
+            return 'Combining comparison findings into the final response'
+        if event_type == 'comparison_reduction_completed':
+            comparison_count = event.get('comparison_count')
+            if comparison_count:
+                return f'Completed comparison across {comparison_count} document pairs'
+            return 'Completed comparison across the selected documents'
+        return 'Running exhaustive review across the selected documents'
+
+    def _build_document_action_hybrid_citations(execution_result):
+        def _coerce_metric_int(value, default_value=0):
+            try:
+                return int(value if value not in (None, '') else default_value)
+            except (TypeError, ValueError):
+                return int(default_value or 0)
+
+        review_result = execution_result.get('review_result') if isinstance(execution_result, dict) else {}
+        review_result = review_result if isinstance(review_result, dict) else {}
+        review_coverage = execution_result.get('review_coverage') if isinstance(execution_result, dict) else {}
+        review_coverage = review_coverage if isinstance(review_coverage, dict) else {}
+
+        document_summaries = review_result.get('documents') if isinstance(review_result.get('documents'), list) else []
+        if not document_summaries:
+            document_summaries = review_coverage.get('documents') if isinstance(review_coverage.get('documents'), list) else []
+
+        citations = []
+        is_comparison = bool(review_result.get('left_document') or review_result.get('right_documents'))
+        left_document = review_result.get('left_document') if isinstance(review_result.get('left_document'), dict) else {}
+        right_documents = review_result.get('right_documents') if isinstance(review_result.get('right_documents'), list) else []
+        document_count = _coerce_metric_int(review_coverage.get('document_count'), len(document_summaries))
+        total_windows = _coerce_metric_int(review_coverage.get('total_windows'))
+        processed_windows = _coerce_metric_int(review_coverage.get('processed_windows'))
+        failed_windows = _coerce_metric_int(review_coverage.get('failed_windows'))
+        total_chunks = _coerce_metric_int(review_coverage.get('total_chunks'))
+        processed_chunks = _coerce_metric_int(review_coverage.get('processed_chunks'))
+        failed_chunks = _coerce_metric_int(review_coverage.get('failed_chunks'))
+        retries_used = _coerce_metric_int(review_coverage.get('retries'))
+        window_unit = str(review_coverage.get('window_unit') or 'pages').strip() or 'pages'
+
+        has_coverage_summary = bool(document_summaries) or any([
+            document_count,
+            total_windows,
+            processed_windows,
+            failed_windows,
+            total_chunks,
+            processed_chunks,
+            failed_chunks,
+            retries_used,
+        ])
+
+        if has_coverage_summary:
+            coverage_lines = [
+                'Coverage',
+                f'Documents reviewed: {document_count}',
+                f'Total windows: {total_windows}',
+                f'Processed windows: {processed_windows}',
+                f'Failed windows: {failed_windows}',
+                f'Total chunks: {total_chunks}',
+                f'Processed chunks: {processed_chunks}',
+                f'Failed chunks: {failed_chunks}',
+                f'Retries used: {retries_used}',
+                f'Window unit: {window_unit}',
+            ]
+
+            left_document_name = str(left_document.get('document_name') or left_document.get('document_id') or '').strip()
+            if is_comparison and left_document_name:
+                coverage_lines.append(f'Source document: {left_document_name}')
+            if is_comparison:
+                coverage_lines.append(f'Target documents compared: {len(right_documents)}')
+
+            citations.append({
+                'file_name': 'Coverage',
+                'document_id': None,
+                'citation_id': 'document_action_coverage',
+                'page_number': 'Metadata',
+                'chunk_id': 'document_action_coverage',
+                'chunk_sequence': 20000,
+                'score': 0.0,
+                'metadata_type': 'document_comparison_coverage' if is_comparison else 'document_review_coverage',
+                'metadata_content': '\n'.join(coverage_lines),
+                'location_label': 'Coverage',
+                'location_value': 'Overall summary',
+            })
+
+        seen_document_ids = set()
+        for index, document_summary in enumerate(document_summaries, start=1):
+            if not isinstance(document_summary, dict):
+                continue
+
+            document_id = str(document_summary.get('document_id') or '').strip()
+            dedupe_key = document_id or f'document-{index}'
+            if dedupe_key in seen_document_ids:
+                continue
+            seen_document_ids.add(dedupe_key)
+
+            file_name = str(
+                document_summary.get('file_name')
+                or document_summary.get('document_name')
+                or document_summary.get('title')
+                or 'Document'
+            ).strip() or 'Document'
+            role_label = str(document_summary.get('role_label') or '').strip().lower()
+            status_text = str(document_summary.get('status_text') or document_summary.get('status') or 'Completed').strip()
+            processed_windows = _coerce_metric_int(document_summary.get('processed_windows'))
+            total_windows = _coerce_metric_int(document_summary.get('total_windows'))
+            failed_windows = _coerce_metric_int(document_summary.get('failed_windows'))
+            processed_chunks = _coerce_metric_int(document_summary.get('processed_chunks'))
+            total_chunks = _coerce_metric_int(document_summary.get('total_chunks'))
+            failed_chunks = _coerce_metric_int(document_summary.get('failed_chunks'))
+            total_pages = _coerce_metric_int(document_summary.get('total_pages'))
+            failed_ranges = [
+                str(range_label).strip()
+                for range_label in (document_summary.get('failed_ranges') or [])
+                if str(range_label).strip()
+            ]
+
+            metadata_lines = []
+            if role_label:
+                metadata_lines.append(f"Role: {role_label.title()} document")
+            if status_text:
+                metadata_lines.append(f"Status: {status_text}")
+            metadata_lines.append(f"Windows reviewed: {processed_windows}/{total_windows}")
+            if total_chunks or processed_chunks or failed_chunks:
+                metadata_lines.append(f"Chunks completed: {processed_chunks}/{total_chunks}")
+            if failed_windows:
+                metadata_lines.append(f"Failed windows: {failed_windows}")
+            if failed_chunks:
+                metadata_lines.append(f"Failed chunks: {failed_chunks}")
+            if total_pages:
+                metadata_lines.append(f"Pages covered: {total_pages}")
+            if failed_ranges:
+                metadata_lines.append(f"Failed ranges: {', '.join(failed_ranges)}")
+
+            citations.append({
+                'file_name': file_name,
+                'document_id': document_id,
+                'citation_id': f'{dedupe_key}_coverage',
+                'page_number': 'Metadata',
+                'chunk_id': f'{dedupe_key}_coverage',
+                'chunk_sequence': 10000 - index,
+                'score': 0.0,
+                'group_id': document_summary.get('scope_id') if document_summary.get('scope') == 'group' else None,
+                'public_workspace_id': document_summary.get('scope_id') if document_summary.get('scope') == 'public' else None,
+                'version': document_summary.get('version'),
+                'classification': document_summary.get('classification'),
+                'metadata_type': 'document_comparison_summary' if role_label else 'document_review_summary',
+                'metadata_content': '\n'.join(metadata_lines),
+                'location_label': 'Coverage',
+                'location_value': 'Document summary',
+            })
+
+        return citations
+
+    def _resolve_document_action_selected_documents(document_ids, document_scope, conversation_id=None, max_documents=5):
+        resolved_documents = []
+        normalized_conversation_id = str(conversation_id or '').strip()
+
+        for document_id in (document_ids or [])[:max_documents]:
+            normalized_document_id = str(document_id or '').strip()
+            if not normalized_document_id or normalized_document_id == 'all':
+                continue
+
+            resolved_document = {
+                'id': normalized_document_id,
+                'display_name': normalized_document_id,
+                'file_name': None,
+                'group_id': None,
+                'public_workspace_id': None,
+            }
+
+            try:
+                doc_query = (
+                    'SELECT TOP 1 c.file_name, c.title, c.group_id, c.public_workspace_id '
+                    'FROM c WHERE c.id = @doc_id '
+                    'ORDER BY c.version DESC'
+                )
+                doc_params = [{'name': '@doc_id', 'value': normalized_document_id}]
+
+                for source_hint, cosmos_container in get_document_containers_for_scope(document_scope):
+                    doc_results = list(cosmos_container.query_items(
+                        query=doc_query,
+                        parameters=doc_params,
+                        enable_cross_partition_query=True,
+                    ))
+                    if not doc_results:
+                        continue
+
+                    doc_info = doc_results[0]
+                    display_name = str(
+                        doc_info.get('title') or doc_info.get('file_name') or normalized_document_id
+                    ).strip() or normalized_document_id
+                    resolved_document = {
+                        'id': normalized_document_id,
+                        'display_name': display_name,
+                        'file_name': doc_info.get('file_name'),
+                        'group_id': doc_info.get('group_id'),
+                        'public_workspace_id': doc_info.get('public_workspace_id'),
+                        'source_hint': source_hint,
+                    }
+                    break
+
+                if normalized_conversation_id:
+                    message_query = (
+                        'SELECT TOP 1 c.filename, c.role '
+                        'FROM c WHERE c.conversation_id = @conversation_id AND c.id = @doc_id'
+                    )
+                    message_params = [
+                        {'name': '@conversation_id', 'value': normalized_conversation_id},
+                        {'name': '@doc_id', 'value': normalized_document_id},
+                    ]
+                    message_results = list(cosmos_messages_container.query_items(
+                        query=message_query,
+                        parameters=message_params,
+                        partition_key=normalized_conversation_id,
+                    ))
+                    if message_results:
+                        message_info = message_results[0]
+                        display_name = str(
+                            message_info.get('filename') or normalized_document_id
+                        ).strip() or normalized_document_id
+                        resolved_document = {
+                            'id': normalized_document_id,
+                            'display_name': display_name,
+                            'file_name': message_info.get('filename'),
+                            'group_id': None,
+                            'public_workspace_id': None,
+                            'source_hint': 'chat_upload',
+                        }
+            except Exception as exc:
+                debug_print(
+                    '[ChatDocumentAction] Failed to resolve selected document metadata | '
+                    f'document_id={normalized_document_id} | '
+                    f'error={exc}'
+                )
+
+            resolved_documents.append(resolved_document)
+
+        return resolved_documents
+
+    def _summarize_document_action_document_names(document_names, total_count):
+        cleaned_names = [
+            str(document_name).strip()
+            for document_name in (document_names or [])
+            if str(document_name).strip()
+        ]
+        if not cleaned_names:
+            if total_count == 1:
+                return '1 selected document'
+            return f'{total_count} selected documents'
+
+        preview_names = cleaned_names[:3]
+        summary = ', '.join(preview_names)
+        if total_count > len(preview_names):
+            summary = f'{summary} (+{total_count - len(preview_names)} more)'
+        return summary
+
+    def _build_document_action_user_metadata(
+        data,
+        user_id,
+        conversation_id,
+        current_thread_id,
+        previous_thread_id,
+        normalized_action,
+        request_agent_info,
+        streaming_enabled=False,
+    ):
+        timestamp = datetime.utcnow().isoformat()
+        selected_document_ids = normalized_action.get('document_ids', [])
+        document_scope = normalized_action.get('doc_scope', 'all')
+        active_group_ids = normalized_action.get('active_group_ids', [])
+        active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
+        resolved_documents = _resolve_document_action_selected_documents(
+            selected_document_ids,
+            document_scope,
+            conversation_id=conversation_id,
+        )
+        resolved_documents_by_id = {
+            document.get('id'): document
+            for document in resolved_documents
+            if document.get('id')
+        }
+        resolved_document_names = [
+            document.get('display_name')
+            for document in resolved_documents
+            if document.get('display_name')
+        ]
+
+        selected_document_summary = _summarize_document_action_document_names(
+            resolved_document_names,
+            len(selected_document_ids),
+        )
+        if normalized_action.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON:
+            left_document_id = str(normalized_action.get('left_document_id') or '').strip()
+            left_document_name = resolved_documents_by_id.get(left_document_id, {}).get('display_name') or left_document_id or 'Selected Source document'
+            right_document_ids = normalized_action.get('right_document_ids', [])
+            right_document_names = [
+                resolved_documents_by_id.get(document_id, {}).get('display_name') or str(document_id).strip()
+                for document_id in right_document_ids
+                if str(document_id).strip()
+            ]
+            right_document_summary = _summarize_document_action_document_names(
+                right_document_names,
+                len(right_document_ids),
+            )
+            selected_document_summary = f'Source: {left_document_name} | Targets: {right_document_summary}'
+
+        current_user = get_current_user_info()
+        user_info = {
+            'user_id': user_id,
+            'timestamp': timestamp,
+        }
+        if current_user:
+            user_info.update({
+                'username': current_user.get('userPrincipalName'),
+                'display_name': current_user.get('displayName'),
+                'email': current_user.get('email'),
+            })
+
+        workspace_search = {
+            'search_enabled': False,
+            'document_scope': document_scope,
+            'selected_document_id': selected_document_ids[0] if len(selected_document_ids) == 1 else None,
+            'document_name': selected_document_summary,
+            'selected_document_count': len(selected_document_ids),
+            'selected_document_names': resolved_document_names,
+        }
+
+        if document_scope == 'group' and active_group_ids:
+            group_doc = find_group_by_id(active_group_ids[0])
+            workspace_search['group_name'] = group_doc.get('name') if group_doc else None
+        if document_scope == 'public' and active_public_workspace_ids:
+            workspace_search['active_public_workspace_id'] = active_public_workspace_ids[0]
+
+        selected_model = str(data.get('model_deployment') or data.get('model_id') or '').strip()
+        user_metadata = {
+            'user_info': user_info,
+            'thread_info': {
+                'thread_id': current_thread_id,
+                'previous_thread_id': previous_thread_id,
+                'active_thread': True,
+                'thread_attempt': 1,
+            },
+            'button_states': {
+                'image_generation': False,
+                'document_search': False,
+                'web_search': False,
+            },
+            'workspace_search': workspace_search,
+            'model_selection': {
+                'selected_model': selected_model,
+                'frontend_requested_model': selected_model,
+                'model_id': data.get('model_id'),
+                'model_endpoint_id': data.get('model_endpoint_id'),
+                'model_provider': data.get('model_provider'),
+                'reasoning_effort': data.get('reasoning_effort') if data.get('reasoning_effort') not in (None, '', 'none') else None,
+                'streaming': bool(streaming_enabled),
+            },
+            'chat_context': {
+                'conversation_id': conversation_id,
+                'chat_type': 'group' if document_scope == 'group' else 'public' if document_scope == 'public' else 'personal',
+            },
+            'exhaustive_review': {
+                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                'document_ids': selected_document_ids,
+                'doc_scope': document_scope,
+                'active_group_ids': active_group_ids,
+                'active_public_workspace_id': active_public_workspace_ids,
+            },
+            'document_action': normalized_action,
+        }
+
+        if user_metadata['chat_context']['chat_type'] == 'group' and workspace_search.get('group_name'):
+            user_metadata['chat_context']['group_name'] = workspace_search.get('group_name')
+        if user_metadata['chat_context']['chat_type'] == 'public' and active_public_workspace_ids:
+            user_metadata['chat_context']['workspace_context'] = active_public_workspace_ids[0]
+
+        if request_agent_info:
+            user_metadata['agent_selection'] = {
+                'selected_agent': request_agent_info.get('name'),
+                'agent_display_name': request_agent_info.get('display_name'),
+                'is_global': request_agent_info.get('is_global', False),
+                'is_group': request_agent_info.get('is_group', False),
+                'group_id': request_agent_info.get('group_id'),
+                'group_name': request_agent_info.get('group_name'),
+                'agent_id': request_agent_info.get('id'),
+            }
+
+        return user_metadata
+
+    def _build_document_action_stream_activity_callback(publish_background_event, assistant_message_id):
+        if not callable(publish_background_event) or not assistant_message_id:
+            return None, None
+
+        step_index_state = {'value': 0}
+
+        def publish_thought(content, progress=None):
+            payload = {
+                'type': 'thought',
+                'message_id': assistant_message_id,
+                'step_index': step_index_state['value'],
+                'step_type': 'document_review',
+                'content': content,
+            }
+            if isinstance(progress, dict) and progress:
+                payload['progress'] = progress
+
+            step_index_state['value'] += 1
+            publish_background_event(f"data: {json.dumps(make_json_serializable(payload))}\n\n")
+
+        def callback(event):
+            event = event if isinstance(event, dict) else {}
+            publish_thought(
+                _build_document_action_stream_content(event),
+                progress=event.get('progress') if isinstance(event.get('progress'), dict) else None,
+            )
+
+        return publish_thought, callback
+
+    def _get_latest_chat_thread_id(conversation_id):
+        try:
+            rows = list(cosmos_messages_container.query_items(
+                query=(
+                    'SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id '
+                    'FROM c WHERE c.conversation_id = @conversation_id '
+                    'ORDER BY c.timestamp DESC'
+                ),
+                parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+                partition_key=conversation_id,
+            ))
+            return rows[0].get('thread_id') if rows else None
+        except Exception:
+            return None
+
+    def _load_or_create_exhaustive_review_conversation(user_id, conversation_id=None):
+        if conversation_id:
+            try:
+                conversation_item = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id,
+                )
+                if conversation_item.get('user_id') != user_id:
+                    raise PermissionError('You do not have access to this conversation.')
+                return conversation_item
+            except CosmosResourceNotFoundError:
+                pass
+
+        created_conversation_id = conversation_id or str(uuid.uuid4())
+        conversation_item = {
+            'id': created_conversation_id,
+            'user_id': user_id,
+            'last_updated': datetime.utcnow().isoformat(),
+            'title': 'New Conversation',
+            'context': [],
+            'tags': [],
+            'strict': False,
+            'chat_type': 'new',
+            'has_unread_assistant_response': False,
+            'last_unread_assistant_message_id': None,
+            'last_unread_assistant_at': None,
+        }
+        cosmos_conversations_container.upsert_item(conversation_item)
+        log_conversation_creation(
+            user_id=user_id,
+            conversation_id=created_conversation_id,
+            title='New Conversation',
+            workspace_type='personal',
+        )
+        conversation_item['added_to_activity_log'] = True
+        cosmos_conversations_container.upsert_item(conversation_item)
+        return conversation_item
+
+    def execute_document_action_chat_request(data=None, publish_background_event=None, forced_action_type=None):
+        settings = get_settings()
+        data = data if isinstance(data, dict) else (request.get_json() or {})
+        user_id = get_current_user_id()
+        if not user_id:
+            return {'error': 'User not authenticated'}, 401
+
+        user_message = str(data.get('message') or '').strip()
+        if not user_message:
+            return {'error': 'Message is required'}, 400
+
+        conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
+        if conversation_id is not None:
+            conversation_id = str(conversation_id).strip() or None
+
+        selected_document_id = data.get('selected_document_id')
+        selected_document_ids = data.get('selected_document_ids', [])
+        if not selected_document_ids and selected_document_id:
+            selected_document_ids = [selected_document_id]
+
+        requested_action = data.get('document_action') if isinstance(data.get('document_action'), dict) else {}
+        debug_print(
+            '[ChatDocumentAction] Received request | '
+            f'user_id={user_id} | '
+            f'conversation_id={conversation_id or "new"} | '
+            f'forced_action_type={forced_action_type or "none"} | '
+            f'requested_action_type={requested_action.get("type") or "none"} | '
+            f'selected_document_count={len(selected_document_ids)}'
+        )
+        if forced_action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW and not requested_action:
+            requested_action = {
+                'type': DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                'document_ids': selected_document_ids,
+                'doc_scope': data.get('doc_scope'),
+                'active_group_ids': data.get('active_group_ids') or data.get('active_group_id'),
+                'active_public_workspace_id': data.get('active_public_workspace_ids') or data.get('active_public_workspace_id'),
+                'window_unit': 'pages',
+                'max_retries_per_window': 1,
+            }
+        try:
+            normalized_action = normalize_document_action_config(
+                action_payload=requested_action,
+                max_documents_by_type=get_document_action_max_documents_by_type(
+                    DOCUMENT_ACTION_CONTEXT_CHAT,
+                    settings=settings,
+                ),
+                allowed_action_types=get_enabled_document_action_types(settings=settings),
+            )
+        except ValueError as exc:
+            debug_print(
+                '[ChatDocumentAction] Validation failed | '
+                f'user_id={user_id} | '
+                f'conversation_id={conversation_id or "new"} | '
+                f'error={exc}'
+            )
+            return {'error': str(exc)}, 400
+        if normalized_action.get('type') == DOCUMENT_ACTION_TYPE_NONE:
+            return {'error': 'Select a document action before sending this request.'}, 400
+
+        selected_document_ids = normalized_action.get('document_ids', [])
+        document_scope = normalized_action.get('doc_scope', 'all')
+        active_group_ids = normalized_action.get('active_group_ids', [])
+        active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
+        request_agent_info = data.get('agent_info') if isinstance(data.get('agent_info'), dict) else {}
+        runner_type = 'agent' if request_agent_info else 'model'
+        debug_print(
+            '[ChatDocumentAction] Normalized action | '
+            f'user_id={user_id} | '
+            f'conversation_id={conversation_id or "new"} | '
+            f'action_type={normalized_action.get("type")} | '
+            f'doc_scope={document_scope} | '
+            f'documents={len(selected_document_ids)} | '
+            f'group_ids={len(active_group_ids)} | '
+            f'public_workspace_ids={len(active_public_workspace_ids)} | '
+            f'runner_type={runner_type}'
+        )
+
+        try:
+            conversation_item = _load_or_create_exhaustive_review_conversation(user_id, conversation_id=conversation_id)
+        except PermissionError as exc:
+            return {'error': str(exc)}, 403
+
+        conversation_id = conversation_item.get('id')
+        g.conversation_id = conversation_id
+
+        previous_thread_id = _get_latest_chat_thread_id(conversation_id)
+        current_thread_id = str(uuid.uuid4())
+        user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+        user_metadata = _build_document_action_user_metadata(
+            data=data,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            current_thread_id=current_thread_id,
+            previous_thread_id=previous_thread_id,
+            normalized_action=normalized_action,
+            request_agent_info=request_agent_info,
+            streaming_enabled=callable(publish_background_event),
+        )
+        user_message_doc = make_json_serializable({
+            'id': user_message_id,
+            'conversation_id': conversation_id,
+            'role': 'user',
+            'content': user_message,
+            'timestamp': datetime.utcnow().isoformat(),
+            'model_deployment_name': data.get('model_deployment'),
+            'metadata': user_metadata,
+        })
+        cosmos_messages_container.upsert_item(user_message_doc)
+
+        try:
+            document_action_activity_context = {
+                key: value
+                for key, value in {
+                    'conversation_source': 'document_action_chat',
+                    'document_action_type': normalized_action.get('type'),
+                    'selected_document_count': len(selected_document_ids),
+                    'streaming_enabled': bool(callable(publish_background_event)),
+                    'runner_type': runner_type,
+                }.items()
+                if value not in (None, '', [])
+            }
+            log_chat_activity(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_type='user_message',
+                message_length=len(user_message) if user_message else 0,
+                has_document_search=False,
+                has_image_generation=False,
+                document_scope=document_scope,
+                chat_context=(user_metadata.get('chat_context') or {}).get('chat_type'),
+                workspace_type=(user_metadata.get('chat_context') or {}).get('chat_type'),
+                group_id=active_group_ids[0] if document_scope == 'group' and active_group_ids else None,
+                public_workspace_id=active_public_workspace_ids[0] if document_scope == 'public' and active_public_workspace_ids else None,
+                additional_context=document_action_activity_context,
+            )
+        except Exception as e:
+            debug_print(f"Activity logging error: {e}")
+
+        assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            current_user_thread_id=current_thread_id,
+            previous_thread_id=previous_thread_id,
+            retry_thread_attempt=None,
+            is_retry=False,
+            user_id=user_id,
+        )
+
+        publish_stream_thought = None
+        stream_activity_callback = None
+        if callable(publish_background_event):
+            publish_stream_thought, stream_activity_callback = _build_document_action_stream_activity_callback(
+                publish_background_event,
+                assistant_message_id,
+            )
+            if callable(publish_stream_thought):
+                publish_stream_thought(
+                    f"Queued {normalized_action.get('type').replace('_', ' ')} for {len(selected_document_ids)} selected document{'s' if len(selected_document_ids) != 1 else ''}"
+                )
+
+        workflow_like = {
+            'id': f'chat-exhaustive-review:{conversation_id}',
+            'user_id': user_id,
+            'name': 'Chat Document Action',
+            'task_prompt': user_message,
+            'runner_type': runner_type,
+            'selected_agent': request_agent_info,
+            'model_endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
+            'model_id': str(data.get('model_id') or '').strip(),
+            'legacy_model_deployment': str(data.get('model_deployment') or '').strip(),
+            'model_binding_summary': {
+                'endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
+                'model_id': str(data.get('model_id') or '').strip(),
+                'provider': str(data.get('model_provider') or '').strip(),
+            },
+            'document_action': normalized_action,
+            'exhaustive_review': {
+                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                'document_ids': normalized_action.get('document_ids', []),
+                'doc_scope': normalized_action.get('doc_scope'),
+                'active_group_ids': normalized_action.get('active_group_ids', []),
+                'active_public_workspace_id': normalized_action.get('active_public_workspace_id', []),
+                'window_unit': normalized_action.get('window_unit'),
+                'window_size': normalized_action.get('window_size'),
+                'window_percent': normalized_action.get('window_percent'),
+                'max_retries_per_window': normalized_action.get('max_retries_per_window'),
+            },
+        }
+
+        try:
+            debug_print(
+                '[ChatDocumentAction] Executing action | '
+                f'user_id={user_id} | '
+                f'conversation_id={conversation_id} | '
+                f'action_type={normalized_action.get("type")} | '
+                f'runner_type={runner_type} | '
+                f'assistant_message_id={assistant_message_id}'
+            )
+            execution_result = _execute_document_action_workflow(
+                workflow_like,
+                settings,
+                conversation_id=conversation_id,
+                run_id=assistant_message_id,
+                thought_tracker=thought_tracker,
+                external_activity_callback=stream_activity_callback,
+            )
+        except Exception as exc:
+            debug_print(
+                '[ChatDocumentAction] Execution failed | '
+                f'user_id={user_id} | '
+                f'conversation_id={conversation_id} | '
+                f'action_type={normalized_action.get("type")} | '
+                f'runner_type={runner_type} | '
+                f'error={exc}'
+            )
+            log_event(
+                f'[ChatExhaustiveReview] Exhaustive chat review failed: {exc}',
+                extra={
+                    'conversation_id': conversation_id,
+                    'user_id': user_id,
+                    'document_count': len(selected_document_ids),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return {'error': str(exc), 'conversation_id': conversation_id, 'user_message_id': user_message_id}, 500
+
+        assistant_timestamp = datetime.utcnow().isoformat()
+        hybrid_citations_list = _build_document_action_hybrid_citations(execution_result)
+        prepared_agent_citations = persist_agent_citation_artifacts(
+            conversation_id=conversation_id,
+            assistant_message_id=assistant_message_id,
+            agent_citations=execution_result.get('agent_citations') or [],
+            created_timestamp=assistant_timestamp,
+            user_info=response_message_context.get('user_info'),
+        )
+
+        assistant_doc = make_json_serializable({
+            'id': assistant_message_id,
+            'conversation_id': conversation_id,
+            'role': 'assistant',
+            'content': execution_result.get('reply', ''),
+            'timestamp': assistant_timestamp,
+            'augmented': False,
+            'hybrid_citations': hybrid_citations_list,
+            'web_search_citations': [],
+            'hybridsearch_query': None,
+            'agent_citations': prepared_agent_citations,
+            'model_deployment_name': execution_result.get('model_deployment_name'),
+            'agent_display_name': execution_result.get('agent_display_name'),
+            'agent_name': execution_result.get('agent_name'),
+            'metadata': {
+                'user_info': response_message_context.get('user_info'),
+                'thread_info': {
+                    'thread_id': response_message_context.get('thread_id'),
+                    'previous_thread_id': response_message_context.get('previous_thread_id'),
+                    'active_thread': True,
+                    'thread_attempt': assistant_thread_attempt,
+                },
+                'exhaustive_review': {
+                    'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                    'coverage': execution_result.get('review_coverage') or {},
+                },
+                'document_action': normalized_action,
+            },
+        })
+        cosmos_messages_container.upsert_item(assistant_doc)
+
+        if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
+            conversation_item['title'] = (user_message[:30] + '...') if len(user_message) > 30 else user_message
+
+        conversation_item['last_updated'] = datetime.utcnow().isoformat()
+        conversation_item['chat_type'] = data.get('chat_type') or conversation_item.get('chat_type') or 'new'
+
+        try:
+            conversation_item = collect_conversation_metadata(
+                user_message=user_message,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                active_group_id=active_group_ids[0] if active_group_ids else None,
+                active_group_ids=active_group_ids,
+                document_scope=document_scope,
+                selected_document_id=selected_document_ids[0] if selected_document_ids else None,
+                model_deployment=execution_result.get('model_deployment_name'),
+                hybrid_search_enabled=False,
+                image_gen_enabled=False,
+                selected_documents=execution_result.get('review_result', {}).get('documents', []),
+                selected_agent=execution_result.get('agent_name'),
+                selected_agent_details=request_agent_info,
+                search_results=None,
+                conversation_item=conversation_item,
+                active_public_workspace_id=active_public_workspace_ids[0] if active_public_workspace_ids else None,
+                active_public_workspace_ids=active_public_workspace_ids,
+            )
+        except Exception as exc:
+            debug_print(f'[ChatExhaustiveReview] Conversation metadata update failed: {exc}')
+
+        cosmos_conversations_container.upsert_item(conversation_item)
+        debug_print(
+            '[ChatDocumentAction] Execution completed | '
+            f'user_id={user_id} | '
+            f'conversation_id={conversation_id} | '
+            f'action_type={normalized_action.get("type")} | '
+            f'runner_type={runner_type} | '
+            f'assistant_message_id={assistant_message_id} | '
+            f"model={execution_result.get('model_deployment_name')} | "
+            f"processed_windows={(execution_result.get('review_coverage') or {}).get('processed_windows', 0)} | "
+            f"failed_windows={(execution_result.get('review_coverage') or {}).get('failed_windows', 0)}"
+        )
+
+        return make_json_serializable({
+            'reply': execution_result.get('reply', ''),
+            'conversation_id': conversation_id,
+            'conversation_title': conversation_item.get('title', 'New Conversation'),
+            'classification': conversation_item.get('classification', []),
+            'context': conversation_item.get('context', []),
+            'chat_type': conversation_item.get('chat_type'),
+            'scope_locked': conversation_item.get('scope_locked'),
+            'locked_contexts': conversation_item.get('locked_contexts', []),
+            'model_deployment_name': execution_result.get('model_deployment_name'),
+            'agent_display_name': execution_result.get('agent_display_name'),
+            'agent_name': execution_result.get('agent_name'),
+            'message_id': assistant_message_id,
+            'user_message_id': user_message_id,
+            'blocked': False,
+            'augmented': False,
+            'hybrid_citations': hybrid_citations_list,
+            'web_search_citations': [],
+            'agent_citations': prepared_agent_citations,
+            'reload_messages': False,
+            'kernel_fallback_notice': None,
+            'thoughts_enabled': thought_tracker.enabled,
+            'review_coverage': execution_result.get('review_coverage') or {},
+            'document_action': normalized_action,
+        }), 200
+
+    def execute_exhaustive_review_chat_request(data=None, publish_background_event=None):
+        return execute_document_action_chat_request(
+            data=data,
+            publish_background_event=publish_background_event,
+            forced_action_type=DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+        )
+
+    @app.route('/api/chat/document-action', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_document_action_api():
+        payload, status_code = execute_document_action_chat_request()
+        return jsonify(payload), status_code
+
+    @app.route('/api/chat/document-action/stream', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_document_action_stream_api():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json() or {}
+        conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
+        if conversation_id is not None:
+            conversation_id = str(conversation_id).strip() or None
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+        data['conversation_id'] = conversation_id
+        g.conversation_id = conversation_id
+        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)
+
+        def generate_document_action_response(publish_background_event=None):
+            try:
+                payload, status_code = execute_document_action_chat_request(
+                    data=data,
+                    publish_background_event=publish_background_event,
+                )
+                if status_code >= 400:
+                    error_message = payload.get('error') or f'Document action failed ({status_code})'
+                    yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
+                    return
+
+                yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
+            except Exception as document_action_error:
+                yield f"data: {json.dumps({'error': str(document_action_error), 'conversation_id': conversation_id})}\n\n"
+
+        return build_background_stream_response(generate_document_action_response, stream_session=stream_session)
+
+    @app.route('/api/chat/exhaustive-review', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_exhaustive_review_api():
+        payload, status_code = execute_exhaustive_review_chat_request()
+        return jsonify(payload), status_code
+
+    @app.route('/api/chat/exhaustive-review/stream', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_exhaustive_review_stream_api():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json() or {}
+        conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
+        if conversation_id is not None:
+            conversation_id = str(conversation_id).strip() or None
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+        data['conversation_id'] = conversation_id
+        g.conversation_id = conversation_id
+        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)
+
+        def generate_exhaustive_review_response(publish_background_event=None):
+            try:
+                payload, status_code = execute_exhaustive_review_chat_request(
+                    data=data,
+                    publish_background_event=publish_background_event,
+                )
+                if status_code >= 400:
+                    error_message = payload.get('error') or f'Exhaustive review failed ({status_code})'
+                    yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
+                    return
+
+                yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
+            except Exception as exhaustive_error:
+                yield f"data: {json.dumps({'error': str(exhaustive_error), 'conversation_id': conversation_id})}\n\n"
+
+        return build_background_stream_response(generate_exhaustive_review_response, stream_session=stream_session)
+
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -6792,7 +7935,10 @@ def register_route_backend_chats(app):
                         has_document_search=hybrid_search_enabled,
                         has_image_generation=image_gen_enabled,
                         document_scope=document_scope,
-                        chat_context=actual_chat_type
+                        chat_context=actual_chat_type,
+                        workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
+                        group_id=active_group_id if actual_chat_type == 'group' else None,
+                        public_workspace_id=active_public_workspace_id if actual_chat_type == 'public' else None,
                     )
                 except Exception as e:
                     # Don't let activity logging errors interrupt chat flow
@@ -7127,24 +8273,12 @@ def register_route_backend_chats(app):
                     )
                 try:
                     # Prepare search arguments
-                    # Set default and maximum values for top_n
-                    default_top_n = 12
-                    max_top_n = 500  # Reasonable cap to prevent excessive resource usage
-                    
-                    # Process top_n_results if provided
-                    if top_n_results is not None:
-                        try:
-                            top_n = int(top_n_results)
-                            # Ensure top_n is within reasonable bounds
-                            if top_n < 1:
-                                top_n = default_top_n
-                            elif top_n > max_top_n:
-                                top_n = max_top_n
-                        except (ValueError, TypeError):
-                            # If conversion fails, use default
-                            top_n = default_top_n
-                    else:
-                        top_n = default_top_n
+                    default_top_n = SEARCH_DEFAULT_TOP_N
+                    top_n = normalize_search_top_n(
+                        top_n_results,
+                        default_top_n=SEARCH_DEFAULT_TOP_N,
+                        max_top_n=SEARCH_MAX_TOP_N,
+                    )
                     
                     search_args = {
                         "query": search_query,
@@ -8373,6 +9507,12 @@ def register_route_backend_chats(app):
                     "kernel": bool(kernel is not None),
                 }
 
+                conversation_history_for_api = maybe_append_chart_tool_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    selected_agent,
+                )
+
                 agent_message_history = [
                     ChatMessageContent(
                         role=msg["role"],
@@ -8464,9 +9604,15 @@ def register_route_backend_chats(app):
                                     timestamp_str = inv.timestamp.isoformat()
                                 else:
                                     timestamp_str = str(inv.timestamp)
+                            tool_name = build_agent_citation_tool_label(
+                                inv.plugin_name,
+                                inv.function_name,
+                                inv.parameters,
+                                inv.result,
+                            )
                             
                             citation = {
-                                'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+                                'tool_name': tool_name,
                                 'function_name': inv.function_name,
                                 'plugin_name': inv.plugin_name,
                                 'function_arguments': make_json_serializable(inv.parameters),
@@ -8813,6 +9959,8 @@ def register_route_backend_chats(app):
             else:
                 ai_message, final_model_used, chat_mode, kernel_fallback_notice = fallback_result
                 token_usage_data = None
+
+            ai_message = _append_inline_chart_blocks_to_message(ai_message, agent_citations_list)
 
             # Emit responded thought for non-agent paths (agent paths emit their own inside callbacks)
             if not selected_agent:
@@ -9659,6 +10807,17 @@ def register_route_backend_chats(app):
                     'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
                     'streaming': 'Enabled'
                 }
+
+                if request_agent_info and isinstance(request_agent_info, dict):
+                    user_metadata['agent_selection'] = {
+                        'selected_agent': request_agent_info.get('name'),
+                        'agent_display_name': request_agent_info.get('display_name'),
+                        'is_global': request_agent_info.get('is_global', False),
+                        'is_group': request_agent_info.get('is_group', False),
+                        'group_id': request_agent_info.get('group_id'),
+                        'group_name': request_agent_info.get('group_name'),
+                        'agent_id': request_agent_info.get('id')
+                    }
                 
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
@@ -9718,7 +10877,10 @@ def register_route_backend_chats(app):
                         has_document_search=hybrid_search_enabled,
                         has_image_generation=False,
                         document_scope=document_scope,
-                        chat_context=actual_chat_type
+                        chat_context=actual_chat_type,
+                        workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
+                        group_id=active_group_id if actual_chat_type == 'group' else None,
+                        public_workspace_id=active_public_workspace_id if actual_chat_type == 'public' else None,
                     )
                 except Exception as e:
                     debug_print(f"Activity logging error: {e}")
@@ -9744,13 +10906,28 @@ def register_route_backend_chats(app):
                 user_thread_id = response_message_context.get('thread_id')
                 user_previous_thread_id = response_message_context.get('previous_thread_id')
 
-                def serialize_thought_event(step_type, content, step_index, message_id=None):
-                    return f"data: {json.dumps({'type': 'thought', 'message_id': message_id or assistant_message_id, 'step_index': step_index, 'step_type': step_type, 'content': content})}\n\n"
+                def serialize_thought_event(step_type, content, step_index, message_id=None, detail=None, activity=None, progress=None):
+                    payload = {
+                        'type': 'thought',
+                        'message_id': message_id or assistant_message_id,
+                        'step_index': step_index,
+                        'step_type': step_type,
+                        'content': content,
+                    }
+
+                    if detail is not None:
+                        payload['detail'] = detail
+                    if isinstance(activity, dict) and activity:
+                        payload['activity'] = activity
+                    if isinstance(progress, dict) and progress:
+                        payload['progress'] = progress
+
+                    return f"data: {json.dumps(payload)}\n\n"
 
                 def emit_thought(step_type, content, detail=None):
                     """Add a thought to Cosmos and return an SSE event string."""
                     thought_tracker.add_thought(step_type, content, detail)
-                    return serialize_thought_event(step_type, content, thought_tracker.current_index - 1)
+                    return serialize_thought_event(step_type, content, thought_tracker.current_index - 1, detail=detail)
 
                 def publish_live_plugin_thought(thought_payload):
                     if not callable(publish_background_event):
@@ -9766,6 +10943,9 @@ def register_route_backend_chats(app):
                             thought_payload.get('content', ''),
                             step_index,
                             message_id=thought_payload.get('message_id') or assistant_message_id,
+                            detail=thought_payload.get('detail'),
+                            activity=thought_payload.get('activity'),
+                            progress=thought_payload.get('progress'),
                         )
                     )
 
@@ -9873,6 +11053,7 @@ def register_route_backend_chats(app):
                                 'web_search_citations': [],
                                 'agent_citations': [],
                                 'model_deployment_name': None,
+                                'metadata': safety_doc.get('metadata', {}),
                                 'thoughts_enabled': thought_tracker.enabled,
                             })
                             yield f"data: {json.dumps(final_data)}\n\n"
@@ -10614,7 +11795,22 @@ def register_route_backend_chats(app):
                     
                     if all_agents:
                         agent_name_to_select = None
-                        if per_user_semantic_kernel:
+                        if request_agent_info:
+                            if isinstance(request_agent_info, dict):
+                                agent_name_to_select = request_agent_info.get('name')
+                                selected_agent_metadata = {
+                                    'selected_agent': request_agent_info.get('name'),
+                                    'agent_display_name': request_agent_info.get('display_name'),
+                                    'is_global': request_agent_info.get('is_global', False),
+                                    'is_group': request_agent_info.get('is_group', False),
+                                    'group_id': request_agent_info.get('group_id'),
+                                    'group_name': request_agent_info.get('group_name'),
+                                    'agent_id': request_agent_info.get('id')
+                                }
+                            else:
+                                agent_name_to_select = request_agent_info
+                            debug_print(f"[Streaming] Request agent name to select: {agent_name_to_select}")
+                        elif per_user_semantic_kernel:
                             # user_settings.get('selected_agent') returns a dict with agent info
                             selected_agent_info = user_settings.get('selected_agent')
                             if isinstance(selected_agent_info, dict):
@@ -10688,6 +11884,15 @@ def register_route_backend_chats(app):
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
                             debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
+
+                if selected_agent_metadata:
+                    user_metadata['agent_selection'] = selected_agent_metadata
+
+                conversation_history_for_api = maybe_append_chart_tool_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    selected_agent,
+                )
 
                 # Stream the response
                 accumulated_content = ""
@@ -10793,7 +11998,7 @@ def register_route_backend_chats(app):
 
                                         if chunk_content:
                                             accumulated_content += chunk_content
-                                            yield f"data: {json.dumps({'content': chunk_content})}\\n\\n"
+                                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
                                     if agent_retry_plan:
                                         debug_print(
@@ -10926,9 +12131,15 @@ def register_route_backend_chats(app):
                                     timestamp_str = inv.timestamp.isoformat()
                                 else:
                                     timestamp_str = str(inv.timestamp)
+                            tool_name = build_agent_citation_tool_label(
+                                inv.plugin_name,
+                                inv.function_name,
+                                inv.parameters,
+                                inv.result,
+                            )
                             
                             citation = {
-                                'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+                                'tool_name': tool_name,
                                 'function_name': inv.function_name,
                                 'plugin_name': inv.plugin_name,
                                 'function_arguments': make_json_serializable(inv.parameters),
@@ -11022,6 +12233,7 @@ def register_route_backend_chats(app):
                         yield emit_thought('generation', f"'{gpt_model}' responded ({gpt_stream_total_duration_s}s from initial message)")
                     
                     # Stream complete - save message and send final metadata
+                    accumulated_content = _append_inline_chart_blocks_to_message(accumulated_content, agent_citations_list)
                     user_info_for_assistant = response_message_context.get('user_info')
                     user_thread_id = response_message_context.get('thread_id')
                     user_previous_thread_id = response_message_context.get('previous_thread_id')
@@ -11099,6 +12311,19 @@ def register_route_backend_chats(app):
                     
                     # Update conversation
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
+
+                    try:
+                        user_message_doc = cosmos_messages_container.read_item(
+                            item=user_message_id,
+                            partition_key=conversation_id
+                        )
+                        if 'metadata' in user_message_doc and 'model_selection' in user_message_doc['metadata']:
+                            user_message_doc['metadata']['model_selection']['selected_model'] = final_model_used if use_agent_streaming else gpt_model
+                        if selected_agent_metadata:
+                            user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
+                        cosmos_messages_container.upsert_item(user_message_doc)
+                    except Exception as e:
+                        debug_print(f"Warning: Could not update streaming user message metadata: {e}")
                     
                     try:
                         conversation_item = collect_conversation_metadata(
@@ -11109,7 +12334,7 @@ def register_route_backend_chats(app):
                             active_group_ids=effective_active_group_ids,
                             document_scope=effective_document_scope,
                             selected_document_id=effective_selected_document_id,
-                            model_deployment=gpt_model,
+                            model_deployment=final_model_used if use_agent_streaming else gpt_model,
                             hybrid_search_enabled=hybrid_search_enabled or history_grounded_search_used,
                             image_gen_enabled=False,
                             selected_documents=combined_documents if combined_documents else None,
@@ -11167,6 +12392,7 @@ def register_route_backend_chats(app):
                         'agent_citations': prepared_agent_citations,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
+                        'metadata': assistant_doc.get('metadata', {}),
                         'full_content': accumulated_content,
                         'thoughts_enabled': thought_tracker.enabled
                     })

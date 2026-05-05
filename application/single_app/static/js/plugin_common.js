@@ -64,7 +64,7 @@ export function escapeHtml(str) {
 }
 
 // Render plugins table (parameterized for tbody selector and button handlers)
-export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, onView, ensureTable = true, isAdmin = false}) {
+export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, onView, onToggleEnabled, ensureTable = true, isAdmin = false}) {
   // Optionally ensure the table is present before rendering
   if (ensureTable) {
     ensurePluginsTableInRoot();
@@ -82,8 +82,12 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
     const safeDisplayName = escapeHtml(displayName);
     const description = plugin.description || 'No description available';
     const truncatedDesc = escapeHtml(truncateDescription(description, 90));
+    const isEnabled = plugin.is_enabled !== false;
     let actionButtons = '';
     let globalBadge = plugin.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : '';
+    const statusBadge = isEnabled
+      ? ' <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">Enabled</span>'
+      : ' <span class="badge bg-secondary">Disabled</span>';
     
     // View button always shown
     let viewButton = `<button type="button" class="btn btn-sm btn-outline-info view-plugin-btn me-1" data-plugin-name="${safeName}" title="View details">
@@ -97,13 +101,17 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
           <button type="button" class="btn btn-sm btn-outline-secondary edit-plugin-btn" data-plugin-name="${safeName}" title="Edit action">
             <i class="bi bi-pencil"></i>
           </button>
+          ${isAdmin && onToggleEnabled ? `
+          <button type="button" class="btn btn-sm ${isEnabled ? 'btn-outline-warning' : 'btn-outline-success'} toggle-plugin-btn" data-plugin-name="${safeName}" title="${isEnabled ? 'Disable action' : 'Enable action'}">
+            <i class="bi ${isEnabled ? 'bi-toggle-off' : 'bi-toggle-on'}"></i>
+          </button>` : ''}
           <button type="button" class="btn btn-sm btn-outline-danger delete-plugin-btn" data-plugin-name="${safeName}" title="Delete action">
             <i class="bi bi-trash"></i>
           </button>`;
     }
     actionButtons = `<div class="d-flex gap-1">${viewButton}${editDeleteButtons}</div>`;
     tr.innerHTML = `
-      <td><strong title="${escapeHtml(plugin.display_name || plugin.name || '')}">${safeDisplayName}</strong>${globalBadge}</td>
+      <td><strong title="${escapeHtml(plugin.display_name || plugin.name || '')}">${safeDisplayName}</strong>${globalBadge}${statusBadge}</td>
       <td class="text-muted small" title="${escapeHtml(description)}">${truncatedDesc}</td>
       <td>${actionButtons}</td>
     `;
@@ -115,6 +123,13 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
   });
   tbody.querySelectorAll('.delete-plugin-btn').forEach(btn => {
     btn.onclick = () => onDelete(btn.getAttribute('data-plugin-name'));
+  });
+  tbody.querySelectorAll('.toggle-plugin-btn').forEach(btn => {
+    btn.onclick = () => {
+      if (onToggleEnabled) {
+        onToggleEnabled(btn.getAttribute('data-plugin-name'));
+      }
+    };
   });
   tbody.querySelectorAll('.view-plugin-btn').forEach(btn => {
     btn.onclick = () => {
@@ -337,6 +352,15 @@ export async function getErrorMessageFromResponse(response, fallbackMessage = 'R
     return fallbackMessage;
   }
 
+  const trimmedResponseText = responseText.trim();
+  const normalizedResponseText = trimmedResponseText.toLowerCase();
+  if (normalizedResponseText.startsWith('<!doctype') || normalizedResponseText.startsWith('<html')) {
+    if (response.status === 404) {
+      return 'Requested API endpoint was not found.';
+    }
+    return fallbackMessage;
+  }
+
   try {
     const errorData = JSON.parse(responseText);
     return errorData.error || responseText;
@@ -348,18 +372,36 @@ export async function getErrorMessageFromResponse(response, fallbackMessage = 'R
 // Server-side validation fallback
 async function validatePluginManifestServerSide(pluginManifest) {
   try {
-    const response = await fetch('/api/admin/plugins/validate', {
+    const response = await fetch('/api/plugins/validate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(pluginManifest)
     });
-    
+
+    if (response.status === 404) {
+      console.warn('Plugin validation endpoint is unavailable. Falling back to save-time validation.');
+      return {
+        valid: true,
+        errors: [],
+        warnings: ['Validation endpoint unavailable; using save-time validation only.']
+      };
+    }
+
+    if (!response.ok) {
+      const errorMessage = await getErrorMessageFromResponse(response, 'Validation request failed');
+      return {
+        valid: false,
+        errors: [errorMessage],
+        warnings: []
+      };
+    }
+
     const result = await response.json();
     return {
-      valid: result.valid,
-      errors: result.errors || [],
+      valid: Boolean(result.valid),
+      errors: result.errors || (result.error ? [result.error] : []),
       warnings: result.warnings || []
     };
   } catch (error) {

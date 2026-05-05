@@ -3,13 +3,14 @@
 import io
 import json
 import markdown2
+import os
 import re
 import tempfile
 import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime
 from html import escape as _escape_html
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 from config import *
@@ -17,6 +18,17 @@ from flask import jsonify, make_response, request
 from functions_appinsights import log_event
 from functions_authentication import *
 from functions_chat import sort_messages_by_thread
+from functions_chart_export import (
+    decode_base64_image_data_uri,
+    replace_inline_chart_blocks_with_export_html,
+)
+from functions_collaboration import (
+    assert_user_can_view_collaboration_conversation,
+    get_accessible_collaboration_message_thoughts,
+    get_collaboration_conversation,
+    is_collaboration_conversation,
+    list_collaboration_messages,
+)
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
 from functions_message_artifacts import (
@@ -26,6 +38,12 @@ from functions_message_artifacts import (
 )
 from functions_settings import *
 from functions_thoughts import get_thoughts_for_conversation
+from PIL import Image
+from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
+from pptx.enum.text import PP_ALIGN
+from pptx.util import Inches as PptxInches, Pt as PptxPt
 from swagger_wrapper import swagger_route, get_auth_security
 from docx import Document as DocxDocument
 from docx.shared import Inches, Pt
@@ -36,6 +54,27 @@ SUMMARY_SOURCE_CHAR_LIMIT = 60000
 DOCX_MARKDOWN_EXTRAS = ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike']
 EMAIL_SUBJECT_CHAR_LIMIT = 120
 EMAIL_SUBJECT_SOURCE_CHAR_LIMIT = 12000
+POWERPOINT_PLAN_SOURCE_CHAR_LIMIT = 24000
+POWERPOINT_MAX_SLIDES = 7
+POWERPOINT_MAX_BULLETS_PER_SLIDE = 5
+POWERPOINT_MAX_APPENDIX_IMAGES = 4
+POWERPOINT_MAX_APPENDIX_TABLES = 3
+POWERPOINT_MAX_APPENDIX_CODE_BLOCKS = 2
+POWERPOINT_MAX_TABLE_ROWS = 8
+POWERPOINT_MAX_TABLE_COLS = 5
+
+POWERPOINT_TITLE_BG = RGBColor(22, 37, 66)
+POWERPOINT_ACCENT = RGBColor(37, 99, 235)
+POWERPOINT_BG = RGBColor(248, 250, 252)
+POWERPOINT_PANEL = RGBColor(255, 255, 255)
+POWERPOINT_TEXT = RGBColor(31, 41, 55)
+POWERPOINT_MUTED = RGBColor(100, 116, 139)
+POWERPOINT_TITLE_TEXT = RGBColor(255, 255, 255)
+
+POWERPOINT_DATA_URI_PATTERN = re.compile(
+    r"data:image\/[a-zA-Z0-9.+-]+;base64,[^\"'\s)]+",
+    re.IGNORECASE,
+)
 
 
 def register_route_backend_conversation_export(app):
@@ -84,29 +123,43 @@ def register_route_backend_conversation_export(app):
             settings = get_settings()
             exported = []
             for conv_id in conversation_ids:
+                conversation = None
+                messages = []
                 try:
                     conversation = cosmos_conversations_container.read_item(
                         item=conv_id,
                         partition_key=conv_id
                     )
+                    if conversation.get('user_id') != user_id:
+                        debug_print(f"Export: user {user_id} does not own conversation {conv_id}")
+                        continue
+
+                    message_query = """
+                        SELECT * FROM c
+                        WHERE c.conversation_id = @conversation_id
+                        ORDER BY c.timestamp ASC
+                    """
+                    messages = list(cosmos_messages_container.query_items(
+                        query=message_query,
+                        parameters=[{'name': '@conversation_id', 'value': conv_id}],
+                        partition_key=conv_id
+                    ))
                 except Exception:
-                    debug_print(f"Export: conversation {conv_id} not found or access denied")
-                    continue
-
-                if conversation.get('user_id') != user_id:
-                    debug_print(f"Export: user {user_id} does not own conversation {conv_id}")
-                    continue
-
-                message_query = """
-                    SELECT * FROM c
-                    WHERE c.conversation_id = @conversation_id
-                    ORDER BY c.timestamp ASC
-                """
-                messages = list(cosmos_messages_container.query_items(
-                    query=message_query,
-                    parameters=[{'name': '@conversation_id', 'value': conv_id}],
-                    partition_key=conv_id
-                ))
+                    try:
+                        conversation = get_collaboration_conversation(conv_id)
+                        access_context = assert_user_can_view_collaboration_conversation(
+                            user_id,
+                            conversation,
+                            allow_pending=True,
+                        )
+                        user_state = access_context.get('user_state') or {}
+                        conversation = dict(conversation)
+                        conversation['is_pinned'] = bool(user_state.get('is_pinned', False))
+                        conversation['is_hidden'] = bool(user_state.get('is_hidden', False))
+                        messages = list_collaboration_messages(conv_id)
+                    except Exception:
+                        debug_print(f"Export: conversation {conv_id} not found or access denied")
+                        continue
 
                 exported.append(
                     _build_export_entry(
@@ -188,6 +241,60 @@ def register_route_backend_conversation_export(app):
             log_event(f"Message export failed: {exc}", level="WARNING")
             return jsonify({'error': 'Export failed due to a server error. Please try again later.'}), 500
 
+    @app.route('/api/message/export-powerpoint', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_export_message_powerpoint():
+        """
+        Export a single message as a PowerPoint (.pptx) presentation.
+
+        Request body:
+            message_id (str): ID of the message to export.
+            conversation_id (str): ID of the conversation the message belongs to.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+
+        message_id = str(data.get('message_id', '') or '').strip()
+        conversation_id = str(data.get('conversation_id', '') or '').strip()
+
+        if not message_id or not conversation_id:
+            return jsonify({'error': 'message_id and conversation_id are required'}), 400
+
+        try:
+            settings = get_settings()
+            message = _load_export_message_for_user(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_id=message_id
+            )
+
+            presentation_bytes = _message_to_pptx_bytes(message, settings)
+            timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            filename = f"message_export_{timestamp_str}.pptx"
+
+            response = make_response(presentation_bytes)
+            response.headers['Content-Type'] = (
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            )
+            response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            debug_print(f"Message PowerPoint export error: {str(exc)}")
+            log_event(f"Message PowerPoint export failed: {exc}", level="WARNING")
+            return jsonify({'error': 'PowerPoint export failed due to a server error. Please try again later.'}), 500
+
     @app.route('/api/message/export-email-draft', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -254,7 +361,7 @@ def _build_export_entry(
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
     ordered_messages = sort_messages_by_thread(filtered_messages)
 
-    raw_thoughts = get_thoughts_for_conversation(conversation.get('id'), user_id)
+    raw_thoughts = [] if is_collaboration_conversation(conversation) else get_thoughts_for_conversation(conversation.get('id'), user_id)
     thoughts_by_message = defaultdict(list)
     for thought in raw_thoughts:
         thoughts_by_message[thought.get('message_id')].append(_sanitize_thought(thought))
@@ -275,6 +382,13 @@ def _build_export_entry(
             message_transcript_index = transcript_index
 
         thoughts = thoughts_by_message.get(message.get('id'), [])
+        if not thoughts and is_collaboration_conversation(conversation):
+            collaboration_thoughts = get_accessible_collaboration_message_thoughts(
+                conversation,
+                message,
+                user_id,
+            )
+            thoughts = [_sanitize_thought(thought) for thought in collaboration_thoughts]
         exported_message = _sanitize_message(
             message,
             sequence_index=sequence_index,
@@ -349,7 +463,7 @@ def _sanitize_conversation(
     return {
         'id': conversation.get('id'),
         'title': conversation.get('title', 'Untitled'),
-        'last_updated': conversation.get('last_updated', ''),
+        'last_updated': conversation.get('last_updated') or conversation.get('updated_at', ''),
         'chat_type': conversation.get('chat_type', 'personal'),
         'tags': conversation.get('tags', []),
         'context': conversation.get('context', []),
@@ -745,8 +859,15 @@ def generate_conversation_summary(
     # Persist to Cosmos when a conversation_id is available
     if conversation_id:
         try:
-            update_conversation_with_metadata(conversation_id, {'summary': summary_data})
-            debug_print(f"Summary persisted to conversation {conversation_id}")
+            summary_persisted = update_conversation_with_metadata(conversation_id, {'summary': summary_data})
+            if summary_persisted:
+                debug_print(f"Summary persisted to conversation {conversation_id}")
+            else:
+                debug_print(f"Summary was generated but not persisted for conversation {conversation_id}")
+                log_event(
+                    f"Conversation summary persistence returned false for {conversation_id}",
+                    level='WARNING'
+                )
         except Exception as persist_exc:
             debug_print(f"Failed to persist summary to Cosmos: {persist_exc}")
             log_event(f"Failed to persist conversation summary: {persist_exc}", level="WARNING")
@@ -1013,7 +1134,11 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
             if message.get('timestamp'):
                 lines.append(f"*{message.get('timestamp')}*")
             lines.append('')
-            lines.append(message.get('content_text') or '_No content recorded._')
+            lines.append(
+                replace_inline_chart_blocks_with_export_html(
+                    message.get('content_text') or '_No content recorded._'
+                )
+            )
             lines.append('')
 
     lines.append('## Appendix A — Conversation Metadata')
@@ -1082,7 +1207,11 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
             if message.get('timestamp'):
                 lines.append(f"*{message.get('timestamp')}*")
             lines.append('')
-            lines.append(message.get('content_text') or '_No content recorded._')
+            lines.append(
+                replace_inline_chart_blocks_with_export_html(
+                    message.get('content_text') or '_No content recorded._'
+                )
+            )
             lines.append('')
 
     return '\n'.join(lines).strip()
@@ -1351,7 +1480,9 @@ def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
 
     doc.add_paragraph('')
 
-    content = _normalize_content(message.get('content', ''))
+    content = replace_inline_chart_blocks_with_export_html(
+        _normalize_content(message.get('content', ''))
+    )
     if content:
         _add_markdown_content_to_doc(doc, content)
     else:
@@ -1367,6 +1498,911 @@ def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
     doc.save(buffer)
     buffer.seek(0)
     return buffer.read()
+
+
+def _message_to_pptx_bytes(message: Dict[str, Any], settings: Dict[str, Any]) -> bytes:
+    role_label = _role_to_label(message.get('role', 'unknown'))
+    timestamp = str(message.get('timestamp', '') or '')
+
+    render_content = replace_inline_chart_blocks_with_export_html(
+        _normalize_content(message.get('content', ''))
+    )
+    planning_content = _sanitize_powerpoint_source_content(render_content)
+    slide_plan = _build_message_powerpoint_plan(
+        content=planning_content,
+        message=message,
+        settings=settings,
+        requested_model=_extract_message_powerpoint_model(message),
+    )
+    appendix_assets = _extract_powerpoint_appendix_assets(render_content)
+    citation_labels = _build_message_citation_labels(message)
+
+    presentation = Presentation()
+    presentation.slide_width = PptxInches(13.333)
+    presentation.slide_height = PptxInches(7.5)
+
+    presentation_title = slide_plan.get('presentation_title') or f'{role_label} Message'
+    presentation_subtitle = slide_plan.get('presentation_subtitle') or _build_powerpoint_subtitle(
+        role_label,
+        timestamp,
+    )
+
+    _add_powerpoint_title_slide(
+        presentation,
+        title=presentation_title,
+        subtitle=presentation_subtitle,
+        role_label=role_label,
+        timestamp=timestamp,
+    )
+
+    rendered_slide = False
+    for slide_spec in slide_plan.get('slides', []):
+        _add_powerpoint_content_slide(presentation, slide_spec, role_label, timestamp)
+        rendered_slide = True
+
+    if not rendered_slide:
+        _add_powerpoint_content_slide(
+            presentation,
+            {'title': 'Overview', 'bullets': ['No content recorded.']},
+            role_label,
+            timestamp,
+        )
+
+    _append_powerpoint_appendix_slides(presentation, appendix_assets, citation_labels)
+
+    buffer = io.BytesIO()
+    presentation.save(buffer)
+    buffer.seek(0)
+    return buffer.read()
+
+
+def _sanitize_powerpoint_source_content(content: str) -> str:
+    if not content:
+        return ''
+
+    sanitized = POWERPOINT_DATA_URI_PATTERN.sub('[inline-image]', content)
+    sanitized = re.sub(
+        r'<img[^>]*alt="([^"]*)"[^>]*>',
+        lambda match: f"[Image: {match.group(1).strip() or 'Inline visual'}]",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(r'<img[^>]*>', '[Image]', sanitized, flags=re.IGNORECASE)
+    sanitized = sanitized.replace('</div>', '\n')
+    sanitized = sanitized.replace('</section>', '\n')
+    sanitized = sanitized.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
+    sanitized = re.sub(r'<[^>]+>', ' ', sanitized)
+    sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)
+    return sanitized.strip()
+
+
+def _build_message_powerpoint_plan(
+    content: str,
+    message: Dict[str, Any],
+    settings: Dict[str, Any],
+    requested_model: str = '',
+) -> Dict[str, Any]:
+    fallback_plan = _build_fallback_powerpoint_plan(content, message)
+    if not content.strip():
+        return fallback_plan
+
+    ai_plan = _generate_powerpoint_slide_plan_with_model(
+        content=content,
+        message=message,
+        settings=settings,
+        requested_model=requested_model,
+        fallback_plan=fallback_plan,
+    )
+    return ai_plan or fallback_plan
+
+
+def _build_fallback_powerpoint_plan(content: str, message: Dict[str, Any]) -> Dict[str, Any]:
+    role_label = _role_to_label(message.get('role', 'unknown'))
+    timestamp = str(message.get('timestamp', '') or '')
+    sections = _extract_powerpoint_sections(content)
+
+    if len(sections) == 1 and not sections[0].get('title'):
+        chunks = [chunk.strip() for chunk in re.split(r'\n\s*\n', sections[0].get('content', '')) if chunk.strip()]
+        if len(chunks) > 1:
+            sections = [
+                {
+                    'title': 'Overview' if index == 0 else f'Detail {index + 1}',
+                    'content': chunk,
+                }
+                for index, chunk in enumerate(chunks)
+            ]
+
+    slides: List[Dict[str, Any]] = []
+    for index, section in enumerate(sections, start=1):
+        if len(slides) >= POWERPOINT_MAX_SLIDES:
+            break
+
+        title = _clean_slide_text(
+            section.get('title') or ('Overview' if index == 1 else f'Key Point {index}'),
+            80,
+        )
+        bullets = _extract_powerpoint_bullets(
+            section.get('content', ''),
+            max_bullets=POWERPOINT_MAX_BULLETS_PER_SLIDE,
+        )
+        if not bullets:
+            plain_text = _markdown_to_plain_text(section.get('content', ''))
+            bullets = _sentence_bullets(plain_text, POWERPOINT_MAX_BULLETS_PER_SLIDE)
+
+        if not bullets:
+            continue
+
+        slides.append({
+            'title': title,
+            'bullets': bullets,
+        })
+
+    if not slides:
+        slides.append({
+            'title': 'Overview',
+            'bullets': _sentence_bullets(
+                _markdown_to_plain_text(content),
+                POWERPOINT_MAX_BULLETS_PER_SLIDE,
+            ) or ['No content recorded.'],
+        })
+
+    return {
+        'presentation_title': _derive_powerpoint_title(content, sections, role_label),
+        'presentation_subtitle': _build_powerpoint_subtitle(role_label, timestamp),
+        'slides': slides,
+    }
+
+
+def _extract_message_powerpoint_model(message: Dict[str, Any]) -> str:
+    metadata = message.get('metadata') if isinstance(message.get('metadata'), dict) else {}
+    candidates = [
+        message.get('model_deployment_name'),
+        metadata.get('selected_model'),
+        metadata.get('model_deployment_name'),
+        metadata.get('model'),
+    ]
+
+    for candidate in candidates:
+        normalized_candidate = _normalize_powerpoint_model_candidate(candidate)
+        if normalized_candidate:
+            return normalized_candidate
+
+    return ''
+
+
+def _normalize_powerpoint_model_candidate(candidate: Any) -> str:
+    if isinstance(candidate, str):
+        return candidate.strip()
+
+    if isinstance(candidate, dict):
+        for key in ('deploymentName', 'deployment', 'value', 'name'):
+            value = str(candidate.get(key) or '').strip()
+            if value:
+                return value
+        return ''
+
+    if isinstance(candidate, list):
+        for item in candidate:
+            normalized_candidate = _normalize_powerpoint_model_candidate(item)
+            if normalized_candidate:
+                return normalized_candidate
+
+    return ''
+
+
+def _generate_powerpoint_slide_plan_with_model(
+    content: str,
+    message: Dict[str, Any],
+    settings: Dict[str, Any],
+    requested_model: str,
+    fallback_plan: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    prompt_source = str(content or '').strip()[:POWERPOINT_PLAN_SOURCE_CHAR_LIMIT]
+    if not prompt_source:
+        return None
+
+    role_label = _role_to_label(message.get('role', 'unknown'))
+    timestamp = str(message.get('timestamp', '') or '')
+    fallback_seed_lines = []
+    for slide in fallback_plan.get('slides', [])[:3]:
+        bullet_preview = '; '.join(slide.get('bullets', [])[:2])
+        seed_text = bullet_preview or slide.get('body', '')
+        if seed_text:
+            fallback_seed_lines.append(f"- {slide.get('title', 'Slide')}: {seed_text}")
+
+    try:
+        gpt_client, gpt_model = _initialize_gpt_client(settings, requested_model)
+        model_lower = gpt_model.lower()
+        is_reasoning_model = (
+            'o1' in model_lower or 'o3' in model_lower or 'gpt-5' in model_lower
+        )
+        instruction_role = 'developer' if is_reasoning_model else 'system'
+        slide_prompt = (
+            'You are turning a single chat message into a presentation-ready PowerPoint outline. '
+            'Preserve factual content, keep numbers and sequence accurate, and do not invent new claims. '
+            'Optimize for concise slide titles and visually scannable bullets. '
+            'Return valid JSON only with the keys presentation_title, presentation_subtitle, and slides. '
+            'The slides value must be an array of 1 to 6 objects. '
+            'Each slide object must contain title and bullets. It may also contain body. '
+            'Use no more than 5 bullets per slide. Keep each bullet under 16 words. '
+            'If body is present, keep it under 280 characters. '
+            'Do not wrap the JSON in markdown fences.'
+        )
+
+        user_prompt = '\n'.join([
+            f'Role: {role_label}',
+            f'Timestamp: {timestamp or "Unknown"}',
+            'Fallback outline seed:',
+            '\n'.join(fallback_seed_lines) if fallback_seed_lines else '- Overview: Summarize the message clearly.',
+            '',
+            'Source message:',
+            prompt_source,
+        ])
+
+        slide_response = gpt_client.chat.completions.create(
+            model=gpt_model,
+            messages=[
+                {
+                    'role': instruction_role,
+                    'content': slide_prompt,
+                },
+                {
+                    'role': 'user',
+                    'content': user_prompt,
+                },
+            ]
+        )
+
+        raw_plan = (
+            (slide_response.choices[0].message.content or '').strip()
+            if slide_response.choices else ''
+        )
+        json_payload = _extract_json_object(raw_plan)
+        if not json_payload:
+            return None
+
+        parsed_plan = json.loads(json_payload)
+        return _sanitize_powerpoint_plan(parsed_plan, fallback_plan)
+    except Exception as exc:
+        debug_print(f'Message PowerPoint plan generation failed: {exc}')
+        log_event(
+            'Message PowerPoint plan generation failed',
+            extra={
+                'requested_model': requested_model or None,
+                'content_length': len(prompt_source),
+            },
+            level='WARNING'
+        )
+        return None
+
+
+def _extract_json_object(raw_content: str) -> Optional[str]:
+    if not raw_content:
+        return None
+
+    start_index = raw_content.find('{')
+    end_index = raw_content.rfind('}')
+    if start_index == -1 or end_index == -1 or end_index <= start_index:
+        return None
+
+    return raw_content[start_index:end_index + 1]
+
+
+def _sanitize_powerpoint_plan(plan: Any, fallback_plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(plan, dict):
+        return None
+
+    slides: List[Dict[str, Any]] = []
+    raw_slides = plan.get('slides') if isinstance(plan.get('slides'), list) else []
+    for index, raw_slide in enumerate(raw_slides, start=1):
+        if len(slides) >= POWERPOINT_MAX_SLIDES or not isinstance(raw_slide, dict):
+            continue
+
+        title = _clean_slide_text(raw_slide.get('title') or f'Slide {index}', 80)
+        raw_bullets = raw_slide.get('bullets', [])
+        if isinstance(raw_bullets, str):
+            raw_bullets = [raw_bullets]
+
+        bullets = []
+        if isinstance(raw_bullets, list):
+            for raw_bullet in raw_bullets:
+                cleaned_bullet = _clean_slide_text(raw_bullet, 120)
+                if cleaned_bullet and cleaned_bullet not in bullets:
+                    bullets.append(cleaned_bullet)
+                if len(bullets) >= POWERPOINT_MAX_BULLETS_PER_SLIDE:
+                    break
+
+        body = _clean_slide_text(raw_slide.get('body', ''), 280)
+        if not bullets and body:
+            bullets = _sentence_bullets(body, POWERPOINT_MAX_BULLETS_PER_SLIDE) or [body]
+
+        if not bullets:
+            continue
+
+        slides.append({
+            'title': title,
+            'bullets': bullets[:POWERPOINT_MAX_BULLETS_PER_SLIDE],
+        })
+
+    if not slides:
+        return None
+
+    return {
+        'presentation_title': _clean_slide_text(
+            plan.get('presentation_title') or fallback_plan.get('presentation_title') or 'Message Export',
+            100,
+        ),
+        'presentation_subtitle': _clean_slide_text(
+            plan.get('presentation_subtitle') or fallback_plan.get('presentation_subtitle') or '',
+            140,
+        ),
+        'slides': slides,
+    }
+
+
+def _extract_powerpoint_sections(content: str) -> List[Dict[str, str]]:
+    if not content.strip():
+        return [{'title': '', 'content': ''}]
+
+    sections: List[Dict[str, str]] = []
+    current_title = ''
+    current_lines: List[str] = []
+    heading_pattern = re.compile(r'^\s*#{1,6}\s+(.+?)\s*$')
+
+    for line in content.splitlines():
+        heading_match = heading_pattern.match(line)
+        if heading_match:
+            if current_title or current_lines:
+                sections.append({
+                    'title': current_title,
+                    'content': '\n'.join(current_lines).strip(),
+                })
+            current_title = _clean_slide_text(heading_match.group(1), 80)
+            current_lines = []
+            continue
+
+        current_lines.append(line)
+
+    if current_title or current_lines:
+        sections.append({
+            'title': current_title,
+            'content': '\n'.join(current_lines).strip(),
+        })
+
+    return sections or [{'title': '', 'content': content.strip()}]
+
+
+def _extract_powerpoint_bullets(content: str, max_bullets: int) -> List[str]:
+    bullets: List[str] = []
+    in_code_block = False
+
+    for line in str(content or '').splitlines():
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+
+        if stripped_line.startswith('```'):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+
+        if _looks_like_markdown_table_row(stripped_line) or _looks_like_markdown_table_divider(stripped_line):
+            continue
+
+        bullet_match = re.match(r'^(?:[-*+]\s+|\d+[.)]\s+)(.+)$', stripped_line)
+        if bullet_match:
+            cleaned_bullet = _clean_slide_text(bullet_match.group(1), 120)
+            if cleaned_bullet and cleaned_bullet not in bullets:
+                bullets.append(cleaned_bullet)
+            if len(bullets) >= max_bullets:
+                break
+            continue
+
+        line_bullets = _sentence_bullets(stripped_line, max_bullets - len(bullets))
+        for line_bullet in line_bullets:
+            if line_bullet and line_bullet not in bullets:
+                bullets.append(line_bullet)
+            if len(bullets) >= max_bullets:
+                break
+
+        if len(bullets) >= max_bullets:
+            break
+
+    return bullets[:max_bullets]
+
+
+def _sentence_bullets(text: str, max_bullets: int) -> List[str]:
+    normalized_text = re.sub(r'\s+', ' ', str(text or '')).strip()
+    if not normalized_text:
+        return []
+
+    sentence_candidates = re.split(r'(?<=[.!?])\s+|\s*;\s+', normalized_text)
+    bullets = []
+    for sentence in sentence_candidates:
+        cleaned_sentence = _clean_slide_text(sentence, 120)
+        if not cleaned_sentence:
+            continue
+        bullets.append(cleaned_sentence)
+        if len(bullets) >= max_bullets:
+            break
+
+    if not bullets:
+        bullets.append(_clean_slide_text(normalized_text, 120))
+
+    return bullets[:max_bullets]
+
+
+def _looks_like_markdown_table_row(line: str) -> bool:
+    return line.startswith('|') and line.endswith('|') and line.count('|') >= 2
+
+
+def _looks_like_markdown_table_divider(line: str) -> bool:
+    return bool(re.match(r'^\|?[\s:-]+\|[\s|:-]*$', line))
+
+
+def _markdown_to_plain_text(content: str) -> str:
+    if not content:
+        return ''
+
+    html = markdown2.markdown(content, extras=DOCX_MARKDOWN_EXTRAS)
+    soup = BeautifulSoup(f'<div>{html}</div>', 'html.parser')
+    plain_text = soup.get_text('\n')
+    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
+    return plain_text.strip()
+
+
+def _derive_powerpoint_title(content: str, sections: List[Dict[str, str]], role_label: str) -> str:
+    for section in sections:
+        if section.get('title'):
+            return _clean_slide_text(section['title'], 100)
+
+    for line in str(content or '').splitlines():
+        cleaned_line = _clean_slide_text(line, 100)
+        if cleaned_line:
+            return cleaned_line
+
+    return f'{role_label} Message'
+
+
+def _build_powerpoint_subtitle(role_label: str, timestamp: str) -> str:
+    subtitle_parts = [role_label, 'Generated from chat message']
+    if timestamp:
+        subtitle_parts.append(timestamp)
+    return ' | '.join(subtitle_parts)
+
+
+def _clean_slide_text(value: Any, max_chars: int) -> str:
+    text = str(value or '')
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1', text)
+    text = re.sub(r'[`*_~]+', '', text)
+    text = re.sub(r'^#{1,6}\s+', '', text)
+    text = re.sub(r'^>\s*', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    if max_chars and len(text) > max_chars:
+        truncated_text = text[:max_chars - 3].rstrip()
+        if ' ' in truncated_text:
+            truncated_text = truncated_text.rsplit(' ', 1)[0]
+        text = f'{truncated_text}...'
+
+    return text
+
+
+def _extract_powerpoint_appendix_assets(content: str) -> Dict[str, List[Dict[str, Any]]]:
+    if not content.strip():
+        return {'images': [], 'tables': [], 'code_blocks': []}
+
+    html = markdown2.markdown(content, extras=DOCX_MARKDOWN_EXTRAS)
+    soup = BeautifulSoup(f'<div>{html}</div>', 'html.parser')
+    root = soup.div if soup.div else soup
+
+    return {
+        'images': _extract_powerpoint_images(root),
+        'tables': _extract_powerpoint_tables(root),
+        'code_blocks': _extract_powerpoint_code_blocks(root),
+    }
+
+
+def _extract_powerpoint_images(root: Tag) -> List[Dict[str, Any]]:
+    images: List[Dict[str, Any]] = []
+    seen_keys = set()
+
+    for image_node in root.find_all('img'):
+        image_bytes = decode_base64_image_data_uri(image_node.get('src'))
+        if not image_bytes:
+            continue
+
+        image_key = (len(image_bytes), image_bytes[:24])
+        if image_key in seen_keys:
+            continue
+        seen_keys.add(image_key)
+
+        chart_wrapper = image_node.find_parent(class_='export-inline-chart')
+        caption_node = chart_wrapper.find(class_='export-inline-chart-caption') if chart_wrapper else None
+        caption = (
+            caption_node.get_text(' ', strip=True)
+            if caption_node and caption_node.get_text(' ', strip=True)
+            else image_node.get('alt') or 'Inline visual'
+        )
+
+        images.append({
+            'title': f'Visual {len(images) + 1}',
+            'caption': _clean_slide_text(caption, 120),
+            'image_bytes': image_bytes,
+        })
+        if len(images) >= POWERPOINT_MAX_APPENDIX_IMAGES:
+            break
+
+    return images
+
+
+def _extract_powerpoint_tables(root: Tag) -> List[Dict[str, Any]]:
+    tables: List[Dict[str, Any]] = []
+
+    for index, table_node in enumerate(root.find_all('table'), start=1):
+        parsed_rows: List[List[str]] = []
+        header_present = False
+        for row_index, row in enumerate(table_node.find_all('tr')):
+            cells = row.find_all(['th', 'td'], recursive=False)
+            if not cells:
+                continue
+            if row_index == 0 and all(cell.name.lower() == 'th' for cell in cells):
+                header_present = True
+
+            parsed_rows.append([
+                _clean_slide_text(cell.get_text(' ', strip=True), 60)
+                for cell in cells[:POWERPOINT_MAX_TABLE_COLS]
+            ])
+            if len(parsed_rows) >= POWERPOINT_MAX_TABLE_ROWS:
+                break
+
+        if not parsed_rows:
+            continue
+
+        column_count = max(len(row) for row in parsed_rows)
+        normalized_rows = [row + [''] * (column_count - len(row)) for row in parsed_rows]
+        tables.append({
+            'title': f'Table {index}',
+            'rows': normalized_rows,
+            'has_header': header_present,
+        })
+        if len(tables) >= POWERPOINT_MAX_APPENDIX_TABLES:
+            break
+
+    return tables
+
+
+def _extract_powerpoint_code_blocks(root: Tag) -> List[Dict[str, Any]]:
+    code_blocks: List[Dict[str, Any]] = []
+
+    for index, code_node in enumerate(root.find_all('pre'), start=1):
+        code_text = code_node.get_text().rstrip()
+        if not code_text:
+            continue
+
+        code_lines = code_text.splitlines()[:18]
+        code_blocks.append({
+            'title': f'Code Example {index}',
+            'code': '\n'.join(code_lines),
+        })
+        if len(code_blocks) >= POWERPOINT_MAX_APPENDIX_CODE_BLOCKS:
+            break
+
+    return code_blocks
+
+
+def _add_powerpoint_title_slide(
+    presentation: Presentation,
+    title: str,
+    subtitle: str,
+    role_label: str,
+    timestamp: str,
+):
+    slide = presentation.slides.add_slide(presentation.slide_layouts[0])
+    _apply_powerpoint_background(slide, POWERPOINT_TITLE_BG)
+
+    accent_shape = slide.shapes.add_shape(
+        MSO_AUTO_SHAPE_TYPE.RECTANGLE,
+        0,
+        presentation.slide_height - PptxInches(0.35),
+        presentation.slide_width,
+        PptxInches(0.35),
+    )
+    accent_shape.fill.solid()
+    accent_shape.fill.fore_color.rgb = POWERPOINT_ACCENT
+    accent_shape.line.fill.background()
+
+    title_shape = slide.shapes.title
+    title_shape.text = title
+    title_frame = title_shape.text_frame
+    title_frame.word_wrap = True
+    for paragraph in title_frame.paragraphs:
+        paragraph.alignment = PP_ALIGN.LEFT
+        for run in paragraph.runs:
+            run.font.size = PptxPt(30)
+            run.font.bold = True
+            run.font.color.rgb = POWERPOINT_TITLE_TEXT
+
+    subtitle_shape = slide.placeholders[1]
+    subtitle_shape.text = subtitle
+    subtitle_frame = subtitle_shape.text_frame
+    subtitle_frame.word_wrap = True
+    for paragraph in subtitle_frame.paragraphs:
+        paragraph.alignment = PP_ALIGN.LEFT
+        for run in paragraph.runs:
+            run.font.size = PptxPt(18)
+            run.font.color.rgb = RGBColor(219, 234, 254)
+
+    footer_box = slide.shapes.add_textbox(
+        PptxInches(0.75),
+        presentation.slide_height - PptxInches(0.9),
+        PptxInches(5.5),
+        PptxInches(0.25),
+    )
+    footer_frame = footer_box.text_frame
+    footer_frame.text = f'{role_label} export{f" | {timestamp}" if timestamp else ""}'
+    footer_paragraph = footer_frame.paragraphs[0]
+    footer_paragraph.alignment = PP_ALIGN.LEFT
+    for run in footer_paragraph.runs:
+        run.font.size = PptxPt(10)
+        run.font.color.rgb = RGBColor(191, 219, 254)
+
+
+def _add_powerpoint_content_slide(
+    presentation: Presentation,
+    slide_spec: Dict[str, Any],
+    role_label: str,
+    timestamp: str,
+):
+    slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+    _apply_powerpoint_background(slide, POWERPOINT_BG)
+
+    accent_bar = slide.shapes.add_shape(
+        MSO_AUTO_SHAPE_TYPE.RECTANGLE,
+        0,
+        0,
+        PptxInches(0.22),
+        presentation.slide_height,
+    )
+    accent_bar.fill.solid()
+    accent_bar.fill.fore_color.rgb = POWERPOINT_ACCENT
+    accent_bar.line.fill.background()
+
+    title_shape = slide.shapes.title
+    title_shape.text = _clean_slide_text(slide_spec.get('title') or 'Overview', 80)
+    title_frame = title_shape.text_frame
+    title_frame.word_wrap = True
+    for paragraph in title_frame.paragraphs:
+        paragraph.alignment = PP_ALIGN.LEFT
+        for run in paragraph.runs:
+            run.font.size = PptxPt(24)
+            run.font.bold = True
+            run.font.color.rgb = POWERPOINT_TEXT
+
+    content_placeholder = slide.placeholders[1]
+    text_frame = content_placeholder.text_frame
+    text_frame.clear()
+    text_frame.word_wrap = True
+
+    bullets = slide_spec.get('bullets', [])
+    if isinstance(bullets, str):
+        bullets = [bullets]
+    if not bullets:
+        bullets = ['No content recorded.']
+
+    font_size = 22 if len(bullets) <= 3 else 20 if len(bullets) <= 5 else 18
+    for index, bullet in enumerate(bullets):
+        paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
+        paragraph.text = _clean_slide_text(bullet, 120)
+        paragraph.level = 0
+        paragraph.alignment = PP_ALIGN.LEFT
+        paragraph.space_after = PptxPt(8)
+        for run in paragraph.runs:
+            run.font.size = PptxPt(font_size)
+            run.font.color.rgb = POWERPOINT_TEXT
+
+    metadata_box = slide.shapes.add_textbox(
+        presentation.slide_width - PptxInches(3.1),
+        presentation.slide_height - PptxInches(0.45),
+        PptxInches(2.6),
+        PptxInches(0.22),
+    )
+    metadata_frame = metadata_box.text_frame
+    metadata_frame.text = f'{role_label}{f" | {timestamp}" if timestamp else ""}'
+    metadata_paragraph = metadata_frame.paragraphs[0]
+    metadata_paragraph.alignment = PP_ALIGN.RIGHT
+    for run in metadata_paragraph.runs:
+        run.font.size = PptxPt(9)
+        run.font.color.rgb = POWERPOINT_MUTED
+
+
+def _append_powerpoint_appendix_slides(
+    presentation: Presentation,
+    appendix_assets: Dict[str, List[Dict[str, Any]]],
+    citation_labels: List[str],
+):
+    for image_asset in appendix_assets.get('images', []):
+        _add_powerpoint_image_slide(presentation, image_asset)
+
+    for table_asset in appendix_assets.get('tables', []):
+        _add_powerpoint_table_slide(presentation, table_asset)
+
+    for code_asset in appendix_assets.get('code_blocks', []):
+        _add_powerpoint_code_slide(presentation, code_asset)
+
+    for index, citation_chunk in enumerate(_chunk_items(citation_labels, 8), start=1):
+        title = 'References' if index == 1 else f'References {index}'
+        _add_powerpoint_content_slide(
+            presentation,
+            {'title': title, 'bullets': citation_chunk},
+            role_label='Sources',
+            timestamp='',
+        )
+
+
+def _add_powerpoint_image_slide(presentation: Presentation, image_asset: Dict[str, Any]):
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    _apply_powerpoint_background(slide, POWERPOINT_PANEL)
+
+    title_shape = slide.shapes.title
+    title_shape.text = _clean_slide_text(image_asset.get('title') or 'Visual', 80)
+    for paragraph in title_shape.text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = PptxPt(24)
+            run.font.bold = True
+            run.font.color.rgb = POWERPOINT_TEXT
+
+    image_bytes = image_asset.get('image_bytes')
+    if image_bytes:
+        left, top, width, height = _fit_powerpoint_image(
+            image_bytes,
+            max_width=presentation.slide_width - PptxInches(1.4),
+            max_height=presentation.slide_height - PptxInches(2.3),
+            top_offset=PptxInches(1.2),
+        )
+        slide.shapes.add_picture(io.BytesIO(image_bytes), left, top, width=width, height=height)
+
+    caption = _clean_slide_text(image_asset.get('caption') or '', 160)
+    if caption:
+        caption_box = slide.shapes.add_textbox(
+            PptxInches(0.8),
+            presentation.slide_height - PptxInches(0.8),
+            presentation.slide_width - PptxInches(1.6),
+            PptxInches(0.35),
+        )
+        caption_frame = caption_box.text_frame
+        caption_frame.text = caption
+        caption_paragraph = caption_frame.paragraphs[0]
+        caption_paragraph.alignment = PP_ALIGN.CENTER
+        for run in caption_paragraph.runs:
+            run.font.size = PptxPt(12)
+            run.font.color.rgb = POWERPOINT_MUTED
+
+
+def _fit_powerpoint_image(
+    image_bytes: bytes,
+    max_width: int,
+    max_height: int,
+    top_offset: int,
+) -> Tuple[int, int, int, int]:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        image_width, image_height = image.size
+
+    max_width = int(max_width)
+    max_height = int(max_height)
+    top_offset = int(top_offset)
+
+    if not image_width or not image_height:
+        return PptxInches(0.8), top_offset, max_width, max_height
+
+    aspect_ratio = image_width / image_height
+    target_width = max_width
+    target_height = int(target_width / aspect_ratio)
+
+    if target_height > max_height:
+        target_height = max_height
+        target_width = int(target_height * aspect_ratio)
+
+    left = int((13333320 - target_width) / 2)
+    top = top_offset + int((max_height - target_height) / 2)
+    return left, top, target_width, target_height
+
+
+def _add_powerpoint_table_slide(presentation: Presentation, table_asset: Dict[str, Any]):
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    _apply_powerpoint_background(slide, POWERPOINT_PANEL)
+
+    title_shape = slide.shapes.title
+    title_shape.text = _clean_slide_text(table_asset.get('title') or 'Table', 80)
+    for paragraph in title_shape.text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = PptxPt(24)
+            run.font.bold = True
+            run.font.color.rgb = POWERPOINT_TEXT
+
+    rows = table_asset.get('rows', [])
+    if not rows:
+        return
+
+    row_count = len(rows)
+    column_count = max(len(row) for row in rows)
+    table_shape = slide.shapes.add_table(
+        row_count,
+        column_count,
+        PptxInches(0.6),
+        PptxInches(1.4),
+        presentation.slide_width - PptxInches(1.2),
+        presentation.slide_height - PptxInches(2.0),
+    )
+    table = table_shape.table
+    has_header = bool(table_asset.get('has_header'))
+
+    for row_index, row_values in enumerate(rows):
+        for column_index in range(column_count):
+            cell = table.cell(row_index, column_index)
+            cell.text = row_values[column_index] if column_index < len(row_values) else ''
+            fill = cell.fill
+            fill.solid()
+            fill.fore_color.rgb = POWERPOINT_ACCENT if has_header and row_index == 0 else POWERPOINT_PANEL
+            paragraph = cell.text_frame.paragraphs[0]
+            paragraph.alignment = PP_ALIGN.LEFT
+            for run in paragraph.runs:
+                run.font.size = PptxPt(12)
+                run.font.bold = bool(has_header and row_index == 0)
+                run.font.color.rgb = POWERPOINT_TITLE_TEXT if has_header and row_index == 0 else POWERPOINT_TEXT
+
+
+def _add_powerpoint_code_slide(presentation: Presentation, code_asset: Dict[str, Any]):
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    _apply_powerpoint_background(slide, POWERPOINT_PANEL)
+
+    title_shape = slide.shapes.title
+    title_shape.text = _clean_slide_text(code_asset.get('title') or 'Code Example', 80)
+    for paragraph in title_shape.text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = PptxPt(24)
+            run.font.bold = True
+            run.font.color.rgb = POWERPOINT_TEXT
+
+    code_panel = slide.shapes.add_shape(
+        MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,
+        PptxInches(0.7),
+        PptxInches(1.35),
+        presentation.slide_width - PptxInches(1.4),
+        presentation.slide_height - PptxInches(2.0),
+    )
+    code_panel.fill.solid()
+    code_panel.fill.fore_color.rgb = RGBColor(241, 245, 249)
+    code_panel.line.color.rgb = RGBColor(203, 213, 225)
+
+    code_box = slide.shapes.add_textbox(
+        PptxInches(0.95),
+        PptxInches(1.55),
+        presentation.slide_width - PptxInches(1.9),
+        presentation.slide_height - PptxInches(2.4),
+    )
+    code_frame = code_box.text_frame
+    code_frame.word_wrap = False
+    code_frame.text = str(code_asset.get('code') or '')
+    for paragraph in code_frame.paragraphs:
+        paragraph.alignment = PP_ALIGN.LEFT
+        for run in paragraph.runs:
+            run.font.name = 'Consolas'
+            run.font.size = PptxPt(12)
+            run.font.color.rgb = POWERPOINT_TEXT
+
+
+def _apply_powerpoint_background(slide, color: RGBColor):
+    fill = slide.background.fill
+    fill.solid()
+    fill.fore_color.rgb = color
+
+
+def _chunk_items(items: List[str], chunk_size: int) -> List[List[str]]:
+    if not items:
+        return []
+    return [items[index:index + chunk_size] for index in range(0, len(items), chunk_size)]
 
 
 def _message_to_email_draft_payload(
@@ -2000,6 +3036,14 @@ def _append_inline_html_runs(paragraph, node: Any, formatting: Optional[Dict[str
         return
 
     if tag_name == 'img':
+        image_bytes = decode_base64_image_data_uri(node.get('src'))
+        if image_bytes:
+            try:
+                paragraph.add_run().add_picture(io.BytesIO(image_bytes), width=Inches(6.0))
+                return
+            except Exception:
+                pass
+
         alt_text = node.get('alt') or 'Image'
         run = paragraph.add_run(f'[{alt_text}]')
         _apply_run_formatting(run, formatting)
@@ -2173,6 +3217,25 @@ small {
     font-size: 8pt;
     color: #666;
 }
+.export-inline-chart {
+    background-color: #fafafa;
+    border: 1px solid #ddd;
+    padding: 8pt;
+    margin-top: 6pt;
+    margin-bottom: 10pt;
+}
+.export-inline-chart img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+.export-inline-chart-caption {
+    font-size: 8pt;
+    color: #666;
+    text-align: center;
+    margin-top: 4pt;
+}
 a {
     color: #0066cc;
 }
@@ -2226,7 +3289,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
     if summary_intro.get('enabled') and summary_intro.get('generated') and summary_intro.get('content'):
         parts.append('<h2>Abstract</h2>')
         abstract_html = markdown2.markdown(
-            summary_intro.get('content', ''),
+            replace_inline_chart_blocks_with_export_html(summary_intro.get('content', '')),
             extras=['fenced-code-blocks', 'tables']
         )
         parts.append(f'<div class="abstract">{abstract_html}</div>')
@@ -2268,7 +3331,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
                 f'{_escape_html(speaker)}</b>{ts_str}</p>'
             )
             content_html = markdown2.markdown(
-                content,
+                replace_inline_chart_blocks_with_export_html(content),
                 extras=['fenced-code-blocks', 'tables', 'break-on-newline']
             )
             parts.append(content_html)
@@ -2365,7 +3428,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
                 )
             content = message.get('content_text', '') or 'No content recorded.'
             content_html = markdown2.markdown(
-                content,
+                replace_inline_chart_blocks_with_export_html(content),
                 extras=['fenced-code-blocks', 'tables', 'break-on-newline']
             )
             parts.append(content_html)

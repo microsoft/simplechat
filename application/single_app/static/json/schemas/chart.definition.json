@@ -1,0 +1,6 @@
+{
+    "allowedAuthTypes": [
+        "user"
+    ],
+    "defaultAuthType": "user"
+}

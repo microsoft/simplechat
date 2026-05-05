@@ -189,6 +189,204 @@
               </div>
             </div>
           </div>
+
+          <div id="simplechat-config-section" class="d-none">
+            <div class="alert alert-primary mb-0">
+              <strong>Built-in action:</strong> SimpleChat does not require a URL or external credentials.
+              The capabilities below become the default operations exposed by this action. Agents can narrow them further per assignment.
+            </div>
+
+            <div class="simplechat-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-chat-square-dots me-2"></i>Default SimpleChat Capabilities
+              </div>
+              <div id="simplechat-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+          </div>
+
+          <div id="msgraph-config-section" class="d-none">
+            <div class="alert alert-info mb-0">
+              <strong>Built-in action:</strong> Microsoft Graph uses the signed-in user's delegated permissions and the standard Graph endpoint.
+              The capabilities below become the default operations exposed by this action. Agents can narrow them further per assignment.
+            </div>
+
+            <div class="simplechat-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-calendar3 me-2"></i>Default Microsoft Graph Capabilities
+              </div>
+              <div id="msgraph-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+          </div>
+
+          <div id="azure-maps-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Built-in action:</strong> This action prepares inline OpenLayers maps in chat and proxies Azure Maps raster tiles through SimpleChat.
+              Only the Azure Maps subscription key is required here.
+            </div>
+
+            <div class="card border-0 shadow-sm mb-0">
+              <div class="card-body p-3">
+                <div class="config-section-label">
+                  <i class="bi bi-geo-alt me-2"></i>Azure Maps Credentials
+                </div>
+                <div class="mb-0">
+                  <label for="azure-maps-key" class="form-label">Subscription Key <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="azure-maps-key" placeholder="Azure Maps subscription key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                  <div class="form-text">The browser receives only a short-lived proxy token. The raw subscription key stays in the stored action configuration.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="chart-config-section" class="d-none">
+            <div class="alert alert-warning mb-0">
+              <strong>Built-in action:</strong> Charts are rendered with SimpleChat's internal Chart.js bundle and the current user's chat session.
+              The chart types below become the default visualization options exposed by this action. Agents can narrow them further per assignment.
+            </div>
+
+            <div class="simplechat-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-bar-chart-line me-2"></i>Default Chart Types
+              </div>
+              <div id="chart-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+          </div>
+
+          <div id="document-search-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <i class="bi bi-search me-2"></i>
+              This action uses SimpleChat's internal document search and the current user's access. No external URL or stored credentials are required.
+            </div>
+
+            <div class="card border-0 shadow-sm mb-3">
+              <div class="card-body p-3">
+                <div class="config-section-label">
+                  <i class="bi bi-sliders me-2"></i>Search Defaults
+                </div>
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label for="document-search-scope" class="form-label">Default Scope</label>
+                    <select class="form-select" id="document-search-scope">
+                      <option value="all">All Accessible Content</option>
+                      <option value="personal">Personal Workspace</option>
+                      <option value="group">Group Workspaces</option>
+                      <option value="public">Public Workspaces</option>
+                    </select>
+                    <div class="form-text">Used when the action is called without an explicit scope filter.</div>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="document-search-top-n" class="form-label">Default Search Result Limit</label>
+                    <input type="number" class="form-control" id="document-search-top-n" value="12" min="1" max="500" />
+                    <div class="form-text">Maximum number of ranked results returned when a caller does not set <code>top_n</code>.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-3">
+              <div class="card-body p-3">
+                <div class="config-section-label">
+                  <i class="bi bi-layout-split me-2"></i>Windowing Defaults
+                </div>
+                <p class="text-muted small mb-3">Chunk retrieval returns all chunks by default. Configure preferred windowing so downstream tools can plan comparisons and summaries consistently.</p>
+                <div class="row g-3">
+                  <div class="col-md-4">
+                    <label for="document-search-window-unit" class="form-label">Preferred Window Unit</label>
+                    <select class="form-select" id="document-search-window-unit">
+                      <option value="pages">Pages</option>
+                      <option value="chunks">Chunks</option>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="document-search-window-size" class="form-label">Preferred Window Size</label>
+                    <input type="number" class="form-control" id="document-search-window-size" min="1" max="100" placeholder="Optional" />
+                    <div class="form-text">Optional fixed number of pages or chunks per window. Takes precedence over percent.</div>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="document-search-window-percent" class="form-label">Preferred Window Percent</label>
+                    <input type="number" class="form-control" id="document-search-window-percent" min="1" max="100" placeholder="Optional" />
+                    <div class="form-text">Optional percent of the document per window when size is not set.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-0">
+              <div class="card-body p-3">
+                <div class="config-section-label">
+                  <i class="bi bi-card-text me-2"></i>Summary Defaults
+                </div>
+                <div class="mb-3">
+                  <label for="document-search-focus-instructions" class="form-label">Default Focus Instructions</label>
+                  <textarea class="form-control" id="document-search-focus-instructions" rows="3" placeholder="Optional guidance such as compare versions, highlight risks, or focus on assigned knowledge."></textarea>
+                  <div class="form-text">Applied when a summarization call does not include its own focus instructions.</div>
+                </div>
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label for="document-search-window-target-length" class="form-label">Window Summary Target Length</label>
+                    <input type="text" class="form-control" id="document-search-window-target-length" value="2 pages" placeholder="2 pages" />
+                    <div class="form-text">Target length for first-pass summaries over each chunk window.</div>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="document-search-final-target-length" class="form-label">Final Summary Target Length</label>
+                    <input type="text" class="form-control" id="document-search-final-target-length" value="2 pages" placeholder="2 pages" />
+                    <div class="form-text">Target length for the final summary output.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="blob-storage-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Container-scoped action:</strong> Configure one Azure Blob container and optionally narrow the action to a blob prefix.
+              The connection string can be stored in Key Vault through the normal action secret flow, while the capability toggles below define the default operations exposed by this action.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-cloud-arrow-down me-2"></i>Blob Storage Connection
+              </div>
+              <div class="mb-3">
+                <label for="blob-storage-connection-string" class="form-label">Connection String <span class="text-danger">*</span></label>
+                <textarea class="form-control" id="blob-storage-connection-string" rows="3" placeholder="DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net"></textarea>
+                <div class="form-text">Use an Azure Storage account connection string with access to the target container.</div>
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="blob-storage-container-name" class="form-label">Container Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="blob-storage-container-name" placeholder="knowledge-base" />
+                  <div class="form-text">The action is scoped to this single container.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="blob-storage-blob-prefix" class="form-label">Blob Prefix</label>
+                  <input type="text" class="form-control" id="blob-storage-blob-prefix" placeholder="docs/markdown" />
+                  <div class="form-text">Optional. Restrict list, read, and upload operations to blobs under this prefix.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-sliders me-2"></i>Default Blob Storage Capabilities
+              </div>
+              <div id="blob-storage-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-file-earmark-text me-2"></i>Supported File Types
+              </div>
+              <div id="blob-storage-read-file-types-section" class="mb-3">
+                <label class="form-label">Read File Types</label>
+                <div id="blob-storage-read-file-types-list" class="d-grid gap-2"></div>
+              </div>
+              <div id="blob-storage-upload-file-types-section">
+                <label class="form-label">Upload File Types</label>
+                <div id="blob-storage-upload-file-types-list" class="d-grid gap-2"></div>
+              </div>
+            </div>
+          </div>
           
           <!-- SQL Database Configuration -->
           <div id="sql-config-section" class="d-none">
@@ -315,8 +513,8 @@
                 <div class="mb-3 d-none" id="sql-driver-field">
                   <label for="sql-driver" class="form-label">ODBC Driver</label>
                   <select class="form-select" id="sql-driver">
-                    <option value="ODBC Driver 17 for SQL Server">ODBC Driver 17 for SQL Server</option>
                     <option value="ODBC Driver 18 for SQL Server">ODBC Driver 18 for SQL Server</option>
+                    <option value="ODBC Driver 17 for SQL Server">ODBC Driver 17 for SQL Server</option>
                     <option value="SQL Server">SQL Server (Legacy)</option>
                   </select>
                 </div>
@@ -440,6 +638,103 @@
               </div>
               <div id="sql-test-connection-result" class="mt-2 d-none">
                 <div class="alert mb-0 py-2 px-3 small" id="sql-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Azure Cosmos DB Configuration -->
+          <div id="cosmos-config-section" class="d-none">
+            <div class="config-section-label">
+              <i class="bi bi-database me-2"></i>Azure Cosmos DB Configuration
+            </div>
+
+            <div class="cosmos-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-plug me-2"></i>Account and Container
+              </div>
+
+              <div class="mb-3">
+                <label for="cosmos-endpoint" class="form-label">Account Endpoint <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="cosmos-endpoint" placeholder="https://your-account.documents.azure.com:443/" />
+                <div class="form-text">Use the Azure Cosmos DB account endpoint for the API for NoSQL account.</div>
+              </div>
+
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="cosmos-database-name" class="form-label">Database Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="cosmos-database-name" placeholder="SimpleChat" />
+                </div>
+                <div class="col-md-6">
+                  <label for="cosmos-container-name" class="form-label">Container Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="cosmos-container-name" placeholder="documents" />
+                </div>
+              </div>
+
+              <div class="mt-3">
+                <label for="cosmos-partition-key-path" class="form-label">Partition Key Path <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="cosmos-partition-key-path" placeholder="/id" />
+                <div class="form-text">Enter the container partition key path exactly as configured in Cosmos DB.</div>
+              </div>
+            </div>
+
+            <div class="cosmos-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+
+              <div class="mb-3">
+                <label for="cosmos-auth-type" class="form-label">Authentication Method <span class="text-danger">*</span></label>
+                <select class="form-select" id="cosmos-auth-type">
+                  <option value="identity">Managed Identity</option>
+                  <option value="key">Account Key</option>
+                </select>
+                <div class="form-text">Managed identity avoids stored secrets. Account keys can be stored in Key Vault when app secret storage is enabled.</div>
+              </div>
+
+              <div class="mb-3 d-none" id="cosmos-auth-key-group">
+                <label for="cosmos-auth-key" class="form-label">Account Key <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="cosmos-auth-key" placeholder="Primary or secondary account key" autocomplete="new-password" />
+                <div class="form-text">If this action already uses a Key Vault-backed key, leave the stored value unchanged to preserve the existing secret.</div>
+              </div>
+
+              <div class="alert alert-info mb-0" id="cosmos-auth-info">
+                <span id="cosmos-auth-info-text">Managed Identity uses Azure AD authentication without storing credentials. Assign an Azure Cosmos DB built-in data reader role to the application identity for the target account.</span>
+              </div>
+            </div>
+
+            <div class="cosmos-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-gear me-2"></i>Query Guidance
+              </div>
+
+              <div class="mb-3">
+                <label for="cosmos-field-hints" class="form-label">Field Hints</label>
+                <textarea class="form-control" id="cosmos-field-hints" rows="4" placeholder="id&#10;title&#10;user_id"></textarea>
+                <div class="form-text">Optional. Add one field name per line so the model knows which document properties are relevant.</div>
+              </div>
+
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="cosmos-max-items" class="form-label">Max Items</label>
+                  <input type="number" class="form-control" id="cosmos-max-items" value="100" min="1" max="1000" />
+                  <div class="form-text">Hard cap for documents returned per query.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="cosmos-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="cosmos-timeout" value="30" min="1" max="120" />
+                  <div class="form-text">Absolute timeout for Cosmos client requests.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 pt-3 border-top" id="cosmos-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="cosmos-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Cosmos Connection
+                </button>
+              </div>
+              <div id="cosmos-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="cosmos-test-connection-alert" role="alert"></div>
               </div>
             </div>
           </div>
@@ -609,6 +904,235 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Include System Tables</label>
                     <span class="fw-medium" id="summary-sql-include-system">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cosmos DB Configuration Section -->
+          <div class="card mb-3 border-0 shadow-sm" id="summary-cosmos-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #17a2b8 0%, #11707f 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-database me-2"></i>Cosmos DB Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-cosmos-auth-type">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Database Name</label>
+                    <span class="fw-medium" id="summary-cosmos-database-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Container Name</label>
+                    <span class="fw-medium" id="summary-cosmos-container-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Partition Key Path</label>
+                    <span class="fw-medium font-monospace" id="summary-cosmos-partition-key-path">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Items</label>
+                    <span class="fw-medium" id="summary-cosmos-max-items">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Timeout</label>
+                    <span class="fw-medium" id="summary-cosmos-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Field Hints</label>
+                    <span class="fw-medium" id="summary-cosmos-field-hints">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-blob-storage-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0dcaf0 0%, #087990 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-cloud me-2"></i>Blob Storage Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Container Name</label>
+                    <span class="fw-medium" id="summary-blob-storage-container-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Blob Prefix</label>
+                    <span class="fw-medium font-monospace" id="summary-blob-storage-blob-prefix">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Enabled By Default</label>
+                    <span class="fw-medium" id="summary-blob-storage-enabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Disabled By Default</label>
+                    <span class="fw-medium" id="summary-blob-storage-disabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Readable File Types</label>
+                    <span class="fw-medium" id="summary-blob-storage-read-file-types">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Uploadable File Types</label>
+                    <span class="fw-medium" id="summary-blob-storage-upload-file-types">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-simplechat-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0d6efd 0%, #084298 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-comments me-2"></i>SimpleChat Capabilities
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Enabled By Default</label>
+                    <span class="fw-medium" id="summary-simplechat-enabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Disabled By Default</label>
+                    <span class="fw-medium" id="summary-simplechat-disabled-list">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-msgraph-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #198754 0%, #146c43 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-calendar3 me-2"></i>Microsoft Graph Capabilities
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Enabled By Default</label>
+                    <span class="fw-medium" id="summary-msgraph-enabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Disabled By Default</label>
+                    <span class="fw-medium" id="summary-msgraph-disabled-list">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-chart-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #fd7e14 0%, #b45309 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-bar-chart-line me-2"></i>Chart Types
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Enabled By Default</label>
+                    <span class="fw-medium" id="summary-chart-enabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Disabled By Default</label>
+                    <span class="fw-medium" id="summary-chart-disabled-list">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-document-search-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #198754 0%, #146c43 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-search me-2"></i>Document Search Defaults
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Default Scope</label>
+                    <span class="fw-medium" id="summary-search-scope">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Search Result Limit</label>
+                    <span class="fw-medium" id="summary-search-top-n">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Chunk Retrieval</label>
+                    <span class="fw-medium" id="summary-search-chunk-behavior">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Preferred Windowing</label>
+                    <span class="fw-medium" id="summary-search-windowing">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Window Summary Target</label>
+                    <span class="fw-medium" id="summary-search-window-target-length">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Final Summary Target</label>
+                    <span class="fw-medium" id="summary-search-final-target-length">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Default Focus Instructions</label>
+                    <span class="fw-medium" id="summary-search-focus-instructions">-</span>
                   </div>
                 </div>
               </div>
@@ -804,6 +1328,13 @@
   background-color: #f8f9fa;
 }
 
+#cosmos-config-section {
+  border: 1px solid #d7eef5;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f8f9fa;
+}
+
 /* Advanced toggle chevron animation */
 #plugin-advanced-toggle-icon {
   transition: transform 0.3s ease;
@@ -815,6 +1346,22 @@
 
 .sql-connection-config, 
 .sql-auth-config {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  border: 1px solid #e9ecef;
+}
+
+.cosmos-config-card {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  border: 1px solid #e9ecef;
+}
+
+.simplechat-config-card {
   background-color: white;
   border-radius: 6px;
   padding: 1rem;
@@ -895,6 +1442,10 @@
   border-left: 4px solid #0dcaf0;
 }
 
+#cosmos-auth-info {
+  border-left: 4px solid #17a2b8;
+}
+
 /* Plugin type selection styling */
 .btn-outline-info small,
 .btn-outline-success small {
@@ -939,8 +1490,15 @@
   background-color: #343a40;
 }
 
+[data-bs-theme="dark"] #cosmos-config-section {
+  border-color: #495057;
+  background-color: #343a40;
+}
+
 [data-bs-theme="dark"] .sql-connection-config,
 [data-bs-theme="dark"] .sql-auth-config,
+[data-bs-theme="dark"] .simplechat-config-card,
+[data-bs-theme="dark"] .cosmos-config-card,
 [data-bs-theme="dark"] .auth-section {
   background-color: #2d3237;
   border-color: #495057;
@@ -964,6 +1522,12 @@
 }
 
 [data-bs-theme="dark"] #sql-auth-info {
+  background-color: #1f3a4a;
+  border-color: #17a2b8;
+  color: #b3e5fc;
+}
+
+[data-bs-theme="dark"] #cosmos-auth-info {
   background-color: #1f3a4a;
   border-color: #17a2b8;
   color: #b3e5fc;

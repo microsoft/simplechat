@@ -1,6 +1,7 @@
 // static/js/workspace/workspace-prompts.js
 
 import { escapeHtml } from "./workspace-utils.js";
+import { openViewModal } from "./view-utils.js";
 
 // ------------- State Variables (Prompts Tab) -------------
 let promptsCurrentPage = 1;
@@ -105,15 +106,25 @@ function renderPromptRow(p) {
      tr.innerHTML = `
          <td title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</td>
          <td>
-            <button class="btn btn-sm btn-primary" onclick="window.onEditPrompt('${p.id}')" title="Edit Prompt">
-                <i class="bi bi-pencil-fill"></i> Edit
+            <div class="d-flex gap-1 justify-content-start justify-content-md-end">
+            <button class="btn btn-sm btn-outline-info" onclick="window.onViewPrompt('${p.id}')" title="View Prompt">
+                <i class="bi bi-eye"></i>
             </button>
-            <button class="btn btn-sm btn-danger ms-1" onclick="window.onDeletePrompt('${p.id}', event)" title="Delete Prompt">
-                <i class="bi bi-trash-fill"></i> Delete
+            <button class="btn btn-sm btn-outline-secondary" onclick="window.onEditPrompt('${p.id}')" title="Edit Prompt">
+                <i class="bi bi-pencil"></i>
             </button>
+            <button class="btn btn-sm btn-outline-danger" onclick="window.onDeletePrompt('${p.id}', event)" title="Delete Prompt">
+                <i class="bi bi-trash"></i>
+            </button>
+            </div>
          </td>
      `;
      promptsTableBody.appendChild(tr);
+}
+
+function fetchPrompt(promptId) {
+    return fetch(`/api/prompts/${promptId}`)
+        .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)));
 }
 
 
@@ -351,8 +362,7 @@ if (promptsSearchInput) {
 // Edit Prompt (Remains largely the same, just needs to be global)
 window.onEditPrompt = function (promptId) {
     if (!promptModalEl || !promptIdEl || !promptNameEl || !promptContentEl) return;
-    fetch(`/api/prompts/${promptId}`)
-        .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
+    fetchPrompt(promptId)
         .then(data => {
             const modalLabel = document.getElementById("promptModalLabel");
                 if (modalLabel) modalLabel.textContent = `Edit Prompt: ${escapeHtml(data.name)}`;
@@ -382,6 +392,19 @@ window.onEditPrompt = function (promptId) {
         });
 };
 
+window.onViewPrompt = function (promptId) {
+    fetchPrompt(promptId)
+        .then(data => {
+            openViewModal(data, 'prompt', {
+                onEdit: (item) => window.onEditPrompt(item.id),
+            });
+        })
+        .catch(err => {
+            console.error("Error retrieving prompt for view:", err);
+            alert("Error retrieving prompt: " + (err.error || err.message || "Unknown error"));
+        });
+};
+
 // Delete Prompt (Remains the same, but calls fetchUserPrompts at the end)
 window.onDeletePrompt = function (promptId, event) {
     if (!confirm("Are you sure you want to delete this prompt?")) return;
@@ -403,7 +426,7 @@ window.onDeletePrompt = function (promptId, event) {
             alert("Error deleting prompt: " + (err.error || err.message || "Unknown error"));
             if (deleteBtn) {
                     deleteBtn.disabled = false;
-                    deleteBtn.innerHTML = '<i class="bi bi-trash-fill"></i> Delete';
+                deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';
             }
         });
 };

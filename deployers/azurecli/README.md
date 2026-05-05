@@ -47,6 +47,7 @@ If you provide only external endpoint information without Azure resource metadat
 ## Files in this folder
 
 - [deploy-simplechat.ps1](deploy-simplechat.ps1) - Main deployment script
+- [upgrade-simplechat.ps1](upgrade-simplechat.ps1) - Code-only container upgrade script for existing Azure CLI deployments
 - [destroy-simplechat.ps1](destroy-simplechat.ps1) - Cleanup script
 - [appRegistrationRoles.json](appRegistrationRoles.json) - App role definition source
 - [ai_search-index-group.json](ai_search-index-group.json) - Group search index definition
@@ -113,6 +114,43 @@ Linux or macOS example:
 cd deployers/azurecli
 pwsh ./deploy-simplechat.ps1
 ```
+
+## Code-only upgrade flow
+
+For an existing Azure CLI deployment where infrastructure is unchanged, use `upgrade-simplechat.ps1` instead of rerunning the full deployer.
+
+This script:
+
+- builds the requested image tag in ACR with `az acr build`
+- updates the existing App Service container image with `az webapp config container set`
+- verifies the App Service now points to the requested image
+- restarts the web app so the new image is pulled
+
+Example with explicit resource names:
+
+```powershell
+cd deployers/azurecli
+./upgrade-simplechat.ps1 `
+	-AcrName registrysimplechatprod `
+	-ImageName simplechat:2026-04-29_01 `
+	-ResourceGroupName sc-contoso-prod-rg `
+	-WebAppName contoso-prod-app
+```
+
+Example using the same base-name and environment naming convention as `deploy-simplechat.ps1`:
+
+```powershell
+cd deployers/azurecli
+./upgrade-simplechat.ps1 `
+	-AcrName registrysimplechatprod `
+	-ImageName simplechat:2026-04-29_01 `
+	-BaseName contoso `
+	-Environment prod
+```
+
+This flow is the Azure CLI deployer's PowerShell-first equivalent to a normal container-only `azd deploy`, without invoking the AZD post-configuration Python path.
+
+If the image already exists in ACR and you only want App Service to move to that tag, add `-SkipAcrBuild`.
 
 ## Configuration areas to review
 

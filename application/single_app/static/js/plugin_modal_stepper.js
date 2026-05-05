@@ -4,7 +4,193 @@ import { showToast } from "./chat/chat-toast.js";
 import { getTypeIcon } from "./workspace/view-utils.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
-const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'blob_storage', 'embedding_model'];
+const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model'];
+const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
+const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
+const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
+const CHART_DEFAULT_ENDPOINT = 'chart://internal';
+const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
+const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
+const BLOB_STORAGE_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'list_container_contents',
+    label: 'List container contents',
+    description: 'List blobs in the configured container and optional prefix.'
+  },
+  {
+    key: 'read_file_content',
+    label: 'Read file content',
+    description: 'Read supported files from the configured container.'
+  },
+  {
+    key: 'upload_file_to_container',
+    label: 'Upload file to container',
+    description: 'Upload supported files into the configured container.'
+  }
+];
+const BLOB_STORAGE_FILE_TYPE_DEFINITIONS = [
+  {
+    key: 'markdown',
+    label: 'Markdown',
+    description: 'Supports .md and .markdown files stored as UTF-8 text.'
+  }
+];
+const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'create_group',
+    label: 'Create groups',
+    description: 'Allow this action to create new group workspaces as the current user.'
+  },
+  {
+    key: 'add_group_member',
+    label: 'Add users to groups',
+    description: 'Allow this action to add members directly to groups using the current user\'s permissions.'
+  },
+  {
+    key: 'make_group_inactive',
+    label: 'Make groups inactive',
+    description: 'Allow this action to mark a group inactive when the current user has Control Center admin access.'
+  },
+  {
+    key: 'create_group_conversation',
+    label: 'Create group multi-user conversations',
+    description: 'Allow this action to create invite-managed group multi-user conversations and then add current group members as participants.'
+  },
+  {
+    key: 'invite_group_conversation_members',
+    label: 'Invite group conversation members',
+    description: 'Allow this action to invite current group members into an existing invite-managed group multi-user conversation.'
+  },
+  {
+    key: 'create_personal_conversation',
+    label: 'Create personal conversations',
+    description: 'Allow this action to create standard one-user personal conversations.'
+  },
+  {
+    key: 'create_personal_workflow',
+    label: 'Create personal workflows',
+    description: 'Allow this action to create personal workflows using the current user\'s own workflow permissions.'
+  },
+  {
+    key: 'add_conversation_message',
+    label: 'Add conversation messages',
+    description: 'Allow this action to add a user-authored message to an existing personal or collaborative conversation.'
+  },
+  {
+    key: 'upload_markdown_document',
+    label: 'Upload markdown documents',
+    description: 'Allow this action to create and upload Markdown documents into the current user\'s personal or allowed group workspaces.'
+  },
+  {
+    key: 'create_personal_collaboration_conversation',
+    label: 'Create personal collaborative conversations',
+    description: 'Allow this action to create personal collaborative conversations and invite participants.'
+  }
+];
+const MSGRAPH_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'get_my_profile',
+    label: 'Read my profile',
+    description: 'Allow this action to read the signed-in user\'s Microsoft 365 profile details.'
+  },
+  {
+    key: 'get_my_timezone',
+    label: 'Read my mailbox timezone',
+    description: 'Allow this action to read mailbox time zone and time formatting settings.'
+  },
+  {
+    key: 'get_my_events',
+    label: 'Read my calendar events',
+    description: 'Allow this action to read upcoming calendar events for the signed-in user.'
+  },
+  {
+    key: 'create_calendar_invite',
+    label: 'Create calendar invites',
+    description: 'Allow this action to create calendar invites, add current group members as attendees, and create Microsoft Teams meetings.'
+  },
+  {
+    key: 'get_my_messages',
+    label: 'Read my mail',
+    description: 'Allow this action to read recent mail messages for the signed-in user.'
+  },
+  {
+    key: 'mark_message_as_read',
+    label: 'Update message read state',
+    description: 'Allow this action to mark mail messages as read or unread.'
+  },
+  {
+    key: 'search_users',
+    label: 'Search directory users',
+    description: 'Allow this action to search Microsoft 365 directory users by name or email prefix.'
+  },
+  {
+    key: 'get_user_by_email',
+    label: 'Lookup user by email',
+    description: 'Allow this action to look up a directory user by exact email address or UPN.'
+  },
+  {
+    key: 'list_drive_items',
+    label: 'List OneDrive items',
+    description: 'Allow this action to list items from the signed-in user\'s OneDrive.'
+  },
+  {
+    key: 'get_my_security_alerts',
+    label: 'Read my security alerts',
+    description: 'Allow this action to read recent security alerts available to the signed-in user.'
+  }
+];
+const CHART_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'line',
+    label: 'Line charts',
+    description: 'Render single-series and multi-series line charts.'
+  },
+  {
+    key: 'bar',
+    label: 'Bar charts',
+    description: 'Render categorical bar charts, including grouped multi-series bars.'
+  },
+  {
+    key: 'pie',
+    label: 'Pie charts',
+    description: 'Render proportional pie charts for part-to-whole comparisons.'
+  },
+  {
+    key: 'doughnut',
+    label: 'Doughnut charts',
+    description: 'Render doughnut charts for part-to-whole comparisons with a center cutout.'
+  },
+  {
+    key: 'scatter',
+    label: 'Scatter plots',
+    description: 'Render XY scatter plots with optional grouped series.'
+  },
+  {
+    key: 'area',
+    label: 'Area charts',
+    description: 'Render filled line charts for trend visualization.'
+  },
+  {
+    key: 'bubble',
+    label: 'Bubble charts',
+    description: 'Render bubble charts with x, y, and size dimensions.'
+  },
+  {
+    key: 'radar',
+    label: 'Radar charts',
+    description: 'Render radar charts for multi-axis comparisons.'
+  },
+  {
+    key: 'stacked_bar',
+    label: 'Stacked bar charts',
+    description: 'Render stacked bar charts for cumulative category comparisons.'
+  },
+  {
+    key: 'stacked_line',
+    label: 'Stacked line charts',
+    description: 'Render stacked line charts for cumulative multi-series trends.'
+  }
+];
 
 export class PluginModalStepper {
   
@@ -25,6 +211,12 @@ export class PluginModalStepper {
     this.lastAdditionalFieldsType = null; // Track last type to avoid unnecessary redraws
     this.defaultAuthTypes = ["NoAuth", "key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"];
     this.currentAllowedAuthTypes = null; // Active allowed auth types derived from definition
+    this.simpleChatCapabilityState = this.getDefaultSimpleChatCapabilities();
+    this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
+    this.chartCapabilityState = this.getDefaultChartCapabilities();
+    this.blobStorageCapabilityState = this.getDefaultBlobStorageCapabilities();
+    this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
+    this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
 
     this._loadPluginSchema().then(() => { // Load schema on initialization
       this._populateGenericAuthTypeDropdown(); // Dynamically populate generic auth type dropdown after schema loads (will be called again after schema loads)
@@ -132,11 +324,17 @@ export class PluginModalStepper {
     });
     
     document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
+    document.getElementById('cosmos-auth-type').addEventListener('change', () => this.handleCosmosAuthTypeChange());
     
     // Test SQL connection button
     const testConnBtn = document.getElementById('sql-test-connection-btn');
     if (testConnBtn) {
       testConnBtn.addEventListener('click', () => this.testSqlConnection());
+    }
+
+    const testCosmosBtn = document.getElementById('cosmos-test-connection-btn');
+    if (testCosmosBtn) {
+      testCosmosBtn.addEventListener('click', () => this.testCosmosConnection());
     }
     
     // Set up display name to generated name conversion
@@ -487,33 +685,718 @@ export class PluginModalStepper {
     }
   }
 
+  isOpenApiType(type = this.selectedType) {
+    return !!(type && type.toLowerCase().includes('openapi'));
+  }
+
+  isSqlType(type = this.selectedType) {
+    return !!(
+      type && (
+        type.toLowerCase().includes('sql') ||
+        type.toLowerCase() === 'sql_schema' ||
+        type.toLowerCase() === 'sql_query'
+      )
+    );
+  }
+
+  isCosmosType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === 'cosmos_query');
+  }
+
+  isDocumentSearchType(type = this.selectedType) {
+    return !!(type && ['search', 'document_search'].includes(type.toLowerCase()));
+  }
+
+  isBlobStorageType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === BLOB_STORAGE_PLUGIN_TYPE);
+  }
+
+  isSimpleChatType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === 'simplechat');
+  }
+
+  isMsGraphType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === 'msgraph');
+  }
+
+  isAzureMapsType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === AZURE_MAPS_PLUGIN_TYPE);
+  }
+
+  isChartType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === 'chart');
+  }
+
+  getDefaultSimpleChatCapabilities() {
+    const defaults = {};
+    SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  normalizeSimpleChatCapabilities(rawCapabilities = null) {
+    const defaults = this.getDefaultSimpleChatCapabilities();
+    if (!rawCapabilities || typeof rawCapabilities !== 'object' || Array.isArray(rawCapabilities)) {
+      return defaults;
+    }
+
+    SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  renderSimpleChatConfiguration() {
+    const list = document.getElementById('simplechat-capabilities-list');
+    if (!list) {
+      return;
+    }
+
+    list.innerHTML = '';
+    SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check mb-3';
+
+      const checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = `simplechat-capability-${definition.key}`;
+      checkbox.checked = Boolean(this.simpleChatCapabilityState?.[definition.key]);
+
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', checkbox.id);
+      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+      checkbox.addEventListener('change', () => {
+        this.simpleChatCapabilityState = {
+          ...this.simpleChatCapabilityState,
+          [definition.key]: checkbox.checked
+        };
+      });
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(label);
+      list.appendChild(wrapper);
+    });
+  }
+
+  setSimpleChatCapabilities(rawCapabilities = null) {
+    this.simpleChatCapabilityState = this.normalizeSimpleChatCapabilities(rawCapabilities);
+    this.renderSimpleChatConfiguration();
+  }
+
+  getSelectedSimpleChatCapabilities() {
+    return this.normalizeSimpleChatCapabilities(this.simpleChatCapabilityState);
+  }
+
+  getDefaultMsGraphCapabilities() {
+    const defaults = {};
+    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  normalizeMsGraphCapabilities(rawCapabilities = null) {
+    const defaults = this.getDefaultMsGraphCapabilities();
+    if (!rawCapabilities || typeof rawCapabilities !== 'object' || Array.isArray(rawCapabilities)) {
+      return defaults;
+    }
+
+    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  renderMsGraphConfiguration() {
+    const list = document.getElementById('msgraph-capabilities-list');
+    if (!list) {
+      return;
+    }
+
+    list.innerHTML = '';
+    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check mb-3';
+
+      const checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = `msgraph-capability-${definition.key}`;
+      checkbox.checked = Boolean(this.msGraphCapabilityState?.[definition.key]);
+
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', checkbox.id);
+      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+      checkbox.addEventListener('change', () => {
+        this.msGraphCapabilityState = {
+          ...this.msGraphCapabilityState,
+          [definition.key]: checkbox.checked
+        };
+      });
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(label);
+      list.appendChild(wrapper);
+    });
+  }
+
+  setMsGraphCapabilities(rawCapabilities = null) {
+    this.msGraphCapabilityState = this.normalizeMsGraphCapabilities(rawCapabilities);
+    this.renderMsGraphConfiguration();
+  }
+
+  getSelectedMsGraphCapabilities() {
+    return this.normalizeMsGraphCapabilities(this.msGraphCapabilityState);
+  }
+
+  getDefaultChartCapabilities() {
+    const defaults = {};
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  normalizeChartCapabilities(rawCapabilities = null) {
+    const defaults = this.getDefaultChartCapabilities();
+    if (!rawCapabilities || typeof rawCapabilities !== 'object' || Array.isArray(rawCapabilities)) {
+      return defaults;
+    }
+
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  renderChartConfiguration() {
+    const list = document.getElementById('chart-capabilities-list');
+    if (!list) {
+      return;
+    }
+
+    list.innerHTML = '';
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check mb-3';
+
+      const checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = `chart-capability-${definition.key}`;
+      checkbox.checked = Boolean(this.chartCapabilityState?.[definition.key]);
+
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', checkbox.id);
+      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+      checkbox.addEventListener('change', () => {
+        this.chartCapabilityState = {
+          ...this.chartCapabilityState,
+          [definition.key]: checkbox.checked
+        };
+      });
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(label);
+      list.appendChild(wrapper);
+    });
+  }
+
+  setChartCapabilities(rawCapabilities = null) {
+    this.chartCapabilityState = this.normalizeChartCapabilities(rawCapabilities);
+    this.renderChartConfiguration();
+  }
+
+  getSelectedChartCapabilities() {
+    return this.normalizeChartCapabilities(this.chartCapabilityState);
+  }
+
+  getDefaultBlobStorageCapabilities() {
+    return {
+      list_container_contents: true,
+      read_file_content: true,
+      upload_file_to_container: false
+    };
+  }
+
+  normalizeBlobStorageCapabilities(rawCapabilities = null) {
+    const defaults = this.getDefaultBlobStorageCapabilities();
+    if (!rawCapabilities || typeof rawCapabilities !== 'object' || Array.isArray(rawCapabilities)) {
+      return defaults;
+    }
+
+    BLOB_STORAGE_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  getDefaultBlobStorageReadFileTypes() {
+    const defaults = {};
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  getDefaultBlobStorageUploadFileTypes() {
+    const defaults = {};
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  normalizeBlobStorageReadFileTypes(rawFileTypes = null) {
+    const defaults = this.getDefaultBlobStorageReadFileTypes();
+    if (!rawFileTypes || typeof rawFileTypes !== 'object' || Array.isArray(rawFileTypes)) {
+      return defaults;
+    }
+
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawFileTypes, definition.key)) {
+        defaults[definition.key] = Boolean(rawFileTypes[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  normalizeBlobStorageUploadFileTypes(rawFileTypes = null) {
+    const defaults = this.getDefaultBlobStorageUploadFileTypes();
+    if (!rawFileTypes || typeof rawFileTypes !== 'object' || Array.isArray(rawFileTypes)) {
+      return defaults;
+    }
+
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawFileTypes, definition.key)) {
+        defaults[definition.key] = Boolean(rawFileTypes[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  renderBlobStorageFileTypes(listId, state, stateKey) {
+    const list = document.getElementById(listId);
+    if (!list) {
+      return;
+    }
+
+    list.innerHTML = '';
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check mb-2';
+
+      const checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = `${stateKey}-${definition.key}`;
+      checkbox.checked = Boolean(state?.[definition.key]);
+
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', checkbox.id);
+      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+      checkbox.addEventListener('change', () => {
+        if (stateKey === 'blob-storage-read-file-type') {
+          this.blobStorageReadFileTypeState = {
+            ...this.blobStorageReadFileTypeState,
+            [definition.key]: checkbox.checked
+          };
+          return;
+        }
+
+        this.blobStorageUploadFileTypeState = {
+          ...this.blobStorageUploadFileTypeState,
+          [definition.key]: checkbox.checked
+        };
+      });
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(label);
+      list.appendChild(wrapper);
+    });
+  }
+
+  updateBlobStorageFileTypeVisibility() {
+    const readSection = document.getElementById('blob-storage-read-file-types-section');
+    const uploadSection = document.getElementById('blob-storage-upload-file-types-section');
+    if (readSection) {
+      if (this.blobStorageCapabilityState?.read_file_content) {
+        readSection.classList.remove('d-none');
+      } else {
+        readSection.classList.add('d-none');
+      }
+    }
+
+    if (uploadSection) {
+      if (this.blobStorageCapabilityState?.upload_file_to_container) {
+        uploadSection.classList.remove('d-none');
+      } else {
+        uploadSection.classList.add('d-none');
+      }
+    }
+  }
+
+  renderBlobStorageConfiguration() {
+    const capabilityList = document.getElementById('blob-storage-capabilities-list');
+    if (!capabilityList) {
+      return;
+    }
+
+    capabilityList.innerHTML = '';
+    BLOB_STORAGE_CAPABILITY_DEFINITIONS.forEach(definition => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check mb-3';
+
+      const checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = `blob-storage-capability-${definition.key}`;
+      checkbox.checked = Boolean(this.blobStorageCapabilityState?.[definition.key]);
+
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', checkbox.id);
+      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+      checkbox.addEventListener('change', () => {
+        this.blobStorageCapabilityState = {
+          ...this.blobStorageCapabilityState,
+          [definition.key]: checkbox.checked
+        };
+        this.updateBlobStorageFileTypeVisibility();
+      });
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(label);
+      capabilityList.appendChild(wrapper);
+    });
+
+    this.renderBlobStorageFileTypes(
+      'blob-storage-read-file-types-list',
+      this.blobStorageReadFileTypeState,
+      'blob-storage-read-file-type'
+    );
+    this.renderBlobStorageFileTypes(
+      'blob-storage-upload-file-types-list',
+      this.blobStorageUploadFileTypeState,
+      'blob-storage-upload-file-type'
+    );
+    this.updateBlobStorageFileTypeVisibility();
+  }
+
+  setBlobStorageConfiguration(additionalFields = {}) {
+    const normalizedAdditionalFields = additionalFields || {};
+    this.blobStorageCapabilityState = this.normalizeBlobStorageCapabilities(
+      normalizedAdditionalFields.blob_storage_capabilities || null
+    );
+    this.blobStorageReadFileTypeState = this.normalizeBlobStorageReadFileTypes(
+      normalizedAdditionalFields.blob_storage_read_file_types || null
+    );
+    this.blobStorageUploadFileTypeState = this.normalizeBlobStorageUploadFileTypes(
+      normalizedAdditionalFields.blob_storage_upload_file_types || null
+    );
+    this.renderBlobStorageConfiguration();
+  }
+
+  getSelectedBlobStorageCapabilities() {
+    return this.normalizeBlobStorageCapabilities(this.blobStorageCapabilityState);
+  }
+
+  getSelectedBlobStorageReadFileTypes() {
+    return this.normalizeBlobStorageReadFileTypes(this.blobStorageReadFileTypeState);
+  }
+
+  getSelectedBlobStorageUploadFileTypes() {
+    return this.normalizeBlobStorageUploadFileTypes(this.blobStorageUploadFileTypeState);
+  }
+
+  normalizeBlobStoragePrefix(prefix = '') {
+    return String(prefix || '').trim().replace(/^\/+|\/+$/g, '');
+  }
+
+  deriveBlobStorageEndpointFromConnectionString(connectionString = '') {
+    const normalizedConnectionString = String(connectionString || '').trim();
+    if (!normalizedConnectionString || normalizedConnectionString === 'Stored_In_KeyVault') {
+      return '';
+    }
+
+    const parsed = {};
+    normalizedConnectionString.split(';').forEach(segment => {
+      const normalizedSegment = segment.trim();
+      if (!normalizedSegment || !normalizedSegment.includes('=')) {
+        return;
+      }
+      const separatorIndex = normalizedSegment.indexOf('=');
+      const key = normalizedSegment.slice(0, separatorIndex).trim();
+      const value = normalizedSegment.slice(separatorIndex + 1).trim();
+      if (key) {
+        parsed[key] = value;
+      }
+    });
+
+    if ((parsed.UseDevelopmentStorage || '').toLowerCase() === 'true') {
+      return 'http://127.0.0.1:10000/devstoreaccount1';
+    }
+
+    if (parsed.BlobEndpoint) {
+      return String(parsed.BlobEndpoint).replace(/\/+$/, '');
+    }
+
+    if (!parsed.AccountName) {
+      return '';
+    }
+
+    const protocol = parsed.DefaultEndpointsProtocol || 'https';
+    const suffix = parsed.EndpointSuffix || 'core.windows.net';
+    return `${protocol}://${parsed.AccountName}.blob.${suffix}`.replace(/\/+$/, '');
+  }
+
+  initializeDocumentSearchConfiguration() {
+    const defaults = {
+      'document-search-scope': 'all',
+      'document-search-top-n': '12',
+      'document-search-window-unit': 'pages',
+      'document-search-window-target-length': '2 pages',
+      'document-search-final-target-length': '2 pages'
+    };
+
+    Object.entries(defaults).forEach(([id, value]) => {
+      const element = document.getElementById(id);
+      if (element && !String(element.value || '').trim()) {
+        element.value = value;
+      }
+    });
+  }
+
+  getDocumentSearchAdditionalFields() {
+    const topNValue = parseInt(document.getElementById('document-search-top-n')?.value, 10);
+    const windowSizeValue = parseInt(document.getElementById('document-search-window-size')?.value, 10);
+    const windowPercentValue = parseInt(document.getElementById('document-search-window-percent')?.value, 10);
+    const focusInstructions = document.getElementById('document-search-focus-instructions')?.value.trim() || '';
+    const windowTargetLength = document.getElementById('document-search-window-target-length')?.value.trim() || '2 pages';
+    const finalTargetLength = document.getElementById('document-search-final-target-length')?.value.trim() || '2 pages';
+
+    const additionalFields = {
+      default_doc_scope: document.getElementById('document-search-scope')?.value || 'all',
+      default_top_n: !Number.isNaN(topNValue) && topNValue > 0 ? topNValue : 12,
+      default_window_unit: document.getElementById('document-search-window-unit')?.value || 'pages',
+      default_window_target_length: windowTargetLength,
+      default_final_target_length: finalTargetLength
+    };
+
+    if (focusInstructions) {
+      additionalFields.default_focus_instructions = focusInstructions;
+    }
+    if (!Number.isNaN(windowSizeValue) && windowSizeValue > 0) {
+      additionalFields.default_window_size = windowSizeValue;
+    }
+    if (!Number.isNaN(windowPercentValue) && windowPercentValue > 0) {
+      additionalFields.default_window_percent = windowPercentValue;
+    }
+
+    return additionalFields;
+  }
+
+  populateDocumentSearchForm(additionalFields = {}) {
+    document.getElementById('document-search-scope').value = additionalFields.default_doc_scope || 'all';
+    document.getElementById('document-search-top-n').value = additionalFields.default_top_n || 12;
+    document.getElementById('document-search-window-unit').value = additionalFields.default_window_unit || 'pages';
+    document.getElementById('document-search-window-size').value = additionalFields.default_window_size || '';
+    document.getElementById('document-search-window-percent').value = additionalFields.default_window_percent || '';
+    document.getElementById('document-search-focus-instructions').value = additionalFields.default_focus_instructions || '';
+    document.getElementById('document-search-window-target-length').value = additionalFields.default_window_target_length || '2 pages';
+    document.getElementById('document-search-final-target-length').value = additionalFields.default_final_target_length || '2 pages';
+  }
+
+  formatDocumentScope(scope) {
+    const scopeMap = {
+      all: 'All Accessible Content',
+      personal: 'Personal Workspace',
+      group: 'Group Workspaces',
+      public: 'Public Workspaces'
+    };
+
+    return scopeMap[scope] || scope || '-';
+  }
+
+  formatDocumentSearchWindowing(config = {}) {
+    const unit = config.default_window_unit === 'chunks' ? 'Chunks' : 'Pages';
+    if (config.default_window_size) {
+      return `${unit} (${config.default_window_size} per window)`;
+    }
+    if (config.default_window_percent) {
+      return `${unit} (${config.default_window_percent}% of document)`;
+    }
+    return `${unit} (automatic sizing)`;
+  }
+
+  isStructuredConfigType(type = this.selectedType) {
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+  }
+
   showConfigSectionForType() {
     const openApiSection = document.getElementById('openapi-config-section');
     const genericSection = document.getElementById('generic-config-section');
     const sqlSection = document.getElementById('sql-config-section');
-    
-    // Determine plugin type
-    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    const cosmosSection = document.getElementById('cosmos-config-section');
+    const documentSearchSection = document.getElementById('document-search-config-section');
+    const blobStorageSection = document.getElementById('blob-storage-config-section');
+    const simpleChatSection = document.getElementById('simplechat-config-section');
+    const msGraphSection = document.getElementById('msgraph-config-section');
+    const azureMapsSection = document.getElementById('azure-maps-config-section');
+    const chartSection = document.getElementById('chart-config-section');
+    const isOpenApiType = this.isOpenApiType();
+    const isSqlType = this.isSqlType();
+    const isCosmosType = this.isCosmosType();
+    const isDocumentSearchType = this.isDocumentSearchType();
+    const isBlobStorageType = this.isBlobStorageType();
+    const isSimpleChatType = this.isSimpleChatType();
+    const isMsGraphType = this.isMsGraphType();
+    const isAzureMapsType = this.isAzureMapsType();
+    const isChartType = this.isChartType();
     
     if (isOpenApiType) {
       openApiSection.classList.remove('d-none');
       genericSection.classList.add('d-none');
       sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
     } else if (isSqlType) {
       openApiSection.classList.add('d-none');
       genericSection.classList.add('d-none');
       sqlSection.classList.remove('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
       // Initialize SQL plugin configuration
       this.initializeSqlConfiguration();
+    } else if (isCosmosType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.remove('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
+      this.initializeCosmosConfiguration();
+    } else if (isDocumentSearchType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.remove('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
+      this.initializeDocumentSearchConfiguration();
+    } else if (isBlobStorageType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.remove('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
+      this.renderBlobStorageConfiguration();
+    } else if (isSimpleChatType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.remove('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
+      this.renderSimpleChatConfiguration();
+    } else if (isMsGraphType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.remove('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
+      this.renderMsGraphConfiguration();
+    } else if (isAzureMapsType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.remove('d-none');
+      chartSection.classList.add('d-none');
+    } else if (isChartType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.remove('d-none');
+      this.renderChartConfiguration();
     } else {
       openApiSection.classList.add('d-none');
       genericSection.classList.remove('d-none');
       sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
     }
   }
 
@@ -537,17 +1420,32 @@ export class PluginModalStepper {
     if (stepNumber === 3) {
       const titleEl = document.getElementById('step-3-title');
       if (titleEl) {
-        const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-        const isSqlType = this.selectedType && (
-          this.selectedType.toLowerCase().includes('sql') || 
-          this.selectedType.toLowerCase() === 'sql_schema' ||
-          this.selectedType.toLowerCase() === 'sql_query'
-        );
+        const isOpenApiType = this.isOpenApiType();
+        const isSqlType = this.isSqlType();
+        const isCosmosType = this.isCosmosType();
+        const isDocumentSearchType = this.isDocumentSearchType();
+        const isBlobStorageType = this.isBlobStorageType();
+        const isAzureMapsType = this.isAzureMapsType();
+        const isChartType = this.isChartType();
         
         if (isOpenApiType) {
           titleEl.textContent = 'API Configuration';
         } else if (isSqlType) {
           titleEl.textContent = 'Database Configuration';
+        } else if (isCosmosType) {
+          titleEl.textContent = 'Cosmos Configuration';
+        } else if (isDocumentSearchType) {
+          titleEl.textContent = 'Document Search Configuration';
+        } else if (isBlobStorageType) {
+          titleEl.textContent = 'Blob Storage Configuration';
+        } else if (this.isSimpleChatType()) {
+          titleEl.textContent = 'SimpleChat Configuration';
+        } else if (this.isMsGraphType()) {
+          titleEl.textContent = 'Microsoft Graph Configuration';
+        } else if (isAzureMapsType) {
+          titleEl.textContent = 'Azure Maps Configuration';
+        } else if (isChartType) {
+          titleEl.textContent = 'Chart Configuration';
         } else {
           titleEl.textContent = 'Configuration';
         }
@@ -555,11 +1453,11 @@ export class PluginModalStepper {
     }
 
     if (stepNumber === 4) {
-      const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
+      const isStructuredConfigType = this.isStructuredConfigType();
       const additionalFieldsDiv = document.getElementById('plugin-additional-fields-div');
 
-      // For SQL types, hide additional fields entirely since Step 3 covers all SQL config
-      if (isSqlType && additionalFieldsDiv) {
+      // For SQL and Cosmos types, hide additional fields entirely since Step 3 covers config.
+      if (isStructuredConfigType && additionalFieldsDiv) {
         additionalFieldsDiv.innerHTML = '';
         additionalFieldsDiv.classList.add('d-none');
         this.lastAdditionalFieldsType = this.selectedType;
@@ -722,8 +1620,22 @@ export class PluginModalStepper {
         // Validate based on which config section is visible
         const openApiSection = document.getElementById('openapi-config-section');
         const sqlSection = document.getElementById('sql-config-section');
+        const cosmosSection = document.getElementById('cosmos-config-section');
+        const documentSearchSection = document.getElementById('document-search-config-section');
+        const blobStorageSection = document.getElementById('blob-storage-config-section');
+        const simpleChatSection = document.getElementById('simplechat-config-section');
+        const msGraphSection = document.getElementById('msgraph-config-section');
+        const azureMapsSection = document.getElementById('azure-maps-config-section');
+        const chartSection = document.getElementById('chart-config-section');
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
+        const isCosmosVisible = !cosmosSection.classList.contains('d-none');
+        const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
+        const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
+        const isSimpleChatVisible = !simpleChatSection.classList.contains('d-none');
+        const isMsGraphVisible = !msGraphSection.classList.contains('d-none');
+        const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
+        const isChartVisible = !chartSection.classList.contains('d-none');
         
         if (isOpenApiVisible) {
           // Validate OpenAPI fields
@@ -833,6 +1745,118 @@ export class PluginModalStepper {
                 this.showError('Password is required.');
                 return false;
               }
+            }
+          }
+        } else if (isCosmosVisible) {
+          const endpoint = document.getElementById('cosmos-endpoint').value.trim();
+          const databaseName = document.getElementById('cosmos-database-name').value.trim();
+          const containerName = document.getElementById('cosmos-container-name').value.trim();
+          const partitionKeyPath = document.getElementById('cosmos-partition-key-path').value.trim();
+          const authType = document.getElementById('cosmos-auth-type').value;
+          const authKey = document.getElementById('cosmos-auth-key').value.trim();
+          const maxItems = parseInt(document.getElementById('cosmos-max-items').value, 10);
+          const timeout = parseInt(document.getElementById('cosmos-timeout').value, 10);
+
+          if (!endpoint) {
+            this.showError('Cosmos DB account endpoint is required.');
+            return false;
+          }
+          if (!databaseName) {
+            this.showError('Cosmos DB database name is required.');
+            return false;
+          }
+          if (!containerName) {
+            this.showError('Cosmos DB container name is required.');
+            return false;
+          }
+          if (!partitionKeyPath || !partitionKeyPath.startsWith('/')) {
+            this.showError('Partition key path is required and must start with /.');
+            return false;
+          }
+          if (authType === 'key' && !authKey) {
+            this.showError('Cosmos DB account key is required when using account key authentication.');
+            return false;
+          }
+          if (Number.isNaN(maxItems) || maxItems < 1 || maxItems > 1000) {
+            this.showError('Max items must be between 1 and 1000.');
+            return false;
+          }
+          if (Number.isNaN(timeout) || timeout < 1 || timeout > 120) {
+            this.showError('Timeout must be between 1 and 120 seconds.');
+            return false;
+          }
+        } else if (isBlobStorageVisible) {
+          const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
+          const containerName = document.getElementById('blob-storage-container-name').value.trim();
+          const capabilityValues = Object.values(this.getSelectedBlobStorageCapabilities());
+          const readTypeValues = Object.values(this.getSelectedBlobStorageReadFileTypes());
+          const uploadTypeValues = Object.values(this.getSelectedBlobStorageUploadFileTypes());
+
+          if (!connectionString) {
+            this.showError('Blob storage connection string is required.');
+            return false;
+          }
+          if (!containerName) {
+            this.showError('Blob storage container name is required.');
+            return false;
+          }
+          if (!capabilityValues.some(Boolean)) {
+            this.showError('Enable at least one blob storage capability before continuing.');
+            return false;
+          }
+          if (this.getSelectedBlobStorageCapabilities().read_file_content && !readTypeValues.some(Boolean)) {
+            this.showError('Enable at least one supported file type for blob reads before continuing.');
+            return false;
+          }
+          if (this.getSelectedBlobStorageCapabilities().upload_file_to_container && !uploadTypeValues.some(Boolean)) {
+            this.showError('Enable at least one supported file type for blob uploads before continuing.');
+            return false;
+          }
+        } else if (isSimpleChatVisible) {
+          const capabilityValues = Object.values(this.getSelectedSimpleChatCapabilities());
+          if (!capabilityValues.some(Boolean)) {
+            this.showError('Enable at least one SimpleChat capability before continuing.');
+            return false;
+          }
+        } else if (isMsGraphVisible) {
+          const capabilityValues = Object.values(this.getSelectedMsGraphCapabilities());
+          if (!capabilityValues.some(Boolean)) {
+            this.showError('Enable at least one Microsoft Graph capability before continuing.');
+            return false;
+          }
+        } else if (isAzureMapsVisible) {
+          const azureMapsKey = document.getElementById('azure-maps-key').value.trim();
+          if (!azureMapsKey) {
+            this.showError('Azure Maps subscription key is required.');
+            return false;
+          }
+        } else if (isChartVisible) {
+          const capabilityValues = Object.values(this.getSelectedChartCapabilities());
+          if (!capabilityValues.some(Boolean)) {
+            this.showError('Enable at least one chart type before continuing.');
+            return false;
+          }
+        } else if (isDocumentSearchVisible) {
+          const topN = parseInt(document.getElementById('document-search-top-n').value, 10);
+          const windowSizeValue = document.getElementById('document-search-window-size').value.trim();
+          const windowPercentValue = document.getElementById('document-search-window-percent').value.trim();
+
+          if (Number.isNaN(topN) || topN < 1 || topN > 500) {
+            this.showError('Default search result limit must be between 1 and 500.');
+            return false;
+          }
+          if (windowSizeValue) {
+            const windowSize = parseInt(windowSizeValue, 10);
+            if (Number.isNaN(windowSize) || windowSize < 1 || windowSize > 100) {
+              this.showError('Preferred window size must be between 1 and 100.');
+              return false;
+            }
+          }
+          if (windowPercentValue) {
+            const windowPercent = parseInt(windowPercentValue, 10);
+            if (Number.isNaN(windowPercent) || windowPercent < 1 || windowPercent > 100) {
+              this.showError('Preferred window percent must be between 1 and 100.');
+              return false;
             }
           }
         } else {
@@ -1098,6 +2122,143 @@ export class PluginModalStepper {
   }
 
   // SQL Plugin Configuration Methods
+  initializeCosmosConfiguration() {
+    const authTypeField = document.getElementById('cosmos-auth-type');
+    const maxItemsField = document.getElementById('cosmos-max-items');
+    const timeoutField = document.getElementById('cosmos-timeout');
+    if (authTypeField && !authTypeField.value) {
+      authTypeField.value = 'identity';
+    }
+    if (maxItemsField && !maxItemsField.value) {
+      maxItemsField.value = '100';
+    }
+    if (timeoutField && !timeoutField.value) {
+      timeoutField.value = '30';
+    }
+
+    const resultDiv = document.getElementById('cosmos-test-connection-result');
+    if (resultDiv) {
+      resultDiv.classList.add('d-none');
+    }
+
+    this.handleCosmosAuthTypeChange();
+  }
+
+  handleCosmosAuthTypeChange() {
+    const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
+    const keyGroup = document.getElementById('cosmos-auth-key-group');
+    const keyInput = document.getElementById('cosmos-auth-key');
+
+    if (keyGroup) {
+      keyGroup.classList.toggle('d-none', authType !== 'key');
+    }
+
+    if (keyInput) {
+      keyInput.required = authType === 'key';
+    }
+
+    this.updateCosmosAuthInfo(authType);
+  }
+
+  updateCosmosAuthInfo(authType = document.getElementById('cosmos-auth-type')?.value || 'identity') {
+    const infoDiv = document.getElementById('cosmos-auth-info');
+    const infoText = document.getElementById('cosmos-auth-info-text');
+
+    if (!infoDiv || !infoText) {
+      return;
+    }
+
+    let message = 'Managed Identity uses Azure AD authentication without storing credentials. Assign an Azure Cosmos DB built-in data reader role to the application identity for the target account.';
+    if (authType === 'key') {
+      message = 'Account Key uses a primary or secondary Azure Cosmos DB account key. When Key Vault secret storage is enabled, the key is stored in Key Vault and edit forms preserve the stored secret if you leave the masked value unchanged.';
+    }
+
+    infoText.textContent = message;
+    infoDiv.classList.remove('d-none');
+  }
+
+  getCosmosFieldHints() {
+    const rawValue = document.getElementById('cosmos-field-hints')?.value || '';
+    return rawValue
+      .split(/[,\n]/)
+      .map(value => value.trim())
+      .filter(Boolean);
+  }
+
+  async testCosmosConnection() {
+    const btn = document.getElementById('cosmos-test-connection-btn');
+    const resultDiv = document.getElementById('cosmos-test-connection-result');
+    const alertDiv = document.getElementById('cosmos-test-connection-alert');
+    if (!btn || !resultDiv || !alertDiv) return;
+
+    const endpoint = document.getElementById('cosmos-endpoint')?.value?.trim() || '';
+    const databaseName = document.getElementById('cosmos-database-name')?.value?.trim() || '';
+    const containerName = document.getElementById('cosmos-container-name')?.value?.trim() || '';
+    const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
+    const authKey = document.getElementById('cosmos-auth-key')?.value?.trim() || '';
+    const timeout = parseInt(document.getElementById('cosmos-timeout')?.value, 10) || 10;
+
+    if (!endpoint || !databaseName || !containerName) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Endpoint, database name, and container name are required before testing the Cosmos connection.';
+      return;
+    }
+    if (authType === 'key' && !authKey) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Account key is required before testing a key-based Cosmos connection.';
+      return;
+    }
+
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
+    btn.disabled = true;
+    resultDiv.classList.add('d-none');
+
+    try {
+      const payload = {
+        endpoint,
+        database_name: databaseName,
+        container_name: containerName,
+        auth_type: authType,
+        timeout
+      };
+
+      if (authType === 'key') {
+        payload.auth_key = authKey;
+      }
+
+      const existingPluginContext = this.getTestPluginContext();
+      if (existingPluginContext) {
+        payload.existing_plugin = existingPluginContext;
+      }
+
+      const response = await fetch('/api/plugins/test-cosmos-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      resultDiv.classList.remove('d-none');
+      if (data.success) {
+        alertDiv.className = 'alert alert-success mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + (data.message || 'Connection successful!');
+      } else {
+        alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + (data.error || 'Connection failed.');
+      }
+    } catch (error) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + (error.message || 'Network error');
+    } finally {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+  }
+
   initializeSqlConfiguration() {
     // Set default values
     document.getElementById('sql-read-only').value = 'true';
@@ -1256,7 +2417,7 @@ export class PluginModalStepper {
     this.updateSqlAuthInfo();
   }
 
-  getSqlTestPluginContext() {
+  getTestPluginContext() {
     if (!this.isEditMode || !this.originalPlugin) {
       return null;
     }
@@ -1323,7 +2484,7 @@ export class PluginModalStepper {
 
     payload.timeout = parseInt(document.getElementById('sql-timeout')?.value) || 10;
 
-    const existingPluginContext = this.getSqlTestPluginContext();
+    const existingPluginContext = this.getTestPluginContext();
     if (existingPluginContext) {
       payload.existing_plugin = existingPluginContext;
     }
@@ -1373,12 +2534,12 @@ export class PluginModalStepper {
   getSqlConnectionExamples(dbType) {
     const examples = {
       sqlserver: `
-        <div class="example"><strong>SQL Server:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.com;DATABASE=mydb;UID=user;PWD=pass</div>
-        <div class="example"><strong>Integrated Auth:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.com;DATABASE=mydb;Trusted_Connection=yes</div>
+        <div class="example"><strong>SQL Server:</strong> DRIVER={ODBC Driver 18 for SQL Server};SERVER=server.com;DATABASE=mydb;UID=user;PWD=pass</div>
+        <div class="example"><strong>Integrated Auth:</strong> DRIVER={ODBC Driver 18 for SQL Server};SERVER=server.com;DATABASE=mydb;Trusted_Connection=yes</div>
       `,
       azure_sql: `
-        <div class="example"><strong>Managed Identity:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;Authentication=ActiveDirectoryMsi</div>
-        <div class="example"><strong>Username/Password:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;UID=user;PWD=pass</div>
+        <div class="example"><strong>Managed Identity:</strong> DRIVER={ODBC Driver 18 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;Authentication=ActiveDirectoryMsi</div>
+        <div class="example"><strong>Username/Password:</strong> DRIVER={ODBC Driver 18 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;UID=user;PWD=pass</div>
       `,
       postgresql: `
         <div class="example"><strong>PostgreSQL:</strong> host=localhost dbname=mydb user=username password=password port=5432</div>
@@ -1559,7 +2720,7 @@ export class PluginModalStepper {
       }
       
       document.getElementById('plugin-auth-type').value = authType;
-    } else if (plugin.type && (plugin.type.toLowerCase().includes('sql') || plugin.type.toLowerCase() === 'sql_schema' || plugin.type.toLowerCase() === 'sql_query')) {
+    } else if (this.isSqlType(plugin.type)) {
       // Populate SQL fields
       const additionalFields = plugin.additionalFields || {};
       const auth = plugin.auth || {};
@@ -1588,7 +2749,7 @@ export class PluginModalStepper {
       document.getElementById('sql-server').value = additionalFields.server || '';
       document.getElementById('sql-database').value = additionalFields.database || '';
       document.getElementById('sql-port').value = additionalFields.port || '';
-      document.getElementById('sql-driver').value = additionalFields.driver || 'ODBC Driver 17 for SQL Server';
+      document.getElementById('sql-driver').value = additionalFields.driver || 'ODBC Driver 18 for SQL Server';
 
       let sqlAuthType = hasConnectionString ? 'connection_string_only' : 'username_password';
 
@@ -1611,6 +2772,49 @@ export class PluginModalStepper {
       this.handleSqlDatabaseTypeChange();
       this.handleSqlConnectionMethodChange();
       this.handleSqlAuthTypeChange();
+    } else if (this.isCosmosType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || {};
+      const auth = plugin.auth || {};
+
+      document.getElementById('cosmos-endpoint').value = plugin.endpoint || '';
+      document.getElementById('cosmos-database-name').value = additionalFields.database_name || '';
+      document.getElementById('cosmos-container-name').value = additionalFields.container_name || '';
+      document.getElementById('cosmos-partition-key-path').value = additionalFields.partition_key_path || '';
+      document.getElementById('cosmos-field-hints').value = Array.isArray(additionalFields.field_hints)
+        ? additionalFields.field_hints.join('\n')
+        : '';
+      document.getElementById('cosmos-max-items').value = additionalFields.max_items || 100;
+      document.getElementById('cosmos-timeout').value = additionalFields.timeout || 30;
+      document.getElementById('cosmos-auth-type').value = auth.type || 'identity';
+      document.getElementById('cosmos-auth-key').value = auth.key || '';
+      this.initializeCosmosConfiguration();
+    } else if (this.isDocumentSearchType(plugin.type)) {
+      this.populateDocumentSearchForm(plugin.additionalFields || {});
+      this.initializeDocumentSearchConfiguration();
+    } else if (this.isBlobStorageType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+      const auth = plugin.auth || {};
+
+      document.getElementById('blob-storage-connection-string').value = auth.key || '';
+      document.getElementById('blob-storage-container-name').value = additionalFields.container_name || '';
+      document.getElementById('blob-storage-blob-prefix').value = additionalFields.blob_prefix || '';
+      this.setBlobStorageConfiguration({
+        blob_storage_capabilities: additionalFields.blob_storage_capabilities || plugin.blob_storage_capabilities || null,
+        blob_storage_read_file_types: additionalFields.blob_storage_read_file_types || plugin.blob_storage_read_file_types || null,
+        blob_storage_upload_file_types: additionalFields.blob_storage_upload_file_types || plugin.blob_storage_upload_file_types || null
+      });
+    } else if (this.isSimpleChatType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+      this.setSimpleChatCapabilities(additionalFields.simplechat_capabilities || plugin.simplechat_capabilities || null);
+    } else if (this.isMsGraphType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+      this.setMsGraphCapabilities(additionalFields.msgraph_capabilities || plugin.msgraph_capabilities || null);
+    } else if (this.isAzureMapsType(plugin.type)) {
+      const auth = plugin.auth || {};
+      document.getElementById('azure-maps-key').value = auth.key || '';
+    } else if (this.isChartType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+      this.setChartCapabilities(additionalFields.chart_capabilities || plugin.chart_capabilities || null);
     } else {
       // Populate generic fields
       document.getElementById('plugin-endpoint-generic').value = plugin.endpoint || '';
@@ -1643,8 +2847,16 @@ export class PluginModalStepper {
     // Determine which configuration section is active
     const openApiSection = document.getElementById('openapi-config-section');
     const sqlSection = document.getElementById('sql-config-section');
+    const cosmosSection = document.getElementById('cosmos-config-section');
+    const documentSearchSection = document.getElementById('document-search-config-section');
+    const blobStorageSection = document.getElementById('blob-storage-config-section');
+    const azureMapsSection = document.getElementById('azure-maps-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
+    const isCosmosVisible = !cosmosSection.classList.contains('d-none');
+    const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
+    const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
+    const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
     
     let auth = {};
     let endpoint = '';
@@ -1820,6 +3032,68 @@ export class PluginModalStepper {
       
       // For SQL plugins, endpoint is not applicable
       endpoint = '';
+    } else if (isCosmosVisible) {
+      endpoint = document.getElementById('cosmos-endpoint').value.trim();
+      const databaseName = document.getElementById('cosmos-database-name').value.trim();
+      const containerName = document.getElementById('cosmos-container-name').value.trim();
+      const partitionKeyPath = document.getElementById('cosmos-partition-key-path').value.trim();
+      const authType = document.getElementById('cosmos-auth-type').value;
+
+      if (!endpoint || !databaseName || !containerName || !partitionKeyPath) {
+        throw new Error('Please complete the Cosmos DB endpoint, database, container, and partition key path.');
+      }
+
+      auth.type = authType;
+      if (authType === 'key') {
+        const authKey = document.getElementById('cosmos-auth-key').value.trim();
+        if (!authKey) {
+          throw new Error('Please enter the Cosmos DB account key.');
+        }
+        auth.key = authKey;
+      } else {
+        auth.identity = 'managed_identity';
+      }
+      additionalFields.database_name = databaseName;
+      additionalFields.container_name = containerName;
+      additionalFields.partition_key_path = partitionKeyPath;
+      additionalFields.field_hints = this.getCosmosFieldHints();
+      additionalFields.max_items = parseInt(document.getElementById('cosmos-max-items').value, 10) || 100;
+      additionalFields.timeout = parseInt(document.getElementById('cosmos-timeout').value, 10) || 30;
+    } else if (isDocumentSearchVisible) {
+      endpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
+      auth.type = 'NoAuth';
+      additionalFields = this.getDocumentSearchAdditionalFields();
+    } else if (isBlobStorageVisible) {
+      const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
+      const containerName = document.getElementById('blob-storage-container-name').value.trim();
+      const blobPrefix = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix').value);
+
+      auth.type = 'connection_string';
+      auth.key = connectionString;
+      endpoint = this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
+      additionalFields.container_name = containerName;
+      if (blobPrefix) {
+        additionalFields.blob_prefix = blobPrefix;
+      }
+      additionalFields.blob_storage_capabilities = this.getSelectedBlobStorageCapabilities();
+      additionalFields.blob_storage_read_file_types = this.getSelectedBlobStorageReadFileTypes();
+      additionalFields.blob_storage_upload_file_types = this.getSelectedBlobStorageUploadFileTypes();
+    } else if (this.isSimpleChatType()) {
+      endpoint = '';
+      auth.type = 'user';
+      additionalFields.simplechat_capabilities = this.getSelectedSimpleChatCapabilities();
+    } else if (this.isMsGraphType()) {
+      endpoint = MSGRAPH_DEFAULT_ENDPOINT;
+      auth.type = 'user';
+      additionalFields.msgraph_capabilities = this.getSelectedMsGraphCapabilities();
+    } else if (isAzureMapsVisible) {
+      endpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
+      auth.type = 'key';
+      auth.key = document.getElementById('azure-maps-key').value.trim();
+    } else if (this.isChartType()) {
+      endpoint = CHART_DEFAULT_ENDPOINT;
+      auth.type = 'user';
+      additionalFields.chart_capabilities = this.getSelectedChartCapabilities();
     } else {
       // Collect generic plugin data
       console.log("Collecting generic plugin data");
@@ -1843,8 +3117,7 @@ export class PluginModalStepper {
     // This preserves OpenAPI spec content and other auto-populated fields
     // For SQL types, Step 3 already provides all necessary config — skip dynamic field merge
     // to prevent empty Step 4 fields from overwriting populated Step 3 values
-    const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
-    if (!isSqlType) {
+    if (!this.isStructuredConfigType()) {
       try {
         const dynamicFields = this.collectAdditionalFields();
         // Merge dynamicFields into additionalFields (preserving existing values)
@@ -1897,23 +3170,62 @@ export class PluginModalStepper {
     document.getElementById('summary-plugin-type').textContent = type;
     document.getElementById('summary-plugin-description').textContent = description || '-';
     
-    // Configuration Section - Handle endpoint vs SQL configuration
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    // Configuration Section - Handle endpoint vs SQL/Cosmos configuration
+    const isSqlType = this.isSqlType();
+    const isCosmosType = this.isCosmosType();
+    const isDocumentSearchType = this.isDocumentSearchType();
+    const isBlobStorageType = this.isBlobStorageType();
+    const isSimpleChatType = this.isSimpleChatType();
+    const isMsGraphType = this.isMsGraphType();
+    const isAzureMapsType = this.isAzureMapsType();
+    const isChartType = this.isChartType();
     
     const endpointRow = document.getElementById('summary-plugin-endpoint-row');
+    const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
     
     if (isSqlType) {
       // Hide endpoint for SQL plugins since they don't use endpoints
       endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = this.getSqlDatabaseType() || '-';
+      databaseTypeRow.style.display = '';
+    } else if (isCosmosType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Cosmos DB for NoSQL';
+      databaseTypeRow.style.display = '';
+    } else if (isDocumentSearchType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Internal document search';
+      databaseTypeRow.style.display = '';
+    } else if (isBlobStorageType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Azure Blob Storage container';
+      databaseTypeRow.style.display = '';
+    } else if (isSimpleChatType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Built-in SimpleChat action';
+      databaseTypeRow.style.display = '';
+    } else if (isMsGraphType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Built-in Microsoft Graph action';
+      databaseTypeRow.style.display = '';
+    } else if (isAzureMapsType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Azure Maps tile proxy';
+      databaseTypeRow.style.display = '';
+    } else if (isChartType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Built-in chart action';
+      databaseTypeRow.style.display = '';
     } else {
       // Show endpoint for non-SQL plugins (OpenAPI, generic, etc.)
       const endpoint = this.getEndpointValue();
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
       endpointRow.style.display = '';
+      databaseTypeRow.style.display = 'none';
     }
     
     const authType = this.getAuthTypeValue();
@@ -1930,34 +3242,55 @@ export class PluginModalStepper {
     }
     
     const databaseType = this.getSqlDatabaseType();
-    const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
-    if (databaseType) {
+    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else {
+    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
       databaseTypeRow.style.display = 'none';
     }
     
     // Show/hide type-specific sections
     this.populateOpenApiSummary();
     this.populateSqlSummary();
+    this.populateCosmosSummary();
+    this.populateDocumentSearchSummary();
+    this.populateBlobStorageSummary();
+    this.populateSimpleChatSummary();
+    this.populateMsGraphSummary();
+    this.populateChartSummary();
     this.populateAdvancedSummary();
     this.populateChangesSummary();
   }
 
   getEndpointValue() {
     // Check different endpoint fields based on plugin type
-    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    const isOpenApiType = this.isOpenApiType();
+    const isSqlType = this.isSqlType();
+    const isCosmosType = this.isCosmosType();
+    const isDocumentSearchType = this.isDocumentSearchType();
+    const isBlobStorageType = this.isBlobStorageType();
+    const isSimpleChatType = this.isSimpleChatType();
+    const isMsGraphType = this.isMsGraphType();
+    const isAzureMapsType = this.isAzureMapsType();
+    const isChartType = this.isChartType();
     
     if (isOpenApiType) {
       return document.getElementById('plugin-endpoint').value.trim();
     } else if (isSqlType) {
       return document.getElementById('sql-connection-string').value.trim();
+    } else if (isCosmosType) {
+      return document.getElementById('cosmos-endpoint').value.trim();
+    } else if (isDocumentSearchType) {
+      return INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
+    } else if (isBlobStorageType) {
+      const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
+      return this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
+    } else if (isAzureMapsType) {
+      return AZURE_MAPS_DEFAULT_ENDPOINT;
+    } else if (isMsGraphType) {
+      return MSGRAPH_DEFAULT_ENDPOINT;
+    } else if (isChartType) {
+      return CHART_DEFAULT_ENDPOINT;
     } else {
       return document.getElementById('plugin-endpoint-generic').value.trim();
     }
@@ -1965,12 +3298,15 @@ export class PluginModalStepper {
 
   getAuthTypeValue() {
     // Check different auth fields based on plugin type
-    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    const isOpenApiType = this.isOpenApiType();
+    const isSqlType = this.isSqlType();
+    const isCosmosType = this.isCosmosType();
+    const isDocumentSearchType = this.isDocumentSearchType();
+    const isBlobStorageType = this.isBlobStorageType();
+    const isSimpleChatType = this.isSimpleChatType();
+    const isMsGraphType = this.isMsGraphType();
+    const isAzureMapsType = this.isAzureMapsType();
+    const isChartType = this.isChartType();
     
     if (isOpenApiType) {
       const authType = document.getElementById('plugin-auth-type').value;
@@ -1978,6 +3314,21 @@ export class PluginModalStepper {
     } else if (isSqlType) {
       const authType = document.getElementById('sql-auth-type').value;
       return this.formatAuthType(authType);
+    } else if (isCosmosType) {
+      const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
+      return authType === 'key' ? 'Account Key' : 'Managed Identity';
+    } else if (isDocumentSearchType) {
+      return 'Internal user context';
+    } else if (isBlobStorageType) {
+      return 'Connection String';
+    } else if (isSimpleChatType) {
+      return 'User';
+    } else if (isMsGraphType) {
+      return 'User';
+    } else if (isAzureMapsType) {
+      return 'Subscription Key';
+    } else if (isChartType) {
+      return 'User';
     } else {
       const authType = document.getElementById('plugin-auth-type-generic').value;
       return this.formatAuthType(authType);
@@ -1998,6 +3349,9 @@ export class PluginModalStepper {
       'user': 'User',
       'servicePrincipal': 'Service Principal',
       'connection_string': 'Connection String',
+      'connection_string_only': 'Connection String Only',
+      'managed_identity': 'Managed Identity',
+      'integrated': 'Integrated Authentication',
       'basic': 'Basic',
       'NoAuth': 'No Authentication'
     };
@@ -2051,11 +3405,7 @@ export class PluginModalStepper {
   }
 
   populateSqlSummary() {
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    const isSqlType = this.isSqlType();
     const sqlSection = document.getElementById('summary-sql-section');
     
     if (isSqlType) {
@@ -2074,6 +3424,190 @@ export class PluginModalStepper {
     } else {
       sqlSection.style.display = 'none';
     }
+  }
+
+  populateCosmosSummary() {
+    const cosmosSection = document.getElementById('summary-cosmos-section');
+    if (!cosmosSection) {
+      return;
+    }
+
+    if (this.isCosmosType()) {
+      const fieldHints = this.getCosmosFieldHints();
+      document.getElementById('summary-cosmos-auth-type').textContent = this.getAuthTypeValue() || '-';
+      document.getElementById('summary-cosmos-database-name').textContent = document.getElementById('cosmos-database-name').value.trim() || '-';
+      document.getElementById('summary-cosmos-container-name').textContent = document.getElementById('cosmos-container-name').value.trim() || '-';
+      document.getElementById('summary-cosmos-partition-key-path').textContent = document.getElementById('cosmos-partition-key-path').value.trim() || '-';
+      document.getElementById('summary-cosmos-max-items').textContent = document.getElementById('cosmos-max-items').value.trim() || '-';
+
+      const timeoutValue = document.getElementById('cosmos-timeout').value.trim();
+      document.getElementById('summary-cosmos-timeout').textContent = timeoutValue ? `${timeoutValue} seconds` : '-';
+      document.getElementById('summary-cosmos-field-hints').textContent = fieldHints.length ? fieldHints.join(', ') : 'None configured';
+      cosmosSection.style.display = '';
+    } else {
+      cosmosSection.style.display = 'none';
+    }
+  }
+
+  populateDocumentSearchSummary() {
+    const searchSection = document.getElementById('summary-document-search-section');
+    if (!searchSection) {
+      return;
+    }
+
+    if (!this.isDocumentSearchType()) {
+      searchSection.style.display = 'none';
+      return;
+    }
+
+    const config = this.getDocumentSearchAdditionalFields();
+    document.getElementById('summary-search-scope').textContent = this.formatDocumentScope(config.default_doc_scope);
+    document.getElementById('summary-search-top-n').textContent = String(config.default_top_n || 12);
+    document.getElementById('summary-search-chunk-behavior').textContent = 'Returns all chunks by default';
+    document.getElementById('summary-search-windowing').textContent = this.formatDocumentSearchWindowing(config);
+    document.getElementById('summary-search-window-target-length').textContent = config.default_window_target_length || '2 pages';
+    document.getElementById('summary-search-final-target-length').textContent = config.default_final_target_length || '2 pages';
+    document.getElementById('summary-search-focus-instructions').textContent = config.default_focus_instructions || 'Uses caller-provided focus instructions';
+    searchSection.style.display = '';
+  }
+
+  populateBlobStorageSummary() {
+    const blobSection = document.getElementById('summary-blob-storage-section');
+    if (!blobSection) {
+      return;
+    }
+
+    if (!this.isBlobStorageType()) {
+      blobSection.style.display = 'none';
+      return;
+    }
+
+    const capabilities = this.getSelectedBlobStorageCapabilities();
+    const readFileTypes = this.getSelectedBlobStorageReadFileTypes();
+    const uploadFileTypes = this.getSelectedBlobStorageUploadFileTypes();
+    const enabledLabels = [];
+    const disabledLabels = [];
+    const enabledReadTypes = [];
+    const enabledUploadTypes = [];
+
+    BLOB_STORAGE_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (capabilities[definition.key]) {
+        enabledLabels.push(definition.label);
+      } else {
+        disabledLabels.push(definition.label);
+      }
+    });
+
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      if (readFileTypes[definition.key]) {
+        enabledReadTypes.push(definition.label);
+      }
+      if (uploadFileTypes[definition.key]) {
+        enabledUploadTypes.push(definition.label);
+      }
+    });
+
+    document.getElementById('summary-blob-storage-container-name').textContent = document.getElementById('blob-storage-container-name').value.trim() || '-';
+    document.getElementById('summary-blob-storage-blob-prefix').textContent = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix').value) || 'None';
+    document.getElementById('summary-blob-storage-enabled-list').textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
+    document.getElementById('summary-blob-storage-disabled-list').textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+    document.getElementById('summary-blob-storage-read-file-types').textContent = capabilities.read_file_content
+      ? (enabledReadTypes.length ? enabledReadTypes.join(', ') : 'None')
+      : 'Read capability disabled';
+    document.getElementById('summary-blob-storage-upload-file-types').textContent = capabilities.upload_file_to_container
+      ? (enabledUploadTypes.length ? enabledUploadTypes.join(', ') : 'None')
+      : 'Upload capability disabled';
+    blobSection.style.display = '';
+  }
+
+  populateSimpleChatSummary() {
+    const simpleChatSection = document.getElementById('summary-simplechat-section');
+    const enabledList = document.getElementById('summary-simplechat-enabled-list');
+    const disabledList = document.getElementById('summary-simplechat-disabled-list');
+    if (!simpleChatSection || !enabledList || !disabledList) {
+      return;
+    }
+
+    if (!this.isSimpleChatType()) {
+      simpleChatSection.style.display = 'none';
+      return;
+    }
+
+    const capabilities = this.getSelectedSimpleChatCapabilities();
+    const enabledLabels = [];
+    const disabledLabels = [];
+
+    SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (capabilities[definition.key]) {
+        enabledLabels.push(definition.label);
+      } else {
+        disabledLabels.push(definition.label);
+      }
+    });
+
+    enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
+    disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+    simpleChatSection.style.display = '';
+  }
+
+  populateMsGraphSummary() {
+    const msGraphSection = document.getElementById('summary-msgraph-section');
+    const enabledList = document.getElementById('summary-msgraph-enabled-list');
+    const disabledList = document.getElementById('summary-msgraph-disabled-list');
+    if (!msGraphSection || !enabledList || !disabledList) {
+      return;
+    }
+
+    if (!this.isMsGraphType()) {
+      msGraphSection.style.display = 'none';
+      return;
+    }
+
+    const capabilities = this.getSelectedMsGraphCapabilities();
+    const enabledLabels = [];
+    const disabledLabels = [];
+
+    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (capabilities[definition.key]) {
+        enabledLabels.push(definition.label);
+      } else {
+        disabledLabels.push(definition.label);
+      }
+    });
+
+    enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
+    disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+    msGraphSection.style.display = '';
+  }
+
+  populateChartSummary() {
+    const chartSection = document.getElementById('summary-chart-section');
+    const enabledList = document.getElementById('summary-chart-enabled-list');
+    const disabledList = document.getElementById('summary-chart-disabled-list');
+    if (!chartSection || !enabledList || !disabledList) {
+      return;
+    }
+
+    if (!this.isChartType()) {
+      chartSection.style.display = 'none';
+      return;
+    }
+
+    const capabilities = this.getSelectedChartCapabilities();
+    const enabledLabels = [];
+    const disabledLabels = [];
+
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (capabilities[definition.key]) {
+        enabledLabels.push(definition.label);
+      } else {
+        disabledLabels.push(definition.label);
+      }
+    });
+
+    enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
+    disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+    chartSection.style.display = '';
   }
 
   populateSqlOptionalSetting(inputId, summaryId, rowId) {
@@ -2119,25 +3653,41 @@ export class PluginModalStepper {
       
       // Get endpoint from the appropriate field based on plugin type
       let currentEndpoint = '';
-      const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-      const isSqlType = this.selectedType && (
-        this.selectedType.toLowerCase().includes('sql') || 
-        this.selectedType.toLowerCase() === 'sql_schema' ||
-        this.selectedType.toLowerCase() === 'sql_query'
-      );
+      const isOpenApiType = this.isOpenApiType();
+      const isSqlType = this.isSqlType();
+      const isCosmosType = this.isCosmosType();
+      const isDocumentSearchType = this.isDocumentSearchType();
+      const isSimpleChatType = this.isSimpleChatType();
+      const isMsGraphType = this.isMsGraphType();
+      const isAzureMapsType = this.isAzureMapsType();
+      const isChartType = this.isChartType();
       
       if (isOpenApiType) {
         currentEndpoint = document.getElementById('plugin-endpoint')?.value || '';
       } else if (isSqlType) {
         currentEndpoint = document.getElementById('sql-connection-string')?.value || '';
+      } else if (isCosmosType) {
+        currentEndpoint = document.getElementById('cosmos-endpoint')?.value || '';
+      } else if (isDocumentSearchType) {
+        currentEndpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
+      } else if (isSimpleChatType) {
+        currentEndpoint = '';
+      } else if (isMsGraphType) {
+        currentEndpoint = MSGRAPH_DEFAULT_ENDPOINT;
+      } else if (isAzureMapsType) {
+        currentEndpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
+      } else if (isChartType) {
+        currentEndpoint = CHART_DEFAULT_ENDPOINT;
       } else {
         currentEndpoint = document.getElementById('plugin-endpoint-generic')?.value || '';
       }
       
       // Get authentication information
       let currentAuthKey = '';
+      let currentAuthType = '';
       if (isOpenApiType) {
         const authType = document.getElementById('plugin-auth-type')?.value || 'none';
+        currentAuthType = authType;
         if (authType === 'api_key') {
           currentAuthKey = document.getElementById('plugin-auth-api-key-value')?.value || '';
         } else if (authType === 'bearer') {
@@ -2149,13 +3699,57 @@ export class PluginModalStepper {
         } else if (authType === 'oauth2') {
           currentAuthKey = document.getElementById('plugin-auth-oauth2-token')?.value || '';
         }
+      } else if (isCosmosType) {
+        currentAuthType = document.getElementById('cosmos-auth-type')?.value || 'identity';
+        if (currentAuthType === 'key') {
+          currentAuthKey = document.getElementById('cosmos-auth-key')?.value || '';
+        }
+      } else if (isDocumentSearchType) {
+        currentAuthType = 'NoAuth';
+      } else if (isSimpleChatType) {
+        currentAuthType = 'user';
+      } else if (isMsGraphType) {
+        currentAuthType = 'user';
+      } else if (isAzureMapsType) {
+        currentAuthType = 'key';
+        currentAuthKey = document.getElementById('azure-maps-key')?.value || '';
+      } else if (isChartType) {
+        currentAuthType = 'user';
       } else {
+        currentAuthType = document.getElementById('plugin-auth-type-generic')?.value || '';
         currentAuthKey = document.getElementById('plugin-auth-key')?.value || '';
       }
       
       // Get metadata and additional fields
       const currentMetadata = document.getElementById('plugin-metadata')?.value || '{}';
-      const currentAdditionalFields = document.getElementById('plugin-additional-fields')?.value || '{}';
+      let currentAdditionalFields = document.getElementById('plugin-additional-fields')?.value || '{}';
+
+      if (isCosmosType) {
+        currentAdditionalFields = JSON.stringify({
+          database_name: document.getElementById('cosmos-database-name')?.value?.trim() || '',
+          container_name: document.getElementById('cosmos-container-name')?.value?.trim() || '',
+          partition_key_path: document.getElementById('cosmos-partition-key-path')?.value?.trim() || '',
+          field_hints: this.getCosmosFieldHints(),
+          max_items: parseInt(document.getElementById('cosmos-max-items')?.value, 10) || 100,
+          timeout: parseInt(document.getElementById('cosmos-timeout')?.value, 10) || 30
+        }, null, 2);
+      } else if (isDocumentSearchType) {
+        currentAdditionalFields = JSON.stringify(this.getDocumentSearchAdditionalFields(), null, 2);
+      } else if (isSimpleChatType) {
+        currentAdditionalFields = JSON.stringify({
+          simplechat_capabilities: this.getSelectedSimpleChatCapabilities()
+        }, null, 2);
+      } else if (isMsGraphType) {
+        currentAdditionalFields = JSON.stringify({
+          msgraph_capabilities: this.getSelectedMsGraphCapabilities()
+        }, null, 2);
+      } else if (isAzureMapsType) {
+        currentAdditionalFields = '{}';
+      } else if (isChartType) {
+        currentAdditionalFields = JSON.stringify({
+          chart_capabilities: this.getSelectedChartCapabilities()
+        }, null, 2);
+      }
       
       // Compare basic fields
       if (currentDisplayName !== (this.originalPlugin.displayName || '')) {
@@ -2192,6 +3786,14 @@ export class PluginModalStepper {
         changes.authKey = {
           before: originalAuthKey ? '***' + originalAuthKey.slice(-4) : '(empty)',
           after: currentAuthKey ? '***' + currentAuthKey.slice(-4) : '(empty)'
+        };
+      }
+
+      const originalAuthType = (this.originalPlugin.auth && this.originalPlugin.auth.type) || '';
+      if (currentAuthType !== originalAuthType) {
+        changes.authType = {
+          before: originalAuthType || '(empty)',
+          after: currentAuthType || '(empty)'
         };
       }
       
@@ -2232,7 +3834,7 @@ export class PluginModalStepper {
 
   populateAdvancedSummary() {
     const advancedSection = document.getElementById('summary-advanced-section');
-    const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
+    const isStructuredConfigType = this.isStructuredConfigType();
     
     // Check if there's any metadata or additional fields
     const metadata = document.getElementById('plugin-metadata').value.trim();
@@ -2250,9 +3852,9 @@ export class PluginModalStepper {
       hasMetadata = metadata.length > 0 && metadata !== '{}';
     }
     
-    // For SQL types, additional fields are already shown in the SQL Database Configuration
+    // For SQL and Cosmos types, additional fields are already shown in dedicated configuration
     // summary section, so skip showing them again in Advanced to avoid redundancy
-    if (!isSqlType) {
+    if (!isStructuredConfigType) {
       // DRY: Use private helper to collect additional fields
       let additionalFieldsObj = this.collectAdditionalFields();
       hasAdditionalFields = Object.keys(additionalFieldsObj).length > 0;
@@ -2272,7 +3874,7 @@ export class PluginModalStepper {
         additionalFieldsPreview.style.display = 'none';
       }
     } else {
-      // Hide additional fields for SQL types
+      // Hide additional fields for structured config types
       const additionalFieldsPreview = document.getElementById('summary-additional-fields-preview');
       if (additionalFieldsPreview) additionalFieldsPreview.style.display = 'none';
       hasAdditionalFields = false;
@@ -2421,6 +4023,7 @@ export class PluginModalStepper {
     safeSetValue('plugin-auth-basic-username-generic');
     safeSetValue('plugin-auth-basic-password-generic');
     safeSetValue('plugin-auth-oauth2-token-generic');
+    safeSetValue('azure-maps-key');
     
     // Step 3 fields - SQL Plugin
     safeSetValue('sql-connection-method', 'connection_string');
@@ -2431,6 +4034,43 @@ export class PluginModalStepper {
     safeSetValue('sql-password');
     safeSetValue('sql-auth-type', 'username_password');
     safeSetValue('sql-database-type', 'sql_server');
+
+    // Step 3 fields - Cosmos Plugin
+    safeSetValue('cosmos-endpoint');
+    safeSetValue('cosmos-database-name');
+    safeSetValue('cosmos-container-name');
+    safeSetValue('cosmos-partition-key-path');
+    safeSetValue('cosmos-field-hints');
+    safeSetValue('cosmos-max-items', '100');
+    safeSetValue('cosmos-timeout', '30');
+    safeSetValue('cosmos-auth-type', 'identity');
+    safeSetValue('cosmos-auth-key');
+
+    // Step 3 fields - Document Search Plugin
+    safeSetValue('document-search-scope', 'all');
+    safeSetValue('document-search-top-n', '12');
+    safeSetValue('document-search-window-unit', 'pages');
+    safeSetValue('document-search-window-size');
+    safeSetValue('document-search-window-percent');
+    safeSetValue('document-search-focus-instructions');
+    safeSetValue('document-search-window-target-length', '2 pages');
+    safeSetValue('document-search-final-target-length', '2 pages');
+
+    // Step 3 fields - Blob Storage Plugin
+    safeSetValue('blob-storage-connection-string');
+    safeSetValue('blob-storage-container-name');
+    safeSetValue('blob-storage-blob-prefix');
+
+    this.simpleChatCapabilityState = this.getDefaultSimpleChatCapabilities();
+    this.renderSimpleChatConfiguration();
+    this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
+    this.renderMsGraphConfiguration();
+    this.chartCapabilityState = this.getDefaultChartCapabilities();
+    this.renderChartConfiguration();
+    this.blobStorageCapabilityState = this.getDefaultBlobStorageCapabilities();
+    this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
+    this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
+    this.renderBlobStorageConfiguration();
     
     // Clear any type selection
     this.selectedType = null;
@@ -2441,6 +4081,7 @@ export class PluginModalStepper {
       this.toggleOpenApiAuthFields();
       this.toggleGenericAuthFields();
       this.handleSqlAuthTypeChange();
+      this.handleCosmosAuthTypeChange();
     } catch (e) {
       console.log('Some auth field toggles not available:', e.message);
     }

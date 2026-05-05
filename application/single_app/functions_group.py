@@ -3,14 +3,12 @@
 from config import *
 import functions_authentication
 import functions_settings
-from functions_authentication import *
-from functions_settings import *
 from typing import Iterable
 
 
 def create_group(name, description):
     """Creates a new group. The creator is the Owner by default."""
-    user_info = get_current_user_info()
+    user_info = functions_authentication.get_current_user_info()
     if not user_info:
         raise Exception("No user in session")
 

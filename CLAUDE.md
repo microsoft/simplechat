@@ -62,6 +62,8 @@ return render_template('page.html', settings=public_settings)
 - Version is stored in `config.py`: `VERSION = "X.XXX.XXX"`
 - When incrementing, only change the third segment (e.g., `0.238.024` -> `0.238.025`)
 - Include the current version in functional test file headers and documentation files
+- Deployer CI/CD logic version is tracked separately in `deployers/version.txt`
+- When modifying files under `deployers/`, increment `deployers/version.txt`; default to a patch bump unless a deliberate deployment compatibility change warrants a minor or major increment
 
 ## Documentation Locations
 

@@ -31,9 +31,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
     min-height: 18px;
     display: none; /* Hide checkboxes by default */
   }
+
+  .document-select-all-checkbox {
+    cursor: pointer;
+    min-width: 18px;
+    min-height: 18px;
+    display: none;
+  }
   
   /* Show checkboxes when in selection mode */
   .selection-mode .document-checkbox {
+    display: block;
+  }
+
+  .selection-mode .document-select-all-checkbox {
     display: block;
   }
   
@@ -275,7 +286,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         aria-controls="documents-tab"
         aria-selected="true"
       >
-        Group Documents
+        Documents
       </button>
     </li>
     <li class="nav-item" role="presentation">
@@ -289,7 +300,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         aria-controls="prompts-tab"
         aria-selected="false"
       >
-        Group Prompts
+        Prompts
       </button>
     </li>
     {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
@@ -305,7 +316,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             aria-controls="group-agents-tab"
             aria-selected="false"
           >
-            Group Agents
+            Agents
           </button>
         </li>
     
@@ -321,7 +332,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
               aria-controls="group-plugins-tab"
               aria-selected="false"
             >
-              Group Actions
+              Actions
             </button>
           </li>
         {% endif %}
@@ -338,7 +349,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             aria-controls="group-endpoints-tab"
             aria-selected="false"
           >
-            Group Endpoints
+            Endpoints
           </button>
         </li>
       {% endif %}
@@ -555,7 +566,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <table class="table table-striped" id="group-documents-table">
           <thead>
             <tr>
-              <th></th>
+              <th>
+                <input
+                  type="checkbox"
+                  id="group-docs-select-all-checkbox"
+                  class="form-check-input document-select-all-checkbox"
+                  aria-label="Select all visible group documents"
+                />
+              </th>
               <!-- Expand -->
               <th class="sortable-header" data-sort-field="file_name" style="cursor: pointer; user-select: none;">
                 File Name <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
@@ -596,6 +614,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <option value="10" selected>10</option>
               <option value="20">20</option>
               <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="250">250</option>
             </select>
             <span class="ms-1 small text-muted">items per page</span>
           </div>
@@ -636,6 +656,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <option value="10" selected>10</option>
               <option value="20">20</option>
               <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="250">250</option>
             </select>
             <span class="ms-1 small text-muted">items per page</span>
           </div>
@@ -2210,13 +2232,74 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   // --- Group Document Selection Functions ---
+  function getGroupSelectionTables() {
+    return [
+      document.getElementById("group-documents-table"),
+      document.getElementById("group-folder-docs-table"),
+    ].filter(Boolean);
+  }
+
+  function getGroupVisibleDocumentCheckboxes() {
+    return Array.from(document.querySelectorAll("#group-documents-table .document-checkbox, #group-folder-docs-table .document-checkbox"));
+  }
+
+  function getGroupSelectAllCheckboxes() {
+    return Array.from(document.querySelectorAll("#group-documents-table .document-select-all-checkbox, #group-folder-docs-table .document-select-all-checkbox"));
+  }
+
+  function syncGroupSelectionUI() {
+    const visibleCheckboxes = getGroupVisibleDocumentCheckboxes();
+    const expandContainers = document.querySelectorAll("#group-documents-table .expand-collapse-container, #group-folder-docs-table .expand-collapse-container");
+    const selectedVisibleCount = visibleCheckboxes.reduce((count, checkbox) => {
+      const documentId = checkbox.getAttribute("data-document-id");
+      const isSelected = groupSelectedDocuments.has(documentId);
+      checkbox.checked = isSelected;
+      return count + (isSelected ? 1 : 0);
+    }, 0);
+
+    getGroupSelectionTables().forEach((table) => {
+      table.classList.toggle("selection-mode", groupSelectionMode);
+    });
+
+    expandContainers.forEach((container) => {
+      container.classList.toggle("d-none", groupSelectionMode);
+      container.classList.toggle("d-inline-block", !groupSelectionMode);
+    });
+
+    getGroupSelectAllCheckboxes().forEach((checkbox) => {
+      const hasVisibleDocuments = visibleCheckboxes.length > 0;
+      checkbox.checked = hasVisibleDocuments && selectedVisibleCount === visibleCheckboxes.length;
+      checkbox.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleCheckboxes.length;
+      checkbox.disabled = !groupSelectionMode || !hasVisibleDocuments;
+    });
+  }
+
+  function refreshGroupSelectionState() {
+    syncGroupSelectionUI();
+    updateGroupBulkActionButtons();
+  }
+
+  function toggleGroupSelectAllDocuments(isSelected) {
+    getGroupVisibleDocumentCheckboxes().forEach((checkbox) => {
+      const documentId = checkbox.getAttribute("data-document-id");
+      checkbox.checked = isSelected;
+      if (isSelected) {
+        groupSelectedDocuments.add(documentId);
+      } else {
+        groupSelectedDocuments.delete(documentId);
+      }
+    });
+
+    refreshGroupSelectionState();
+  }
+
   function updateGroupSelectedDocuments(documentId, isSelected) {
     if (isSelected) {
       groupSelectedDocuments.add(documentId);
     } else {
       groupSelectedDocuments.delete(documentId);
     }
-    updateGroupBulkActionButtons();
+    refreshGroupSelectionState();
   }
 
   function updateGroupBulkActionButtons() {
@@ -2255,57 +2338,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function toggleGroupSelectionMode() {
-    const table = document.getElementById("group-documents-table");
-    const checkboxes = document.querySelectorAll('.document-checkbox');
-    const expandContainers = document.querySelectorAll('.expand-collapse-container');
-    const bulkActionsBar = document.getElementById("groupBulkActionsBar");
-    
     groupSelectionMode = !groupSelectionMode;
     
-    if (groupSelectionMode) {
-      // Enter selection mode
-      table.classList.add("selection-mode");
-      
-      // Show checkboxes and hide expand buttons
-      checkboxes.forEach(checkbox => {
-        checkbox.style.display = 'inline-block';
-      });
-      
-      expandContainers.forEach(container => {
-        container.style.display = 'none';
-      });
-    } else {
-      // Exit selection mode
-      table.classList.remove("selection-mode");
-      
-      // Hide checkboxes and show expand buttons
-      checkboxes.forEach(checkbox => {
-        checkbox.style.display = 'none';
-        checkbox.checked = false;
-      });
-      
-      expandContainers.forEach(container => {
-        container.style.display = 'inline-block';
-      });
-      
-      // Hide bulk actions bar
-      if (bulkActionsBar) {
-        bulkActionsBar.style.display = 'none';
-      }
-      
-      // Clear selected documents
+    if (!groupSelectionMode) {
       groupSelectedDocuments.clear();
     }
+
+    refreshGroupSelectionState();
   }
 
   // Clear group selection
   function clearGroupSelection() {
-    const checkboxes = document.querySelectorAll('.document-checkbox');
-    checkboxes.forEach(checkbox => {
-      checkbox.checked = false;
-    });
     groupSelectedDocuments.clear();
-    updateGroupBulkActionButtons();
+    refreshGroupSelectionState();
   }
 
   function deleteGroupSelectedDocuments() {
@@ -2457,6 +2502,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
         if (window.updateGroupSelectedDocuments) {
           window.updateGroupSelectedDocuments(documentId, event.target.checked);
         }
+      }
+
+      if (event.target.classList.contains('document-select-all-checkbox')) {
+        toggleGroupSelectAllDocuments(event.target.checked);
       }
     });
 
@@ -3151,6 +3200,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             renderGroupDocumentRow(doc, userRoleInActiveGroup)
           );
         }
+        refreshGroupSelectionState();
         renderGroupDocsPaginationControls(
           data.page,
           data.page_size,
@@ -3180,6 +3230,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       docStatus.toLowerCase().includes("error");
     const hasError = docStatus.toLowerCase().includes("error");
     const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRole); // Check role for actions
+    const isSelected = groupSelectedDocuments.has(docId);
 
     const docRow = document.createElement("tr");
     docRow.id = `group-doc-row-${docId}`; // Use distinct prefix
@@ -3188,7 +3239,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // First column with checkbox and expand/collapse
     let firstColumnHtml = `
         <td class="align-middle">
-            <input type="checkbox" class="document-checkbox" data-document-id="${docId}" style="display: none;">
+        <input type="checkbox" class="form-check-input document-checkbox" data-document-id="${docId}"${isSelected ? ' checked' : ''}>
             <span class="expand-collapse-container">
             ${isComplete && !hasError ?
                 `<button class="btn btn-link p-0" onclick="toggleGroupDetails('${docId}')" title="Show/Hide Details">
@@ -4668,8 +4719,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       }
       return 'bi-arrow-down-up text-muted';
     };
-    let html = `<table class="table table-striped table-sm"><thead><tr>
-      <th style="width:50px;"></th>
+    const selectionModeClass = groupSelectionMode ? ' selection-mode' : '';
+    let html = `<table class="table table-striped table-sm${selectionModeClass}" id="group-folder-docs-table"><thead><tr>
+      <th style="width:50px;"><input type="checkbox" class="form-check-input document-select-all-checkbox" aria-label="Select all visible group folder documents" /></th>
       <th class="folder-sortable-header" data-sort-field="file_name" style="cursor:pointer;user-select:none;">File Name <i class="bi ${sortIconFn('file_name')} small"></i></th>
       <th class="folder-sortable-header" data-sort-field="title" style="cursor:pointer;user-select:none;">Title <i class="bi ${sortIconFn('title')} small"></i></th>
       <th style="width:240px;">Actions</th>
@@ -4689,15 +4741,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
           || docStatus.toLowerCase().includes('complete')
           || docStatus.toLowerCase().includes('error');
       const hasError = docStatus.toLowerCase().includes('error');
+      const isSelected = groupSelectedDocuments.has(docId);
 
       // First column: expand/collapse or status indicator
       let firstColHtml = '';
       if (isComplete && !hasError) {
-        firstColHtml = `<button class="btn btn-link p-0" onclick="onEditGroupDocument('${docId}')" title="View Metadata"><span class="bi bi-chevron-right"></span></button>`;
+        firstColHtml = `<input type="checkbox" class="form-check-input document-checkbox" data-document-id="${docId}"${isSelected ? ' checked' : ''}><span class="expand-collapse-container"><button class="btn btn-link p-0" onclick="onEditGroupDocument('${docId}')" title="View Metadata"><span class="bi bi-chevron-right"></span></button></span>`;
       } else if (hasError) {
-        firstColHtml = `<span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span>`;
+        firstColHtml = `<input type="checkbox" class="form-check-input document-checkbox" data-document-id="${docId}"${isSelected ? ' checked' : ''}><span class="expand-collapse-container"><span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span></span>`;
       } else {
-        firstColHtml = `<span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span>`;
+        firstColHtml = `<input type="checkbox" class="form-check-input document-checkbox" data-document-id="${docId}"${isSelected ? ' checked' : ''}><span class="expand-collapse-container"><span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span></span>`;
       }
 
       // Chat button
@@ -4833,6 +4886,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <option value="10"${groupFolderPageSize === 10 ? ' selected' : ''}>10</option>
             <option value="20"${groupFolderPageSize === 20 ? ' selected' : ''}>20</option>
             <option value="50"${groupFolderPageSize === 50 ? ' selected' : ''}>50</option>
+            <option value="100"${groupFolderPageSize === 100 ? ' selected' : ''}>100</option>
+            <option value="250"${groupFolderPageSize === 250 ? ' selected' : ''}>250</option>
           </select>
           <span class="ms-1 small text-muted">per page</span>
         </div>
@@ -4847,6 +4902,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       container.innerHTML = html;
       wireGroupBackButton(container);
+  refreshGroupSelectionState();
 
       // Wire search
       const si = document.getElementById('group-folder-search-input');

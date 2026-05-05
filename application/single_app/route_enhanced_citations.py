@@ -12,7 +12,7 @@ import pandas
 
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings, enabled_required
-from functions_documents import get_document_metadata
+from functions_documents import get_document_blob_storage_info
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
@@ -61,6 +61,14 @@ def _serialize_tabular_preview_table(df_preview):
         for row in df_preview.itertuples(index=False, name=None)
     ]
     return columns, rows
+
+
+def _resolve_document_blob_reference(raw_doc):
+    """Resolve the persisted blob container and path for the cited document."""
+    container_name, blob_name = get_document_blob_storage_info(raw_doc)
+    if not container_name or not blob_name:
+        raise FileNotFoundError("Blob reference is incomplete for this document")
+    return container_name, blob_name
 
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
@@ -430,11 +438,10 @@ def register_enhanced_citations_routes(app):
             # Download blob with size cap to protect memory
             settings = get_settings()
             max_blob_size = int(settings.get('tabular_preview_max_blob_size_mb', 200)) * 1024 * 1024
-            workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-            blob_name = get_blob_name(raw_doc, workspace_type)
             blob_service_client = CLIENTS.get("storage_account_office_docs_client")
             if not blob_service_client:
                 return jsonify({"error": "Blob storage client not available"}), 500
+            container_name, blob_name = _resolve_document_blob_reference(raw_doc)
             blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
             blob_props = blob_client.get_blob_properties()
             if blob_props.size > max_blob_size:
@@ -590,54 +597,21 @@ def get_document(user_id, doc_id):
     # If document not found in any workspace
     return {"error": "Document not found or access denied"}, 404
 
-def determine_workspace_type_and_container(raw_doc):
-    """
-    Determine workspace type and appropriate container based on document metadata
-    """
-    if raw_doc.get('public_workspace_id'):
-        return 'public', raw_doc.get('blob_container') or storage_account_public_documents_container_name
-    elif raw_doc.get('group_id'):
-        return 'group', raw_doc.get('blob_container') or storage_account_group_documents_container_name
-    else:
-        return 'personal', raw_doc.get('blob_container') or storage_account_user_documents_container_name
-
-def get_blob_name(raw_doc, workspace_type):
-    """
-    Determine the correct blob name based on workspace type
-    """
-    _, blob_name = get_document_blob_storage_info(raw_doc)
-    if blob_name:
-        return blob_name
-
-    if workspace_type == 'public':
-        return f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
-    elif workspace_type == 'group':
-        return f"{raw_doc['group_id']}/{raw_doc['file_name']}"
-    else:
-        return f"{raw_doc['user_id']}/{raw_doc['file_name']}"
-
 def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=False):
     """
     Server-side rendering: Serve enhanced citation file content directly
     Based on the logic from the existing view_pdf function but serves content directly
     """
-    settings = get_settings()
-    
     # Get blob storage client
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
         raise Exception("Blob storage client not available")
-    
-    # Determine workspace type and container
-    workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-    container_client = blob_service_client.get_container_client(container_name)
-    
-    # Build blob name based on workspace type
-    blob_name = get_blob_name(raw_doc, workspace_type)
+
+    container_name, blob_name = _resolve_document_blob_reference(raw_doc)
     
     try:
         # Download blob content directly
-        blob_client = container_client.get_blob_client(blob_name)
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
         blob_data = blob_client.download_blob()
         content = blob_data.readall()
         
@@ -701,17 +675,12 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
         raise Exception("Blob storage client not available")
-    
-    # Determine workspace type and container
-    workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-    container_client = blob_service_client.get_container_client(container_name)
-    
-    # Build blob name based on workspace type
-    blob_name = get_blob_name(raw_doc, workspace_type)
+
+    container_name, blob_name = _resolve_document_blob_reference(raw_doc)
     
     try:
         # Download blob content directly
-        blob_client = container_client.get_blob_client(blob_name)
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
         blob_data = blob_client.download_blob()
         content = blob_data.readall()
         

@@ -18,16 +18,16 @@ class ThoughtTracker:
     interrupt the chat processing flow.
     """
 
-    def __init__(self, conversation_id, message_id, thread_id, user_id):
+    def __init__(self, conversation_id, message_id, thread_id, user_id, force_enabled=False):
         self.conversation_id = conversation_id
         self.message_id = message_id
         self.thread_id = thread_id
         self.user_id = user_id
         self.current_index = 0
         settings = get_settings()
-        self.enabled = settings.get('enable_thoughts', True)
+        self.enabled = force_enabled or settings.get('enable_thoughts', True)
 
-    def add_thought(self, step_type, content, detail=None):
+    def add_thought(self, step_type, content, detail=None, activity=None):
         """Write a thought step to Cosmos immediately.
 
         Args:
@@ -56,6 +56,8 @@ class ThoughtTracker:
             'duration_ms': None,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }
+        if isinstance(activity, dict) and activity:
+            thought_doc['activity'] = dict(activity)
         self.current_index += 1
 
         try:
