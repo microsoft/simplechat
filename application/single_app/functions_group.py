@@ -103,8 +103,16 @@ def find_group_by_id(group_id):
     except exceptions.CosmosResourceNotFoundError:
         return None
 
-def update_active_group_for_user(group_id):
-    user_id = functions_authentication.get_current_user_id()
+def update_active_group_for_user(group_id, user_id=None):
+    if not user_id:
+        user_id = functions_authentication.get_current_user_id()
+
+    assert_group_role(
+        user_id,
+        group_id,
+        allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+    )
+
     new_settings = {
         "activeGroupOid": group_id
     }
@@ -129,12 +137,17 @@ def get_user_role_in_group(group_doc, user_id):
     return None
 
 
-def require_active_group(user_id: str) -> str:
-    """Return the active group id for a user or raise ValueError if missing."""
+def require_active_group(
+    user_id: str,
+    allowed_roles: Iterable[str] = ("Owner", "Admin", "DocumentManager", "User"),
+) -> str:
+    """Return the active group id for a user after validating current membership."""
     settings = functions_settings.get_user_settings(user_id)
     active_group_id = settings.get("settings", {}).get("activeGroupOid")
     if not active_group_id:
         raise ValueError("No active group selected")
+
+    assert_group_role(user_id, active_group_id, allowed_roles=allowed_roles)
     return active_group_id
 
 

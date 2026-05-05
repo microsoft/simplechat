@@ -150,6 +150,7 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     
     Args:
         enable_video: Whether video file support is enabled
+        enable_audio: Whether audio file support is enabled
     Returns:
         set: Allowed file extensions
     """

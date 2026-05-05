@@ -20,6 +20,12 @@ let orchestrationSettings = {};
 let agents = [];
 let selectedAgent = null;
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text ?? '';
+    return div.innerHTML;
+}
+
 // --- Function Definitions ---
 
 async function loadAllAdminAgentData() {
@@ -283,13 +289,16 @@ function renderAgentsTable() {
         const isEnabled = agent.is_enabled !== false;
         const tr = document.createElement('tr');
         let selectedBadge = isSelected ? '<span class="badge bg-primary ms-1">Selected</span>' : '';
+        const safeName = escapeHtml(agent.name || '');
+        const safeDisplayName = escapeHtml(agent.display_name || '');
+        const safeDescription = escapeHtml(agent.description || '');
         let enabledBadge = isEnabled
             ? '<span class="badge bg-success-subtle text-success-emphasis border border-success-subtle ms-1">Enabled</span>'
             : '<span class="badge bg-secondary ms-1">Disabled</span>';
         tr.innerHTML = `
-            <td>${agent.name}${enabledBadge}</td>
-            <td>${agent.display_name}</td>
-            <td>${agent.description || ''}</td>
+            <td>${safeName}${enabledBadge}</td>
+            <td>${safeDisplayName}</td>
+            <td>${safeDescription}</td>
             <td>${selectedBadge}</td>
             <td>
                 <button type="button" class="btn btn-sm btn-secondary edit-agent-btn" data-index="${idx}">Edit</button>

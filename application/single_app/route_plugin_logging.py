@@ -4,7 +4,7 @@ API endpoints for accessing plugin invocation logs and statistics.
 """
 
 from flask import Blueprint, jsonify, request
-from functions_authentication import login_required, get_current_user_id
+from functions_authentication import admin_required, login_required, get_current_user_id
 from functions_appinsights import log_event
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from swagger_wrapper import swagger_route, get_auth_security
@@ -122,10 +122,10 @@ def get_plugin_stats():
     security=get_auth_security()
 )
 @login_required
+@admin_required
 def get_recent_invocations():
     """Get the most recent plugin invocations across all users (admin only)."""
     try:
-        # Note: You might want to add admin role checking here
         plugin_logger = get_plugin_logger()
         
         limit = request.args.get('limit', 20, type=int)
@@ -220,6 +220,7 @@ def get_plugin_specific_invocations(plugin_name):
     security=get_auth_security()
 )
 @login_required
+@admin_required
 def clear_plugin_logs():
     """Clear plugin invocation logs (admin only or for testing)."""
     try:

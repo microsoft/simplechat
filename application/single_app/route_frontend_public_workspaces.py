@@ -2,6 +2,7 @@
 
 from config import *
 from functions_authentication import *
+from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -116,7 +117,10 @@ def register_route_frontend_public_workspaces(app):
         workspace_id = request.form.get("workspace_id")
         if not user_id or not workspace_id:
             return "Missing user or workspace id", 400
-        success = update_user_settings(user_id, {"activePublicWorkspaceOid": workspace_id})
-        if not success:
-            return "Failed to update user settings", 500
+
+        try:
+            update_active_public_workspace_for_user(user_id, workspace_id)
+        except LookupError:
+            return "Workspace not found", 404
+
         return redirect(url_for('public_workspaces'))

@@ -1086,12 +1086,12 @@ def register_route_backend_group_documents(app):
 
         data = request.get_json()
         tag_name = data.get('tag_name')
-        color = data.get('color', '#0d6efd')
+        color = data.get('color')
 
         if not tag_name:
             return jsonify({'error': 'tag_name is required'}), 400
 
-        from functions_documents import normalize_tag, validate_tags
+        from functions_documents import normalize_tag, validate_tag_color, validate_tags
         from datetime import datetime, timezone
 
         try:
@@ -1100,6 +1100,9 @@ def register_route_backend_group_documents(app):
                 return jsonify({'error': error_msg}), 400
 
             normalized_tag = normalized_tags[0]
+            is_valid_color, color_error, normalized_color = validate_tag_color(color, normalized_tag)
+            if not is_valid_color:
+                return jsonify({'error': color_error}), 400
 
             tag_defs = group_doc.get('tag_definitions', {})
 
@@ -1107,7 +1110,7 @@ def register_route_backend_group_documents(app):
                 return jsonify({'error': 'Tag already exists'}), 409
 
             tag_defs[normalized_tag] = {
-                'color': color,
+                'color': normalized_color,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             group_doc['tag_definitions'] = tag_defs
@@ -1117,7 +1120,7 @@ def register_route_backend_group_documents(app):
                 'message': f'Tag "{normalized_tag}" created successfully',
                 'tag': {
                     'name': normalized_tag,
-                    'color': color
+                    'color': normalized_color
                 }
             }), 201
 
@@ -1288,7 +1291,7 @@ def register_route_backend_group_documents(app):
         new_name = data.get('new_name')
         new_color = data.get('color')
 
-        from functions_documents import normalize_tag, validate_tags, update_document, propagate_tags_to_chunks
+        from functions_documents import normalize_tag, validate_tag_color, validate_tags, update_document, propagate_tags_to_chunks
 
         try:
             normalized_old_tag = normalize_tag(tag_name)
@@ -1349,14 +1352,18 @@ def register_route_backend_group_documents(app):
                 }), 200
 
             if new_color:
+                is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
+                if not is_valid_color:
+                    return jsonify({'error': color_error}), 400
+
                 tag_defs = group_doc.get('tag_definitions', {})
 
                 if normalized_old_tag in tag_defs:
-                    tag_defs[normalized_old_tag]['color'] = new_color
+                    tag_defs[normalized_old_tag]['color'] = normalized_color
                 else:
                     from datetime import datetime, timezone
                     tag_defs[normalized_old_tag] = {
-                        'color': new_color,
+                        'color': normalized_color,
                         'created_at': datetime.now(timezone.utc).isoformat()
                     }
 
@@ -1364,7 +1371,11 @@ def register_route_backend_group_documents(app):
                 cosmos_groups_container.upsert_item(group_doc)
 
                 return jsonify({
-                    'message': f'Tag color updated for "{normalized_old_tag}"'
+                    'message': f'Tag color updated for "{normalized_old_tag}"',
+                    'tag': {
+                        'name': normalized_old_tag,
+                        'color': normalized_color
+                    }
                 }), 200
 
             return jsonify({'error': 'No updates specified'}), 400

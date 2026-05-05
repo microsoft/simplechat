@@ -195,7 +195,7 @@ export function showCitedTextPopup(citedText, fileName, pageNumber) {
       <div class="modal-dialog modal-dialog-scrollable modal-xl modal-fullscreen-sm-down">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title">Source: ${fileName}, Page: ${pageNumber}</h5>
+            <h5 class="modal-title"></h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body">
@@ -205,11 +205,11 @@ export function showCitedTextPopup(citedText, fileName, pageNumber) {
       </div>
     `;
     document.body.appendChild(modalContainer);
-  } else {
-    const modalTitle = modalContainer.querySelector(".modal-title");
-    if (modalTitle) {
-      modalTitle.textContent = `Source: ${fileName}, Page: ${pageNumber}`;
-    }
+  }
+
+  const modalTitle = modalContainer.querySelector(".modal-title");
+  if (modalTitle) {
+    modalTitle.textContent = `Source: ${fileName}, Page: ${pageNumber}`;
   }
 
   const citedTextContent = document.getElementById("cited-text-content");

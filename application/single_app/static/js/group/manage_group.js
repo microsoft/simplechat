@@ -81,7 +81,6 @@ $(document).ready(function () {
     $("#changeRoleModal").modal("show");
   });
 
-  // Add event delegation for approve/reject request buttons
   $(document).on("click", ".approve-request-btn", function () {
     const requestId = $(this).data("request-id");
     approveRequest(requestId);
@@ -115,6 +114,17 @@ $(document).ready(function () {
   $('input[name="activityLimit"]').on('change', function() {
     const limit = parseInt($(this).val());
     loadActivityTimeline(limit);
+  });
+
+  $(document).on("click", "#activityTimeline .activity-item", function () {
+    showRawActivity($(this).data("activity"));
+  });
+
+  $(document).on("keydown", "#activityTimeline .activity-item", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      showRawActivity($(this).data("activity"));
+    }
   });
 
   // Retention policy settings
@@ -168,7 +178,9 @@ $(document).ready(function () {
     // Populate the list of members to be removed
     let membersList = "<ul class='list-unstyled'>";
     selectedMembers.forEach(member => {
-      membersList += `<li>• ${member.name} (${member.email})</li>`;
+      const safeName = escapeHtml(member.name || "");
+      const safeEmail = escapeHtml(member.email || "");
+      membersList += `<li>&bull; ${safeName} (${safeEmail})</li>`;
     });
     membersList += "</ul>";
     
@@ -187,10 +199,11 @@ $(document).ready(function () {
       let options = "";
       members.forEach((m) => {
         if (m.role === "Owner") return;
-
-        options += `<option value="${m.userId}">${m.displayName} (${m.email})</option>`;
+        const safeUserId = escapeHtml(m.userId || "");
+        const safeDisplayName = escapeHtml(m.displayName || "(no name)");
+        const safeEmail = escapeHtml(m.email || "");
+        options += `<option value="${safeUserId}">${safeDisplayName} (${safeEmail})</option>`;
       });
-
       $("#newOwnerSelect").html(options);
       $("#transferOwnershipModal").modal("show");
     });
@@ -410,22 +423,26 @@ function loadMembers(searchTerm, roleFilter) {
     let rows = "";
     members.forEach((m) => {
       const isOwner = m.role === "Owner";
+      const safeUserId = escapeHtml(m.userId || "");
+      const safeDisplayName = escapeHtml(m.displayName || "(no name)");
+      const safeEmail = escapeHtml(m.email || "");
+      const safeRole = escapeHtml(m.role || "");
       const checkboxHtml = isOwner || (currentUserRole !== "Owner" && currentUserRole !== "Admin") 
         ? '<input type="checkbox" class="form-check-input" disabled>' 
         : `<input type="checkbox" class="form-check-input member-checkbox" 
-                   data-user-id="${m.userId}" 
-                   data-user-name="${m.displayName || '(no name)'}"
-                   data-user-email="${m.email || ''}"
-                   data-user-role="${m.role}">`;
+                   data-user-id="${safeUserId}" 
+                   data-user-name="${safeDisplayName}"
+                   data-user-email="${safeEmail}"
+                   data-user-role="${safeRole}">`;
       
       rows += `
       <tr>
         <td>${checkboxHtml}</td>
         <td>
-          ${m.displayName || "(no name)"}<br/>
-          <small>${m.email || ""}</small>
+          ${safeDisplayName}<br/>
+          <small>${safeEmail}</small>
         </td>
-        <td>${m.role}</td>
+        <td>${safeRole}</td>
         <td>${renderMemberActions(m)}</td>
       </tr>
     `;
@@ -529,10 +546,12 @@ function loadPendingRequests() {
   $.get(`/api/groups/${groupId}/requests`, function (pending) {
     let rows = "";
     pending.forEach((u) => {
+      const safeDisplayName = escapeHtml(u.displayName || "(no name)");
+      const safeEmail = escapeHtml(u.email || "");
       rows += `
         <tr>
-          <td>${u.displayName}</td>
-          <td>${u.email}</td>
+          <td>${safeDisplayName}</td>
+          <td>${safeEmail}</td>
           <td>
             <button class="btn btn-sm btn-success approve-request-btn" 
                     data-request-id="${u.userId}">Approve</button>
@@ -634,15 +653,18 @@ function renderUserSearchResults(users) {
     html = `<tr><td colspan="3" class="text-center text-muted">No results.</td></tr>`;
   } else {
     users.forEach(u => {
+      const safeUserId = escapeHtml(u.id || "");
+      const safeDisplayName = escapeHtml(u.displayName || "(no name)");
+      const safeEmail = escapeHtml(u.email || "");
       html += `
         <tr>
-          <td>${u.displayName || "(no name)"}</td>
-          <td>${u.email || ""}</td>
+          <td>${safeDisplayName}</td>
+          <td>${safeEmail}</td>
           <td>
             <button class="btn btn-sm btn-primary select-user-btn"
-                    data-user-id="${u.id}"
-                    data-user-name="${u.displayName}"
-                    data-user-email="${u.email}">
+                    data-user-id="${safeUserId}"
+                    data-user-name="${safeDisplayName}"
+                    data-user-email="${safeEmail}">
               Select
             </button>
           </td>
@@ -893,7 +915,7 @@ function handleCsvFileSelect(event) {
       <p>Total members to add: <strong>${csvParsedData.length}</strong></p>
       <p>Sample data (first 3):</p>
       <ul class="mb-0">
-        ${sampleRows.map(row => `<li>${row.displayName} (${row.email})</li>`).join('')}
+        ${sampleRows.map(row => `<li>${escapeHtml(row.displayName || '')} (${escapeHtml(row.email || '')})</li>`).join('')}
       </ul>
     `);
     $("#csvValidationResults").show();
@@ -1081,7 +1103,11 @@ function loadActivityTimeline(limit = 50) {
       }
       
       const html = activities.map(activity => renderActivityItem(activity)).join('');
-      $('#activityTimeline').html(html);
+      const activityTimeline = $('#activityTimeline');
+      activityTimeline.html(html);
+      activityTimeline.find('.activity-item').each(function(index) {
+        $(this).data('activity', activities[index]);
+      });
     })
     .fail(function(xhr) {
       if (xhr.status === 403) {
@@ -1133,21 +1159,23 @@ function renderActivityItem(activity) {
   } else if (activityType === 'conversation_deletion') {
     description = 'Conversation deleted';
   }
-  
-  const activityJson = JSON.stringify(activity);
+
+  const safeTitle = escapeHtml(title);
+  const safeTime = escapeHtml(time);
+  const safeDescription = escapeHtml(description);
   
   return `
-    <div class="activity-item" data-activity='${activityJson.replace(/'/g, "&apos;")}' onclick="showRawActivity(this)">
+    <div class="activity-item" role="button" tabindex="0">
       <div class="d-flex align-items-start gap-3">
         <div class="activity-icon">
           <i class="bi bi-${icon} text-${color}" style="font-size: 1.5rem;"></i>
         </div>
         <div class="flex-grow-1">
           <div class="d-flex justify-content-between align-items-start mb-1">
-            <h6 class="mb-0">${title}</h6>
-            <small class="text-muted">${time}</small>
+            <h6 class="mb-0">${safeTitle}</h6>
+            <small class="text-muted">${safeTime}</small>
           </div>
-          <p class="mb-0 text-muted small">${description}</p>
+          <p class="mb-0 text-muted small">${safeDescription}</p>
         </div>
       </div>
     </div>
@@ -1177,12 +1205,18 @@ function formatNumber(num) {
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-function showRawActivity(element) {
+function showRawActivity(activity) {
   try {
-    const activityJson = element.getAttribute('data-activity');
-    const activity = JSON.parse(activityJson);
     const modalBody = document.getElementById('rawActivityModalBody');
-    modalBody.innerHTML = `<pre><code>${JSON.stringify(activity, null, 2)}</code></pre>`;
+    if (!modalBody) {
+      return;
+    }
+
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.textContent = JSON.stringify(activity ?? {}, null, 2) || '{}';
+    pre.appendChild(code);
+    modalBody.replaceChildren(pre);
     $('#rawActivityModal').modal('show');
   } catch (error) {
     console.error('Error showing raw activity:', error);

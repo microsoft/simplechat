@@ -665,7 +665,7 @@ function renderPublicDocumentRow(doc) {
         <p class="mb-1"><strong>Citations:</strong> ${getCitationBadge(doc.enhanced_citations)}</p>
         <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || 'N/A')}</p>
         <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(doc.keywords || 'N/A')}</p>
-        <p class="mb-1"><strong>Tags:</strong> ${renderPublicTagBadges(doc.tags || [])}</p>
+        <p class="mb-1"><strong>Tags:</strong> <span class="public-doc-tag-badges"></span></p>
         <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(doc.abstract || 'N/A')}</p>
         <hr class="my-2">
         <div class="d-flex flex-wrap gap-2">
@@ -680,6 +680,8 @@ function renderPublicDocumentRow(doc) {
         </div>
       </div>
     </td>`;
+
+  renderPublicTagBadges(doc.tags || [], detailsRow.querySelector('.public-doc-tag-badges'));
 
   // Append main and details rows
   const tbody = document.querySelector('#public-documents-table tbody');
@@ -1446,58 +1448,16 @@ async function renderPublicGridView() {
     updatePublicGridSortIcons();
 
     const canManageTags = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
-    let html = '';
-    folderItems.forEach(item => {
-      const ek = escapeHtml(item.key);
-      const en = escapeHtml(item.displayName);
-      const cl = `${item.count} file${item.count !== 1 ? 's' : ''}`;
-      let actionsHtml = '';
-      if (item.type === 'tag' && !item.isSpecial && canManageTags) {
-        actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
-          <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
-          <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="#" onclick="chatWithPublicFolder('tag','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
-            <li><a class="dropdown-item" href="#" onclick="renamePublicTag('${ek}'); return false;"><i class="bi bi-pencil me-2"></i>Rename Tag</a></li>
-            <li><a class="dropdown-item" href="#" onclick="changePublicTagColor('${ek}','${item.tagData.color}'); return false;"><i class="bi bi-palette me-2"></i>Change Color</a></li>
-            <li><hr class="dropdown-divider"></li>
-            <li><a class="dropdown-item text-danger" href="#" onclick="deletePublicTag('${ek}'); return false;"><i class="bi bi-trash me-2"></i>Delete Tag</a></li>
-          </ul></div></div>`;
-      } else if (item.type === 'classification') {
-        actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
-          <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
-          <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="#" onclick="chatWithPublicFolder('classification','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
-          </ul></div></div>`;
-      } else if (item.type === 'tag' && item.isSpecial) {
-        actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
-          <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
-          <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="#" onclick="chatWithPublicFolder('tag','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
-          </ul></div></div>`;
-      }
-      html += `<div class="col-6 col-sm-4 col-md-3 col-lg-2">
-        <div class="tag-folder-card" data-tag="${ek}" data-folder-type="${item.type}" title="${en} (${cl})">
-          ${actionsHtml}
-          <div class="tag-folder-icon"><i class="bi ${item.icon}" style="color: ${item.color};"></i></div>
-          <div class="tag-folder-name${item.isSpecial ? ' text-muted' : ''}">${en}</div>
-          <div class="tag-folder-count">${cl}</div>
-        </div></div>`;
-    });
-
     if (folderItems.length === 0) {
-      html = '<div class="col-12 text-center text-muted py-5"><i class="bi bi-folder2-open display-1 mb-3"></i><p>No folders yet. Add tags to documents to organize them.</p></div>';
+      container.innerHTML = '<div class="col-12 text-center text-muted py-5"><i class="bi bi-folder2-open display-1 mb-3"></i><p>No folders yet. Add tags to documents to organize them.</p></div>';
+      return;
     }
-    container.innerHTML = html;
-    container.querySelectorAll('.tag-folder-card').forEach(card => {
-      card.addEventListener('click', (e) => {
-        if (e.target.closest('.tag-folder-actions')) return;
-        publicCurrentFolder = card.getAttribute('data-tag');
-        publicCurrentFolderType = card.getAttribute('data-folder-type') || 'tag';
-        publicFolderCurrentPage = 1;
-        publicFolderSortBy = '_ts'; publicFolderSortOrder = 'desc'; publicFolderSearchTerm = '';
-        renderPublicFolderContents(publicCurrentFolder);
-      });
+
+    const cards = document.createDocumentFragment();
+    folderItems.forEach((item) => {
+      cards.appendChild(createPublicFolderCard(item, canManageTags));
     });
+    container.replaceChildren(cards);
   } catch (error) {
     console.error('Error rendering public grid view:', error);
     container.innerHTML = '<div class="col-12 text-center text-danger py-5"><i class="bi bi-exclamation-triangle display-4 mb-2"></i><p>Error loading tag folders</p></div>';
@@ -1585,10 +1545,9 @@ async function renderPublicFolderContents(tagName) {
   else if (tagName === '__unclassified__') { displayName = 'Unclassified Documents'; tagColor = '#6c757d'; }
   else if (isClassification) {
     const cat = (window.classification_categories || []).find(c => c.label === tagName);
-    displayName = tagName; tagColor = cat?.color || '#6c757d';
+    displayName = tagName; tagColor = normalizePublicHexColor(cat?.color, '#6c757d');
   } else {
-    const tagInfo = publicWorkspaceTags.find(t => t.name === tagName);
-    displayName = tagName; tagColor = tagInfo?.color || '#6c757d';
+    displayName = tagName; tagColor = getPublicTagColorByName(tagName, '#6c757d');
   }
 
   const viewInfo = document.getElementById('public-docs-view-info');
@@ -1722,8 +1681,9 @@ function renamePublicTag(tagName) {
 }
 
 function changePublicTagColor(tagName, currentColor) {
-  const newColor = prompt(`Enter new hex color for "${tagName}":`, currentColor || '#0d6efd');
-  if (!newColor || newColor === currentColor) return;
+  const safeCurrentColor = currentColor || getPublicTagColorByName(tagName, '#0d6efd');
+  const newColor = prompt(`Enter new hex color for "${tagName}":`, safeCurrentColor);
+  if (!newColor || newColor === safeCurrentColor) return;
   fetch(`/api/public_workspace_documents/tags/${encodeURIComponent(tagName)}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ color: newColor.trim() })
@@ -1771,9 +1731,179 @@ function updatePublicGridSortIcons() {
   });
 }
 
+const publicHexColorPattern = /^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+function normalizePublicHexColor(color, fallback = '#6c757d') {
+  const rawColor = typeof color === 'string' ? color.trim() : '';
+  const fallbackColor = typeof fallback === 'string' ? fallback.trim() : '#6c757d';
+  const candidate = publicHexColorPattern.test(rawColor)
+    ? rawColor
+    : (publicHexColorPattern.test(fallbackColor) ? fallbackColor : '#6c757d');
+
+  let normalizedColor = candidate.startsWith('#') ? candidate : `#${candidate}`;
+  if (normalizedColor.length === 4) {
+    normalizedColor = '#' + normalizedColor.slice(1).split('').map((component) => component + component).join('');
+  }
+
+  return normalizedColor.toLowerCase();
+}
+
+function getPublicWorkspaceTagByName(tagName) {
+  return publicWorkspaceTags.find((tag) => tag.name === tagName) || null;
+}
+
+function getPublicTagColorByName(tagName, fallback = '#6c757d') {
+  const tag = getPublicWorkspaceTagByName(tagName);
+  return normalizePublicHexColor(tag?.color, fallback);
+}
+
+function applyPublicBackgroundColor(element, color, fallback = '#6c757d') {
+  const safeColor = normalizePublicHexColor(color, fallback);
+  element.style.backgroundColor = safeColor;
+  return safeColor;
+}
+
+function applyPublicForegroundColor(element, color, fallback = '#6c757d') {
+  const safeColor = normalizePublicHexColor(color, fallback);
+  element.style.color = safeColor;
+  return safeColor;
+}
+
+function createPublicTagBadgeElement(tagName, color, className = 'tag-badge') {
+  const badge = document.createElement('span');
+  badge.className = className;
+  const safeColor = applyPublicBackgroundColor(badge, color);
+  badge.style.color = isPublicColorLight(safeColor) ? '#000' : '#fff';
+  badge.textContent = String(tagName || '');
+  return badge;
+}
+
+function createPublicDropdownItem(iconClasses, label, onClick, danger = false) {
+  const listItem = document.createElement('li');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `dropdown-item${danger ? ' text-danger' : ''}`;
+
+  const icon = document.createElement('i');
+  icon.className = `bi ${iconClasses} me-2`;
+  button.appendChild(icon);
+  button.appendChild(document.createTextNode(label));
+
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onClick();
+  });
+
+  listItem.appendChild(button);
+  return listItem;
+}
+
+function createPublicDropdownDivider() {
+  const listItem = document.createElement('li');
+  const divider = document.createElement('hr');
+  divider.className = 'dropdown-divider';
+  listItem.appendChild(divider);
+  return listItem;
+}
+
+function createPublicFolderActionsMenu(item, canManageTags) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'tag-folder-actions';
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'dropdown';
+
+  const menuButton = document.createElement('button');
+  menuButton.type = 'button';
+  menuButton.className = 'tag-folder-menu-btn';
+  menuButton.setAttribute('data-bs-toggle', 'dropdown');
+  menuButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  const menuIcon = document.createElement('i');
+  menuIcon.className = 'bi bi-three-dots-vertical';
+  menuButton.appendChild(menuIcon);
+
+  const menu = document.createElement('ul');
+  menu.className = 'dropdown-menu';
+
+  if (item.type === 'classification') {
+    menu.appendChild(createPublicDropdownItem('bi-chat-dots', 'Chat', () => chatWithPublicFolder('classification', item.key)));
+  } else if (item.isSpecial) {
+    menu.appendChild(createPublicDropdownItem('bi-chat-dots', 'Chat', () => chatWithPublicFolder('tag', item.key)));
+  } else if (canManageTags) {
+    menu.appendChild(createPublicDropdownItem('bi-chat-dots', 'Chat', () => chatWithPublicFolder('tag', item.key)));
+    menu.appendChild(createPublicDropdownItem('bi-pencil', 'Rename Tag', () => renamePublicTag(item.key)));
+    menu.appendChild(createPublicDropdownItem('bi-palette', 'Change Color', () => changePublicTagColor(item.key, item.tagData?.color)));
+    menu.appendChild(createPublicDropdownDivider());
+    menu.appendChild(createPublicDropdownItem('bi-trash', 'Delete Tag', () => deletePublicTag(item.key), true));
+  }
+
+  dropdown.appendChild(menuButton);
+  dropdown.appendChild(menu);
+  wrapper.appendChild(dropdown);
+
+  return wrapper;
+}
+
+function createPublicFolderCard(item, canManageTags) {
+  const col = document.createElement('div');
+  col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+
+  const card = document.createElement('div');
+  card.className = 'tag-folder-card';
+  card.dataset.tag = item.key;
+  card.dataset.folderType = item.type;
+
+  const countLabel = `${item.count} file${item.count !== 1 ? 's' : ''}`;
+  card.title = `${item.displayName} (${countLabel})`;
+
+  const actions = createPublicFolderActionsMenu(item, canManageTags);
+  if (actions.querySelector('.dropdown-item')) {
+    card.appendChild(actions);
+  }
+
+  const iconWrapper = document.createElement('div');
+  iconWrapper.className = 'tag-folder-icon';
+  const icon = document.createElement('i');
+  icon.className = `bi ${item.icon}`;
+  applyPublicForegroundColor(icon, item.color);
+  iconWrapper.appendChild(icon);
+
+  const name = document.createElement('div');
+  name.className = `tag-folder-name${item.isSpecial ? ' text-muted' : ''}`;
+  name.textContent = item.displayName;
+
+  const count = document.createElement('div');
+  count.className = 'tag-folder-count';
+  count.textContent = countLabel;
+
+  card.appendChild(iconWrapper);
+  card.appendChild(name);
+  card.appendChild(count);
+
+  card.addEventListener('click', (event) => {
+    if (event.target.closest('.tag-folder-actions')) {
+      return;
+    }
+
+    publicCurrentFolder = item.key;
+    publicCurrentFolderType = item.type || 'tag';
+    publicFolderCurrentPage = 1;
+    publicFolderSortBy = '_ts';
+    publicFolderSortOrder = 'desc';
+    publicFolderSearchTerm = '';
+    renderPublicFolderContents(publicCurrentFolder);
+  });
+
+  col.appendChild(card);
+  return col;
+}
+
 function isColorLight(hexColor) {
-  if (!hexColor) return true;
-  const hex = hexColor.replace('#', '');
+  const hex = normalizePublicHexColor(hexColor).replace('#', '');
   const r = parseInt(hex.substring(0, 2), 16);
   const g = parseInt(hex.substring(2, 4), 16);
   const b = parseInt(hex.substring(4, 6), 16);
@@ -1790,8 +1920,8 @@ function updatePublicBulkTagsList() {
   listEl.innerHTML = '';
   publicWorkspaceTags.forEach(tag => {
     const el = document.createElement('span');
-    el.className = `tag-badge ${isColorLight(tag.color) ? 'text-dark' : 'text-light'}`;
-    el.style.backgroundColor = tag.color;
+    const safeColor = applyPublicBackgroundColor(el, tag.color);
+    el.className = `tag-badge ${isColorLight(safeColor) ? 'text-dark' : 'text-light'}`;
     el.style.border = publicBulkSelectedTags.has(tag.name) ? '3px solid #000' : '3px solid transparent';
     el.textContent = tag.name;
     el.style.cursor = 'pointer';
@@ -1917,8 +2047,7 @@ window.loadPublicWorkspaceTags = loadPublicWorkspaceTags;
 // ============ Public Tag Management & Selection Functions ============
 
 function isPublicColorLight(hex) {
-  if (!hex) return true;
-  hex = hex.replace('#', '');
+  hex = normalizePublicHexColor(hex).replace('#', '');
   const r = parseInt(hex.substring(0, 2), 16), g = parseInt(hex.substring(2, 4), 16), b = parseInt(hex.substring(4, 6), 16);
   return (r * 299 + g * 587 + b * 114) / 1000 > 155;
 }
@@ -1929,27 +2058,36 @@ function escapePublicHtml(text) {
   return d.innerHTML;
 }
 
-function renderPublicTagBadges(tags, maxDisplay = 3) {
+function renderPublicTagBadges(tags, container, maxDisplay = 3) {
+  if (!container) return;
+
+  container.textContent = '';
+
   if (!Array.isArray(tags) || tags.length === 0) {
-    return '<span class="text-muted small">No tags</span>';
+    const emptyState = document.createElement('span');
+    emptyState.className = 'text-muted small';
+    emptyState.textContent = 'No tags';
+    container.appendChild(emptyState);
+    return;
   }
 
-  let html = '';
+  const fragment = document.createDocumentFragment();
   const displayTags = tags.slice(0, maxDisplay);
 
-  displayTags.forEach(tagName => {
-    const tag = publicWorkspaceTags.find(t => t.name === tagName);
-    const color = tag && tag.color ? tag.color : '#6c757d';
-    const textClass = isPublicColorLight(color) ? 'text-dark' : 'text-light';
-
-    html += `<span class="tag-badge ${textClass}" style="background-color:${color};" title="${escapePublicHtml(tagName)}">${escapePublicHtml(tagName)}</span>`;
+  displayTags.forEach((tagName) => {
+    const badge = createPublicTagBadgeElement(tagName, getPublicTagColorByName(tagName), 'tag-badge me-1');
+    badge.title = tagName;
+    fragment.appendChild(badge);
   });
 
   if (tags.length > maxDisplay) {
-    html += `<span class="badge bg-secondary">+${tags.length - maxDisplay}</span>`;
+    const extraBadge = document.createElement('span');
+    extraBadge.className = 'badge bg-secondary';
+    extraBadge.textContent = `+${tags.length - maxDisplay}`;
+    fragment.appendChild(extraBadge);
   }
 
-  return html;
+  container.appendChild(fragment);
 }
 
 // --- Tag Management Modal ---
@@ -1967,20 +2105,55 @@ function refreshPublicTagManagementTable() {
     tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No tags yet. Add one above.</td></tr>';
     return;
   }
-  let html = '';
-  publicWorkspaceTags.forEach(tag => {
-    const ek = escapePublicHtml(tag.name);
-    html += `<tr>
-      <td><div style="width:30px;height:30px;background-color:${tag.color};border-radius:4px;border:1px solid #dee2e6;"></div></td>
-      <td><span class="badge" style="background-color:${tag.color};color:${isPublicColorLight(tag.color)?'#000':'#fff'};">${ek}</span></td>
-      <td>${tag.count}</td>
-      <td>
-        <button class="btn btn-sm btn-outline-primary me-1" onclick="window.editPublicTagInModal('${ek}','${tag.color}')"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-sm btn-outline-danger" onclick="window.deletePublicTagFromModal('${ek}')"><i class="bi bi-trash"></i></button>
-      </td>
-    </tr>`;
+  tbody.textContent = '';
+  const fragment = document.createDocumentFragment();
+
+  publicWorkspaceTags.forEach((tag) => {
+    const row = document.createElement('tr');
+
+    const colorCell = document.createElement('td');
+    const colorSwatch = document.createElement('div');
+    colorSwatch.style.width = '30px';
+    colorSwatch.style.height = '30px';
+    colorSwatch.style.borderRadius = '4px';
+    colorSwatch.style.border = '1px solid #dee2e6';
+    applyPublicBackgroundColor(colorSwatch, tag.color);
+    colorCell.appendChild(colorSwatch);
+
+    const tagCell = document.createElement('td');
+    tagCell.appendChild(createPublicTagBadgeElement(tag.name, tag.color, 'badge'));
+
+    const countCell = document.createElement('td');
+    countCell.textContent = String(tag.count);
+
+    const actionsCell = document.createElement('td');
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'btn btn-sm btn-outline-primary me-1';
+    editButton.innerHTML = '<i class="bi bi-pencil"></i>';
+    editButton.addEventListener('click', () => {
+      window.editPublicTagInModal(tag.name);
+    });
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'btn btn-sm btn-outline-danger';
+    deleteButton.innerHTML = '<i class="bi bi-trash"></i>';
+    deleteButton.addEventListener('click', () => {
+      window.deletePublicTagFromModal(tag.name);
+    });
+
+    actionsCell.appendChild(editButton);
+    actionsCell.appendChild(deleteButton);
+
+    row.appendChild(colorCell);
+    row.appendChild(tagCell);
+    row.appendChild(countCell);
+    row.appendChild(actionsCell);
+    fragment.appendChild(row);
   });
-  tbody.innerHTML = html;
+
+  tbody.appendChild(fragment);
 }
 
 function publicCancelEditMode() {
@@ -1997,7 +2170,8 @@ function publicCancelEditMode() {
   if (cancelBtn) cancelBtn.classList.add('d-none');
 }
 
-window.editPublicTagInModal = function(tagName, currentColor) {
+window.editPublicTagInModal = function(tagName) {
+  const currentColor = getPublicTagColorByName(tagName, '#0d6efd');
   publicEditingTag = { originalName: tagName, originalColor: currentColor };
   const nameInput = document.getElementById('public-new-tag-name');
   const colorInput = document.getElementById('public-new-tag-color');
@@ -2101,23 +2275,40 @@ function renderPublicTagSelectionList() {
     });
     return;
   }
-  let html = '';
-  publicWorkspaceTags.forEach(tag => {
-    const isSelected = publicDocSelectedTags.has(tag.name);
-    const textColor = isPublicColorLight(tag.color) ? '#000' : '#fff';
-    html += `<label class="list-group-item d-flex align-items-center" style="cursor:pointer;">
-      <input class="form-check-input me-3" type="checkbox" value="${escapePublicHtml(tag.name)}" ${isSelected ? 'checked' : ''}>
-      <span class="badge me-2" style="background-color:${tag.color};color:${textColor};">${escapePublicHtml(tag.name)}</span>
-      <span class="ms-auto text-muted small">${tag.count} docs</span>
-    </label>`;
-  });
-  listContainer.innerHTML = html;
-  listContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      if (e.target.checked) publicDocSelectedTags.add(e.target.value);
-      else publicDocSelectedTags.delete(e.target.value);
+  listContainer.textContent = '';
+  const fragment = document.createDocumentFragment();
+
+  publicWorkspaceTags.forEach((tag) => {
+    const row = document.createElement('label');
+    row.className = 'list-group-item d-flex align-items-center';
+    row.style.cursor = 'pointer';
+
+    const checkbox = document.createElement('input');
+    checkbox.className = 'form-check-input me-3';
+    checkbox.type = 'checkbox';
+    checkbox.value = tag.name;
+    checkbox.checked = publicDocSelectedTags.has(tag.name);
+    checkbox.addEventListener('change', (event) => {
+      if (event.target.checked) {
+        publicDocSelectedTags.add(event.target.value);
+      } else {
+        publicDocSelectedTags.delete(event.target.value);
+      }
     });
+
+    const badge = createPublicTagBadgeElement(tag.name, tag.color, 'badge me-2');
+
+    const count = document.createElement('span');
+    count.className = 'ms-auto text-muted small';
+    count.textContent = `${tag.count} docs`;
+
+    row.appendChild(checkbox);
+    row.appendChild(badge);
+    row.appendChild(count);
+    fragment.appendChild(row);
   });
+
+  listContainer.appendChild(fragment);
 }
 
 // --- Document Tags Display ---
@@ -2128,17 +2319,26 @@ function updatePublicDocTagsDisplay() {
     container.innerHTML = '<span class="text-muted small">No tags selected</span>';
     return;
   }
-  let html = '';
-  publicDocSelectedTags.forEach(tagName => {
-    const tag = publicWorkspaceTags.find(t => t.name === tagName);
-    const color = tag ? tag.color : '#6c757d';
-    const textColor = isPublicColorLight(color) ? '#000' : '#fff';
-    html += `<span class="badge" style="background-color:${color};color:${textColor};">
-      ${escapePublicHtml(tagName)}
-      <i class="bi bi-x" style="cursor:pointer;" onclick="window.removePublicDocSelectedTag('${escapePublicHtml(tagName)}')"></i>
-    </span>`;
+
+  container.textContent = '';
+  publicDocSelectedTags.forEach((tagName) => {
+    const badge = createPublicTagBadgeElement(tagName, getPublicTagColorByName(tagName), 'badge me-1');
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'btn btn-link btn-sm text-reset text-decoration-none p-0 ms-1 align-baseline';
+    removeButton.setAttribute('aria-label', `Remove ${tagName}`);
+
+    const removeIcon = document.createElement('i');
+    removeIcon.className = 'bi bi-x';
+    removeButton.appendChild(removeIcon);
+    removeButton.addEventListener('click', () => {
+      window.removePublicDocSelectedTag(tagName);
+    });
+
+    badge.appendChild(document.createTextNode(' '));
+    badge.appendChild(removeButton);
+    container.appendChild(badge);
   });
-  container.innerHTML = html;
 }
 
 window.removePublicDocSelectedTag = function(tagName) {
