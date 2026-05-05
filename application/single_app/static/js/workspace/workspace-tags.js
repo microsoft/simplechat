@@ -1048,10 +1048,56 @@ function setupBulkTagManagement() {
         
         if (bulkTagApplyBtn) {
             bulkTagApplyBtn.addEventListener('click', async () => {
-                await applyBulkTagChanges();
-                modalInstance.hide();
+                const didApply = await applyBulkTagChanges();
+                if (didApply) {
+                    modalInstance.hide();
+                }
             });
         }
+    }
+}
+
+function getBulkTagLoadingLabel(buttonLoading) {
+    const existingLabel = buttonLoading.querySelector('.button-loading-label');
+    if (existingLabel) {
+        return existingLabel;
+    }
+
+    const textNode = Array.from(buttonLoading.childNodes).find((node) => {
+        return node.nodeType === 3 && node.textContent.trim().length > 0;
+    });
+    if (textNode) {
+        return textNode;
+    }
+
+    const fallbackLabel = document.createElement('span');
+    fallbackLabel.className = 'button-loading-label';
+    fallbackLabel.textContent = 'Applying...';
+    buttonLoading.appendChild(fallbackLabel);
+    return fallbackLabel;
+}
+
+function setBulkTagButtonLoadingState(applyBtn, isLoading, current = 0, total = 0) {
+    const buttonText = applyBtn.querySelector('.button-text');
+    const buttonLoading = applyBtn.querySelector('.button-loading');
+    const loadingLabel = getBulkTagLoadingLabel(buttonLoading);
+    const loadingText = isLoading && total > 0
+        ? `Applying ${Math.min(current, total)}/${total}...`
+        : 'Applying...';
+
+    applyBtn.disabled = isLoading;
+    buttonText.classList.toggle('d-none', isLoading);
+    buttonLoading.classList.toggle('d-none', !isLoading);
+    loadingLabel.textContent = loadingText;
+}
+
+function mergeBulkTagResults(targetResults, result) {
+    if (Array.isArray(result?.success) && result.success.length > 0) {
+        targetResults.success.push(...result.success);
+    }
+
+    if (Array.isArray(result?.errors) && result.errors.length > 0) {
+        targetResults.errors.push(...result.errors);
     }
 }
 
@@ -1125,23 +1171,23 @@ async function applyBulkTagChanges() {
     if (documentIds.length === 0) {
         console.log('[Bulk Tag] ERROR: No documents selected');
         alert('No documents selected');
-        return;
+        return false;
     }
     
     if (selectedTags.length === 0) {
         console.log('[Bulk Tag] ERROR: No tags selected');
         alert('Please select at least one tag by clicking on it');
-        return;
+        return false;
     }
     
     // Show loading state
     const applyBtn = document.getElementById('bulk-tag-apply-btn');
-    const buttonText = applyBtn.querySelector('.button-text');
-    const buttonLoading = applyBtn.querySelector('.button-loading');
-    
-    applyBtn.disabled = true;
-    buttonText.classList.add('d-none');
-    buttonLoading.classList.remove('d-none');
+    const totalDocuments = documentIds.length;
+    const results = {
+        success: [],
+        errors: []
+    };
+    let processedCount = 0;
     
     console.log('[Bulk Tag] Preparing request with:', {
         document_ids: documentIds,
@@ -1150,62 +1196,83 @@ async function applyBulkTagChanges() {
     });
     
     try {
-        console.log('[Bulk Tag] Sending POST to /api/documents/bulk-tag...');
-        const response = await fetch('/api/documents/bulk-tag', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                document_ids: documentIds,
-                action: action,
-                tags: selectedTags
-            })
-        });
-        
-        console.log('[Bulk Tag] Response status:', response.status);
-        
-        const result = await response.json();
-        console.log('[Bulk Tag] Response data:', result);
-        
-        // Log error details if any
-        if (result.errors && result.errors.length > 0) {
-            console.error('[Bulk Tag] Error details:', result.errors);
-            result.errors.forEach((err, idx) => {
-                console.error(`[Bulk Tag] Error ${idx + 1}:`, err);
+        for (let index = 0; index < documentIds.length; index += 1) {
+            const documentId = documentIds[index];
+            setBulkTagButtonLoadingState(applyBtn, true, index + 1, totalDocuments);
+
+            console.log('[Bulk Tag] Sending POST to /api/documents/bulk-tag for document:', documentId);
+
+            const response = await fetch('/api/documents/bulk-tag', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    document_ids: [documentId],
+                    action: action,
+                    tags: selectedTags
+                })
             });
-        }
-        
-        if (response.ok) {
-            const successCount = result.success?.length || 0;
-            const errorCount = result.errors?.length || 0;
-            
-            console.log('[Bulk Tag] Success count:', successCount);
-            console.log('[Bulk Tag] Error count:', errorCount);
-            
-            let message = `Tags updated for ${successCount} document(s)`;
-            if (errorCount > 0) {
-                message += `\n${errorCount} document(s) had errors`;
+
+            const result = await response.json();
+            console.log('[Bulk Tag] Response status for document', documentId, ':', response.status);
+            console.log('[Bulk Tag] Response data for document', documentId, ':', result);
+
+            if (!response.ok) {
+                throw new Error(result.error || `Failed to update tags for document ${documentId}`);
             }
-            alert(message);
-            
-            // Reload workspace tags and documents
-            console.log('[Bulk Tag] Reloading tags and documents...');
-            await loadWorkspaceTags();
-            window.fetchUserDocuments?.();
-            
-            // Clear selection
-            window.selectedDocuments?.clear();
-            updateSelectionUI();
-        } else {
-            alert('Error: ' + (result.error || 'Failed to update tags'));
+
+            mergeBulkTagResults(results, result);
+            processedCount = index + 1;
         }
+
+        const successCount = results.success.length;
+        const errorCount = results.errors.length;
+
+        console.log('[Bulk Tag] Success count:', successCount);
+        console.log('[Bulk Tag] Error count:', errorCount);
+
+        let message = `Tags updated for ${successCount} document(s)`;
+        if (errorCount > 0) {
+            message += `\n${errorCount} document(s) had errors`;
+        }
+        alert(message);
+
+        // Reload workspace tags and documents
+        console.log('[Bulk Tag] Reloading tags and documents...');
+        await loadWorkspaceTags();
+        window.fetchUserDocuments?.();
+
+        // Clear selection
+        window.selectedDocuments?.clear();
+        updateSelectionUI();
+        return true;
     } catch (error) {
         console.error('Error applying bulk tag changes:', error);
-        alert('Error updating tags');
+
+        if (processedCount > 0) {
+            console.log('[Bulk Tag] Reloading tags and documents after partial progress...');
+            await loadWorkspaceTags();
+            window.fetchUserDocuments?.();
+        }
+
+        let errorMessage = 'Error updating tags';
+        if (processedCount > 0) {
+            errorMessage = `Stopped after ${processedCount}/${totalDocuments} document(s).`;
+
+            if (results.success.length > 0) {
+                errorMessage += `\nUpdated ${results.success.length} document(s) before the error.`;
+            }
+
+            if (results.errors.length > 0) {
+                errorMessage += `\n${results.errors.length} document(s) had errors before the stop.`;
+            }
+
+            errorMessage += `\n${error.message}`;
+        }
+
+        alert(errorMessage);
+        return false;
     } finally {
-        // Reset button state
-        applyBtn.disabled = false;
-        buttonText.classList.remove('d-none');
-        buttonLoading.classList.add('d-none');
+        setBulkTagButtonLoadingState(applyBtn, false);
     }
 }
 

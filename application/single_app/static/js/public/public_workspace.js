@@ -1933,6 +1933,50 @@ function updatePublicBulkTagsList() {
   });
 }
 
+function getPublicBulkTagLoadingLabel(buttonLoading) {
+  const existingLabel = buttonLoading.querySelector('.button-loading-label');
+  if (existingLabel) {
+    return existingLabel;
+  }
+
+  const textNode = Array.from(buttonLoading.childNodes).find((node) => {
+    return node.nodeType === 3 && node.textContent.trim().length > 0;
+  });
+  if (textNode) {
+    return textNode;
+  }
+
+  const fallbackLabel = document.createElement('span');
+  fallbackLabel.className = 'button-loading-label';
+  fallbackLabel.textContent = 'Applying...';
+  buttonLoading.appendChild(fallbackLabel);
+  return fallbackLabel;
+}
+
+function setPublicBulkTagButtonLoadingState(applyBtn, isLoading, current = 0, total = 0) {
+  const btnText = applyBtn.querySelector('.button-text');
+  const btnLoad = applyBtn.querySelector('.button-loading');
+  const loadingLabel = getPublicBulkTagLoadingLabel(btnLoad);
+  const loadingText = isLoading && total > 0
+    ? `Applying ${Math.min(current, total)}/${total}...`
+    : 'Applying...';
+
+  applyBtn.disabled = isLoading;
+  btnText.classList.toggle('d-none', isLoading);
+  btnLoad.classList.toggle('d-none', !isLoading);
+  loadingLabel.textContent = loadingText;
+}
+
+function mergePublicBulkTagResults(targetResults, result) {
+  if (Array.isArray(result?.success) && result.success.length > 0) {
+    targetResults.success.push(...result.success);
+  }
+
+  if (Array.isArray(result?.errors) && result.errors.length > 0) {
+    targetResults.errors.push(...result.errors);
+  }
+}
+
 async function applyPublicBulkTagChanges() {
   const action = document.getElementById('public-bulk-tag-action').value;
   const selectedTags = Array.from(publicBulkSelectedTags);
@@ -1941,32 +1985,61 @@ async function applyPublicBulkTagChanges() {
   if (selectedTags.length === 0) { alert('Please select at least one tag'); return; }
 
   const applyBtn = document.getElementById('public-bulk-tag-apply-btn');
-  const btnText = applyBtn.querySelector('.button-text');
-  const btnLoad = applyBtn.querySelector('.button-loading');
-  applyBtn.disabled = true; btnText.classList.add('d-none'); btnLoad.classList.remove('d-none');
+  const totalDocuments = documentIds.length;
+  const results = { success: [], errors: [] };
+  let processedCount = 0;
 
   try {
-    const response = await fetch('/api/public_workspace_documents/bulk-tag', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ document_ids: documentIds, action: action, tags: selectedTags })
-    });
-    const result = await response.json();
-    if (response.ok) {
-      const sc = result.success?.length || 0;
-      const ec = result.errors?.length || 0;
-      let msg = `Tags updated for ${sc} document(s)`;
-      if (ec > 0) msg += `\n${ec} document(s) had errors`;
-      alert(msg);
+    for (let index = 0; index < documentIds.length; index += 1) {
+      const documentId = documentIds[index];
+      setPublicBulkTagButtonLoadingState(applyBtn, true, index + 1, totalDocuments);
+
+      const response = await fetch('/api/public_workspace_documents/bulk-tag', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: [documentId], action: action, tags: selectedTags })
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || `Failed to update tags for document ${documentId}`);
+      }
+
+      mergePublicBulkTagResults(results, result);
+      processedCount = index + 1;
+    }
+
+    const sc = results.success.length;
+    const ec = results.errors.length;
+    let msg = `Tags updated for ${sc} document(s)`;
+    if (ec > 0) msg += `\n${ec} document(s) had errors`;
+    alert(msg);
+    await loadPublicWorkspaceTags();
+    fetchPublicDocs();
+    publicSelectedDocuments.clear();
+    const bar = document.getElementById('publicBulkActionsBar');
+    if (bar) bar.style.display = 'none';
+    const modal = bootstrap.Modal.getInstance(document.getElementById('publicBulkTagModal'));
+    if (modal) modal.hide();
+  } catch (e) {
+    console.error(e);
+
+    if (processedCount > 0) {
       await loadPublicWorkspaceTags();
       fetchPublicDocs();
-      publicSelectedDocuments.clear();
-      const bar = document.getElementById('publicBulkActionsBar');
-      if (bar) bar.style.display = 'none';
-      const modal = bootstrap.Modal.getInstance(document.getElementById('publicBulkTagModal'));
-      if (modal) modal.hide();
-    } else { alert('Error: ' + (result.error || 'Failed to update tags')); }
-  } catch (e) { console.error(e); alert('Error updating tags'); }
-  finally { applyBtn.disabled = false; btnText.classList.remove('d-none'); btnLoad.classList.add('d-none'); }
+    }
+
+    let errorMessage = 'Error updating tags';
+    if (processedCount > 0) {
+      errorMessage = `Stopped after ${processedCount}/${totalDocuments} document(s).`;
+      if (results.success.length > 0) errorMessage += `\nUpdated ${results.success.length} document(s) before the error.`;
+      if (results.errors.length > 0) errorMessage += `\n${results.errors.length} document(s) had errors before the stop.`;
+      errorMessage += `\n${e.message}`;
+    }
+
+    alert(errorMessage);
+  } finally {
+    setPublicBulkTagButtonLoadingState(applyBtn, false);
+  }
 }
 
 // Expose grid/tag functions globally
