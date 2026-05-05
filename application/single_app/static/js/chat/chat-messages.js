@@ -138,6 +138,11 @@ function syncDocumentActionTooltip() {
   documentActionSelect.setAttribute('aria-description', description);
 }
 
+function isWorkspaceDocumentSearchEnabled() {
+  const searchDocumentsButton = document.getElementById('search-documents-btn');
+  return Boolean(searchDocumentsButton?.classList.contains('active'));
+}
+
 const INLINE_ASSISTANT_EXPORT_ACTIONS = Object.freeze({
   powerpoint: {
     actionName: 'exportMessageAsPowerPoint',
@@ -3331,11 +3336,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     modelProvider,
   } = getCurrentModelSelection();
 
-  let hybridSearchEnabled = false;
-  const sdbtn = document.getElementById('search-documents-btn');
-  if (sdbtn && sdbtn.classList.contains('active')) {
-    hybridSearchEnabled = true;
-  }
+  const hybridSearchEnabled = isWorkspaceDocumentSearchEnabled();
 
   let selectedDocumentId = null;
   let selectedDocumentIds = [];
@@ -3416,7 +3417,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains('active') : false;
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
   const selectedTags = getSelectedTags();
-  const documentActionType = getDocumentActionType();
+  const documentActionType = hybridSearchEnabled ? getDocumentActionType() : DOCUMENT_ACTION_NONE;
   const comparisonTargetIds = documentActionType === DOCUMENT_ACTION_COMPARISON
     ? getSelectedComparisonTargetIds()
     : [];

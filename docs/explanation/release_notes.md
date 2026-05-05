@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.111)**
+
+#### Bug Fixes
+
+*   **Workspace Search Document Action Gating**
+    *   Fixed chat document actions so Review and Compare now only apply while Workspace Search is enabled.
+    *   Turning Workspace Search off now ignores any previously selected Review or Compare mode instead of routing the request through document-action validation and showing stale "select documents before starting a review" warnings.
+    *   Added a focused UI regression test for the workspace-toggle flow so normal chat sends continue using the standard chat stream when workspace search is disabled.
+    *   (Ref: workspace search toggle, `chat-messages.js`, `test_chat_document_action_workspace_toggle.py`)
+
 ### **(v0.241.110)**
 
 #### New Features
