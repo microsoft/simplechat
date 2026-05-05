@@ -69,9 +69,6 @@ $(document).ready(function () {
 
   // Add event delegation for remove member button
   $(document).on("click", ".remove-member-btn", function () {
-      const safeName = escapeHtml(member.name || "");
-      const safeEmail = escapeHtml(member.email || "");
-      membersList += `<li>&bull; ${safeName} (${safeEmail})</li>`;
     const userId = $(this).data("user-id");
     removeMember(userId);
   });
@@ -79,14 +76,17 @@ $(document).ready(function () {
   // Add event delegation for change role button
   $(document).on("click", ".change-role-btn", function () {
     const userId = $(this).data("user-id");
-        const safeUserId = escapeHtml(m.userId || "");
-        const safeDisplayName = escapeHtml(m.displayName || "(no name)");
-        const safeEmail = escapeHtml(m.email || "");
-        options += `<option value="${safeUserId}">${safeDisplayName} (${safeEmail})</option>`;
-      });
+    const currentRole = $(this).data("user-role");
+    openChangeRoleModal(userId, currentRole);
+    $("#changeRoleModal").modal("show");
+  });
+
+  $(document).on("click", ".approve-request-btn", function () {
     const requestId = $(this).data("request-id");
     approveRequest(requestId);
-    });
+  });
+
+  $(document).on("click", ".reject-request-btn", function () {
     const requestId = $(this).data("request-id");
     rejectRequest(requestId);
   });
@@ -126,9 +126,7 @@ $(document).ready(function () {
       showRawActivity($(this).data("activity"));
     }
   });
-      const safeName = escapeHtml(member.name || "");
-      const safeEmail = escapeHtml(member.email || "");
-      membersList += `<li>• ${safeName} (${safeEmail})</li>`;
+
   // Retention policy settings
   $("#saveRetentionBtn").on("click", function () {
     saveGroupRetentionSettings();
@@ -209,6 +207,8 @@ $(document).ready(function () {
       $("#newOwnerSelect").html(options);
       $("#transferOwnershipModal").modal("show");
     });
+  });
+
   $("#transferOwnershipForm").on("submit", function (e) {
     e.preventDefault();
     const newOwnerId = $("#newOwnerSelect").val();
