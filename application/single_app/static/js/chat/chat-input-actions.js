@@ -19,6 +19,27 @@ const chooseFileBtn = document.getElementById("choose-file-btn");
 const fileInputEl = document.getElementById("file-input");
 const uploadBtn = document.getElementById("upload-btn");
 const cancelFileSelection = document.getElementById("cancel-file-selection");
+const userInputEl = document.getElementById("user-input");
+
+const clipboardMimeExtensionMap = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/bmp": "bmp",
+  "image/tiff": "tiff",
+  "image/heif": "heif",
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "application/json": "json",
+  "text/csv": "csv",
+  "application/xml": "xml",
+  "text/xml": "xml",
+  "application/yaml": "yaml",
+  "text/yaml": "yaml",
+};
 
 export function resetFileButton() {
   const fileInputEl = document.getElementById("file-input");
@@ -47,6 +68,112 @@ export function resetFileButton() {
   }
 }
 
+function inferExtensionFromMimeType(mimeType) {
+  const normalizedMimeType = String(mimeType || "").trim().toLowerCase();
+  if (!normalizedMimeType) {
+    return "bin";
+  }
+
+  if (clipboardMimeExtensionMap[normalizedMimeType]) {
+    return clipboardMimeExtensionMap[normalizedMimeType];
+  }
+
+  const mimeSegments = normalizedMimeType.split("/");
+  const subtype = mimeSegments.length > 1 ? mimeSegments[1] : "";
+  const sanitizedSubtype = subtype.split("+")[0].split(";")[0].trim();
+  return sanitizedSubtype || "bin";
+}
+
+function normalizeUploadFile(file, fallbackPrefix = "clipboard_upload") {
+  if (!(file instanceof File)) {
+    return null;
+  }
+
+  const currentName = String(file.name || "").trim();
+  if (currentName) {
+    return file;
+  }
+
+  const extension = inferExtensionFromMimeType(file.type);
+  const normalizedName = `${fallbackPrefix}_${Date.now()}.${extension}`;
+  return new File([file], normalizedName, {
+    type: file.type || "application/octet-stream",
+    lastModified: file.lastModified || Date.now(),
+  });
+}
+
+function buildUploadFileList(filesLike, fallbackPrefix = "clipboard_upload") {
+  return Array.from(filesLike || [])
+    .map((file) => normalizeUploadFile(file, fallbackPrefix))
+    .filter(Boolean);
+}
+
+function uploadFilesInSequence(files) {
+  return files.reduce((uploadChain, file) => {
+    return uploadChain.then(() => uploadFileToConversation(file));
+  }, Promise.resolve());
+}
+
+function beginChatFileUpload(filesLike, options = {}) {
+  const { fallbackPrefix = "clipboard_upload" } = options;
+  const uploadFiles = buildUploadFileList(filesLike, fallbackPrefix);
+
+  if (uploadFiles.length === 0) {
+    return Promise.resolve(false);
+  }
+
+  const doUpload = () => {
+    if (!currentConversationId) {
+      return createNewConversation(() => {
+        uploadFilesInSequence(uploadFiles);
+      }, { preserveSelections: true });
+    }
+
+    return uploadFilesInSequence(uploadFiles);
+  };
+
+  if (window.UserAgreementManager) {
+    return Promise.resolve(
+      window.UserAgreementManager.checkBeforeUpload(
+        uploadFiles,
+        "chat",
+        "default",
+        function () {
+          doUpload();
+        }
+      )
+    );
+  }
+
+  return Promise.resolve(doUpload());
+}
+
+function getClipboardFiles(clipboardData) {
+  if (!clipboardData) {
+    return [];
+  }
+
+  const clipboardFiles = [];
+  const clipboardItems = Array.from(clipboardData.items || []);
+
+  clipboardItems.forEach((item) => {
+    if (item?.kind !== "file" || typeof item.getAsFile !== "function") {
+      return;
+    }
+
+    const file = item.getAsFile();
+    if (file) {
+      clipboardFiles.push(file);
+    }
+  });
+
+  if (clipboardFiles.length > 0) {
+    return clipboardFiles;
+  }
+
+  return Array.from(clipboardData.files || []);
+}
+
 export function uploadFileToConversation(file) {
   const uploadingIndicatorEl = showFileUploadingMessage();
   
@@ -63,7 +190,7 @@ export function uploadFileToConversation(file) {
   formData.append("file", file);
   formData.append("conversation_id", currentConversationId);
 
-  fetch("/upload", {
+  return fetch("/upload", {
     method: "POST",
     body: formData,
   })
@@ -440,31 +567,8 @@ if (fileInputEl) {
       
       // Hide the upload button since we're auto-uploading
       uploadBtn.style.display = "none";
-      
-      // Check for user agreement before uploading
-      const doUpload = () => {
-        if (!currentConversationId) {
-          createNewConversation(() => {
-            uploadFileToConversation(file);
-          }, { preserveSelections: true });
-        } else {
-          uploadFileToConversation(file);
-        }
-      };
-      
-      // Check if UserAgreementManager exists and check for agreement
-      if (window.UserAgreementManager) {
-        window.UserAgreementManager.checkBeforeUpload(
-          fileInputEl.files,
-          'chat',
-          'default',
-          function(files) {
-            doUpload();
-          }
-        );
-      } else {
-        doUpload();
-      }
+
+      beginChatFileUpload([file], { fallbackPrefix: "chat_upload" });
     } else {
       resetFileButton();
     }
@@ -490,29 +594,18 @@ if (uploadBtn) {
       return;
     }
 
-    // Check for user agreement before uploading
-    const doUpload = () => {
-      if (!currentConversationId) {
-        createNewConversation(() => {
-          uploadFileToConversation(file);
-        }, { preserveSelections: true });
-      } else {
-        uploadFileToConversation(file);
-      }
-    };
-    
-    // Check if UserAgreementManager exists and check for agreement
-    if (window.UserAgreementManager) {
-      window.UserAgreementManager.checkBeforeUpload(
-        fileInput.files,
-        'chat',
-        'default',
-        function(files) {
-          doUpload();
-        }
-      );
-    } else {
-      doUpload();
+    beginChatFileUpload([file], { fallbackPrefix: "chat_upload" });
+  });
+}
+
+if (userInputEl) {
+  userInputEl.addEventListener("paste", (event) => {
+    const clipboardFiles = getClipboardFiles(event.clipboardData);
+    if (clipboardFiles.length === 0) {
+      return;
     }
+
+    event.preventDefault();
+    beginChatFileUpload(clipboardFiles, { fallbackPrefix: "pasted_file" });
   });
 }

@@ -4,6 +4,26 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.110)**
+
+#### New Features
+
+*   **Chat Clipboard Paste Uploads**
+    *   Added direct clipboard upload support in Chats so users can paste copied images and browser-exposed files straight into the main chat message box instead of opening the file picker first.
+    *   The pasted upload flow now reuses the existing chat upload pipeline, including automatic conversation creation, upload consent checks, and backend file processing.
+    *   Clipboard files with empty names are normalized before upload so pasted screenshots still reach the existing extension-based processing path.
+    *   (Ref: chat paste uploads, `chat-input-actions.js`, `test_chat_clipboard_paste_upload_support.py`, `test_chat_clipboard_paste_upload_workflow.py`, `CHAT_CLIPBOARD_PASTE_UPLOADS.md`)
+
+### **(v0.241.109)**
+
+#### Bug Fixes
+
+*   **Chat Stream Lifecycle Observability**
+    *   Improved diagnostics for long-running chat streams so backend status now distinguishes active, detached-but-running, completed, and errored stream states during the replay window.
+    *   Added backend lifecycle logging for keepalive, detach, reattach, queue backpressure, and terminal stream outcomes, plus frontend best-effort telemetry for request failures, read failures, premature endings, aborts, and recovery attempts.
+    *   Added focused regression coverage and versioned fix documentation for the new stream observability path.
+    *   (Ref: `route_backend_chats.py`, `chat-streaming.js`, `test_chat_stream_lifecycle_observability.py`, `CHAT_STREAM_LIFECYCLE_OBSERVABILITY_FIX.md`)
+
 ### **(v0.241.022)**
 
 *   **Uploaded File Preview Body XSS Hardening (`f044`)**

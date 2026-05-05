@@ -8,6 +8,7 @@ import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStrea
 import { hydrateInlineCharts } from './chat-inline-charts.js';
 
 let currentStreamController = null;
+const MAX_STREAM_CLIENT_ERROR_LENGTH = 500;
 
 function normalizeLegacyEscapedSseDelimiters(chunk) {
     return String(chunk || '').replace(/(\})\\n\\n(?=(?:data:|event:|id:|retry:|:|$))/g, '$1\n\n');
@@ -47,6 +48,47 @@ function removeStreamingPlaceholder(messageId) {
     }
 }
 
+function normalizeStreamErrorMessage(errorLike) {
+    const normalized = String(errorLike || '').trim();
+    if (normalized.length <= MAX_STREAM_CLIENT_ERROR_LENGTH) {
+        return normalized;
+    }
+
+    return `${normalized.slice(0, MAX_STREAM_CLIENT_ERROR_LENGTH)}...`;
+}
+
+function reportClientStreamEvent(eventType, payload = {}) {
+    const normalizedEventType = String(eventType || '').trim();
+    if (!normalizedEventType) {
+        return Promise.resolve(false);
+    }
+
+    const requestBody = {
+        event_type: normalizedEventType,
+        ...payload,
+    };
+
+    if (requestBody.error_message) {
+        requestBody.error_message = normalizeStreamErrorMessage(requestBody.error_message);
+    }
+    if (requestBody.abort_reason) {
+        requestBody.abort_reason = normalizeStreamErrorMessage(requestBody.abort_reason);
+    }
+
+    return fetch('/api/chat/stream/client-event', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify(requestBody),
+        keepalive: true,
+    }).then(() => true).catch(error => {
+        console.warn('Failed to report stream client event:', error);
+        return false;
+    });
+}
+
 async function getStreamingStatus(conversationId) {
     if (!conversationId) {
         return null;
@@ -79,13 +121,32 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
     try {
         const statusData = await getStreamingStatus(conversationId);
         if (!statusData?.pending) {
+            void reportClientStreamEvent('stream_recovery_unavailable', {
+                conversation_id: conversationId,
+                pending: Boolean(statusData?.pending),
+                reattachable: Boolean(statusData?.reattachable),
+                status: statusData?.status || null,
+            });
             return false;
         }
+
+        void reportClientStreamEvent('stream_recovery_attempt', {
+            conversation_id: conversationId,
+            pending: Boolean(statusData?.pending),
+            reattachable: Boolean(statusData?.reattachable),
+            status: statusData?.status || null,
+        });
 
         clearStreamingThoughtSession(failedMessageId);
         removeStreamingPlaceholder(failedMessageId);
 
         const reconnectMessageId = createStreamingPlaceholder(reconnectStatusLabel);
+        void reportClientStreamEvent('stream_recovery_attached', {
+            conversation_id: conversationId,
+            pending: Boolean(statusData?.pending),
+            reattachable: Boolean(statusData?.reattachable),
+            status: statusData?.status || null,
+        });
         return consumeStreamingResponse(
             signal => fetch(`/api/chat/stream/reattach/${conversationId}`, {
                 method: 'GET',
@@ -125,10 +186,13 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
     const abortController = new AbortController();
     currentStreamController = abortController;
+    const streamStartedAt = Date.now();
     let accumulatedContent = '';
     let hasStreamedContent = false;
     let streamError = false;
     let streamCompleted = false;
+    let lastChunkAt = null;
+    let eventCount = 0;
 
     requestFactory(abortController.signal).then(response => {
         if (!response.ok) {
@@ -143,6 +207,13 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         if (!response.body) {
             throw new Error('Streaming response body is unavailable.');
         }
+
+        void reportClientStreamEvent('stream_response_opened', {
+            conversation_id: recoveryConversationId,
+            elapsed_ms: Date.now() - streamStartedAt,
+            had_streamed_content: hasStreamedContent,
+            event_count: eventCount,
+        });
         
         // Read the streaming response
         const reader = response.body.getReader();
@@ -150,10 +221,21 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         let sseBuffer = '';
 
         function processStreamData(data) {
+            eventCount += 1;
+            lastChunkAt = Date.now();
+
             if (data.error) {
                 stopThoughtPolling();
                 streamError = true;
                 clearStreamingThoughtSession(tempAiMessageId);
+                void reportClientStreamEvent('stream_read_error', {
+                    conversation_id: recoveryConversationId,
+                    elapsed_ms: Date.now() - streamStartedAt,
+                    time_since_last_chunk_ms: 0,
+                    had_streamed_content: hasStreamedContent,
+                    event_count: eventCount,
+                    error_message: data.error,
+                });
                 handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
                 clearCurrentStreamController(abortController);
                 if (typeof onError === 'function') {
@@ -256,6 +338,15 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     if (!processedFinalEvent && !streamCompleted && !streamError) {
                         clearCurrentStreamController(abortController);
 
+                        void reportClientStreamEvent('stream_premature_end', {
+                            conversation_id: recoveryConversationId,
+                            elapsed_ms: Date.now() - streamStartedAt,
+                            time_since_last_chunk_ms: lastChunkAt ? Date.now() - lastChunkAt : 0,
+                            had_streamed_content: hasStreamedContent,
+                            event_count: eventCount,
+                            status: 'done_without_terminal_event',
+                        });
+
                         if (allowRecovery) {
                             const recovered = await attemptStreamingRecovery(
                                 recoveryConversationId,
@@ -303,6 +394,14 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 readStream(); // Continue reading
             }).catch(async err => {
                 if (abortController.signal.aborted) {
+                    void reportClientStreamEvent('stream_aborted', {
+                        conversation_id: recoveryConversationId,
+                        elapsed_ms: Date.now() - streamStartedAt,
+                        time_since_last_chunk_ms: lastChunkAt ? Date.now() - lastChunkAt : 0,
+                        had_streamed_content: hasStreamedContent,
+                        event_count: eventCount,
+                        abort_reason: abortController.signal.reason || 'aborted',
+                    });
                     clearStreamingThoughtSession(tempAiMessageId);
                     clearCurrentStreamController(abortController);
                     if (typeof onFinally === 'function') {
@@ -313,6 +412,14 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
                 stopThoughtPolling();
                 console.error('Stream reading error:', err);
+                void reportClientStreamEvent('stream_read_error', {
+                    conversation_id: recoveryConversationId,
+                    elapsed_ms: Date.now() - streamStartedAt,
+                    time_since_last_chunk_ms: lastChunkAt ? Date.now() - lastChunkAt : 0,
+                    had_streamed_content: hasStreamedContent,
+                    event_count: eventCount,
+                    error_message: err.message,
+                });
 
                 clearCurrentStreamController(abortController);
                 if (allowRecovery) {
@@ -347,6 +454,14 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         
     }).catch(async error => {
         if (abortController.signal.aborted) {
+            void reportClientStreamEvent('stream_aborted', {
+                conversation_id: recoveryConversationId,
+                elapsed_ms: Date.now() - streamStartedAt,
+                time_since_last_chunk_ms: lastChunkAt ? Date.now() - lastChunkAt : 0,
+                had_streamed_content: hasStreamedContent,
+                event_count: eventCount,
+                abort_reason: abortController.signal.reason || 'aborted',
+            });
             clearStreamingThoughtSession(tempAiMessageId);
             clearCurrentStreamController(abortController);
             if (typeof onFinally === 'function') {
@@ -357,6 +472,14 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
         stopThoughtPolling();
         console.error('Streaming request error:', error);
+        void reportClientStreamEvent('stream_request_error', {
+            conversation_id: recoveryConversationId,
+            elapsed_ms: Date.now() - streamStartedAt,
+            time_since_last_chunk_ms: lastChunkAt ? Date.now() - lastChunkAt : 0,
+            had_streamed_content: hasStreamedContent,
+            event_count: eventCount,
+            error_message: error.message,
+        });
 
         clearCurrentStreamController(abortController);
         if (allowRecovery) {

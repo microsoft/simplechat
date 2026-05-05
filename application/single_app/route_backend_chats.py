@@ -39,6 +39,7 @@ from functions_content import generate_embedding, generate_embeddings_batch
 from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
+from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
@@ -87,6 +88,86 @@ FACT_MEMORY_TYPE_FACT = 'fact'
 FACT_MEMORY_TYPE_INSTRUCTION = 'instruction'
 FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer'
 INLINE_CHART_ID_PATTERN_TEMPLATE = '"chartId":"{}"'
+STREAM_STATUS_NOT_FOUND = 'not_found'
+STREAM_STATUS_STARTED = 'started'
+STREAM_STATUS_STREAMING = 'streaming'
+STREAM_STATUS_DETACHED_RUNNING = 'detached_running'
+STREAM_STATUS_COMPLETED = 'completed'
+STREAM_STATUS_ERROR = 'error'
+TERMINAL_STREAM_STATUSES = {STREAM_STATUS_COMPLETED, STREAM_STATUS_ERROR}
+ALLOWED_STREAM_CLIENT_EVENTS = {
+    'stream_aborted',
+    'stream_premature_end',
+    'stream_read_error',
+    'stream_request_error',
+    'stream_response_opened',
+    'stream_recovery_attempt',
+    'stream_recovery_attached',
+    'stream_recovery_unavailable',
+}
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _utcnow_iso():
+    return datetime.utcnow().isoformat()
+
+
+def _parse_iso_datetime(value):
+    normalized = str(value or '').strip()
+    if not normalized:
+        return None
+
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def _truncate_log_text(value, max_length=500):
+    normalized = str(value or '').strip()
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[:max_length]}..."
+
+
+def _build_stream_status_payload(metadata):
+    snapshot = dict(metadata or {})
+    if not snapshot:
+        return {
+            'active': False,
+            'pending': False,
+            'reattachable': False,
+            'status': STREAM_STATUS_NOT_FOUND,
+        }
+
+    snapshot['active'] = bool(snapshot.get('active'))
+    snapshot['pending'] = snapshot['active']
+    snapshot['reattachable'] = snapshot['active']
+    snapshot['status'] = str(snapshot.get('status') or STREAM_STATUS_STARTED)
+    snapshot['consumer_detached'] = bool(snapshot.get('consumer_detached'))
+    snapshot['detach_count'] = _safe_int(snapshot.get('detach_count'))
+    snapshot['reattach_count'] = _safe_int(snapshot.get('reattach_count'))
+    snapshot['event_count'] = _safe_int(snapshot.get('event_count'))
+    snapshot['content_event_count'] = _safe_int(snapshot.get('content_event_count'))
+    snapshot['content_chars'] = _safe_int(snapshot.get('content_chars'))
+    snapshot['queue_backpressure_count'] = _safe_int(snapshot.get('queue_backpressure_count'))
+
+    started_at = _parse_iso_datetime(snapshot.get('started_at'))
+    updated_at = _parse_iso_datetime(snapshot.get('updated_at'))
+    completed_at = _parse_iso_datetime(snapshot.get('completed_at'))
+    reference_time = completed_at if snapshot['status'] in TERMINAL_STREAM_STATUSES and completed_at else datetime.utcnow()
+    if started_at:
+        snapshot['elapsed_seconds'] = round(max((reference_time - started_at).total_seconds(), 0.0), 1)
+    if updated_at:
+        snapshot['seconds_since_update'] = round(max((datetime.utcnow() - updated_at).total_seconds(), 0.0), 1)
+
+    return snapshot
 
 
 def _normalize_inline_chart_markdown(chart_markdown):
@@ -1578,11 +1659,37 @@ def is_personal_chat_conversation(conversation_item):
 class BackgroundStreamBridge:
     """Relay SSE events from a background worker to the active HTTP stream."""
 
-    def __init__(self, max_queue_size=200):
+    def __init__(self, max_queue_size=200, stream_session=None):
         self._queue = queue.Queue(maxsize=max_queue_size)
         self._sentinel = object()
         self._consumer_attached = True
         self._state_lock = threading.Lock()
+        self._stream_session = stream_session
+        self._last_backpressure_logged_at = 0.0
+
+    def _record_queue_backpressure(self):
+        if not self._stream_session:
+            return
+
+        stream_status = self._stream_session.note_queue_backpressure(self._queue.qsize()) or {}
+        now = time.time()
+        if (now - self._last_backpressure_logged_at) < 30:
+            return
+
+        self._last_backpressure_logged_at = now
+        log_event(
+            '[Streaming] SSE bridge queue backpressure detected',
+            extra={
+                'conversation_id': stream_status.get('conversation_id'),
+                'user_id': stream_status.get('user_id'),
+                'status': stream_status.get('status'),
+                'queue_backpressure_count': stream_status.get('queue_backpressure_count'),
+                'last_queue_depth': stream_status.get('last_queue_depth'),
+                'event_count': stream_status.get('event_count'),
+                'content_event_count': stream_status.get('content_event_count'),
+            },
+            level=logging.WARNING,
+        )
 
     def push(self, event):
         """Queue an SSE event unless the consumer has already detached."""
@@ -1597,6 +1704,7 @@ class BackgroundStreamBridge:
                 self._queue.put(event, timeout=0.25)
                 return True
             except queue.Full:
+                self._record_queue_backpressure()
                 continue
 
     def finish(self):
@@ -1626,6 +1734,8 @@ class BackgroundStreamBridge:
                 if not consumer_attached:
                     break
 
+                if self._stream_session:
+                    self._stream_session.note_keepalive(source='bridge')
                 yield ': keep-alive\n\n'
                 continue
 
@@ -1633,7 +1743,7 @@ class BackgroundStreamBridge:
                 break
             yield next_item
 
-    def detach_consumer(self):
+    def detach_consumer(self, reason='consumer_cleanup', update_session=False):
         """Stop queueing new events once the HTTP consumer disconnects."""
         with self._state_lock:
             already_detached = not self._consumer_attached
@@ -1641,6 +1751,23 @@ class BackgroundStreamBridge:
 
         if already_detached:
             return
+
+        if update_session and self._stream_session:
+            stream_status = self._stream_session.mark_consumer_detached(reason=reason) or {}
+            log_event(
+                '[Streaming] Stream consumer detached',
+                extra={
+                    'conversation_id': stream_status.get('conversation_id'),
+                    'user_id': stream_status.get('user_id'),
+                    'status': stream_status.get('status'),
+                    'detach_reason': stream_status.get('detach_reason'),
+                    'detach_count': stream_status.get('detach_count'),
+                    'event_count': stream_status.get('event_count'),
+                    'content_event_count': stream_status.get('content_event_count'),
+                    'content_chars': stream_status.get('content_chars'),
+                },
+                level=logging.WARNING,
+            )
 
         while True:
             try:
@@ -1682,22 +1809,104 @@ class ActiveConversationStreamSession:
         self._condition = threading.Condition()
         self._accepting_events = True
 
-    def _build_metadata(self, active):
-        return {
+    def _build_metadata(self, active, existing=None):
+        metadata = dict(existing or {})
+        metadata.update({
             'user_id': self.user_id,
             'conversation_id': self.conversation_id,
             'active': bool(active),
             'heartbeat_interval_seconds': self.heartbeat_interval_seconds,
-            'updated_at': datetime.utcnow().isoformat(),
-        }
+            'updated_at': _utcnow_iso(),
+        })
+        metadata.setdefault('status', STREAM_STATUS_STARTED)
+        metadata.setdefault('started_at', metadata['updated_at'])
+        metadata.setdefault('event_count', 0)
+        metadata.setdefault('content_event_count', 0)
+        metadata.setdefault('content_chars', 0)
+        metadata.setdefault('consumer_detached', False)
+        metadata.setdefault('detach_count', 0)
+        metadata.setdefault('reattach_count', 0)
+        metadata.setdefault('queue_backpressure_count', 0)
+        metadata.setdefault('last_error', None)
+        return metadata
+
+    def _get_metadata(self):
+        metadata = app_settings_cache.get_stream_session_meta(self.cache_key)
+        if not isinstance(metadata, dict):
+            return {}
+        return dict(metadata)
+
+    def _persist_metadata(self, metadata):
+        app_settings_cache.set_stream_session_meta(
+            self.cache_key,
+            metadata,
+            ttl_seconds=self.session_ttl_seconds,
+        )
+        return metadata
+
+    def get_status_snapshot(self):
+        return _build_stream_status_payload(self._get_metadata())
 
     def initialize(self):
         """Initialize the stream session cache state for a new live response."""
+        initial_metadata = self._build_metadata(active=True)
         app_settings_cache.initialize_stream_session_cache(
             self.cache_key,
-            self._build_metadata(active=True),
+            initial_metadata,
             ttl_seconds=self.session_ttl_seconds,
         )
+        log_event(
+            '[Streaming] Stream session started',
+            extra={
+                'conversation_id': self.conversation_id,
+                'user_id': self.user_id,
+                'status': initial_metadata.get('status'),
+                'started_at': initial_metadata.get('started_at'),
+                'heartbeat_interval_seconds': self.heartbeat_interval_seconds,
+                'session_ttl_seconds': self.session_ttl_seconds,
+            },
+            level=logging.INFO,
+        )
+
+    def note_keepalive(self, source='unknown'):
+        metadata = self._build_metadata(active=self.is_active(), existing=self._get_metadata())
+        metadata['last_keepalive_at'] = _utcnow_iso()
+        metadata['last_keepalive_source'] = str(source or 'unknown')
+        self._persist_metadata(metadata)
+        return self.get_status_snapshot()
+
+    def note_queue_backpressure(self, queue_depth=0):
+        metadata = self._build_metadata(active=self.is_active(), existing=self._get_metadata())
+        metadata['queue_backpressure_count'] = _safe_int(metadata.get('queue_backpressure_count')) + 1
+        metadata['last_queue_backpressure_at'] = _utcnow_iso()
+        metadata['last_queue_depth'] = max(_safe_int(queue_depth), 0)
+        self._persist_metadata(metadata)
+        return self.get_status_snapshot()
+
+    def mark_consumer_detached(self, reason='client_disconnect'):
+        metadata = self._build_metadata(active=self.is_active(), existing=self._get_metadata())
+        if metadata.get('consumer_detached'):
+            return self.get_status_snapshot()
+
+        metadata['consumer_detached'] = True
+        metadata['detach_count'] = _safe_int(metadata.get('detach_count')) + 1
+        metadata['last_detached_at'] = _utcnow_iso()
+        metadata['detach_reason'] = str(reason or 'client_disconnect')
+        if metadata.get('active'):
+            metadata['status'] = STREAM_STATUS_DETACHED_RUNNING
+        self._persist_metadata(metadata)
+        return self.get_status_snapshot()
+
+    def mark_reattached(self):
+        metadata = self._build_metadata(active=self.is_active(), existing=self._get_metadata())
+        metadata['consumer_detached'] = False
+        metadata['reattach_count'] = _safe_int(metadata.get('reattach_count')) + 1
+        metadata['last_reattach_at'] = _utcnow_iso()
+        metadata['detach_reason'] = None
+        if metadata.get('active'):
+            metadata['status'] = STREAM_STATUS_STREAMING if metadata.get('first_content_at') else STREAM_STATUS_STARTED
+        self._persist_metadata(metadata)
+        return self.get_status_snapshot()
 
     def publish(self, event_text):
         """Append an SSE event to the replay history and notify listeners."""
@@ -1711,16 +1920,69 @@ class ActiveConversationStreamSession:
         payload = _extract_sse_event_payload(event_text)
         is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error'))
 
+        metadata = self._build_metadata(active=not is_terminal_event, existing=self._get_metadata())
+        metadata['event_count'] = _safe_int(metadata.get('event_count')) + 1
+        metadata['last_event_at'] = _utcnow_iso()
+
+        content_value = payload.get('content') if isinstance(payload, dict) else None
+        first_content_emitted = False
+        if content_value:
+            metadata['content_event_count'] = _safe_int(metadata.get('content_event_count')) + 1
+            metadata['content_chars'] = _safe_int(metadata.get('content_chars')) + len(str(content_value))
+            if not metadata.get('first_content_at'):
+                metadata['first_content_at'] = metadata['last_event_at']
+                first_content_emitted = True
+
+        if is_terminal_event:
+            metadata['completed_at'] = metadata['last_event_at']
+            metadata['status'] = STREAM_STATUS_ERROR if payload.get('error') else STREAM_STATUS_COMPLETED
+            if payload.get('error'):
+                metadata['last_error'] = str(payload.get('error'))
+        elif metadata.get('consumer_detached'):
+            metadata['status'] = STREAM_STATUS_DETACHED_RUNNING
+        elif metadata.get('first_content_at'):
+            metadata['status'] = STREAM_STATUS_STREAMING
+        else:
+            metadata['status'] = STREAM_STATUS_STARTED
+
         app_settings_cache.append_stream_session_event(
             self.cache_key,
             event_text,
             ttl_seconds=self.session_ttl_seconds,
         )
-        app_settings_cache.set_stream_session_meta(
-            self.cache_key,
-            self._build_metadata(active=not is_terminal_event),
-            ttl_seconds=self.session_ttl_seconds,
-        )
+        self._persist_metadata(metadata)
+
+        if first_content_emitted:
+            log_event(
+                '[Streaming] First stream content emitted',
+                extra={
+                    'conversation_id': self.conversation_id,
+                    'user_id': self.user_id,
+                    'status': metadata.get('status'),
+                    'first_content_at': metadata.get('first_content_at'),
+                    'event_count': metadata.get('event_count'),
+                },
+                level=logging.INFO,
+            )
+
+        if is_terminal_event:
+            log_event(
+                '[Streaming] Stream session completed' if metadata.get('status') == STREAM_STATUS_COMPLETED else '[Streaming] Stream session failed',
+                extra={
+                    'conversation_id': self.conversation_id,
+                    'user_id': self.user_id,
+                    'status': metadata.get('status'),
+                    'started_at': metadata.get('started_at'),
+                    'completed_at': metadata.get('completed_at'),
+                    'event_count': metadata.get('event_count'),
+                    'content_event_count': metadata.get('content_event_count'),
+                    'content_chars': metadata.get('content_chars'),
+                    'detach_count': metadata.get('detach_count'),
+                    'reattach_count': metadata.get('reattach_count'),
+                    'last_error': metadata.get('last_error'),
+                },
+                level=logging.INFO if metadata.get('status') == STREAM_STATUS_COMPLETED else logging.ERROR,
+            )
 
         with self._condition:
             self._condition.notify_all()
@@ -1732,14 +1994,30 @@ class ActiveConversationStreamSession:
             self._accepting_events = False
             self._condition.notify_all()
 
-        app_settings_cache.set_stream_session_meta(
-            self.cache_key,
-            self._build_metadata(active=False),
-            ttl_seconds=self.session_ttl_seconds,
-        )
+        metadata = self._build_metadata(active=False, existing=self._get_metadata())
+        if metadata.get('status') not in TERMINAL_STREAM_STATUSES:
+            metadata['status'] = STREAM_STATUS_COMPLETED
+            metadata['completed_at'] = metadata.get('completed_at') or _utcnow_iso()
+            self._persist_metadata(metadata)
+            log_event(
+                '[Streaming] Stream session closed without explicit terminal event',
+                extra={
+                    'conversation_id': self.conversation_id,
+                    'user_id': self.user_id,
+                    'status': metadata.get('status'),
+                    'started_at': metadata.get('started_at'),
+                    'completed_at': metadata.get('completed_at'),
+                    'event_count': metadata.get('event_count'),
+                    'detach_count': metadata.get('detach_count'),
+                },
+                level=logging.WARNING,
+            )
+            return
+
+        self._persist_metadata(metadata)
 
     def is_active(self):
-        metadata = app_settings_cache.get_stream_session_meta(self.cache_key) or {}
+        metadata = self._get_metadata()
         return bool(metadata.get('active'))
 
     def is_expired(self, ttl_seconds):
@@ -1782,6 +2060,7 @@ class ActiveConversationStreamSession:
 
             if (time.time() - last_heartbeat_at) >= heartbeat_interval_seconds:
                 last_heartbeat_at = time.time()
+                self.note_keepalive(source='session')
                 yield self.HEARTBEAT_EVENT
 
 
@@ -6243,7 +6522,7 @@ def restore_agent_stream_retry_state(agent, retry_state):
 def register_route_backend_chats(app):
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
-        stream_bridge = BackgroundStreamBridge()
+        stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
 
         def publish_background_event(event_text):
             if event_text is None:
@@ -6269,6 +6548,19 @@ def register_route_backend_chats(app):
                     publish_background_event(event)
             except Exception as e:
                 debug_print(f"[STREAM BACKGROUND] Worker error: {e}")
+                stream_status = stream_session.get_status_snapshot() if stream_session else {}
+                log_event(
+                    f"[Streaming] Background worker error: {e}",
+                    extra={
+                        'conversation_id': stream_status.get('conversation_id'),
+                        'user_id': stream_status.get('user_id'),
+                        'status': stream_status.get('status'),
+                        'event_count': stream_status.get('event_count'),
+                        'content_event_count': stream_status.get('content_event_count'),
+                    },
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
                 error_event = f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
                 publish_background_event(error_event)
             finally:
@@ -6289,14 +6581,19 @@ def register_route_backend_chats(app):
             worker_thread.start()
 
         def consume_stream():
+            stream_consumed = False
             try:
                 for event in stream_bridge.iter_events():
                     yield event
+                stream_consumed = True
             except GeneratorExit:
-                stream_bridge.detach_consumer()
+                stream_bridge.detach_consumer(reason='client_disconnect', update_session=True)
                 raise
             finally:
-                stream_bridge.detach_consumer()
+                stream_bridge.detach_consumer(
+                    reason='stream_consumed' if stream_consumed else 'consumer_cleanup',
+                    update_session=False,
+                )
 
         return Response(
             stream_with_context(consume_stream()),
@@ -12474,12 +12771,10 @@ def register_route_backend_chats(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
-        return jsonify({
-            'conversation_id': conversation_id,
-            'pending': bool(stream_session),
-            'reattachable': bool(stream_session),
-        })
+        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=False)
+        stream_status = stream_session.get_status_snapshot() if stream_session else _build_stream_status_payload(None)
+        stream_status['conversation_id'] = conversation_id
+        return jsonify(stream_status)
 
     @app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -12495,8 +12790,49 @@ def register_route_backend_chats(app):
         if not stream_session:
             return jsonify({'error': 'No active stream is available for this conversation'}), 404
 
+        stream_status = stream_session.mark_reattached() or {}
+        log_event(
+            '[Streaming] Stream consumer reattached',
+            extra={
+                'conversation_id': stream_status.get('conversation_id'),
+                'user_id': stream_status.get('user_id'),
+                'status': stream_status.get('status'),
+                'reattach_count': stream_status.get('reattach_count'),
+                'detach_count': stream_status.get('detach_count'),
+                'event_count': stream_status.get('event_count'),
+            },
+            level=logging.INFO,
+        )
+
+        def consume_reattach_stream():
+            stream_consumed = False
+            detach_recorded = False
+            try:
+                for event in stream_session.iter_events():
+                    yield event
+                stream_consumed = True
+            except GeneratorExit:
+                detach_status = stream_session.mark_consumer_detached(reason='reattach_disconnect') or {}
+                detach_recorded = True
+                log_event(
+                    '[Streaming] Reattached stream consumer detached',
+                    extra={
+                        'conversation_id': detach_status.get('conversation_id'),
+                        'user_id': detach_status.get('user_id'),
+                        'status': detach_status.get('status'),
+                        'detach_reason': detach_status.get('detach_reason'),
+                        'detach_count': detach_status.get('detach_count'),
+                        'reattach_count': detach_status.get('reattach_count'),
+                    },
+                    level=logging.WARNING,
+                )
+                raise
+            finally:
+                if not detach_recorded and not stream_consumed and stream_session.is_active():
+                    stream_session.mark_consumer_detached(reason='reattach_cleanup')
+
         return Response(
-            stream_with_context(stream_session.iter_events()),
+            stream_with_context(consume_reattach_stream()),
             mimetype='text/event-stream',
             headers={
                 'Cache-Control': 'no-cache',
@@ -12504,6 +12840,52 @@ def register_route_backend_chats(app):
                 'Connection': 'keep-alive'
             }
         )
+
+    @app.route('/api/chat/stream/client-event', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_stream_client_event_api():
+        """Capture best-effort client-side streaming failures for backend correlation."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True) or {}
+        event_type = str(data.get('event_type') or '').strip().lower()
+        if event_type not in ALLOWED_STREAM_CLIENT_EVENTS:
+            return jsonify({'error': 'Unsupported stream client event'}), 400
+
+        conversation_id = str(data.get('conversation_id') or '').strip() or None
+        elapsed_ms = max(_safe_int(data.get('elapsed_ms')), 0)
+        time_since_last_chunk_ms = max(_safe_int(data.get('time_since_last_chunk_ms')), 0)
+        level = logging.WARNING if event_type in {
+            'stream_premature_end',
+            'stream_read_error',
+            'stream_request_error',
+            'stream_recovery_unavailable',
+        } else logging.INFO
+
+        log_event(
+            f'[Streaming Client] {event_type}',
+            extra={
+                'user_id': user_id,
+                'conversation_id': conversation_id,
+                'event_type': event_type,
+                'elapsed_ms': elapsed_ms,
+                'time_since_last_chunk_ms': time_since_last_chunk_ms,
+                'had_streamed_content': bool(data.get('had_streamed_content')),
+                'event_count': max(_safe_int(data.get('event_count')), 0),
+                'pending': bool(data.get('pending')),
+                'reattachable': bool(data.get('reattachable')),
+                'reported_status': str(data.get('status') or '').strip() or None,
+                'error_message': _truncate_log_text(data.get('error_message')) or None,
+                'abort_reason': _truncate_log_text(data.get('abort_reason'), max_length=120) or None,
+            },
+            level=level,
+        )
+
+        return jsonify({'success': True, 'event_type': event_type})
 
     @app.route('/api/message/<message_id>/mask', methods=['POST'])
     @swagger_route(security=get_auth_security())
