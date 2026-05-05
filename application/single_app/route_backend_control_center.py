@@ -539,7 +539,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                 
                 # Update user settings with cached metrics
                 settings_update = {'metrics': metrics_cache}
-                update_success = update_user_settings(user.get('id'), settings_update)
+                update_success = update_user_settings(user.get('id'), settings_update, allow_cross_user=True)
                 
                 if update_success:
                     debug_print(f"Successfully cached metrics for user {user.get('id')}")
@@ -2315,7 +2315,7 @@ def register_route_backend_control_center(app):
                 }
             }
             
-            success = update_user_settings(user_id, access_settings)
+            success = update_user_settings(user_id, access_settings, allow_cross_user=True)
             
             if success:
                 # Log admin action
@@ -2371,7 +2371,7 @@ def register_route_backend_control_center(app):
                 }
             }
             
-            success = update_user_settings(user_id, file_upload_settings)
+            success = update_user_settings(user_id, file_upload_settings, allow_cross_user=True)
             
             if success:
                 # Log admin action
@@ -2515,7 +2515,7 @@ def register_route_backend_control_center(app):
             
             for user_id in user_ids:
                 try:
-                    success = update_user_settings(user_id, update_settings)
+                    success = update_user_settings(user_id, update_settings, allow_cross_user=True)
                     if success:
                         success_count += 1
                     else:
@@ -5940,6 +5940,22 @@ def register_route_backend_control_center(app):
             debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
 
+    def _get_authorized_route_approval(approval_id, group_id, require_approval_rights=False):
+        """Resolve the current user and return an authorized approval plus user context."""
+        user = session.get('user', {})
+        user_id = user.get('oid') or user.get('sub')
+        user_roles = user.get('roles', [])
+        user_email = user.get('preferred_username', user.get('email', 'unknown'))
+        user_name = user.get('name', user_email)
+        approval = get_authorized_approval(
+            approval_id,
+            group_id,
+            user_id,
+            user_roles,
+            require_approval_rights=require_approval_rights,
+        )
+        return approval, user_id, user_roles, user_email, user_name
+
     @app.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -5952,23 +5968,23 @@ def register_route_backend_control_center(app):
             group_id (str): Group ID (partition key)
         """
         try:
-            user = session.get('user', {})
-            user_id = user.get('oid') or user.get('sub')
-            
             group_id = request.args.get('group_id')
             if not group_id:
                 return jsonify({'error': 'group_id query parameter is required'}), 400
-            
-            # Get the approval
-            approval = cosmos_approvals_container.read_item(
-                item=approval_id,
-                partition_key=group_id
+
+            approval, user_id, user_roles, _user_email, _user_name = _get_authorized_route_approval(
+                approval_id,
+                group_id,
             )
             
             # Add can_approve field
-            approval['can_approve'] = (approval.get('requester_id') != user_id)
+            approval['can_approve'] = _can_user_approve(approval, user_id, user_roles)
             
             return jsonify(approval), 200
+        except LookupError:
+            return jsonify({'error': 'Approval not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You are not authorized to view this approval'}), 403
             
         except Exception as e:
             debug_print(f"Error fetching approval {approval_id}: {e}")
@@ -5989,17 +6005,18 @@ def register_route_backend_control_center(app):
             comment (str, optional): Approval comment
         """
         try:
-            user = session.get('user', {})
-            user_id = user.get('oid') or user.get('sub')
-            user_email = user.get('preferred_username', user.get('email', 'unknown'))
-            user_name = user.get('name', user_email)
-            
             data = request.get_json()
             group_id = data.get('group_id')
             comment = data.get('comment', '')
             
             if not group_id:
                 return jsonify({'error': 'group_id is required'}), 400
+
+            approval, user_id, _user_roles, user_email, user_name = _get_authorized_route_approval(
+                approval_id,
+                group_id,
+                require_approval_rights=True,
+            )
             
             # Approve the request
             approval = approve_request(
@@ -6008,7 +6025,8 @@ def register_route_backend_control_center(app):
                 approver_id=user_id,
                 approver_email=user_email,
                 approver_name=user_name,
-                comment=comment
+                comment=comment,
+                approval=approval,
             )
             
             # Execute the approved action
@@ -6020,6 +6038,10 @@ def register_route_backend_control_center(app):
                 'approval': approval,
                 'execution_result': execution_result
             }), 200
+        except LookupError:
+            return jsonify({'error': 'Approval not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You are not eligible to approve this request'}), 403
             
         except Exception as e:
             debug_print(f"Error approving request: {e}")
@@ -6038,11 +6060,6 @@ def register_route_backend_control_center(app):
             comment (str): Reason for denial (required)
         """
         try:
-            user = session.get('user', {})
-            user_id = user.get('oid') or user.get('sub')
-            user_email = user.get('preferred_username', user.get('email', 'unknown'))
-            user_name = user.get('name', user_email)
-            
             data = request.get_json()
             group_id = data.get('group_id')
             comment = data.get('comment', '')
@@ -6052,6 +6069,12 @@ def register_route_backend_control_center(app):
             
             if not comment:
                 return jsonify({'error': 'comment is required for denial'}), 400
+
+            approval, user_id, _user_roles, user_email, user_name = _get_authorized_route_approval(
+                approval_id,
+                group_id,
+                require_approval_rights=True,
+            )
             
             # Deny the request
             approval = deny_request(
@@ -6061,7 +6084,8 @@ def register_route_backend_control_center(app):
                 denier_email=user_email,
                 denier_name=user_name,
                 comment=comment,
-                auto_denied=False
+                auto_denied=False,
+                approval=approval,
             )
             
             return jsonify({
@@ -6069,6 +6093,10 @@ def register_route_backend_control_center(app):
                 'message': 'Request denied',
                 'approval': approval
             }), 200
+        except LookupError:
+            return jsonify({'error': 'Approval not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You are not eligible to deny this request'}), 403
             
         except Exception as e:
             debug_print(f"Error denying request: {e}")
@@ -6127,8 +6155,7 @@ def register_route_backend_control_center(app):
             approvals_with_permission = []
             for approval in result.get('approvals', []):
                 approval_copy = dict(approval)
-                # User can approve if they didn't create the request
-                approval_copy['can_approve'] = (approval.get('requester_id') != user_id)
+                approval_copy['can_approve'] = _can_user_approve(approval, user_id, user_roles)
                 approvals_with_permission.append(approval_copy)
             
             return jsonify({
@@ -6157,23 +6184,23 @@ def register_route_backend_control_center(app):
             group_id (str): Group ID (partition key)
         """
         try:
-            user = session.get('user', {})
-            user_id = user.get('oid') or user.get('sub')
-            
             group_id = request.args.get('group_id')
             if not group_id:
                 return jsonify({'error': 'group_id query parameter is required'}), 400
-            
-            # Get the approval
-            approval = cosmos_approvals_container.read_item(
-                item=approval_id,
-                partition_key=group_id
+
+            approval, user_id, user_roles, _user_email, _user_name = _get_authorized_route_approval(
+                approval_id,
+                group_id,
             )
             
             # Add can_approve field
-            approval['can_approve'] = (approval.get('requester_id') != user_id)
+            approval['can_approve'] = _can_user_approve(approval, user_id, user_roles)
             
             return jsonify(approval), 200
+        except LookupError:
+            return jsonify({'error': 'Approval not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You are not authorized to view this approval'}), 403
             
         except Exception as e:
             debug_print(f"Error fetching approval {approval_id}: {e}")
@@ -6193,17 +6220,18 @@ def register_route_backend_control_center(app):
             comment (str, optional): Approval comment
         """
         try:
-            user = session.get('user', {})
-            user_id = user.get('oid') or user.get('sub')
-            user_email = user.get('preferred_username', user.get('email', 'unknown'))
-            user_name = user.get('name', user_email)
-            
             data = request.get_json()
             group_id = data.get('group_id')
             comment = data.get('comment', '')
             
             if not group_id:
                 return jsonify({'error': 'group_id is required'}), 400
+
+            approval, user_id, _user_roles, user_email, user_name = _get_authorized_route_approval(
+                approval_id,
+                group_id,
+                require_approval_rights=True,
+            )
             
             # Approve the request
             approval = approve_request(
@@ -6212,7 +6240,8 @@ def register_route_backend_control_center(app):
                 approver_id=user_id,
                 approver_email=user_email,
                 approver_name=user_name,
-                comment=comment
+                comment=comment,
+                approval=approval,
             )
             
             # Execute the approved action
@@ -6224,6 +6253,10 @@ def register_route_backend_control_center(app):
                 'approval': approval,
                 'execution_result': execution_result
             }), 200
+        except LookupError:
+            return jsonify({'error': 'Approval not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You are not eligible to approve this request'}), 403
             
         except Exception as e:
             debug_print(f"Error approving request: {e}")
@@ -6241,11 +6274,6 @@ def register_route_backend_control_center(app):
             comment (str): Reason for denial (required)
         """
         try:
-            user = session.get('user', {})
-            user_id = user.get('oid') or user.get('sub')
-            user_email = user.get('preferred_username', user.get('email', 'unknown'))
-            user_name = user.get('name', user_email)
-            
             data = request.get_json()
             group_id = data.get('group_id')
             comment = data.get('comment', '')
@@ -6255,6 +6283,12 @@ def register_route_backend_control_center(app):
             
             if not comment:
                 return jsonify({'error': 'comment is required for denial'}), 400
+
+            approval, user_id, _user_roles, user_email, user_name = _get_authorized_route_approval(
+                approval_id,
+                group_id,
+                require_approval_rights=True,
+            )
             
             # Deny the request
             approval = deny_request(
@@ -6264,7 +6298,8 @@ def register_route_backend_control_center(app):
                 denier_email=user_email,
                 denier_name=user_name,
                 comment=comment,
-                auto_denied=False
+                auto_denied=False,
+                approval=approval,
             )
             
             return jsonify({
@@ -6272,6 +6307,10 @@ def register_route_backend_control_center(app):
                 'message': 'Request denied',
                 'approval': approval
             }), 200
+        except LookupError:
+            return jsonify({'error': 'Approval not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You are not eligible to deny this request'}), 403
             
         except Exception as e:
             debug_print(f"Error denying request: {e}")

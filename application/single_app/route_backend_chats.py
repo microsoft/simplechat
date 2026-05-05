@@ -218,6 +218,235 @@ def build_fact_memory_citation(query_text, matched_facts, search_mode):
     }
 
 
+def _normalize_requested_scope_ids(*scope_values):
+    """Normalize single-value and list-based scope ids into a de-duplicated list."""
+    normalized_values = []
+    for scope_value in scope_values:
+        if scope_value is None:
+            continue
+
+        if isinstance(scope_value, (list, tuple, set)):
+            candidates = list(scope_value)
+        else:
+            candidates = [scope_value]
+
+        for candidate in candidates:
+            normalized_candidate = str(candidate or '').strip()
+            if not normalized_candidate or normalized_candidate in normalized_values:
+                continue
+            normalized_values.append(normalized_candidate)
+
+    return normalized_values
+
+
+def _get_authorized_chat_scope_context(
+    user_id,
+    active_group_id=None,
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    active_public_workspace_ids=None,
+):
+    """Filter request-provided chat scopes down to the caller's current access."""
+    requested_group_ids = _normalize_requested_scope_ids(active_group_ids, active_group_id)
+    allowed_group_ids = []
+    for group_id in requested_group_ids:
+        group_doc = find_group_by_id(group_id)
+        if group_doc and get_user_role_in_group(group_doc, user_id):
+            allowed_group_ids.append(group_id)
+
+    requested_public_workspace_ids = _normalize_requested_scope_ids(
+        active_public_workspace_ids,
+        active_public_workspace_id,
+    )
+    visible_public_workspace_ids = set(
+        _normalize_requested_scope_ids(get_user_visible_public_workspace_ids_from_settings(user_id) or [])
+    )
+    allowed_public_workspace_ids = [
+        workspace_id
+        for workspace_id in requested_public_workspace_ids
+        if workspace_id in visible_public_workspace_ids
+    ]
+
+    return {
+        'active_group_ids': allowed_group_ids,
+        'active_group_id': allowed_group_ids[0] if allowed_group_ids else None,
+        'active_public_workspace_ids': allowed_public_workspace_ids,
+        'active_public_workspace_id': (
+            allowed_public_workspace_ids[0] if allowed_public_workspace_ids else None
+        ),
+    }
+
+
+def _set_authorized_chat_request_context(user_id, conversation_id, scope_context):
+    """Persist the canonical request authorization context for downstream plugin checks."""
+    authorized_context = {
+        'user_id': user_id,
+        'conversation_id': conversation_id,
+        'active_group_ids': list(scope_context.get('active_group_ids') or []),
+        'active_group_id': scope_context.get('active_group_id'),
+        'active_public_workspace_ids': list(scope_context.get('active_public_workspace_ids') or []),
+        'active_public_workspace_id': scope_context.get('active_public_workspace_id'),
+    }
+    authorized_context['fact_memory_scope_id'] = authorized_context['active_group_id'] or user_id
+    authorized_context['fact_memory_scope_type'] = (
+        'group' if authorized_context['active_group_id'] else 'user'
+    )
+
+    g.conversation_id = conversation_id
+    g.authorized_chat_context = authorized_context
+    return authorized_context
+
+
+def _resolve_chat_selected_document_metadata(document_id, user_id=None, document_scope='personal',
+                                            active_group_id=None, active_group_ids=None,
+                                            active_public_workspace_id=None,
+                                            active_public_workspace_ids=None):
+    """Resolve selected-document metadata using the authorized chat scope model."""
+    normalized_document_id = str(document_id or '').strip()
+    if not normalized_document_id or normalized_document_id == 'all':
+        return None
+
+    normalized_scope = str(document_scope or 'personal').strip().lower()
+    authorized_group_ids = _normalize_requested_scope_ids(active_group_ids, active_group_id)
+    authorized_public_workspace_ids = _normalize_requested_scope_ids(
+        active_public_workspace_ids,
+        active_public_workspace_id,
+    )
+
+    resolution_queries = []
+
+    if normalized_scope in {'personal', 'workspace', 'all'} and user_id:
+        resolution_queries.append({
+            'source_hint': 'workspace',
+            'cosmos_container': cosmos_user_documents_container,
+            'query': """
+                SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id
+                FROM c
+                WHERE c.id = @doc_id
+                    AND (
+                        c.user_id = @user_id
+                        OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                        OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
+                    )
+                ORDER BY c.version DESC
+            """,
+            'parameters': [
+                {'name': '@doc_id', 'value': normalized_document_id},
+                {'name': '@user_id', 'value': user_id},
+                {'name': '@user_id_prefix', 'value': f"{user_id},"},
+            ],
+        })
+
+    if normalized_scope in {'group', 'all'}:
+        for group_id in authorized_group_ids:
+            resolution_queries.append({
+                'source_hint': 'group',
+                'cosmos_container': cosmos_group_documents_container,
+                'query': """
+                    SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id
+                    FROM c
+                    WHERE c.id = @doc_id
+                        AND (
+                            c.group_id = @group_id
+                            OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                            OR ARRAY_CONTAINS(c.shared_group_ids, @group_id_approved)
+                        )
+                    ORDER BY c.version DESC
+                """,
+                'parameters': [
+                    {'name': '@doc_id', 'value': normalized_document_id},
+                    {'name': '@group_id', 'value': group_id},
+                    {'name': '@group_id_approved', 'value': f"{group_id},approved"},
+                ],
+            })
+
+    if normalized_scope in {'public', 'all'}:
+        for public_workspace_id in authorized_public_workspace_ids:
+            resolution_queries.append({
+                'source_hint': 'public',
+                'cosmos_container': cosmos_public_documents_container,
+                'query': """
+                    SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id
+                    FROM c
+                    WHERE c.id = @doc_id
+                        AND c.public_workspace_id = @public_workspace_id
+                    ORDER BY c.version DESC
+                """,
+                'parameters': [
+                    {'name': '@doc_id', 'value': normalized_document_id},
+                    {'name': '@public_workspace_id', 'value': public_workspace_id},
+                ],
+            })
+
+    for resolution_query in resolution_queries:
+        doc_results = list(resolution_query['cosmos_container'].query_items(
+            query=resolution_query['query'],
+            parameters=resolution_query['parameters'],
+            enable_cross_partition_query=True,
+        ))
+        if not doc_results:
+            continue
+
+        doc_info = dict(doc_results[0])
+        doc_info['source_hint'] = resolution_query['source_hint']
+        return doc_info
+
+    return None
+
+
+def _create_personal_conversation(user_id, conversation_id=None):
+    """Create and persist a new personal conversation owned by the current user."""
+    resolved_conversation_id = str(conversation_id or uuid.uuid4())
+    conversation_item = {
+        'id': resolved_conversation_id,
+        'user_id': user_id,
+        'last_updated': datetime.utcnow().isoformat(),
+        'title': 'New Conversation',
+        'context': [],
+        'tags': [],
+        'strict': False,
+        'chat_type': 'new'
+    }
+    cosmos_conversations_container.upsert_item(conversation_item)
+
+    log_conversation_creation(
+        user_id=user_id,
+        conversation_id=resolved_conversation_id,
+        title='New Conversation',
+        workspace_type='personal'
+    )
+
+    conversation_item['added_to_activity_log'] = True
+    cosmos_conversations_container.upsert_item(conversation_item)
+    return conversation_item
+
+
+def _authorize_personal_conversation_access(user_id, conversation_id):
+    """Load a personal conversation and ensure the caller owns it."""
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError(f"Conversation {conversation_id} not found") from exc
+
+    if conversation_item.get('user_id') != user_id:
+        raise PermissionError('You can only access your own conversations')
+
+    return conversation_item
+
+
+def _resolve_or_create_authorized_personal_conversation(user_id, conversation_id):
+    """Create new personal conversations server-side or load an authorized existing one."""
+    if not conversation_id:
+        conversation_item = _create_personal_conversation(user_id)
+        return conversation_item, conversation_item['id']
+
+    conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
+    return conversation_item, conversation_id
+
+
 def build_instruction_memory_payload(
     scope_id,
     scope_type,
@@ -5127,8 +5356,10 @@ def infer_tabular_source_context_from_document(source_doc, document_scope='perso
 
 
 def get_selected_workspace_tabular_file_contexts(selected_document_ids=None, selected_document_id=None,
-                                                 document_scope='personal', active_group_id=None,
-                                                 active_public_workspace_id=None):
+                                                 document_scope='personal', user_id=None,
+                                                 active_group_id=None, active_group_ids=None,
+                                                 active_public_workspace_id=None,
+                                                 active_public_workspace_ids=None):
     """Resolve explicitly selected workspace documents and return tabular source contexts."""
     selected_ids = list(selected_document_ids or [])
     if not selected_ids and selected_document_id and selected_document_id != 'all':
@@ -5144,33 +5375,26 @@ def get_selected_workspace_tabular_file_contexts(selected_document_ids=None, sel
             continue
 
         try:
-            doc_query = (
-                "SELECT TOP 1 c.file_name, c.title, c.group_id, c.public_workspace_id "
-                "FROM c WHERE c.id = @doc_id "
-                "ORDER BY c.version DESC"
+            doc_info = _resolve_chat_selected_document_metadata(
+                doc_id,
+                user_id=user_id,
+                document_scope=document_scope,
+                active_group_id=active_group_id,
+                active_group_ids=active_group_ids,
+                active_public_workspace_id=active_public_workspace_id,
+                active_public_workspace_ids=active_public_workspace_ids,
             )
-            doc_params = [{"name": "@doc_id", "value": doc_id}]
+            if not doc_info:
+                continue
 
-            for source_hint, cosmos_container in get_document_containers_for_scope(document_scope):
-                doc_results = list(cosmos_container.query_items(
-                    query=doc_query,
-                    parameters=doc_params,
-                    enable_cross_partition_query=True
-                ))
-
-                if not doc_results:
-                    continue
-
-                doc_info = doc_results[0]
-                file_context = build_tabular_file_context(
-                    doc_info.get('file_name') or doc_info.get('title'),
-                    source_hint=source_hint,
-                    group_id=doc_info.get('group_id') or active_group_id,
-                    public_workspace_id=doc_info.get('public_workspace_id') or active_public_workspace_id,
-                )
-                if file_context:
-                    tabular_file_contexts.append(file_context)
-                break
+            file_context = build_tabular_file_context(
+                doc_info.get('file_name') or doc_info.get('title'),
+                source_hint=doc_info.get('source_hint', 'workspace'),
+                group_id=doc_info.get('group_id') or active_group_id,
+                public_workspace_id=doc_info.get('public_workspace_id') or active_public_workspace_id,
+            )
+            if file_context:
+                tabular_file_contexts.append(file_context)
         except Exception as e:
             log_event(
                 f"[Tabular SK Analysis] Failed to resolve selected document '{doc_id}': {e}",
@@ -5182,7 +5406,10 @@ def get_selected_workspace_tabular_file_contexts(selected_document_ids=None, sel
 
 def collect_workspace_tabular_file_contexts(combined_documents=None, selected_document_ids=None,
                                             selected_document_id=None, document_scope='personal',
-                                            active_group_id=None, active_public_workspace_id=None):
+                                            user_id=None, active_group_id=None,
+                                            active_group_ids=None,
+                                            active_public_workspace_id=None,
+                                            active_public_workspace_ids=None):
     """Collect tabular source contexts from search results and explicit workspace selection."""
     tabular_file_contexts = []
 
@@ -5200,8 +5427,11 @@ def collect_workspace_tabular_file_contexts(combined_documents=None, selected_do
         selected_document_ids=selected_document_ids,
         selected_document_id=selected_document_id,
         document_scope=document_scope,
+        user_id=user_id,
         active_group_id=active_group_id,
+        active_group_ids=active_group_ids,
         active_public_workspace_id=active_public_workspace_id,
+        active_public_workspace_ids=active_public_workspace_ids,
     ))
 
     return dedupe_tabular_file_contexts(tabular_file_contexts)
@@ -5209,15 +5439,21 @@ def collect_workspace_tabular_file_contexts(combined_documents=None, selected_do
 
 def collect_workspace_tabular_filenames(combined_documents=None, selected_document_ids=None,
                                         selected_document_id=None, document_scope='personal',
-                                        active_group_id=None, active_public_workspace_id=None):
+                                        user_id=None, active_group_id=None,
+                                        active_group_ids=None,
+                                        active_public_workspace_id=None,
+                                        active_public_workspace_ids=None):
     """Collect unique tabular filenames from search results and explicit workspace selection."""
     tabular_file_contexts = collect_workspace_tabular_file_contexts(
         combined_documents=combined_documents,
         selected_document_ids=selected_document_ids,
         selected_document_id=selected_document_id,
         document_scope=document_scope,
+        user_id=user_id,
         active_group_id=active_group_id,
+        active_group_ids=active_group_ids,
         active_public_workspace_id=active_public_workspace_id,
+        active_public_workspace_ids=active_public_workspace_ids,
     )
     return {file_context['file_name'] for file_context in tabular_file_contexts}
 
@@ -6031,22 +6267,19 @@ def register_route_backend_chats(app):
 
             active_group_id = data.get('active_group_id')
             active_group_ids = data.get('active_group_ids', [])
-            # Backwards compat: if new list not provided, wrap single ID
-            if not active_group_ids and active_group_id:
-                active_group_ids = [active_group_id]
-            # Permission validation: only keep groups user is a member of
-            validated_group_ids = []
-            for gid in active_group_ids:
-                g_doc = find_group_by_id(gid)
-                if g_doc and get_user_role_in_group(g_doc, user_id):
-                    validated_group_ids.append(gid)
-            active_group_ids = validated_group_ids
-            # Keep single ID for backwards compat in metadata/context
-            active_group_id = active_group_ids[0] if active_group_ids else data.get('active_group_id')
             active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
             active_public_workspace_ids = data.get('active_public_workspace_ids', [])
-            if not active_public_workspace_ids and active_public_workspace_id:
-                active_public_workspace_ids = [active_public_workspace_id]
+            scope_context = _get_authorized_chat_scope_context(
+                user_id,
+                active_group_id=active_group_id,
+                active_group_ids=active_group_ids,
+                active_public_workspace_id=active_public_workspace_id,
+                active_public_workspace_ids=active_public_workspace_ids,
+            )
+            active_group_ids = scope_context['active_group_ids']
+            active_group_id = scope_context['active_group_id']
+            active_public_workspace_ids = scope_context['active_public_workspace_ids']
+            active_public_workspace_id = scope_context['active_public_workspace_id']
             frontend_gpt_model = data.get('model_deployment')
             top_n_results = data.get('top_n')  # Extract top_n parameter from request
             classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
@@ -6064,20 +6297,12 @@ def register_route_backend_chats(app):
                 operation_type = 'Edit' if is_edit else 'Retry'
                 debug_print(f"🔍 Chat API - {operation_type} detected! user_message_id={retry_user_message_id}, thread_id={retry_thread_id}, attempt={retry_thread_attempt}")
             
-            # Store conversation_id in Flask context for plugin logger access
-            g.conversation_id = conversation_id
-            
-            # Clear plugin invocations at start of message processing to ensure
-            # each message only shows citations for tools executed during that specific interaction
-            from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
-            plugin_logger = get_plugin_logger()
-            plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
-            
             # Validate chat_type
             if chat_type not in ('user', 'group'):
                 chat_type = 'user'
                 
             search_query = user_message # <--- ADD THIS LINE (Initialize search_query)
+            web_search_query_text = build_web_search_query_text(user_message)
             hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
             web_search_citations_list = []
@@ -6236,65 +6461,25 @@ def register_route_backend_chats(app):
             # ---------------------------------------------------------------------
             # 1) Load or create conversation
             # ---------------------------------------------------------------------
-            if not conversation_id:
-                conversation_id = str(uuid.uuid4())
-                conversation_item = {
-                    'id': conversation_id,
-                    'user_id': user_id,
-                    'last_updated': datetime.utcnow().isoformat(),
-                    'title': 'New Conversation',
-                    'context': [],
-                    'tags': [],
-                    'strict': False,
-                    'chat_type': 'new'
-                }
-                cosmos_conversations_container.upsert_item(conversation_item)
-                
-                # Log conversation creation
-                log_conversation_creation(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    title='New Conversation',
-                    workspace_type='personal'
+            try:
+                conversation_item, conversation_id = _resolve_or_create_authorized_personal_conversation(
+                    user_id,
+                    conversation_id,
                 )
-                
-                # Mark as logged to activity logs to prevent duplicate migration
-                conversation_item['added_to_activity_log'] = True
-                cosmos_conversations_container.upsert_item(conversation_item)
-            else:
-                try:
-                    conversation_item = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
-                except CosmosResourceNotFoundError:
-                    # If conversation ID is provided but not found, create a new one with that ID
-                    # Or decide if you want to return an error instead
-                    conversation_item = {
-                        'id': conversation_id, # Keep the provided ID if needed for linking
-                        'user_id': user_id,
-                        'last_updated': datetime.utcnow().isoformat(),
-                        'title': 'New Conversation', # Or maybe fetch title differently?
-                        'context': [],
-                        'tags': [],
-                        'strict': False,
-                        'chat_type': 'new'
-                    }
-                    # Optionally log that a conversation was expected but not found
-                    debug_print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
-                    cosmos_conversations_container.upsert_item(conversation_item)
-                    
-                    # Log conversation creation
-                    log_conversation_creation(
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        title='New Conversation',
-                        workspace_type='personal'
-                    )
-                    
-                    # Mark as logged to activity logs to prevent duplicate migration
-                    conversation_item['added_to_activity_log'] = True
-                    cosmos_conversations_container.upsert_item(conversation_item)
-                except Exception as e:
-                    debug_print(f"Error reading conversation {conversation_id}: {e}")
-                    return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
+            except LookupError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError:
+                return jsonify({'error': 'Forbidden'}), 403
+            except Exception as e:
+                debug_print(f"Error reading conversation {conversation_id}: {e}")
+                return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
+
+            _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
+
+            # Clear plugin invocations at start of message processing to ensure
+            # each message only shows citations for tools executed during that specific interaction
+            plugin_logger = get_plugin_logger()
+            plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
 
             # Determine the actual chat context based on existing conversation or document usage
             # For existing conversations, use the chat_type from conversation metadata
@@ -6404,21 +6589,16 @@ def register_route_backend_chats(app):
                 # Get document details if specific document selected
                 if selected_document_id and selected_document_id != "all":
                     try:
-                        # Use the appropriate documents container based on scope
-                        if document_scope == 'group':
-                            cosmos_container = cosmos_group_documents_container
-                        elif document_scope == 'public':
-                            cosmos_container = cosmos_public_documents_container
-                        elif document_scope == 'personal':
-                            cosmos_container = cosmos_user_documents_container
-                        
-                        doc_query = "SELECT c.file_name, c.title, c.document_id, c.group_id FROM c WHERE c.id = @doc_id"
-                        doc_params = [{"name": "@doc_id", "value": selected_document_id}]
-                        doc_results = list(cosmos_container.query_items(
-                            query=doc_query, parameters=doc_params, enable_cross_partition_query=True
-                        ))
-                        if doc_results and 'workspace_search' in user_metadata:
-                            doc_info = doc_results[0]
+                        doc_info = _resolve_chat_selected_document_metadata(
+                            selected_document_id,
+                            user_id=user_id,
+                            document_scope=document_scope,
+                            active_group_id=active_group_id,
+                            active_group_ids=active_group_ids,
+                            active_public_workspace_id=active_public_workspace_id,
+                            active_public_workspace_ids=active_public_workspace_ids,
+                        )
+                        if doc_info and 'workspace_search' in user_metadata:
                             user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
                             user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
                     except Exception as e:
@@ -6802,7 +6982,11 @@ def register_route_backend_chats(app):
                         fallback_search_parameters = build_prior_grounded_document_search_parameters(
                             prior_grounded_document_refs
                         )
-                        if fallback_search_parameters.get('document_ids'):
+                        fallback_search_parameters = revalidate_prior_grounded_document_search_parameters(
+                            user_id,
+                            fallback_search_parameters,
+                        )
+                        if fallback_search_parameters.get('document_ids') and fallback_search_parameters.get('doc_scope'):
                             history_grounded_search_used = True
                             effective_document_scope = fallback_search_parameters.get('doc_scope') or 'all'
                             effective_selected_document_ids = list(
@@ -6889,6 +7073,7 @@ def register_route_backend_chats(app):
                             # Filter out inactive thread messages before summarizing
                             message_texts_search = []
                             for msg in last_messages_asc:
+                                role = msg.get('role', 'user')
                                 thread_info = msg.get('metadata', {}).get('thread_info', {})
                                 active_thread = thread_info.get('active_thread')
                                 
@@ -6896,8 +7081,15 @@ def register_route_backend_chats(app):
                                 if active_thread is False:
                                     debug_print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from search summary")
                                     continue
-                                    
-                                message_texts_search.append(f"{msg.get('role', 'user').upper()}: {msg.get('content', '')}")
+
+                                if role not in ('user', 'assistant'):
+                                    continue
+
+                                content = msg.get('content', '')
+                                if role == 'assistant':
+                                    content = build_assistant_history_content_with_citations(msg, content)
+
+                                message_texts_search.append(f"{role.upper()}: {content}")
                             
                             if not message_texts_search:
                                 # No active messages to summarize
@@ -7614,8 +7806,11 @@ def register_route_backend_chats(app):
                     selected_document_ids=effective_selected_document_ids,
                     selected_document_id=effective_selected_document_id,
                     document_scope=effective_document_scope,
+                    user_id=user_id,
                     active_group_id=effective_active_group_id,
+                    active_group_ids=effective_active_group_ids,
                     active_public_workspace_id=effective_active_public_workspace_id,
+                    active_public_workspace_ids=effective_active_public_workspace_ids,
                 )
                 workspace_tabular_files = {
                     file_context['file_name'] for file_context in workspace_tabular_file_contexts
@@ -7689,7 +7884,7 @@ def register_route_backend_chats(app):
                     )
 
             if web_search_enabled:
-                thought_tracker.add_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
+                thought_tracker.add_thought('web_search', f"Searching the web for '{web_search_query_text[:50]}'")
                 perform_web_search(
                     settings=settings,
                     conversation_id=conversation_id,
@@ -7700,7 +7895,7 @@ def register_route_backend_chats(app):
                     document_scope=document_scope,
                     active_group_id=active_group_id,
                     active_public_workspace_id=active_public_workspace_id,
-                    search_query=search_query,
+                    web_search_query_text=web_search_query_text,
                     system_messages_for_augmentation=system_messages_for_augmentation,
                     agent_citations_list=agent_citations_list,
                     web_search_citations_list=web_search_citations_list,
@@ -8906,9 +9101,32 @@ def register_route_backend_chats(app):
 
         compatibility_mode = bool(data.get('image_generation')) or is_retry
         requested_conversation_id = str(data.get('conversation_id') or '').strip() or None
+
+        if requested_conversation_id:
+            try:
+                _authorize_personal_conversation_access(user_id, requested_conversation_id)
+            except LookupError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError:
+                return jsonify({'error': 'Forbidden'}), 403
+            except Exception as exc:
+                debug_print(f"[Streaming] Error authorizing conversation {requested_conversation_id}: {exc}")
+                return jsonify({'error': 'Failed to authorize conversation'}), 500
+
+        initial_scope_context = _get_authorized_chat_scope_context(
+            user_id,
+            active_group_id=data.get('active_group_id'),
+            active_group_ids=data.get('active_group_ids', []),
+            active_public_workspace_id=data.get('active_public_workspace_id'),
+            active_public_workspace_ids=data.get('active_public_workspace_ids', []),
+        )
         finalized_conversation_id = requested_conversation_id or str(uuid.uuid4())
         is_new_stream_conversation = requested_conversation_id is None
         data['conversation_id'] = finalized_conversation_id
+        data['active_group_ids'] = list(initial_scope_context['active_group_ids'])
+        data['active_group_id'] = initial_scope_context['active_group_id']
+        data['active_public_workspace_ids'] = list(initial_scope_context['active_public_workspace_ids'])
+        data['active_public_workspace_id'] = initial_scope_context['active_public_workspace_id']
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
 
         request_message = (data.get('message') or '').strip()
@@ -9047,22 +9265,19 @@ def register_route_backend_chats(app):
                 tags_filter = data.get('tags', [])  # Extract tags filter
                 active_group_id = data.get('active_group_id')
                 active_group_ids = data.get('active_group_ids', [])
-                # Backwards compat: if new list not provided, wrap single ID
-                if not active_group_ids and active_group_id:
-                    active_group_ids = [active_group_id]
-                # Permission validation: only keep groups user is a member of
-                validated_group_ids = []
-                for gid in active_group_ids:
-                    g_doc = find_group_by_id(gid)
-                    if g_doc and get_user_role_in_group(g_doc, user_id):
-                        validated_group_ids.append(gid)
-                active_group_ids = validated_group_ids
-                # Keep single ID for backwards compat in metadata/context
-                active_group_id = active_group_ids[0] if active_group_ids else data.get('active_group_id')
                 active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
                 active_public_workspace_ids = data.get('active_public_workspace_ids', [])
-                if not active_public_workspace_ids and active_public_workspace_id:
-                    active_public_workspace_ids = [active_public_workspace_id]
+                scope_context = _get_authorized_chat_scope_context(
+                    user_id,
+                    active_group_id=active_group_id,
+                    active_group_ids=active_group_ids,
+                    active_public_workspace_id=active_public_workspace_id,
+                    active_public_workspace_ids=active_public_workspace_ids,
+                )
+                active_group_ids = scope_context['active_group_ids']
+                active_group_id = scope_context['active_group_id']
+                active_public_workspace_ids = scope_context['active_public_workspace_ids']
+                active_public_workspace_id = scope_context['active_public_workspace_id']
                 frontend_gpt_model = data.get('model_deployment')
                 frontend_model_id = data.get('model_id')
                 frontend_model_endpoint_id = data.get('model_endpoint_id')
@@ -9156,11 +9371,9 @@ def register_route_backend_chats(app):
                     yield f"data: {json.dumps({'error': 'Image generation is not supported in streaming mode'})}\n\n"
                     return
                 
-                # Initialize Flask context
-                g.conversation_id = conversation_id
+                _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
                 
                 # Clear plugin invocations
-                from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
                 plugin_logger = get_plugin_logger()
                 plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
                 debug_print(
@@ -9175,6 +9388,7 @@ def register_route_backend_chats(app):
                 
                 # Initialize variables
                 search_query = user_message
+                web_search_query_text = build_web_search_query_text(user_message)
                 hybrid_citations_list = []
                 agent_citations_list = []
                 web_search_citations_list = []
@@ -9323,37 +9537,18 @@ def register_route_backend_chats(app):
                 
                 # Load or create conversation (simplified)
                 if is_new_stream_conversation:
-                    conversation_item = {
-                        'id': conversation_id,
-                        'user_id': user_id,
-                        'last_updated': datetime.utcnow().isoformat(),
-                        'title': 'New Conversation',
-                        'context': [],
-                        'tags': [],
-                        'strict': False,
-                        'chat_type': 'new'
-                    }
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    conversation_item = _create_personal_conversation(user_id, conversation_id=conversation_id)
                     debug_print(f"[Streaming] Created new conversation {conversation_id}")
                 else:
                     try:
-                        conversation_item = cosmos_conversations_container.read_item(
-                            item=conversation_id, partition_key=conversation_id
-                        )
+                        conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
                         debug_print(f"[Streaming] Loaded existing conversation {conversation_id}")
-                    except CosmosResourceNotFoundError:
-                        conversation_item = {
-                            'id': conversation_id,
-                            'user_id': user_id,
-                            'last_updated': datetime.utcnow().isoformat(),
-                            'title': 'New Conversation',
-                            'context': [],
-                            'tags': [],
-                            'strict': False,
-                            'chat_type': 'new'
-                        }
-                        cosmos_conversations_container.upsert_item(conversation_item)
-                        debug_print(f"[Streaming] Conversation {conversation_id} not found; created replacement")
+                    except LookupError:
+                        yield f"data: {json.dumps({'error': 'Conversation not found'})}\n\n"
+                        return
+                    except PermissionError:
+                        yield f"data: {json.dumps({'error': 'Forbidden'})}\n\n"
+                        return
                 
                 # Determine chat type
                 actual_chat_type = 'personal_single_user'
@@ -9402,21 +9597,16 @@ def register_route_backend_chats(app):
                     # Get document details if specific document selected
                     if selected_document_id and selected_document_id != "all":
                         try:
-                            # Use the appropriate documents container based on scope
-                            if document_scope == 'group':
-                                cosmos_container = cosmos_group_documents_container
-                            elif document_scope == 'public':
-                                cosmos_container = cosmos_public_documents_container
-                            elif document_scope == 'personal':
-                                cosmos_container = cosmos_user_documents_container
-                            
-                            doc_query = "SELECT c.file_name, c.title, c.document_id, c.group_id FROM c WHERE c.id = @doc_id"
-                            doc_params = [{"name": "@doc_id", "value": selected_document_id}]
-                            doc_results = list(cosmos_container.query_items(
-                                query=doc_query, parameters=doc_params, enable_cross_partition_query=True
-                            ))
-                            if doc_results:
-                                doc_info = doc_results[0]
+                            doc_info = _resolve_chat_selected_document_metadata(
+                                selected_document_id,
+                                user_id=user_id,
+                                document_scope=document_scope,
+                                active_group_id=active_group_id,
+                                active_group_ids=active_group_ids,
+                                active_public_workspace_id=active_public_workspace_id,
+                                active_public_workspace_ids=active_public_workspace_ids,
+                            )
+                            if doc_info:
                                 user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
                                 user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
                         except Exception as e:
@@ -9744,7 +9934,11 @@ def register_route_backend_chats(app):
                             fallback_search_parameters = build_prior_grounded_document_search_parameters(
                                 prior_grounded_document_refs
                             )
-                            if fallback_search_parameters.get('document_ids'):
+                            fallback_search_parameters = revalidate_prior_grounded_document_search_parameters(
+                                user_id,
+                                fallback_search_parameters,
+                            )
+                            if fallback_search_parameters.get('document_ids') and fallback_search_parameters.get('doc_scope'):
                                 history_grounded_search_used = True
                                 effective_document_scope = fallback_search_parameters.get('doc_scope') or 'all'
                                 effective_selected_document_ids = list(
@@ -10072,8 +10266,11 @@ def register_route_backend_chats(app):
                         selected_document_ids=effective_selected_document_ids,
                         selected_document_id=effective_selected_document_id,
                         document_scope=effective_document_scope,
+                        user_id=user_id,
                         active_group_id=effective_active_group_id,
+                        active_group_ids=effective_active_group_ids,
                         active_public_workspace_id=effective_active_public_workspace_id,
+                        active_public_workspace_ids=effective_active_public_workspace_ids,
                     )
                     workspace_tabular_files = {
                         file_context['file_name'] for file_context in workspace_tabular_file_contexts
@@ -10160,7 +10357,7 @@ def register_route_backend_chats(app):
                     debug_print(
                         f"[Streaming] Starting web search augmentation for conversation_id={conversation_id}"
                     )
-                    yield emit_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
+                    yield emit_thought('web_search', f"Searching the web for '{web_search_query_text[:50]}'")
                     perform_web_search(
                         settings=settings,
                         conversation_id=conversation_id,
@@ -10171,7 +10368,7 @@ def register_route_backend_chats(app):
                         document_scope=document_scope,
                         active_group_id=active_group_id,
                         active_public_workspace_id=active_public_workspace_id,
-                        search_query=search_query,
+                        web_search_query_text=web_search_query_text,
                         system_messages_for_augmentation=system_messages_for_augmentation,
                         agent_citations_list=agent_citations_list,
                         web_search_citations_list=web_search_citations_list,
@@ -11102,7 +11299,13 @@ def register_route_backend_chats(app):
             # Get action: "mask_all", "mask_selection", or "unmask_all"
             action = data.get('action')
             selection = data.get('selection', {})
-            user_display_name = data.get('display_name', 'Unknown User')
+            current_user = get_current_user_info() or {}
+            user_display_name = (
+                current_user.get('displayName')
+                or current_user.get('email')
+                or current_user.get('userPrincipalName')
+                or 'Unknown User'
+            )
             
             # Validate action
             if action not in ['mask_all', 'mask_selection', 'unmask_all']:
@@ -11686,6 +11889,43 @@ def build_prior_grounded_document_search_parameters(grounded_refs):
         'active_public_workspace_id': public_workspace_ids[0] if public_workspace_ids else None,
         'scope_types': sorted(scope_types),
     }
+
+
+def revalidate_prior_grounded_document_search_parameters(user_id, search_parameters):
+    """Filter fallback search parameters to scopes the caller can still access."""
+    normalized_parameters = dict(search_parameters or {})
+    scope_types = set(normalized_parameters.get('scope_types') or [])
+    scope_context = _get_authorized_chat_scope_context(
+        user_id,
+        active_group_ids=normalized_parameters.get('active_group_ids') or [],
+        active_public_workspace_ids=normalized_parameters.get('active_public_workspace_ids') or [],
+    )
+    allowed_group_ids = scope_context['active_group_ids']
+    allowed_public_workspace_ids = scope_context['active_public_workspace_ids']
+
+    allowed_scope_types = []
+    if 'personal' in scope_types:
+        allowed_scope_types.append('personal')
+    if allowed_group_ids:
+        allowed_scope_types.append('group')
+    if allowed_public_workspace_ids:
+        allowed_scope_types.append('public')
+
+    normalized_parameters['active_group_ids'] = allowed_group_ids
+    normalized_parameters['active_group_id'] = scope_context['active_group_id']
+    normalized_parameters['active_public_workspace_ids'] = allowed_public_workspace_ids
+    normalized_parameters['active_public_workspace_id'] = scope_context['active_public_workspace_id']
+    normalized_parameters['scope_types'] = allowed_scope_types
+
+    if not allowed_scope_types:
+        normalized_parameters['document_ids'] = []
+        normalized_parameters['doc_scope'] = None
+        return normalized_parameters
+
+    normalized_parameters['doc_scope'] = (
+        allowed_scope_types[0] if len(allowed_scope_types) == 1 else 'all'
+    )
+    return normalized_parameters
 
 
 def build_history_only_assessment_messages(history_segments, default_system_prompt=''):
@@ -12294,6 +12534,11 @@ def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, in
         "completion_tokens": int(completion_tokens),
     }
 
+
+def build_web_search_query_text(user_message):
+    """Return the only chat content allowed to leave the app for external web search."""
+    return str(user_message or "").strip()
+
 def perform_web_search(
     *,
     settings,
@@ -12305,7 +12550,7 @@ def perform_web_search(
     document_scope,
     active_group_id,
     active_public_workspace_id,
-    search_query,
+    web_search_query_text,
     system_messages_for_augmentation,
     agent_citations_list,
     web_search_citations_list,
@@ -12320,7 +12565,10 @@ def perform_web_search(
     debug_print(f"[WebSearch]   document_scope: {document_scope}")
     debug_print(f"[WebSearch]   active_group_id: {active_group_id}")
     debug_print(f"[WebSearch]   active_public_workspace_id: {active_public_workspace_id}")
-    debug_print(f"[WebSearch]   search_query: {search_query[:100] if search_query else None}...")
+    debug_print(
+        "[WebSearch]   web_search_query_text: "
+        f"{web_search_query_text[:100] if web_search_query_text else None}..."
+    )
     
     enable_web_search = settings.get("enable_web_search")
     debug_print(f"[WebSearch] enable_web_search setting: {enable_web_search}")
@@ -12328,15 +12576,13 @@ def perform_web_search(
     if not enable_web_search:
         debug_print("[WebSearch] Web search is DISABLED in settings, returning early")
         return True  # Not an error, just disabled
-
-    debug_print("[WebSearch] Web search is ENABLED, proceeding...")
     
     web_search_agent = settings.get("web_search_agent") or {}
     debug_print(f"[WebSearch] web_search_agent config present: {bool(web_search_agent)}")
     if web_search_agent:
         # Avoid logging sensitive data, just log structure
         debug_print(f"[WebSearch]   web_search_agent keys: {list(web_search_agent.keys())}")
-    
+
     other_settings = web_search_agent.get("other_settings") or {}
     debug_print(f"[WebSearch] other_settings keys: {list(other_settings.keys()) if other_settings else '<empty>'}")
     
@@ -12369,16 +12615,8 @@ def perform_web_search(
         return False  # Configuration error
 
     debug_print(f"[WebSearch] Agent ID is configured: {agent_id}")
-    
-    query_text = None
-    try:
-        query_text = search_query
-        debug_print(f"[WebSearch] Using search_query as query_text: {query_text[:100] if query_text else None}...")
-    except NameError:
-        query_text = None
-        debug_print("[WebSearch] search_query not defined, query_text is None")
 
-    query_text = (query_text or user_message or "").strip()
+    query_text = (web_search_query_text or user_message or "").strip()
     debug_print(f"[WebSearch] Final query_text after fallback: '{query_text[:100] if query_text else ''}'")
     
     if not query_text:
@@ -12400,17 +12638,8 @@ def perform_web_search(
     debug_print(f"[WebSearch] Message history created with {len(message_history)} message(s)")
 
     try:
-        foundry_metadata = {
-            "conversation_id": conversation_id,
-            "user_id": user_id,
-            "message_id": user_message_id,
-            "chat_type": chat_type,
-            "document_scope": document_scope,
-            "group_id": active_group_id if chat_type == "group" else None,
-            "public_workspace_id": active_public_workspace_id,
-            "search_query": query_text,
-        }
-        debug_print(f"[WebSearch] Foundry metadata prepared: {json.dumps(foundry_metadata, default=str)}")
+        foundry_metadata = {}
+        debug_print("[WebSearch] Foundry metadata prepared: {}")
         
         debug_print("[WebSearch] Calling execute_foundry_agent...")
         debug_print(f"[WebSearch]   foundry_settings keys: {list(foundry_settings.keys())}")

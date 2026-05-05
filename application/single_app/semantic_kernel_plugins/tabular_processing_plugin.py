@@ -15,11 +15,15 @@ import logging
 import re
 import warnings
 import pandas
+from flask import g, has_request_context
 from typing import Annotated, Dict, List, Optional, Set
 from urllib.parse import urlsplit, urlunsplit
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from functions_appinsights import log_event
+from functions_authentication import get_current_user_id
+from functions_group import find_group_by_id, get_user_role_in_group
+from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from config import (
     CLIENTS,
     TABULAR_EXTENSIONS,
@@ -186,6 +190,179 @@ class TabularProcessingPlugin:
         if not client:
             raise RuntimeError("Blob storage client not available. Enhanced citations must be enabled.")
         return client
+
+    def _get_authorized_chat_context(self) -> dict:
+        """Return the canonical request-scoped authorization context for tabular access."""
+        if not has_request_context():
+            raise PermissionError('Tabular processing requires an active request context.')
+
+        current_user_id = str(get_current_user_id() or '').strip()
+        if not current_user_id:
+            raise PermissionError('User not authenticated.')
+
+        authorized_context = dict(getattr(g, 'authorized_chat_context', {}) or {})
+        authorized_user_id = str(authorized_context.get('user_id') or current_user_id).strip()
+        if authorized_user_id != current_user_id:
+            authorized_user_id = current_user_id
+
+        authorized_conversation_id = str(
+            authorized_context.get('conversation_id') or getattr(g, 'conversation_id', '') or ''
+        ).strip()
+        if not authorized_conversation_id:
+            raise PermissionError('Conversation context unavailable for tabular processing.')
+
+        active_group_ids = [
+            str(group_id or '').strip()
+            for group_id in (authorized_context.get('active_group_ids') or [])
+            if str(group_id or '').strip()
+        ]
+        active_public_workspace_ids = [
+            str(workspace_id or '').strip()
+            for workspace_id in (authorized_context.get('active_public_workspace_ids') or [])
+            if str(workspace_id or '').strip()
+        ]
+
+        return {
+            'user_id': authorized_user_id,
+            'conversation_id': authorized_conversation_id,
+            'active_group_ids': active_group_ids,
+            'active_group_id': str(authorized_context.get('active_group_id') or '').strip() or None,
+            'active_public_workspace_ids': active_public_workspace_ids,
+            'active_public_workspace_id': (
+                str(authorized_context.get('active_public_workspace_id') or '').strip() or None
+            ),
+        }
+
+    def _resolve_authorized_scope_arguments(
+        self,
+        user_id: str,
+        conversation_id: str,
+        group_id: Optional[str] = None,
+        public_workspace_id: Optional[str] = None,
+    ) -> dict:
+        """Normalize tool-call scope arguments against the current authorized request context."""
+        authorized_context = self._get_authorized_chat_context()
+        requested_user_id = str(user_id or '').strip()
+        requested_conversation_id = str(conversation_id or '').strip()
+        requested_group_id = str(group_id or '').strip()
+        requested_public_workspace_id = str(public_workspace_id or '').strip()
+
+        if requested_user_id and requested_user_id != authorized_context['user_id']:
+            log_event(
+                '[TabularProcessingPlugin] Ignoring mismatched user_id in tool call.',
+                extra={
+                    'requested_user_id': requested_user_id,
+                    'authorized_user_id': authorized_context['user_id'],
+                },
+                level=logging.WARNING,
+            )
+
+        if requested_conversation_id and requested_conversation_id != authorized_context['conversation_id']:
+            log_event(
+                '[TabularProcessingPlugin] Ignoring mismatched conversation_id in tool call.',
+                extra={
+                    'requested_conversation_id': requested_conversation_id,
+                    'authorized_conversation_id': authorized_context['conversation_id'],
+                },
+                level=logging.WARNING,
+            )
+
+        resolved_group_id = None
+        if requested_group_id:
+            if not self._is_authorized_group_scope(
+                authorized_context['user_id'],
+                requested_group_id,
+                authorized_context=authorized_context,
+            ):
+                raise PermissionError('Tabular processing cannot access that group scope.')
+            resolved_group_id = requested_group_id
+
+        resolved_public_workspace_id = None
+        if requested_public_workspace_id:
+            if not self._is_authorized_public_workspace_scope(
+                authorized_context['user_id'],
+                requested_public_workspace_id,
+                authorized_context=authorized_context,
+            ):
+                raise PermissionError('Tabular processing cannot access that public workspace scope.')
+            resolved_public_workspace_id = requested_public_workspace_id
+
+        authorized_context['user_id'] = authorized_context['user_id']
+        authorized_context['conversation_id'] = authorized_context['conversation_id']
+        authorized_context['group_id'] = resolved_group_id
+        authorized_context['public_workspace_id'] = resolved_public_workspace_id
+        return authorized_context
+
+    def _is_authorized_group_scope(
+        self,
+        user_id: str,
+        group_id: str,
+        authorized_context: Optional[dict] = None,
+    ) -> bool:
+        """Return True when the current user may access the requested group scope."""
+        normalized_group_id = str(group_id or '').strip()
+        if not normalized_group_id:
+            return False
+
+        if authorized_context and normalized_group_id in set(authorized_context.get('active_group_ids') or []):
+            return True
+
+        group_doc = find_group_by_id(normalized_group_id)
+        return bool(group_doc and get_user_role_in_group(group_doc, user_id))
+
+    def _is_authorized_public_workspace_scope(
+        self,
+        user_id: str,
+        public_workspace_id: str,
+        authorized_context: Optional[dict] = None,
+    ) -> bool:
+        """Return True when the current user may access the requested public workspace scope."""
+        normalized_public_workspace_id = str(public_workspace_id or '').strip()
+        if not normalized_public_workspace_id:
+            return False
+
+        if authorized_context and normalized_public_workspace_id in set(
+            authorized_context.get('active_public_workspace_ids') or []
+        ):
+            return True
+
+        visible_public_workspace_ids = set(
+            get_user_visible_public_workspace_ids_from_settings(user_id) or []
+        )
+        return normalized_public_workspace_id in visible_public_workspace_ids
+
+    def _is_authorized_blob_location(self, container_name: str, blob_path: str, authorized_context: dict) -> bool:
+        """Ensure remembered blob locations still fall within the caller's authorized request scope."""
+        source = self._infer_source_from_container(container_name)
+        blob_parts = [part for part in str(blob_path or '').split('/') if part]
+        if not source or not blob_parts:
+            return False
+
+        if source == 'workspace':
+            return blob_parts[0] == authorized_context['user_id']
+
+        if source == 'chat':
+            return (
+                len(blob_parts) >= 2
+                and blob_parts[0] == authorized_context['user_id']
+                and blob_parts[1] == authorized_context['conversation_id']
+            )
+
+        if source == 'group':
+            return self._is_authorized_group_scope(
+                authorized_context['user_id'],
+                blob_parts[0],
+                authorized_context=authorized_context,
+            )
+
+        if source == 'public':
+            return self._is_authorized_public_workspace_scope(
+                authorized_context['user_id'],
+                blob_parts[0],
+                authorized_context=authorized_context,
+            )
+
+        return False
 
     def _list_tabular_blobs(self, container_name: str, prefix: str) -> List[str]:
         """List all tabular file blobs under a given prefix."""
@@ -2754,9 +2931,25 @@ class TabularProcessingPlugin:
     def _resolve_blob_location_with_fallback(self, user_id: str, conversation_id: str, filename: str, source: str,
                                               group_id: str = None, public_workspace_id: str = None) -> tuple:
         """Try primary source first, then fall back to other containers if blob not found."""
+        authorized_context = self._resolve_authorized_scope_arguments(
+            user_id,
+            conversation_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        user_id = authorized_context['user_id']
+        conversation_id = authorized_context['conversation_id']
+        group_id = authorized_context['group_id']
+        public_workspace_id = authorized_context['public_workspace_id']
         source = source.lower().strip()
+
+        if source == 'group' and not group_id:
+            group_id = authorized_context['active_group_id']
+        if source == 'public' and not public_workspace_id:
+            public_workspace_id = authorized_context['active_public_workspace_id']
+
         override = self._get_resolved_blob_location_override(source, filename)
-        if override:
+        if override and self._is_authorized_blob_location(override[0], override[1], authorized_context):
             return override
 
         attempts = []
@@ -2811,6 +3004,29 @@ class TabularProcessingPlugin:
         public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON list of available tabular files"]:
         """List all tabular files available for the user across all accessible containers."""
+        try:
+            authorized_context = self._resolve_authorized_scope_arguments(
+                user_id,
+                conversation_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+        except PermissionError as exc:
+            log_event(
+                f"[TabularProcessingPlugin] Denied tabular file listing: {exc}",
+                level=logging.WARNING,
+                extra={
+                    'requested_group_id': group_id,
+                    'requested_public_workspace_id': public_workspace_id,
+                },
+            )
+            return json.dumps({"error": str(exc)})
+
+        user_id = authorized_context['user_id']
+        conversation_id = authorized_context['conversation_id']
+        group_id = authorized_context['group_id']
+        public_workspace_id = authorized_context['public_workspace_id']
+
         def _sync_work():
             results = []
             try:

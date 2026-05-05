@@ -36,7 +36,16 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
-from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper, retrieve_secret_from_key_vault, retrieve_secret_from_key_vault_by_full_name, validate_secret_name_dynamic
+from functions_keyvault import (
+    SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
+    SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
+    SecretReturnType,
+    keyvault_model_endpoint_get_helper,
+    resolve_secret_reference_for_context,
+    retrieve_secret_from_key_vault,
+    retrieve_secret_from_key_vault_by_full_name,
+    validate_secret_name_dynamic,
+)
 from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agent, get_group_agents
@@ -1595,6 +1604,27 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     log_event(f"[SK Loader] load_single_agent_for_kernel completed - returning {len(agent_objs)} agents: {list(agent_objs.keys())}", level=logging.INFO)
     return kernel, agent_objs
 
+def _get_plugin_secret_context(plugin_manifest):
+    """Infer the expected Key Vault scope for a plugin manifest."""
+    if not isinstance(plugin_manifest, dict):
+        return None, None
+
+    plugin_scope = str(plugin_manifest.get("scope") or "").strip().lower()
+    if plugin_scope == "group" or plugin_manifest.get("is_group"):
+        return plugin_manifest.get("group_id"), "group"
+    if plugin_scope == "global" or plugin_manifest.get("is_global"):
+        return plugin_manifest.get("id"), "global"
+    if plugin_scope == "user" or plugin_manifest.get("user_id"):
+        return plugin_manifest.get("user_id"), "user"
+    return plugin_manifest.get("id"), "global"
+
+
+def _is_sql_sensitive_plugin_field(plugin_manifest, field_name):
+    """Return True when an additional field should resolve as a SQL secret."""
+    plugin_type = str((plugin_manifest or {}).get("type") or "").strip().lower()
+    return plugin_type in {"sql_query", "sql_schema"} and field_name in SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS
+
+
 def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
     """
     Resolve any Key Vault secrets in a plugin manifest.
@@ -1606,26 +1636,66 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
     if not kv_name:
         raise ValueError("Key Vault name not configured in settings")
     
-    def resolve_value(value):
-        if isinstance(value, str) and validate_secret_name_dynamic(value):
-            resolved = retrieve_secret_from_key_vault_by_full_name(value)
-            if resolved:
-                return resolved
-            else:
-                raise ValueError(f"Failed to retrieve secret '{value}' from Key Vault '{kv_name}'")
-        return value
-    
-    resolved_manifest = {}
-    for k, v in plugin_manifest.items():
-        debug_print(f"[SK Loader] Resolving plugin manifest key: {k} with value type: {type(v)}")
-        if isinstance(v, str):
-            resolved_manifest[k] = resolve_value(v)
-        elif isinstance(v, list):
-            resolved_manifest[k] = [resolve_value(item) for item in v]
-        elif isinstance(v, dict):
-            resolved_manifest[k] = {sub_k: resolve_value(sub_v) for sub_k, sub_v in v.items()}
-        else:
-            resolved_manifest[k] = v  # Leave other types unchanged
+    scope_value, scope = _get_plugin_secret_context(plugin_manifest)
+    resolved_manifest = dict(plugin_manifest)
+
+    auth = plugin_manifest.get("auth", {})
+    if isinstance(auth, dict):
+        resolved_auth = dict(auth)
+        for auth_field in ("key", *SQL_PLUGIN_SENSITIVE_AUTH_FIELDS):
+            value = auth.get(auth_field)
+            if not isinstance(value, str) or not validate_secret_name_dynamic(value):
+                continue
+            try:
+                resolved_auth[auth_field] = resolve_secret_reference_for_context(
+                    value,
+                    scope_value=scope_value,
+                    scope=scope,
+                    allowed_sources={"action"},
+                    context_label=f"plugin auth field '{auth_field}'",
+                )
+            except ValueError as exc:
+                log_event(
+                    f"[SK Loader] Blocked plugin auth secret resolution for field '{auth_field}': {exc}",
+                    extra={
+                        "plugin_name": plugin_manifest.get("name"),
+                        "plugin_id": plugin_manifest.get("id"),
+                        "scope": scope,
+                    },
+                    level=logging.WARNING,
+                )
+                resolved_auth[auth_field] = ""
+        resolved_manifest["auth"] = resolved_auth
+
+    additional_fields = plugin_manifest.get("additionalFields", {})
+    if isinstance(additional_fields, dict):
+        resolved_additional_fields = dict(additional_fields)
+        for field_name, value in additional_fields.items():
+            if not isinstance(value, str) or not validate_secret_name_dynamic(value):
+                continue
+            if not (field_name.endswith("__Secret") or _is_sql_sensitive_plugin_field(plugin_manifest, field_name)):
+                continue
+            try:
+                resolved_additional_fields[field_name] = resolve_secret_reference_for_context(
+                    value,
+                    scope_value=scope_value,
+                    scope=scope,
+                    allowed_sources={"action-addset"},
+                    context_label=f"plugin additional field '{field_name}'",
+                )
+            except ValueError as exc:
+                log_event(
+                    f"[SK Loader] Blocked plugin additionalField secret resolution for '{field_name}': {exc}",
+                    extra={
+                        "plugin_name": plugin_manifest.get("name"),
+                        "plugin_id": plugin_manifest.get("id"),
+                        "scope": scope,
+                    },
+                    level=logging.WARNING,
+                )
+                resolved_additional_fields[field_name] = ""
+        resolved_manifest["additionalFields"] = resolved_additional_fields
+
     return resolved_manifest
 
 def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="global"):

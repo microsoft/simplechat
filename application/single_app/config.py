@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.006"
+VERSION = "0.241.022"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -150,6 +150,7 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     
     Args:
         enable_video: Whether video file support is enabled
+        enable_audio: Whether audio file support is enabled
     Returns:
         set: Allowed file extensions
     """

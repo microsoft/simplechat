@@ -1,8 +1,10 @@
 # functions_public_workspaces.py
 
 from config import *
+import functions_settings
 from functions_authentication import *
 from functions_group import *
+from typing import Iterable
 
 def create_public_workspace(name: str, description: str) -> dict:
     """
@@ -114,11 +116,55 @@ def get_user_role_in_public_workspace(ws_doc: dict, user_id: str) -> str | None:
         return None
     if ws_doc.get("owner", {}).get("userId") == user_id:
         return "Owner"
-    if user_id in ws_doc.get("admins", []):
-        return "Admin"
+    for admin in ws_doc.get("admins", []):
+        if isinstance(admin, str) and admin == user_id:
+            return "Admin"
+        if isinstance(admin, dict) and admin.get("userId") == user_id:
+            return "Admin"
     if any(dm["userId"] == user_id for dm in ws_doc.get("documentManagers", [])):
         return "DocumentManager"
     return None
+
+
+def build_public_workspace_public_summary(ws_doc: dict) -> dict:
+    """Return the non-sensitive workspace fields safe for any authenticated caller."""
+    owner = ws_doc.get("owner", {}) or {}
+    return {
+        "id": ws_doc.get("id", ""),
+        "name": ws_doc.get("name", ""),
+        "description": ws_doc.get("description", ""),
+        "owner": {
+            "displayName": owner.get("displayName", ""),
+        },
+        "status": ws_doc.get("status", "active"),
+        "heroColor": ws_doc.get("heroColor", "#0078d4"),
+        "userRole": None,
+        "isMember": False,
+    }
+
+
+def build_public_workspace_member_payload(ws_doc: dict, user_id: str) -> dict:
+    """Return the workspace fields required by member-facing workspace pages."""
+    role = get_user_role_in_public_workspace(ws_doc, user_id)
+    owner = ws_doc.get("owner", {}) or {}
+    payload = {
+        "id": ws_doc.get("id", ""),
+        "name": ws_doc.get("name", ""),
+        "description": ws_doc.get("description", ""),
+        "owner": {
+            "displayName": owner.get("displayName", ""),
+            "email": owner.get("email", ""),
+        },
+        "status": ws_doc.get("status", "active"),
+        "heroColor": ws_doc.get("heroColor", "#0078d4"),
+        "userRole": role,
+        "isMember": bool(role),
+    }
+
+    if role in ("Owner", "Admin") and "retention_policy" in ws_doc:
+        payload["retention_policy"] = ws_doc.get("retention_policy")
+
+    return payload
 
 
 def is_user_in_public_workspace(ws_doc: dict, user_id: str) -> bool:
@@ -224,9 +270,46 @@ def count_public_workspace_documents(ws_id: str) -> int:
 
 def update_active_public_workspace_for_user(user_id: str, ws_id: str) -> None:
     """
-    Persist the user's activePublicWorkspaceOid in their settings.
+    Persist the user's activePublicWorkspaceOid after validating the workspace.
     """
-    update_user_settings(user_id, {"activePublicWorkspaceOid": ws_id})
+    normalized_workspace_id = str(ws_id or "").strip()
+    if not normalized_workspace_id:
+        functions_settings.update_user_settings(user_id, {"activePublicWorkspaceOid": ""})
+        return
+
+    workspace_doc = find_public_workspace_by_id(normalized_workspace_id)
+    if not workspace_doc:
+        raise LookupError("Workspace not found")
+
+    functions_settings.update_user_settings(
+        user_id,
+        {"activePublicWorkspaceOid": normalized_workspace_id},
+    )
+
+
+def require_active_public_workspace(
+    user_id: str,
+    allowed_roles: Iterable[str] = ("Owner", "Admin", "DocumentManager"),
+) -> tuple[str, dict, str]:
+    """Return the active public workspace after validating it still exists and the user can access it."""
+    settings = functions_settings.get_user_settings(user_id)
+    active_workspace_id = str(settings.get("settings", {}).get("activePublicWorkspaceOid") or "").strip()
+    if not active_workspace_id:
+        raise ValueError("No active public workspace selected")
+
+    workspace_doc = find_public_workspace_by_id(active_workspace_id)
+    if not workspace_doc:
+        raise LookupError("Active public workspace not found")
+
+    role = get_user_role_in_public_workspace(workspace_doc, user_id)
+    if not role:
+        raise PermissionError("Access denied")
+
+    allowed = {allowed_role.lower() for allowed_role in allowed_roles}
+    if role.lower() not in allowed:
+        raise PermissionError("Access denied")
+
+    return active_workspace_id, workspace_doc, role
 
 
 def get_user_visible_public_workspaces(user_id: str) -> list:

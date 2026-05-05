@@ -5,8 +5,12 @@ FactMemoryPlugin for Semantic Kernel: provides write/update/delete operations fo
 - Exposes methods for use as a Semantic Kernel plugin (does not need to derive from BasePlugin).
 - Read/inject logic is handled separately by orchestration utility.
 """
+import logging
+from flask import g, has_request_context
 from typing import Optional, List
 
+from functions_appinsights import log_event
+from functions_authentication import get_current_user_id
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_fact_memory_store import FactMemoryStore
 
@@ -17,6 +21,82 @@ class FactMemoryPlugin:
     def __init__(self, store: Optional[FactMemoryStore] = None):
         self.store = store or FactMemoryStore()
         auto_wrap_plugin_functions(self, self.__class__.__name__)
+
+    def _get_authorized_fact_memory_scope(self) -> dict:
+        """Return the canonical request-scoped fact-memory authorization boundary."""
+        if not has_request_context():
+            raise PermissionError('Fact memory requires an active request context.')
+
+        current_user_id = str(get_current_user_id() or '').strip()
+        if not current_user_id:
+            raise PermissionError('User not authenticated.')
+
+        authorized_context = dict(getattr(g, 'authorized_chat_context', {}) or {})
+        authorized_user_id = str(authorized_context.get('user_id') or current_user_id).strip()
+        if authorized_user_id != current_user_id:
+            authorized_user_id = current_user_id
+
+        authorized_scope_id = str(
+            authorized_context.get('fact_memory_scope_id')
+            or authorized_context.get('active_group_id')
+            or current_user_id
+        ).strip()
+        authorized_scope_type = str(
+            authorized_context.get('fact_memory_scope_type')
+            or ('group' if authorized_context.get('active_group_id') else 'user')
+        ).strip().lower()
+        if authorized_scope_type not in {'user', 'group'}:
+            authorized_scope_type = 'user'
+
+        authorized_conversation_id = str(
+            authorized_context.get('conversation_id') or getattr(g, 'conversation_id', '') or ''
+        ).strip() or None
+
+        return {
+            'user_id': authorized_user_id,
+            'scope_id': authorized_scope_id,
+            'scope_type': authorized_scope_type,
+            'conversation_id': authorized_conversation_id,
+        }
+
+    def _resolve_authorized_fact_memory_call(
+        self,
+        scope_type: str = '',
+        scope_id: str = '',
+        conversation_id: str = '',
+    ) -> dict:
+        """Normalize tool-call scope arguments against the authorized request scope."""
+        authorized_scope = self._get_authorized_fact_memory_scope()
+        requested_scope_type = str(scope_type or '').strip().lower()
+        requested_scope_id = str(scope_id or '').strip()
+        requested_conversation_id = str(conversation_id or '').strip()
+
+        if (
+            (requested_scope_type and requested_scope_type != authorized_scope['scope_type'])
+            or (requested_scope_id and requested_scope_id != authorized_scope['scope_id'])
+        ):
+            log_event(
+                '[FactMemoryPlugin] Overriding mismatched fact-memory scope in tool call.',
+                extra={
+                    'requested_scope_type': requested_scope_type,
+                    'requested_scope_id': requested_scope_id,
+                    'authorized_scope_type': authorized_scope['scope_type'],
+                    'authorized_scope_id': authorized_scope['scope_id'],
+                },
+                level=logging.WARNING,
+            )
+
+        if requested_conversation_id and requested_conversation_id != authorized_scope['conversation_id']:
+            log_event(
+                '[FactMemoryPlugin] Overriding mismatched fact-memory conversation_id in tool call.',
+                extra={
+                    'requested_conversation_id': requested_conversation_id,
+                    'authorized_conversation_id': authorized_scope['conversation_id'],
+                },
+                level=logging.WARNING,
+            )
+
+        return authorized_scope
 
     @kernel_function(
         description="""
@@ -39,11 +119,16 @@ class FactMemoryPlugin:
         """
         Store a fact for the given agent, scope, and conversation.
         """
-        return self.store.set_fact(
+        authorized_scope = self._resolve_authorized_fact_memory_call(
             scope_type=scope_type,
             scope_id=scope_id,
-            value=value,
             conversation_id=conversation_id,
+        )
+        return self.store.set_fact(
+            scope_type=authorized_scope['scope_type'],
+            scope_id=authorized_scope['scope_id'],
+            value=value,
+            conversation_id=authorized_scope['conversation_id'],
             agent_id=agent_id,
             memory_type=memory_type,
         )
@@ -56,8 +141,9 @@ class FactMemoryPlugin:
         """
         Update a fact value by its unique id and scope_id partition key.
         """
+        authorized_scope = self._resolve_authorized_fact_memory_call(scope_id=scope_id)
         update_kwargs = {
-            'scope_id': scope_id,
+            'scope_id': authorized_scope['scope_id'],
             'fact_id': fact_id,
             'value': value,
         }
@@ -77,8 +163,9 @@ class FactMemoryPlugin:
         """
         Delete a fact by its unique id and the scope_id which is the partition key.
         """
+        authorized_scope = self._resolve_authorized_fact_memory_call(scope_id=scope_id)
         return self.store.delete_fact(
-            scope_id=scope_id,
+            scope_id=authorized_scope['scope_id'],
             fact_id=fact_id
         )
 
@@ -100,7 +187,11 @@ class FactMemoryPlugin:
         """
         Retrieve all facts for the user. Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent. Use this to get all facts that will be injected as context for the agent.
         """
-        return self.store.get_facts(
+        authorized_scope = self._resolve_authorized_fact_memory_call(
             scope_type=scope_type,
             scope_id=scope_id,
+        )
+        return self.store.get_facts(
+            scope_type=authorized_scope['scope_type'],
+            scope_id=authorized_scope['scope_id'],
         )

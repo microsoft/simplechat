@@ -23,6 +23,8 @@ function setupGroupShareEventListeners() {
     // Group search functionality
     const searchGroupsBtn = document.getElementById('searchGroupsBtn');
     const groupSearchTerm = document.getElementById('groupSearchTerm');
+    const groupSearchResultsBody = document.querySelector('#groupSearchResultsTable tbody');
+    const sharedGroupsList = document.getElementById('sharedGroupsList');
     
     if (searchGroupsBtn) {
         searchGroupsBtn.addEventListener('click', handleGroupSearch);
@@ -34,6 +36,34 @@ function setupGroupShareEventListeners() {
                 e.preventDefault();
                 handleGroupSearch();
             }
+        });
+    }
+
+    if (groupSearchResultsBody) {
+        groupSearchResultsBody.addEventListener('click', function(e) {
+            const addButton = e.target.closest('.group-search-add-btn');
+            if (!addButton) {
+                return;
+            }
+
+            window.addGroupToDocument(
+                addButton.dataset.groupId || '',
+                addButton.dataset.groupName || ''
+            );
+        });
+    }
+
+    if (sharedGroupsList) {
+        sharedGroupsList.addEventListener('click', function(e) {
+            const removeButton = e.target.closest('.shared-group-remove-btn');
+            if (!removeButton) {
+                return;
+            }
+
+            window.removeGroupFromDocument(
+                removeButton.dataset.groupId || '',
+                removeButton.dataset.groupName || ''
+            );
         });
     }
 
@@ -93,20 +123,42 @@ function renderSharedGroups(sharedGroups) {
     
     if (sharedGroups.length === 0) {
         noSharedGroups.style.display = 'block';
-        sharedGroupsList.innerHTML = '';
+        sharedGroupsList.replaceChildren();
     } else {
         noSharedGroups.style.display = 'none';
-        sharedGroupsList.innerHTML = sharedGroups.map(group => `
-            <div class="d-flex justify-content-between align-items-center mb-2 p-2 bg-light rounded">
-                <div>
-                    <strong>${escapeHtml(group.name)}</strong>
-                    ${group.description ? `<br><small class="text-muted">${escapeHtml(group.description)}</small>` : ''}
-                </div>
-                <button class="btn btn-sm btn-outline-danger" onclick="removeGroupFromDocument('${group.id}', '${escapeHtml(group.name)}')">
-                    <i class="bi bi-x"></i> Remove
-                </button>
-            </div>
-        `).join('');
+        const groupRows = sharedGroups.map(group => {
+            const row = document.createElement('div');
+            row.className = 'd-flex justify-content-between align-items-center mb-2 p-2 bg-light rounded';
+
+            const details = document.createElement('div');
+
+            const name = document.createElement('strong');
+            name.textContent = group.name || '';
+            details.appendChild(name);
+
+            if (group.description) {
+                details.appendChild(document.createElement('br'));
+
+                const description = document.createElement('small');
+                description.className = 'text-muted';
+                description.textContent = group.description;
+                details.appendChild(description);
+            }
+
+            const removeButton = document.createElement('button');
+            removeButton.type = 'button';
+            removeButton.className = 'btn btn-sm btn-outline-danger shared-group-remove-btn';
+            removeButton.dataset.groupId = group.id || '';
+            removeButton.dataset.groupName = group.name || '';
+            removeButton.innerHTML = '<i class="bi bi-x"></i> Remove';
+
+            row.appendChild(details);
+            row.appendChild(removeButton);
+
+            return row;
+        });
+
+        sharedGroupsList.replaceChildren(...groupRows);
     }
 }
 
@@ -171,18 +223,33 @@ function renderGroupSearchResults(groups) {
         tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No groups found</td></tr>';
         return;
     }
-    
-    tbody.innerHTML = groups.map(group => `
-        <tr>
-            <td>${escapeHtml(group.name)}</td>
-            <td>${escapeHtml(group.description || '')}</td>
-            <td>
-                <button class="btn btn-sm btn-primary" onclick="addGroupToDocument('${group.id}', '${escapeHtml(group.name)}')">
-                    Add
-                </button>
-            </td>
-        </tr>
-    `).join('');
+
+    const groupRows = groups.map(group => {
+        const row = document.createElement('tr');
+
+        const nameCell = document.createElement('td');
+        nameCell.textContent = group.name || '';
+
+        const descriptionCell = document.createElement('td');
+        descriptionCell.textContent = group.description || '';
+
+        const actionCell = document.createElement('td');
+        const addButton = document.createElement('button');
+        addButton.type = 'button';
+        addButton.className = 'btn btn-sm btn-primary group-search-add-btn';
+        addButton.dataset.groupId = group.id || '';
+        addButton.dataset.groupName = group.name || '';
+        addButton.textContent = 'Add';
+
+        actionCell.appendChild(addButton);
+        row.appendChild(nameCell);
+        row.appendChild(descriptionCell);
+        row.appendChild(actionCell);
+
+        return row;
+    });
+
+    tbody.replaceChildren(...groupRows);
 }
 
 window.addGroupToDocument = async function(groupId, groupName) {
@@ -304,15 +371,22 @@ function showToast(message, type = 'info') {
     toast.setAttribute('role', 'alert');
     toast.setAttribute('aria-live', 'assertive');
     toast.setAttribute('aria-atomic', 'true');
-    
-    toast.innerHTML = `
-        <div class="d-flex">
-            <div class="toast-body">
-                ${message}
-            </div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-        </div>
-    `;
+
+    const content = document.createElement('div');
+    content.className = 'd-flex';
+
+    const toastBody = document.createElement('div');
+    toastBody.className = 'toast-body';
+    toastBody.textContent = String(message ?? '');
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close btn-close-white me-2 m-auto';
+    closeButton.setAttribute('data-bs-dismiss', 'toast');
+
+    content.appendChild(toastBody);
+    content.appendChild(closeButton);
+    toast.appendChild(content);
     
     // Add to toast container
     let toastContainer = document.getElementById('toastContainer');

@@ -1,5 +1,6 @@
 # functions_documents.py that has some changes I need to merge into Development
 
+import re
 import traceback
 from config import *
 from functions_content import *
@@ -20,6 +21,7 @@ def allowed_file(filename, allowed_extensions=None):
 ARCHIVED_SCOPE_PREFIX = "__archived__::"
 CURRENT_ALIAS_BLOB_PATH_MODE = "current_alias"
 ARCHIVED_REVISION_BLOB_PATH_MODE = "archived_revision"
+TAG_COLOR_PATTERN = re.compile(r'^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
 
 
 def _get_blob_container_name(group_id=None, public_workspace_id=None):
@@ -7566,6 +7568,58 @@ def sanitize_tags_for_filter(raw_tags):
     return valid_tags
 
 
+def normalize_tag_color(color):
+    """
+    Normalize a tag color to a canonical 6-digit lowercase hex code.
+    Returns None for invalid values.
+    """
+    if not isinstance(color, str):
+        return None
+
+    normalized_color = color.strip()
+    if not normalized_color:
+        return None
+
+    if not TAG_COLOR_PATTERN.fullmatch(normalized_color):
+        return None
+
+    if not normalized_color.startswith('#'):
+        normalized_color = f'#{normalized_color}'
+
+    if len(normalized_color) == 4:
+        normalized_color = '#' + ''.join(component * 2 for component in normalized_color[1:])
+
+    return normalized_color.lower()
+
+
+def get_safe_tag_color(color, tag_name):
+    """
+    Return a normalized tag color or the deterministic default for the tag.
+    """
+    normalized_color = normalize_tag_color(color)
+    if normalized_color:
+        return normalized_color
+
+    safe_tag_name = normalize_tag(tag_name) or str(tag_name or '')
+    return get_default_tag_color(safe_tag_name)
+
+
+def validate_tag_color(color, tag_name):
+    """
+    Validate a requested tag color.
+    Returns (is_valid, error_message, normalized_color).
+    Missing colors resolve to the deterministic default for the tag.
+    """
+    if color is None:
+        return True, None, get_safe_tag_color(None, tag_name)
+
+    normalized_color = normalize_tag_color(color)
+    if not normalized_color:
+        return False, 'Tag color must be a valid 3- or 6-digit hex color', None
+
+    return True, None, normalized_color
+
+
 def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
     """
     Get all unique tags used in a workspace with document counts.
@@ -7662,7 +7716,7 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
             results.append({
                 'name': tag_name,
                 'count': count,
-                'color': tag_def.get('color', get_default_tag_color(tag_name))
+                'color': get_safe_tag_color(tag_def.get('color'), tag_name)
             })
         
         # Add defined tags that haven't been used yet (count = 0)
@@ -7671,7 +7725,7 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
                 results.append({
                     'name': tag_name,
                     'count': 0,
-                    'color': tag_def.get('color', get_default_tag_color(tag_name))
+                    'color': get_safe_tag_color(tag_def.get('color'), tag_name)
                 })
 
         # Sort by count descending, then name ascending
@@ -7728,34 +7782,40 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
     """
     from datetime import datetime, timezone
 
+    safe_color = get_safe_tag_color(color, tag_name)
+
     if workspace_type == 'group' and group_id:
         from functions_group import find_group_by_id
         group_doc = find_group_by_id(group_id)
         if not group_doc:
-            return {'color': color or get_default_tag_color(tag_name)}
+            return {'color': safe_color}
         tag_defs = group_doc.get('tag_definitions', {})
         if tag_name not in tag_defs:
             tag_defs[tag_name] = {
-                'color': color if color else get_default_tag_color(tag_name),
+                'color': safe_color,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             group_doc['tag_definitions'] = tag_defs
             cosmos_groups_container.upsert_item(group_doc)
-        return tag_defs[tag_name]
+        stored_tag_def = dict(tag_defs[tag_name])
+        stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
+        return stored_tag_def
     elif workspace_type == 'public' and public_workspace_id:
         from functions_public_workspaces import find_public_workspace_by_id
         ws_doc = find_public_workspace_by_id(public_workspace_id)
         if not ws_doc:
-            return {'color': color or get_default_tag_color(tag_name)}
+            return {'color': safe_color}
         tag_defs = ws_doc.get('tag_definitions', {})
         if tag_name not in tag_defs:
             tag_defs[tag_name] = {
-                'color': color if color else get_default_tag_color(tag_name),
+                'color': safe_color,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             ws_doc['tag_definitions'] = tag_defs
             cosmos_public_workspaces_container.upsert_item(ws_doc)
-        return tag_defs[tag_name]
+        stored_tag_def = dict(tag_defs[tag_name])
+        stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
+        return stored_tag_def
     else:
         # Personal: store in user settings
         from functions_settings import get_user_settings, update_user_settings
@@ -7771,12 +7831,14 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
 
         if tag_name not in workspace_tags:
             workspace_tags[tag_name] = {
-                'color': color if color else get_default_tag_color(tag_name),
+                'color': safe_color,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             update_user_settings(user_id, {'tag_definitions': tag_definitions})
 
-        return workspace_tags[tag_name]
+        stored_tag_def = dict(workspace_tags[tag_name])
+        stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
+        return stored_tag_def
 
 
 def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, public_workspace_id=None):

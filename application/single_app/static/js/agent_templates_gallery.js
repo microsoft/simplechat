@@ -142,7 +142,12 @@ function renderAccordion(accordion, templates, options = {}) {
     if (Array.isArray(template.actions_to_load) && template.actions_to_load.length) {
       const actionLine = document.createElement("p");
       actionLine.className = "mb-0 text-muted small";
-      actionLine.innerHTML = `<strong>Recommended actions:</strong> ${template.actions_to_load.join(", ")}`;
+      const actionLabel = document.createElement("strong");
+      actionLabel.textContent = "Recommended actions:";
+      actionLine.appendChild(actionLabel);
+      actionLine.appendChild(
+        document.createTextNode(` ${template.actions_to_load.map((action) => String(action)).join(", ")}`)
+      );
       metaList.appendChild(actionLine);
     }
 

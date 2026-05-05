@@ -1261,7 +1261,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_web_search': enable_web_search,
                 'web_search_consent_accepted': web_search_consent_accepted,
                 'enable_web_search_user_notice': form_data.get('enable_web_search_user_notice') == 'on',
-                'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.').strip(),
+                'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.').strip(),
                 'web_search_agent': {
                     'agent_type': 'aifoundry',
                     'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),

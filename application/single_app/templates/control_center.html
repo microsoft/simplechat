@@ -3742,7 +3742,7 @@ window.GroupManager = {
                 
                 const ownershipResult = await ownershipResponse.json();
                 console.log('Ownership request created:', ownershipResult);
-                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${ownershipResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success');
+                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${ownershipResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success', true);
                 
             } else if (ownership === 'transfer') {
                 // Transfer ownership to another user - create approval request
@@ -3764,7 +3764,7 @@ window.GroupManager = {
                 
                 const transferResult = await transferResponse.json();
                 console.log('Transfer request created:', transferResult);
-                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${transferResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success');
+                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${transferResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success', true);
                 
             } else {
                 // No ownership change
@@ -4020,8 +4020,8 @@ window.GroupManager = {
                     return `
                         <tr>
                             <td>
-                                <div class="fw-bold">${member.name || 'Unknown User'}</div>
-                                <small class="text-muted">${member.email || 'No email'}</small>
+                                <div class="fw-bold">${GroupManager.escapeHtml(member.name || 'Unknown User')}</div>
+                                <small class="text-muted">${GroupManager.escapeHtml(member.email || 'No email')}</small>
                             </td>
                             <td>
                                 <span class="badge ${badgeClass}">${member.role}</span>

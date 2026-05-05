@@ -2,9 +2,25 @@
 
 from config import *
 from functions_authentication import *
+from functions_group import require_active_group
 from functions_settings import *
 from functions_prompts import *
 from swagger_wrapper import swagger_route, get_auth_security
+
+
+def _get_active_group_or_error(user_id):
+    try:
+        return require_active_group(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        ), None
+    except ValueError:
+        return None, (jsonify({"error": "No active group selected"}), 400)
+    except LookupError:
+        return None, (jsonify({"error": "Active group not found"}), 404)
+    except PermissionError:
+        return None, (jsonify({"error": "You are not a member of the active group"}), 403)
+
 
 def register_route_backend_group_prompts(app):
     @app.route('/api/group_prompts', methods=['GET'])
@@ -13,10 +29,10 @@ def register_route_backend_group_prompts(app):
     @user_required
     @enabled_required("enable_group_workspaces")
     def get_group_prompts():
-        user_id      = get_current_user_id()
-        active_group = get_user_settings(user_id)["settings"].get("activeGroupOid")
-        if not active_group:
-            return jsonify({"error":"No active group selected"}), 400
+        user_id = get_current_user_id()
+        active_group, error_response = _get_active_group_or_error(user_id)
+        if error_response:
+            return error_response
 
         try:
             items, total, page, page_size = list_prompts(
@@ -41,10 +57,10 @@ def register_route_backend_group_prompts(app):
     @user_required
     @enabled_required("enable_group_workspaces")
     def create_group_prompt():
-        user_id      = get_current_user_id()
-        active_group = get_user_settings(user_id)["settings"].get("activeGroupOid")
-        if not active_group:
-            return jsonify({"error":"No active group selected"}), 400
+        user_id = get_current_user_id()
+        active_group, error_response = _get_active_group_or_error(user_id)
+        if error_response:
+            return error_response
 
         data    = request.get_json() or {}
         name    = data.get("name","").strip()
@@ -71,10 +87,10 @@ def register_route_backend_group_prompts(app):
     @user_required
     @enabled_required("enable_group_workspaces")
     def get_group_prompt(prompt_id):
-        user_id      = get_current_user_id()
-        active_group = get_user_settings(user_id)["settings"].get("activeGroupOid")
-        if not active_group:
-            return jsonify({"error":"No active group selected"}), 400
+        user_id = get_current_user_id()
+        active_group, error_response = _get_active_group_or_error(user_id)
+        if error_response:
+            return error_response
 
         try:
             item = get_prompt_doc(
@@ -96,10 +112,10 @@ def register_route_backend_group_prompts(app):
     @user_required
     @enabled_required("enable_group_workspaces")
     def update_group_prompt(prompt_id):
-        user_id      = get_current_user_id()
-        active_group = get_user_settings(user_id)["settings"].get("activeGroupOid")
-        if not active_group:
-            return jsonify({"error":"No active group selected"}), 400
+        user_id = get_current_user_id()
+        active_group, error_response = _get_active_group_or_error(user_id)
+        if error_response:
+            return error_response
 
         data = request.get_json() or {}
         updates = {}
@@ -135,10 +151,10 @@ def register_route_backend_group_prompts(app):
     @user_required
     @enabled_required("enable_group_workspaces")
     def delete_group_prompt(prompt_id):
-        user_id      = get_current_user_id()
-        active_group = get_user_settings(user_id)["settings"].get("activeGroupOid")
-        if not active_group:
-            return jsonify({"error":"No active group selected"}), 400
+        user_id = get_current_user_id()
+        active_group, error_response = _get_active_group_or_error(user_id)
+        if error_response:
+            return error_response
 
         try:
             success = delete_prompt_doc(

@@ -102,10 +102,32 @@ def _serialize_additional_settings(raw: Any) -> str:
     return json.dumps(parsed, indent=2, sort_keys=True)
 
 
+def _normalize_actions_to_load(actions: Any, strict: bool = False) -> List[str]:
+    if actions in (None, ""):
+        return []
+    if not isinstance(actions, list):
+        if strict:
+            raise ValueError("actions_to_load must be an array of strings")
+        return []
+
+    cleaned: List[str] = []
+    for action in actions:
+        if isinstance(action, str):
+            trimmed = action.strip()
+        elif strict:
+            raise ValueError("actions_to_load entries must be strings")
+        else:
+            trimmed = str(action).strip()
+
+        if trimmed:
+            cleaned.append(trimmed)
+
+    return cleaned
+
+
 def _sanitize_template(doc: Dict[str, Any], include_internal: bool = False) -> Dict[str, Any]:
     cleaned = _strip_metadata(doc)
-    cleaned.setdefault('actions_to_load', [])
-    cleaned['actions_to_load'] = [a for a in cleaned['actions_to_load'] if a]
+    cleaned['actions_to_load'] = _normalize_actions_to_load(cleaned.get('actions_to_load'))
     cleaned.setdefault('tags', [])
     cleaned['tags'] = [str(tag)[:64] for tag in cleaned['tags']]
     cleaned['helper_text'] = _normalize_helper_text(
@@ -287,7 +309,7 @@ def _base_template_from_payload(payload: Dict[str, Any], user_info: Optional[Dic
     tags = payload.get('tags') or []
     tags = [str(tag)[:64] for tag in tags]
 
-    actions = [str(action) for action in (payload.get('actions_to_load') or []) if action]
+    actions = _normalize_actions_to_load(payload.get('actions_to_load'), strict=True)
 
     template = {
         'id': payload.get('id') or str(uuid.uuid4()),
@@ -365,6 +387,11 @@ def update_agent_template(template_id: str, updates: Dict[str, Any]) -> Optional
         payload['additional_settings'] = _parse_additional_settings(payload['additional_settings'])
     else:
         payload['additional_settings'] = _parse_additional_settings(doc.get('additional_settings'))
+
+    if 'actions_to_load' in payload:
+        payload['actions_to_load'] = _normalize_actions_to_load(payload['actions_to_load'], strict=True)
+    else:
+        payload['actions_to_load'] = _normalize_actions_to_load(doc.get('actions_to_load'))
 
     if 'tags' in payload:
         payload['tags'] = [str(tag)[:64] for tag in payload['tags']]

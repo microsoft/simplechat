@@ -6,6 +6,59 @@ const userId = window.userId;
 
 let currentUserRole = null;
 
+function hideWorkspaceAccessAlert() {
+  const accessAlert = document.getElementById('workspace-access-alert');
+  if (accessAlert) {
+    accessAlert.classList.add('d-none');
+  }
+}
+
+function showWorkspaceAccessAlert(message) {
+  const statusAlert = document.getElementById('workspace-status-alert');
+  if (!statusAlert || !statusAlert.parentNode) {
+    return;
+  }
+
+  let accessAlert = document.getElementById('workspace-access-alert');
+  if (!accessAlert) {
+    accessAlert = document.createElement('div');
+    accessAlert.id = 'workspace-access-alert';
+    accessAlert.className = 'alert alert-info mb-3 d-none';
+    statusAlert.parentNode.insertBefore(accessAlert, statusAlert.nextSibling);
+  }
+
+  accessAlert.innerHTML = `<i class="bi bi-info-circle me-2"></i>${message}`;
+  accessAlert.classList.remove('d-none');
+}
+
+function toggleMemberOnlySections(isVisible) {
+  const memberOnlySelectors = [
+    '#membership',
+    '#stats',
+    '#settings-tab-item',
+    '#settings'
+  ];
+
+  ['#membership-tab', '#stats-tab'].forEach(selector => {
+    const button = document.querySelector(selector);
+    if (!button) {
+      return;
+    }
+    const navItem = button.closest('.nav-item');
+    if (navItem) {
+      navItem.classList.toggle('d-none', !isVisible);
+    }
+  });
+
+  memberOnlySelectors.forEach(selector => {
+    const element = document.querySelector(selector);
+    if (!element) {
+      return;
+    }
+    element.classList.toggle('d-none', !isVisible);
+  });
+}
+
 $(document).ready(function () {
   // Initial load: workspace info, then members & pending requests
   loadWorkspaceInfo(function () {
@@ -80,7 +133,10 @@ $(document).ready(function () {
         let options = "";
         members.forEach(m => {
           if (m.role !== "Owner") {
-            options += `<option value="${m.userId}">${m.displayName} (${m.email})</option>`;
+            const safeUserId = escapeHtml(m.userId || "");
+            const safeDisplayName = escapeHtml(m.displayName || "(no name)");
+            const safeEmail = escapeHtml(m.email || "");
+            options += `<option value="${safeUserId}">${safeDisplayName} (${safeEmail})</option>`;
           }
         });
         $("#newOwnerSelect").html(options);
@@ -153,15 +209,40 @@ $(document).ready(function () {
       searchUsers();
     }
   });
+  $(document).on("click", ".select-user-btn", function () {
+    const button = $(this);
+    selectUserForAdd(
+      button.data("user-id"),
+      button.data("user-name"),
+      button.data("user-email")
+    );
+  });
 
   // Approve / Reject requests (Admin/Owner)
-  $("#pendingRequestsTable").on("click", ".approve-request-btn", function () {
-    approveRequest($(this).data("id"));
+  $("#searchUsersBtn").on("click", function () {
+          `;
+          }).join("");
   });
-  $("#pendingRequestsTable").on("click", ".reject-request-btn", function () {
-    rejectRequest($(this).data("id"));
+  $("#userSearchTerm").on("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      searchUsers();
+    }
   });
 
+  // Approve / Reject requests (Admin/Owner)
+          const safeUserId = escapeHtml(u.id || "");
+          const safeDisplayName = escapeHtml(u.displayName || "(no name)");
+          const safeEmail = escapeHtml(u.email || "");
+  $("#pendingRequestsTable").on("click", ".approve-request-btn", function () {
+    approveRequest($(this).data("id"));
+              <td>${safeDisplayName}</td>
+              <td>${safeEmail}</td>
+    rejectRequest($(this).data("id"));
+                <button class="btn btn-sm btn-primary select-user-btn"
+                        data-user-id="${safeUserId}"
+                        data-user-name="${safeDisplayName}"
+                        data-user-email="${safeEmail}">
   // CSV Bulk Upload Events
   $("#addBulkMemberBtn").on("click", function () {
     $("#csvBulkUploadModal").modal("show");
@@ -224,7 +305,9 @@ $(document).ready(function () {
     // Populate the list of members to be removed
     let membersList = "<ul class='list-unstyled'>";
     selectedMembers.forEach(member => {
-      membersList += `<li>• ${member.name} (${member.email})</li>`;
+      const safeName = escapeHtml(member.name || "");
+      const safeEmail = escapeHtml(member.email || "");
+      membersList += `<li>&bull; ${safeName} (${safeEmail})</li>`;
     });
     membersList += "</ul>";
     
@@ -247,22 +330,30 @@ function loadWorkspaceInfo(callback) {
   $.get(`/api/public_workspaces/${workspaceId}`)
     .done(function (ws) {
       // Update status alert
-      updateWorkspaceStatusAlert(ws);
+      updateWorkspaceStatusAlert({ status: ws.status || 'active' });
       const owner = ws.owner || {};
-      const admins = ws.admins || [];
-      const docMgrs = ws.documentManagers || [];
+      const isMember = Boolean(ws.isMember);
 
       // Update profile hero
       updateProfileHero(ws, owner);
 
       // Determine role
-      if (userId === owner.userId) {
-        currentUserRole = "Owner";
-      } else if (admins.includes(userId)) {
-        currentUserRole = "Admin";
-      } else if (docMgrs.some(dm => dm.userId === userId)) {
-        currentUserRole = "DocumentManager";
+      currentUserRole = ws.userRole || null;
+
+      if (!isMember) {
+        toggleMemberOnlySections(false);
+        $("#ownerActionsContainer").hide();
+        $("#memberActionsContainer").hide();
+        $("#addMemberBtn").hide();
+        $("#addBulkMemberBtn").hide();
+        $("#pendingRequestsSection").hide();
+        $("#activityTimelineSection").hide();
+        showWorkspaceAccessAlert('Membership, statistics, and workspace settings are only available to workspace members.');
+        return;
       }
+
+      toggleMemberOnlySections(true);
+      hideWorkspaceAccessAlert();
 
       // Owner UI
       if (currentUserRole === "Owner") {
@@ -290,8 +381,12 @@ function loadWorkspaceInfo(callback) {
         $("#pendingRequestsSection").show();
         $("#activityTimelineSection").show();
         $("#settings-tab-item").removeClass("d-none");
+        $('#settings').removeClass('d-none');
         loadPendingRequests();
         loadPublicRetentionSettings();
+      } else {
+        $("#settings-tab-item").addClass("d-none");
+        $('#settings').addClass('d-none');
       }
 
       if (callback) callback();
@@ -336,22 +431,26 @@ function loadMembers(searchTerm = "", roleFilter = "") {
     .done(function (members) {
       const rows = members.map(m => {
         const isOwner = m.role === "Owner";
+        const safeUserId = escapeHtml(m.userId || "");
+        const safeDisplayName = escapeHtml(m.displayName || "(no name)");
+        const safeEmail = escapeHtml(m.email || "");
+        const safeRole = escapeHtml(m.role || "");
         const checkboxHtml = isOwner || (currentUserRole !== "Owner" && currentUserRole !== "Admin") 
           ? '<input type="checkbox" class="form-check-input" disabled>' 
           : `<input type="checkbox" class="form-check-input member-checkbox" 
-                     data-user-id="${m.userId}" 
-                     data-user-name="${m.displayName || '(no name)'}"
-                     data-user-email="${m.email || ''}"
-                     data-user-role="${m.role}">`;
+                     data-user-id="${safeUserId}" 
+                     data-user-name="${safeDisplayName}"
+                     data-user-email="${safeEmail}"
+                     data-user-role="${safeRole}">`;
         
         return `
           <tr>
             <td>${checkboxHtml}</td>
             <td>
-              ${m.displayName || "(no name)"}<br>
-              <small>${m.email || ""}</small>
+              ${safeDisplayName}<br>
+              <small>${safeEmail}</small>
             </td>
-            <td>${m.role}</td>
+            <td>${safeRole}</td>
             <td>${renderMemberActions(m)}</td>
           </tr>
         `;
@@ -431,10 +530,13 @@ function removeMember(memberId) {
 function loadPendingRequests() {
   $.get(`/api/public_workspaces/${workspaceId}/requests`)
     .done(function (requests) {
-      const rows = requests.map(req => `
+      const rows = requests.map(req => {
+        const safeDisplayName = escapeHtml(req.displayName || "(no name)");
+        const safeEmail = escapeHtml(req.email || "");
+        return `
         <tr>
-          <td>${req.displayName}</td>
-          <td>${req.email}</td>
+          <td>${safeDisplayName}</td>
+          <td>${safeEmail}</td>
           <td>
             <button class="btn btn-sm btn-success approve-request-btn"
                     data-id="${req.userId}">Approve</button>
@@ -442,7 +544,8 @@ function loadPendingRequests() {
                     data-id="${req.userId}">Reject</button>
           </td>
         </tr>
-      `).join("");
+      `;
+      }).join("");
       $("#pendingRequestsTable tbody").html(rows);
     })
     .fail(function (jq) {
@@ -514,13 +617,18 @@ function renderUserSearchResults(users) {
     html = `<tr><td colspan="3" class="text-center text-muted">No results.</td></tr>`;
   } else {
     users.forEach(u => {
+      const safeUserId = escapeHtml(u.id || "");
+      const safeDisplayName = escapeHtml(u.displayName || "(no name)");
+      const safeEmail = escapeHtml(u.email || "");
       html += `
         <tr>
-          <td>${u.displayName || "(no name)"}</td>
-          <td>${u.email || ""}</td>
+          <td>${safeDisplayName}</td>
+          <td>${safeEmail}</td>
           <td>
-            <button class="btn btn-sm btn-primary"
-                    onclick="selectUserForAdd('${u.id}', '${u.displayName}', '${u.email}')">
+            <button class="btn btn-sm btn-primary select-user-btn"
+                    data-user-id="${safeUserId}"
+                    data-user-name="${safeDisplayName}"
+                    data-user-email="${safeEmail}">
               Select
             </button>
           </td>
@@ -1023,7 +1131,7 @@ function handleCsvFileSelect(event) {
       <p>Total members to add: <strong>${csvParsedData.length}</strong></p>
       <p>Sample data (first 3):</p>
       <ul class="mb-0">
-        ${sampleRows.map(row => `<li>${row.displayName} (${row.email})</li>`).join('')}
+        ${sampleRows.map(row => `<li>${escapeHtml(row.displayName || '')} (${escapeHtml(row.email || '')})</li>`).join('')}
       </ul>
     `);
     $("#csvValidationResults").show();

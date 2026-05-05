@@ -625,7 +625,7 @@
                 <div id="web-search-notice-container" class="mb-2" style="display: none;">
                     <div class="d-flex align-items-center px-3 py-2 rounded-top border border-bottom-0" style="background-color: var(--bs-tertiary-bg); border-color: var(--bs-border-color) !important;">
                         <i class="bi bi-info-circle text-primary me-2"></i>
-                        <span class="small" id="web-search-notice-text">{{ settings.web_search_user_notice_text or 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.' }}</span>
+                        <span class="small" id="web-search-notice-text">{{ settings.web_search_user_notice_text or 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.' }}</span>
                         <button type="button" class="btn-close btn-close-sm ms-auto" id="web-search-notice-dismiss" aria-label="Dismiss" style="font-size: 0.65rem;"></button>
                     </div>
                 </div>

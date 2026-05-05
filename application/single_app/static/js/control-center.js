@@ -496,7 +496,7 @@ class ControlCenter {
     renderUserAvatar(user) {
         if (user.profile_image) {
             return `
-                <img src="${user.profile_image}" alt="${this.escapeHtml(user.display_name || user.email)}" 
+                <img src="${this.escapeHtml(user.profile_image)}" alt="${this.escapeHtml(user.display_name || user.email)}" 
                      class="rounded-circle me-2" style="width: 32px; height: 32px; object-fit: cover;">
             `;
         } else {
@@ -1293,13 +1293,17 @@ class ControlCenter {
         this.showToast(message, 'danger');
     }
     
-    showToast(message, type = 'info') {
+    showToast(message, type = 'info', allowHtml = false) {
+        const safeMessage = allowHtml
+            ? String(message ?? '')
+            : this.escapeHtml(String(message ?? ''));
+
         // Create toast HTML
         const toastHtml = `
             <div class="toast align-items-center text-bg-${type} border-0" role="alert" aria-live="assertive" aria-atomic="true">
                 <div class="d-flex">
                     <div class="toast-body">
-                        ${message}
+                        ${safeMessage}
                     </div>
                     <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
                 </div>
@@ -2831,22 +2835,22 @@ class ControlCenter {
         
         switch (activityType) {
             case 'user_login':
-                return `Login method: ${log.login_method || log.details?.login_method || 'N/A'}`;
+                return `Login method: ${this.escapeHtml(log.login_method || log.details?.login_method || 'N/A')}`;
                 
             case 'conversation_creation':
-                return `Title: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                return `Title: ${this.escapeHtml(log.conversation?.title || 'Untitled')}, ID: ${this.escapeHtml(log.conversation?.conversation_id || 'N/A')}`;
                 
             case 'document_creation':
-                return `File: ${log.document?.file_name || 'Unknown'}, Type: ${log.document?.file_type || ''}`;
+                return `File: ${this.escapeHtml(log.document?.file_name || 'Unknown')}, Type: ${this.escapeHtml(log.document?.file_type || '')}`;
                 
             case 'token_usage':
-                return `Type: ${log.token_type || 'unknown'}, Tokens: ${log.usage?.total_tokens || 0}, Model: ${log.usage?.model || 'N/A'}`;
+                return `Type: ${this.escapeHtml(log.token_type || 'unknown')}, Tokens: ${log.usage?.total_tokens || 0}, Model: ${this.escapeHtml(log.usage?.model || 'N/A')}`;
                 
             case 'conversation_deletion':
-                return `Deleted: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                return `Deleted: ${this.escapeHtml(log.conversation?.title || 'Untitled')}, ID: ${this.escapeHtml(log.conversation?.conversation_id || 'N/A')}`;
                 
             case 'conversation_archival':
-                return `Archived: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                return `Archived: ${this.escapeHtml(log.conversation?.title || 'Untitled')}, ID: ${this.escapeHtml(log.conversation?.conversation_id || 'N/A')}`;
                 
             default:
                 return 'N/A';
@@ -3473,13 +3477,13 @@ class ControlCenter {
                     <input type="checkbox" class="form-check-input public-workspace-checkbox" value="${workspace.id}">
                 </td>
                 <td>
-                    <div class="fw-semibold">${workspace.name || 'Unnamed Workspace'}</div>
-                    <div class="text-muted small">${workspace.description || 'No description'}</div>
-                    <div class="text-muted small">ID: ${workspace.id}</div>
+                    <div class="fw-semibold">${this.escapeHtml(workspace.name || 'Unnamed Workspace')}</div>
+                    <div class="text-muted small">${this.escapeHtml(workspace.description || 'No description')}</div>
+                    <div class="text-muted small">ID: ${this.escapeHtml(workspace.id)}</div>
                 </td>
                 <td>
-                    <div>${ownerName}</div>
-                    <div class="text-muted small">${ownerEmail}</div>
+                    <div>${this.escapeHtml(ownerName)}</div>
+                    <div class="text-muted small">${this.escapeHtml(ownerEmail)}</div>
                 </td>
                 <td>
                     <div class="small"><strong>${memberCount}</strong> member${memberCount !== 1 ? 's' : ''}</div>

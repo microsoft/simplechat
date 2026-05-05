@@ -1,5 +1,7 @@
 # functions_settings.py
 
+from flask import has_request_context
+
 from config import *
 from functions_appinsights import log_event
 import app_settings_cache
@@ -15,6 +17,43 @@ from support_menu_config import (
 def is_tabular_processing_enabled(settings):
     """Tabular processing is available whenever enhanced citations is enabled."""
     return bool((settings or {}).get('enable_enhanced_citations', False))
+
+
+def _authorize_user_settings_access(user_id, operation, allow_cross_user=False):
+    """Authorize user-settings access for the current request context."""
+    normalized_user_id = str(user_id or '').strip()
+    if allow_cross_user or not has_request_context():
+        return None
+
+    try:
+        # Import locally to avoid a circular dependency during app startup.
+        from functions_authentication import get_current_user_id
+    except ImportError:
+        from application.single_app.functions_authentication import get_current_user_id
+
+    actor_user_id = str(get_current_user_id() or '').strip()
+    if actor_user_id and normalized_user_id and actor_user_id != normalized_user_id:
+        log_event(
+            f"[UserSettings] Denied cross-user {operation}",
+            {
+                "actor_user_id": actor_user_id,
+                "target_user_id": normalized_user_id,
+                "operation": operation,
+            },
+            level=logging.WARNING,
+        )
+        raise PermissionError(f"Cannot {operation} settings for another user.")
+
+    return actor_user_id or None
+
+
+def _should_sync_session_profile(target_user_id, actor_user_id, allow_cross_user=False):
+    """Return True when session-derived profile data should update the target settings doc."""
+    if allow_cross_user or not has_request_context():
+        return False
+    normalized_target_user_id = str(target_user_id or '').strip()
+    normalized_actor_user_id = str(actor_user_id or '').strip()
+    return bool(normalized_target_user_id and normalized_actor_user_id and normalized_target_user_id == normalized_actor_user_id)
 import copy
 from support_menu_config import (
     get_default_support_latest_features_visibility,
@@ -306,7 +345,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_web_search': False,
         'web_search_consent_accepted': False,
         'enable_web_search_user_notice': False,  # Show popup to users explaining their message will be sent to Bing
-        'web_search_user_notice_text': 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.',
+        'web_search_user_notice_text': 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.',
         'web_search_agent': {
             'agent_type': 'aifoundry',
             'azure_openai_gpt_endpoint': '',
@@ -1035,9 +1074,14 @@ def decrypt_key(encrypted_key):
         )
         return None
 
-def get_user_settings(user_id):
+def get_user_settings(user_id, allow_cross_user=False):
     """Fetches the user settings document from Cosmos DB, ensuring email and display_name are present if possible."""
-    from flask import session
+    actor_user_id = _authorize_user_settings_access(user_id, "read", allow_cross_user=allow_cross_user)
+    should_sync_session_profile = _should_sync_session_profile(
+        user_id,
+        actor_user_id,
+        allow_cross_user=allow_cross_user,
+    )
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
         updated = False
@@ -1058,27 +1102,62 @@ def get_user_settings(user_id):
             doc['settings']['showTutorialButtons'] = True
             updated = True
         
-        # Try to update email/display_name if missing and available in session
-        user = session.get("user", {})
-        email = user.get("preferred_username") or user.get("email")
-        display_name = user.get("name")
-        if email and doc.get("email") != email:
-            doc["email"] = email
-            updated = True
-        if display_name and doc.get("display_name") != display_name:
-            doc["display_name"] = display_name
-            updated = True
-            
-        # Check if profile image needs to be fetched
-        if 'profileImage' not in doc['settings']:
+        if should_sync_session_profile:
+            # Try to update email/display_name if missing and available in session
+            user = session.get("user", {})
+            email = user.get("preferred_username") or user.get("email")
+            display_name = user.get("name")
+            if email and doc.get("email") != email:
+                doc["email"] = email
+                updated = True
+            if display_name and doc.get("display_name") != display_name:
+                doc["display_name"] = display_name
+                updated = True
+
+            # Check if profile image needs to be fetched
+            if 'profileImage' not in doc['settings']:
+                from functions_authentication import get_user_profile_image
+                try:
+                    profile_image = get_user_profile_image()
+                    doc['settings']['profileImage'] = profile_image
+                    updated = True
+                except Exception as e:
+                    log_event(
+                        "Could not fetch profile image for existing user.",
+                        extra={
+                            "user_id": user_id,
+                            "error": str(e)
+                        },
+                        level=logging.WARNING
+                    )
+                    doc['settings']['profileImage'] = None
+                    updated = True
+        
+        if updated:
+            cosmos_user_settings_container.upsert_item(body=doc)
+        return doc
+    except exceptions.CosmosResourceNotFoundError:
+        # Return a default structure if the user has no settings saved yet
+        doc = {"id": user_id, "settings": {}}
+        doc["settings"]["personal_model_endpoints"] = []
+        doc["settings"]["showTutorialButtons"] = True
+        if should_sync_session_profile:
+            user = session.get("user", {})
+            email = user.get("preferred_username") or user.get("email")
+            display_name = user.get("name")
+            if email:
+                doc["email"] = email
+            if display_name:
+                doc["display_name"] = display_name
+
+            # Try to fetch profile image for new user
             from functions_authentication import get_user_profile_image
             try:
                 profile_image = get_user_profile_image()
                 doc['settings']['profileImage'] = profile_image
-                updated = True
             except Exception as e:
                 log_event(
-                    "Could not fetch profile image for existing user.",
+                    "Could not fetch profile image for new user.",
                     extra={
                         "user_id": user_id,
                         "error": str(e)
@@ -1086,39 +1165,6 @@ def get_user_settings(user_id):
                     level=logging.WARNING
                 )
                 doc['settings']['profileImage'] = None
-                updated = True
-        
-        if updated:
-            cosmos_user_settings_container.upsert_item(body=doc)
-        return doc
-    except exceptions.CosmosResourceNotFoundError:
-        # Return a default structure if the user has no settings saved yet
-        user = session.get("user", {})
-        email = user.get("preferred_username") or user.get("email")
-        display_name = user.get("name")
-        doc = {"id": user_id, "settings": {}}
-        doc["settings"]["personal_model_endpoints"] = []
-        doc["settings"]["showTutorialButtons"] = True
-        if email:
-            doc["email"] = email
-        if display_name:
-            doc["display_name"] = display_name
-            
-        # Try to fetch profile image for new user
-        from functions_authentication import get_user_profile_image
-        try:
-            profile_image = get_user_profile_image()
-            doc['settings']['profileImage'] = profile_image
-        except Exception as e:
-            log_event(
-                "Could not fetch profile image for new user.",
-                extra={
-                    "user_id": user_id,
-                    "error": str(e)
-                },
-                level=logging.WARNING
-            )
-            doc['settings']['profileImage'] = None
             
         cosmos_user_settings_container.upsert_item(body=doc)
         return doc
@@ -1134,7 +1180,7 @@ def get_user_settings(user_id):
         )
         raise # Re-raise the exception to be handled by the route
     
-def update_user_settings(user_id, settings_to_update):
+def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
     """
     Updates or creates user settings in Cosmos DB, merging new settings
     into the existing 'settings' sub-dictionary and updating 'lastUpdated'.
@@ -1147,8 +1193,21 @@ def update_user_settings(user_id, settings_to_update):
     Returns:
         bool: True if the update was successful, False otherwise.
     """
+    actor_user_id = _authorize_user_settings_access(
+        user_id,
+        "update",
+        allow_cross_user=allow_cross_user,
+    )
     sanitized_settings_to_update = sanitize_settings_for_logging(settings_to_update)
-    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": sanitized_settings_to_update})
+    log_event(
+        "[UserSettings] Update Attempt",
+        {
+            "user_id": user_id,
+            "actor_user_id": actor_user_id,
+            "allow_cross_user": allow_cross_user,
+            "settings_to_update": sanitized_settings_to_update,
+        },
+    )
 
 
     try:

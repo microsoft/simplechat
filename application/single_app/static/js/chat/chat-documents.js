@@ -1838,16 +1838,43 @@ document.addEventListener('DOMContentLoaded', function() {
           icon = 'bi-globe';
         }
         if (name) {
-          workspaceItems.push(`<li class="list-group-item"><i class="bi ${icon} me-2"></i>${name}</li>`);
+          workspaceItems.push({ icon, name });
         }
       }
 
       if (listEl) {
+        listEl.textContent = '';
         if (workspaceItems.length > 0) {
           const listLabel = scopeLocked === true ? 'Currently locked to:' : 'Will lock to:';
-          listEl.innerHTML = `<p class="small text-muted mb-2">${listLabel}</p><ul class="list-group list-group-flush">${workspaceItems.join('')}</ul>`;
+          const listLabelEl = document.createElement('p');
+          listLabelEl.className = 'small text-muted mb-2';
+          listLabelEl.textContent = listLabel;
+
+          const listGroupEl = document.createElement('ul');
+          listGroupEl.className = 'list-group list-group-flush';
+
+          workspaceItems.forEach(({ icon, name }) => {
+            const listItemEl = document.createElement('li');
+            listItemEl.className = 'list-group-item';
+
+            const iconEl = document.createElement('i');
+            iconEl.className = `bi ${icon} me-2`;
+
+            const nameEl = document.createElement('span');
+            nameEl.textContent = name;
+
+            listItemEl.appendChild(iconEl);
+            listItemEl.appendChild(nameEl);
+            listGroupEl.appendChild(listItemEl);
+          });
+
+          listEl.appendChild(listLabelEl);
+          listEl.appendChild(listGroupEl);
         } else {
-          listEl.innerHTML = '<p class="text-muted">No specific workspaces recorded.</p>';
+          const emptyStateEl = document.createElement('p');
+          emptyStateEl.className = 'text-muted';
+          emptyStateEl.textContent = 'No specific workspaces recorded.';
+          listEl.appendChild(emptyStateEl);
         }
       }
 
