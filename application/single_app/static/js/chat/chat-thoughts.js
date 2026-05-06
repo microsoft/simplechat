@@ -166,6 +166,22 @@ function isTabularActivityPayload(activity) {
         || activity.plugin_name === 'TabularProcessingPlugin';
 }
 
+function isTabularToolActivity(activity) {
+    if (!activity || typeof activity !== 'object') {
+        return false;
+    }
+
+    return activity.kind === 'tabular_tool_invocation';
+}
+
+function isTabularPostProcessingActivity(activity) {
+    if (!activity || typeof activity !== 'object') {
+        return false;
+    }
+
+    return activity.kind === 'tabular_post_processing';
+}
+
 function isTabularThought(thoughtData) {
     const stepType = String(thoughtData?.step_type || '').trim().toLowerCase();
     if (stepType === 'tabular_analysis') {
@@ -334,9 +350,13 @@ function computeAgentActivityPercent(state, counters, forceCompleted = false) {
 function renderAgentActivityProgress(state, options = {}) {
     const isLive = options.live === true;
     const counters = getAgentActivityCounters(state);
-    const isCompleted = state.completed || (counters.totalCount > 0 && counters.runningCount === 0);
-    const percent = computeAgentActivityPercent(state, counters, isCompleted);
     const isTabular = state.category === 'tabular';
+    const hasTabularPostProcessingActivity = isTabular && counters.activities.some(activity => isTabularPostProcessingActivity(activity));
+    const hasNonToolTabularActivity = isTabular && counters.activities.some(activity => !isTabularToolActivity(activity));
+    const isCompleted = isTabular
+        ? (state.completed || (hasTabularPostProcessingActivity && counters.totalCount > 0 && counters.runningCount === 0))
+        : (state.completed || (counters.totalCount > 0 && counters.runningCount === 0));
+    const percent = computeAgentActivityPercent(state, counters, isCompleted);
     const status = isCompleted
         ? (counters.failedCount > 0 ? 'completed_with_failures' : 'completed')
         : 'running';
@@ -345,13 +365,21 @@ function renderAgentActivityProgress(state, options = {}) {
     const progressTitle = isTabular ? 'Tabular analysis' : 'Agent progress';
     const progressLabel = isTabular ? 'Tabular analysis progress' : 'Agent progress';
     const currentStepPrefix = isTabular ? 'Current tabular step' : 'Current tool';
-    const initialStatusText = isTabular ? 'Gathering workbook evidence' : 'Connecting to the selected agent';
-    const completedStatusText = isTabular ? 'Workbook evidence ready' : 'Response ready';
+    const initialStatusText = isTabular
+        ? (hasTabularPostProcessingActivity ? 'Preparing workbook output' : 'Gathering workbook evidence')
+        : 'Connecting to the selected agent';
+    const completedStatusText = isTabular
+        ? (hasTabularPostProcessingActivity ? 'Tabular export ready' : 'Workbook evidence ready')
+        : 'Response ready';
     const iconClass = isTabular ? 'bi-table text-info' : 'bi-robot text-info';
 
     if (counters.totalCount > 0) {
         if (isTabular) {
-            summaryParts.push(buildProgressSummaryLabel(counters.finishedCount, counters.totalCount, 'tool call'));
+            summaryParts.push(buildProgressSummaryLabel(
+                counters.finishedCount,
+                counters.totalCount,
+                hasNonToolTabularActivity ? 'step' : 'tool call'
+            ));
         } else {
             summaryParts.push(buildProgressSummaryLabel(counters.finishedCount, counters.totalCount, 'tool'));
         }

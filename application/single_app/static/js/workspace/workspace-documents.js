@@ -862,6 +862,7 @@ function renderDocumentRow(doc) {
             entry => entry.startsWith(currentUserId + ",")
         );
     }
+    const pendingSharedApproval = !isOwner && Boolean(sharedUserEntry && sharedUserEntry.endsWith(",not_approved"));
     
     // First column with checkbox and expand/collapse
     let firstColumnHtml = `
@@ -884,7 +885,7 @@ function renderDocumentRow(doc) {
     let chatButton = '';
     
     // Chat button for everyone with access (outside dropdown)
-    if (isComplete && !hasError && (isOwner || (!sharedUserEntry || sharedUserEntry.endsWith(",approved")))) {
+    if (isComplete && !hasError && !pendingSharedApproval && (isOwner || (!sharedUserEntry || sharedUserEntry.endsWith(",approved")))) {
         chatButton = `
             <button class="btn btn-sm btn-primary me-1 action-btn-wide text-start"
                 onclick="window.redirectToChat('${docId}')"
@@ -897,7 +898,7 @@ function renderDocumentRow(doc) {
         `;
     }
     
-    if (isComplete && !hasError) {
+    if (isComplete && !hasError && !pendingSharedApproval) {
         actionsDropdown = `
         <div class="dropdown action-dropdown d-inline-block">
             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -962,6 +963,19 @@ function renderDocumentRow(doc) {
             </ul>
         </div>
         `;
+    } else if (isComplete && !hasError && pendingSharedApproval) {
+        actionsDropdown = `
+        <div class="dropdown action-dropdown d-inline-block">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More shared document actions">
+                <i class="bi bi-three-dots-vertical"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item select-btn" href="#" onclick="window.toggleSelectionMode(); return false;">
+                    <i class="bi bi-check-square me-2"></i>Select
+                </a></li>
+            </ul>
+        </div>
+        `;
     } else if (isOwner) {
         // Only owners can delete incomplete/error documents
         actionsDropdown = `
@@ -982,8 +996,8 @@ function renderDocumentRow(doc) {
     let approvalButton = '';
     if (!isOwner && sharedUserEntry && sharedUserEntry.endsWith(",not_approved")) {
         approvalButton = `
-            <button class="btn btn-sm btn-success me-1 action-btn-wide text-start"
-                onclick="window.approveSharedDocument('${docId}', this, '${escapeHtml(doc.owner_id || doc.user_id)}')"
+            <button type="button" class="btn btn-sm btn-success me-1"
+                onclick="window.approveSharedDocument('${docId}', '${escapeHtml(doc.owner_id || doc.user_id)}')"
                 title="Approve access to this shared document"
                 aria-label="Approve access to shared document: ${escapeHtml(doc.file_name || 'Untitled')}"
             >
@@ -1801,7 +1815,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Approve shared document handler
-window.approveSharedDocument = async function(documentId, btn, ownerOid) {
+window.approveSharedDocument = async function(documentId, ownerOid) {
     let ownerInfo = { display_name: "the owner", email: "" };
     if (ownerOid) {
         try {
@@ -1813,21 +1827,25 @@ window.approveSharedDocument = async function(documentId, btn, ownerOid) {
             }
         } catch (e) {}
     }
-    let msg = `This file was shared with you by <strong>${escapeHtml(ownerInfo.display_name)}</strong>`;
-    if (ownerInfo.email) msg += ` (<span class="text-muted">${escapeHtml(ownerInfo.email)}</span>)`;
-    msg += ".<br>Do you want to approve access to this shared document?";
-
     // Populate and show the modal
     const modalEl = document.getElementById("approveSharedModal");
-    const modalBody = document.getElementById("approveSharedModalBody");
+    const ownerNameEl = document.getElementById("approveSharedModalOwnerName");
+    const ownerEmailEl = document.getElementById("approveSharedModalOwnerEmail");
+    const ownerEmailWrapperEl = document.getElementById("approveSharedModalOwnerEmailWrapper");
     const approveBtn = document.getElementById("approveSharedModalApproveBtn");
     const cancelBtn = document.getElementById("approveSharedModalCancelBtn");
     const denyBtn = document.getElementById("approveSharedModalDenyBtn");
-    if (!modalEl || !modalBody || !approveBtn || !denyBtn) {
-        alert("Approval modal not found in the page.");
+    if (!modalEl || !ownerNameEl || !ownerEmailEl || !ownerEmailWrapperEl || !approveBtn || !cancelBtn || !denyBtn) {
+        if (window.showToast) {
+            window.showToast('Approval modal is unavailable on this page.', 'danger');
+        } else {
+            console.error('Approval modal not found in the page.');
+        }
         return;
     }
-    modalBody.innerHTML = msg;
+    ownerNameEl.textContent = ownerInfo.display_name || 'the owner';
+    ownerEmailEl.textContent = ownerInfo.email || '';
+    ownerEmailWrapperEl.classList.toggle('d-none', !ownerInfo.email);
     approveBtn.disabled = false;
     approveBtn.innerHTML = "Approve";
     denyBtn.disabled = false;
@@ -1850,12 +1868,16 @@ window.approveSharedDocument = async function(documentId, btn, ownerOid) {
                 bootstrap.Modal.getOrCreateInstance(modalEl).hide();
                 fetchUserDocuments();
             } else {
-                alert(data.error || "Failed to approve document");
+                if (window.showToast) {
+                    window.showToast(data.error || 'Failed to approve document', 'danger');
+                }
                 approveBtn.disabled = false;
                 approveBtn.innerHTML = "Approve";
             }
         } catch (err) {
-            alert("Error approving document: " + (err.error || err.message || "Unknown error"));
+            if (window.showToast) {
+                window.showToast(`Error approving document: ${err.error || err.message || 'Unknown error'}`, 'danger');
+            }
             approveBtn.disabled = false;
             approveBtn.innerHTML = "Approve";
         }
@@ -1873,12 +1895,16 @@ window.approveSharedDocument = async function(documentId, btn, ownerOid) {
                 bootstrap.Modal.getOrCreateInstance(modalEl).hide();
                 fetchUserDocuments();
             } else {
-                alert(data.error || "Failed to deny access");
+                if (window.showToast) {
+                    window.showToast(data.error || 'Failed to deny access', 'danger');
+                }
                 denyBtn.disabled = false;
                 denyBtn.innerHTML = "Deny";
             }
         } catch (err) {
-            alert("Error denying access: " + (err.error || err.message || "Unknown error"));
+            if (window.showToast) {
+                window.showToast(`Error denying access: ${err.error || err.message || 'Unknown error'}`, 'danger');
+            }
             denyBtn.disabled = false;
             denyBtn.innerHTML = "Deny";
         }

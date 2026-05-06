@@ -1,14 +1,14 @@
 # test_chat_generated_tabular_output_card.py
 """
 UI test for chat generated tabular output cards.
-Version: 0.241.129
-Implemented in: 0.241.129
+Version: 0.241.130
+Implemented in: 0.241.130
 
 This test ensures assistant replies with generic generated analysis artifact
-metadata render a reusable export card, preserve untrusted values as text, and
-trigger the chat artifact download endpoint plus the workspace-promotion action
-when the user clicks the card buttons without introducing page-level JavaScript
-errors.
+metadata render a reusable export card, preserve untrusted values as text,
+keep long JSON preview lines wrapped inside the chat card, and trigger the chat
+artifact download endpoint plus the workspace-promotion action when the user
+clicks the card buttons without introducing page-level JavaScript errors.
 """
 
 import json
@@ -187,6 +187,119 @@ def test_chat_generated_tabular_output_card(playwright):
         assert promote_requests[0]["conversation_id"] == "generated-tabular-output-test"
         assert promote_requests[0]["message_id"] == "generated-export-123"
         assert promote_requests[0]["workspace_scope"] == "personal"
+        assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_generated_analysis_json_preview_wraps_long_lines(playwright):
+    """Validate generated JSON preview blocks wrap long lines instead of overflowing the card."""
+    _require_ui_env()
+
+    long_reason_token = "analysis" * 160
+    artifact_payload = {
+        "capability": "exhaustive_review",
+        "artifact_message_id": "generated-wrap-123",
+        "conversation_id": "generated-json-wrap-test",
+        "storage_scope": "chat",
+        "file_name": "exhaustive-review.json",
+        "output_format": "json",
+        "summary": "Saved the full review as a JSON artifact for follow-up.",
+        "preview_items": [
+            {
+                "comment_id": "115562TroyHammer.pdf",
+                "classification": "substantive",
+                "reason": long_reason_token,
+            }
+        ],
+    }
+
+    page_errors = []
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 900, "height": 900},
+    )
+    page = context.new_page()
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    page.route(
+        "**/api/user/settings",
+        lambda route: _fulfill_json(route, {"selected_agent": None, "settings": {"enable_agents": False}}),
+    )
+    page.route("**/api/get_conversations", lambda route: _fulfill_json(route, {"conversations": []}))
+
+    try:
+        page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        page.wait_for_selector("#chatbox")
+        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
+
+        page.evaluate(
+            """
+            async (artifactPayload) => {
+                const conversationId = 'generated-json-wrap-test';
+                currentConversationId = conversationId;
+                window.currentConversationId = conversationId;
+
+                const messagesModule = await import('/static/js/chat/chat-messages.js');
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'Saved the exhaustive review JSON artifact.',
+                    null,
+                    'assistant-generated-wrap',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-generated-wrap',
+                        role: 'assistant',
+                        content: 'Saved the exhaustive review JSON artifact.',
+                        metadata: {
+                            generated_analysis_artifacts: [artifactPayload],
+                        },
+                    },
+                    true
+                );
+            }
+            """,
+            artifact_payload,
+        )
+
+        card = page.locator('.generated-tabular-output-card')
+        expect(card).to_be_visible()
+        expect(card).to_contain_text('Exhaustive Review JSON artifact')
+
+        preview_block = card.locator('.generated-analysis-preview-block')
+        expect(preview_block).to_be_visible()
+        expect(preview_block).to_contain_text(long_reason_token[:120])
+
+        layout_metrics = preview_block.evaluate(
+            """
+            (node) => {
+                const computedStyle = window.getComputedStyle(node);
+                return {
+                    whiteSpace: computedStyle.whiteSpace,
+                    overflowWrap: computedStyle.overflowWrap,
+                    scrollWidth: node.scrollWidth,
+                    clientWidth: node.clientWidth,
+                };
+            }
+            """
+        )
+
+        assert layout_metrics["whiteSpace"] == "pre-wrap"
+        assert layout_metrics["overflowWrap"] == "anywhere"
+        assert layout_metrics["scrollWidth"] <= layout_metrics["clientWidth"] + 4, (
+            "Expected generated JSON preview lines to wrap within the preview block instead of "
+            "overflowing horizontally."
+        )
         assert page_errors == []
     finally:
         context.close()

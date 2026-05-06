@@ -1568,6 +1568,30 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 
+<!-- Group Generated Artifact Approval Modal -->
+<div class="modal fade" id="groupGeneratedArtifactApprovalModal" tabindex="-1" aria-labelledby="groupGeneratedArtifactApprovalModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="groupGeneratedArtifactApprovalModalLabel">Review Pending Generated Artifact</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">
+          <strong id="groupGeneratedArtifactApprovalModalFileName">This generated artifact</strong>
+          is pending group workspace approval.
+        </p>
+        <p class="mb-0" id="groupGeneratedArtifactApprovalModalMessage">Choose whether to approve this pending generated artifact or deny the request.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-danger action-btn-wide me-1 d-none" id="groupGeneratedArtifactApprovalModalSecondaryActionBtn">Deny</button>
+        <button type="button" class="btn btn-sm btn-secondary action-btn-wide me-1" data-bs-dismiss="modal" id="groupGeneratedArtifactApprovalModalCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-sm btn-success action-btn-wide" id="groupGeneratedArtifactApprovalModalApproveBtn">Approve</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %} 
 
 {% block scripts %}
@@ -3382,75 +3406,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     showGroupDocumentDeleteFeedback(message, variant);
   }
 
-  function buildGroupGeneratedArtifactApproveButton(documentId, fileName) {
-    const approveButton = document.createElement("button");
-    approveButton.type = "button";
-    approveButton.className =
-      "btn btn-sm btn-outline-success me-1 action-btn-wide text-start";
-    approveButton.setAttribute(
-      "aria-label",
-      `Approve generated artifact ${String(fileName || "document").trim() || "document"}`
-    );
-
-    const icon = document.createElement("i");
-    icon.className = "bi bi-check2-circle me-1";
-    icon.setAttribute("aria-hidden", "true");
-    approveButton.appendChild(icon);
-    approveButton.appendChild(document.createTextNode("Approve"));
-
-    approveButton.addEventListener("click", () => {
-      window.approveGroupGeneratedArtifactDocument(documentId, approveButton);
-    });
-
-    return approveButton;
-  }
-
-  function buildGroupGeneratedArtifactDenyButton(documentId, fileName) {
-    const denyButton = document.createElement("button");
-    denyButton.type = "button";
-    denyButton.className =
-      "btn btn-sm btn-outline-danger me-1 action-btn-wide text-start";
-    denyButton.setAttribute(
-      "aria-label",
-      `Deny generated artifact ${String(fileName || "document").trim() || "document"}`
-    );
-
-    const icon = document.createElement("i");
-    icon.className = "bi bi-x-circle me-1";
-    icon.setAttribute("aria-hidden", "true");
-    denyButton.appendChild(icon);
-    denyButton.appendChild(document.createTextNode("Deny"));
-
-    denyButton.addEventListener("click", () => {
-      window.denyGroupGeneratedArtifactDocument(documentId, denyButton);
-    });
-
-    return denyButton;
-  }
-
-  function buildGroupGeneratedArtifactCancelButton(documentId, fileName) {
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.className =
-      "btn btn-sm btn-outline-secondary me-1 action-btn-wide text-start";
-    cancelButton.setAttribute(
-      "aria-label",
-      `Cancel generated artifact ${String(fileName || "document").trim() || "document"}`
-    );
-
-    const icon = document.createElement("i");
-    icon.className = "bi bi-x-lg me-1";
-    icon.setAttribute("aria-hidden", "true");
-    cancelButton.appendChild(icon);
-    cancelButton.appendChild(document.createTextNode("Cancel"));
-
-    cancelButton.addEventListener("click", () => {
-      window.cancelGroupGeneratedArtifactDocument(documentId, cancelButton);
-    });
-
-    return cancelButton;
-  }
-
   function getGroupGeneratedArtifactRequesterId(doc) {
     return String(
       (doc && (doc.generated_artifact_requested_by_user_id || doc.user_id)) || ""
@@ -3464,41 +3419,69 @@ app_settings.app_title }} {% endblock %} {% block head %}
     ).trim();
   }
 
-  function getGroupGeneratedArtifactActionButtons(doc, userRole) {
-    if (!isPendingGeneratedArtifactDocument(doc)) {
-      return [];
-    }
+  let activeGroupGeneratedArtifactModalContext = null;
 
-    const actionButtons = [];
+  function getGroupGeneratedArtifactActionState(doc, userRole) {
     const documentId = String((doc && doc.id) || "").trim();
-    if (!documentId) {
-      return actionButtons;
-    }
-
     const groupStatus = window.currentGroupStatus || "active";
     const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRole);
     const requesterId = getGroupGeneratedArtifactRequesterId(doc);
     const currentUserId = getCurrentWorkspaceUserId();
     const isRequester = !!currentUserId && requesterId === currentUserId;
-    const fileName = doc.file_name || "document";
+    const canApprove = canManage && groupStatus === "active";
+    const canDeny = canManage && !isRequester;
+    const canCancelRequest = isRequester;
 
-    if (canManage && groupStatus === "active") {
-      actionButtons.push(
-        buildGroupGeneratedArtifactApproveButton(documentId, fileName)
-      );
+    return {
+      documentId,
+      fileName: String((doc && doc.file_name) || "document").trim() || "document",
+      canApprove,
+      canDeny,
+      canCancelRequest,
+      hasAnyAction: Boolean(documentId && (canApprove || canDeny || canCancelRequest)),
+    };
+  }
+
+  function buildGroupGeneratedArtifactActionLauncherButton(doc, userRole) {
+    const actionState = getGroupGeneratedArtifactActionState(doc, userRole);
+    if (!actionState.hasAnyAction) {
+      return null;
     }
 
-    if (canManage && !isRequester) {
-      actionButtons.push(buildGroupGeneratedArtifactDenyButton(documentId, fileName));
+    const launcherText = actionState.canApprove ? "Approve" : "Review";
+    const launcherButton = document.createElement("button");
+    launcherButton.type = "button";
+    launcherButton.className =
+      "btn btn-sm btn-success me-1 action-btn-wide text-start";
+    launcherButton.setAttribute(
+      "aria-label",
+      `${launcherText} generated artifact ${actionState.fileName}`
+    );
+
+    const icon = document.createElement("i");
+    icon.className = "bi bi-check2-circle me-1";
+    icon.setAttribute("aria-hidden", "true");
+    launcherButton.appendChild(icon);
+    launcherButton.appendChild(document.createTextNode(launcherText));
+
+    launcherButton.addEventListener("click", () => {
+      openGroupGeneratedArtifactApprovalModal(doc, userRole);
+    });
+
+    return launcherButton;
+  }
+
+  function getGroupGeneratedArtifactActionButtons(doc, userRole) {
+    if (!isPendingGeneratedArtifactDocument(doc)) {
+      return [];
     }
 
-    if (isRequester) {
-      actionButtons.push(
-        buildGroupGeneratedArtifactCancelButton(documentId, fileName)
-      );
+    const launcherButton = buildGroupGeneratedArtifactActionLauncherButton(doc, userRole);
+    if (!launcherButton) {
+      return [];
     }
 
-    return actionButtons;
+    return [launcherButton];
   }
 
   function prependGroupGeneratedArtifactActionButtons(actionsCell, doc, userRole) {
@@ -3524,6 +3507,298 @@ app_settings.app_title }} {% endblock %} {% block head %}
       prependGroupGeneratedArtifactActionButtons(actionsCell, doc, userRoleInActiveGroup);
     });
   }
+
+  function getGroupGeneratedArtifactApprovalModalElements() {
+    return {
+      modalEl: document.getElementById("groupGeneratedArtifactApprovalModal"),
+      fileNameEl: document.getElementById("groupGeneratedArtifactApprovalModalFileName"),
+      messageEl: document.getElementById("groupGeneratedArtifactApprovalModalMessage"),
+      secondaryActionBtn: document.getElementById("groupGeneratedArtifactApprovalModalSecondaryActionBtn"),
+      cancelBtn: document.getElementById("groupGeneratedArtifactApprovalModalCancelBtn"),
+      approveBtn: document.getElementById("groupGeneratedArtifactApprovalModalApproveBtn"),
+    };
+  }
+
+  function resetGroupGeneratedArtifactApprovalModal(modalElements) {
+    modalElements.secondaryActionBtn.disabled = false;
+    modalElements.secondaryActionBtn.textContent = "Deny";
+    modalElements.secondaryActionBtn.classList.add("d-none");
+    modalElements.secondaryActionBtn.onclick = null;
+
+    modalElements.cancelBtn.disabled = false;
+    modalElements.cancelBtn.textContent = "Cancel";
+    modalElements.cancelBtn.onclick = null;
+
+    modalElements.approveBtn.disabled = false;
+    modalElements.approveBtn.textContent = "Approve";
+    modalElements.approveBtn.classList.remove("d-none");
+    modalElements.approveBtn.onclick = null;
+  }
+
+  function getGroupGeneratedArtifactApprovalModalMessage(actionState) {
+    if (actionState.canApprove && actionState.canDeny) {
+      return "Choose whether to approve this pending generated artifact or deny the request.";
+    }
+
+    if (actionState.canApprove && actionState.canCancelRequest) {
+      return "Choose whether to approve this pending generated artifact or cancel your request.";
+    }
+
+    if (actionState.canApprove) {
+      return "Choose whether to approve this pending generated artifact.";
+    }
+
+    if (actionState.canCancelRequest) {
+      return "Choose whether to cancel your pending generated artifact request.";
+    }
+
+    if (actionState.canDeny) {
+      return "Choose whether to deny this pending generated artifact request.";
+    }
+
+    return "Review this pending generated artifact request.";
+  }
+
+  function clearGroupGeneratedArtifactApprovalModalContext() {
+    activeGroupGeneratedArtifactModalContext = null;
+  }
+
+  function openGroupGeneratedArtifactApprovalModal(doc, userRole) {
+    const actionState = getGroupGeneratedArtifactActionState(doc, userRole);
+    if (!actionState.hasAnyAction) {
+      showGroupWorkspaceMessage(
+        "No generated artifact actions are available for this document.",
+        "warning"
+      );
+      return;
+    }
+
+    const modalElements = getGroupGeneratedArtifactApprovalModalElements();
+    if (
+      !modalElements.modalEl ||
+      !modalElements.fileNameEl ||
+      !modalElements.messageEl ||
+      !modalElements.secondaryActionBtn ||
+      !modalElements.cancelBtn ||
+      !modalElements.approveBtn
+    ) {
+      showGroupWorkspaceMessage(
+        "The generated artifact approval modal is unavailable on this page.",
+        "danger"
+      );
+      return;
+    }
+
+    if (!modalElements.modalEl.dataset.generatedArtifactApprovalBound) {
+      modalElements.modalEl.addEventListener("hidden.bs.modal", () => {
+        clearGroupGeneratedArtifactApprovalModalContext();
+        resetGroupGeneratedArtifactApprovalModal(modalElements);
+      });
+      modalElements.modalEl.dataset.generatedArtifactApprovalBound = "true";
+    }
+
+    activeGroupGeneratedArtifactModalContext = {
+      documentId: actionState.documentId,
+    };
+
+    modalElements.fileNameEl.textContent = actionState.fileName;
+    modalElements.messageEl.textContent =
+      getGroupGeneratedArtifactApprovalModalMessage(actionState);
+    resetGroupGeneratedArtifactApprovalModal(modalElements);
+
+    modalElements.approveBtn.classList.toggle("d-none", !actionState.canApprove);
+    if (actionState.canApprove) {
+      modalElements.approveBtn.onclick = async () => {
+        const wasSuccessful = await approveGroupGeneratedArtifactDocument(
+          actionState.documentId,
+          modalElements.approveBtn
+        );
+        if (wasSuccessful) {
+          bootstrap.Modal.getOrCreateInstance(modalElements.modalEl).hide();
+        }
+      };
+    }
+
+    if (actionState.canDeny || actionState.canCancelRequest) {
+      modalElements.secondaryActionBtn.classList.remove("d-none");
+      if (actionState.canDeny) {
+        modalElements.secondaryActionBtn.textContent = "Deny";
+        modalElements.secondaryActionBtn.onclick = async () => {
+          const wasSuccessful = await denyGroupGeneratedArtifactDocument(
+            actionState.documentId,
+            modalElements.secondaryActionBtn
+          );
+          if (wasSuccessful) {
+            bootstrap.Modal.getOrCreateInstance(modalElements.modalEl).hide();
+          }
+        };
+      } else {
+        modalElements.secondaryActionBtn.textContent = "Cancel Request";
+        modalElements.secondaryActionBtn.onclick = async () => {
+          const wasSuccessful = await cancelGroupGeneratedArtifactDocument(
+            actionState.documentId,
+            modalElements.secondaryActionBtn
+          );
+          if (wasSuccessful) {
+            bootstrap.Modal.getOrCreateInstance(modalElements.modalEl).hide();
+          }
+        };
+      }
+    }
+
+    modalElements.cancelBtn.onclick = () => {
+      bootstrap.Modal.getOrCreateInstance(modalElements.modalEl).hide();
+    };
+
+    bootstrap.Modal.getOrCreateInstance(modalElements.modalEl).show();
+  }
+
+  function refreshCurrentGroupDocumentView() {
+    if (groupCurrentFolder) {
+      renderGroupFolderContents(groupCurrentFolder);
+      return;
+    }
+
+    fetchGroupDocuments();
+  }
+
+  async function approveGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
+    if (!["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup)) {
+      showGroupWorkspaceMessage(
+        "You do not have permission to approve generated artifacts in this group.",
+        "danger"
+      );
+      return false;
+    }
+
+    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+    if (triggerButton) {
+      triggerButton.disabled = true;
+      triggerButton.innerHTML =
+        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+    }
+
+    try {
+      const response = await fetch(
+        `/api/group_documents/${encodeURIComponent(documentId)}/approve-generated-artifact`,
+        { method: "POST" }
+      );
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseData.error || `Server responded with status ${response.status}`
+        );
+      }
+
+      showGroupWorkspaceMessage(
+        responseData.message || "Generated artifact approved.",
+        "success"
+      );
+      refreshCurrentGroupDocumentView();
+      return true;
+    } catch (error) {
+      showGroupWorkspaceMessage(
+        error.message || "Failed to approve the generated artifact.",
+        "danger"
+      );
+      if (triggerButton && document.body.contains(triggerButton)) {
+        triggerButton.disabled = false;
+        triggerButton.innerHTML = originalButtonHtml;
+      }
+      return false;
+    }
+  }
+
+  async function denyGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
+    if (!["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup)) {
+      showGroupWorkspaceMessage(
+        "You do not have permission to deny generated artifacts in this group.",
+        "danger"
+      );
+      return false;
+    }
+
+    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+    if (triggerButton) {
+      triggerButton.disabled = true;
+      triggerButton.innerHTML =
+        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+    }
+
+    try {
+      const response = await fetch(
+        `/api/group_documents/${encodeURIComponent(documentId)}/deny-generated-artifact`,
+        { method: "POST" }
+      );
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseData.error || `Server responded with status ${response.status}`
+        );
+      }
+
+      showGroupWorkspaceMessage(
+        responseData.message || "Generated artifact denied.",
+        "success"
+      );
+      refreshCurrentGroupDocumentView();
+      return true;
+    } catch (error) {
+      showGroupWorkspaceMessage(
+        error.message || "Failed to deny the generated artifact.",
+        "danger"
+      );
+      if (triggerButton && document.body.contains(triggerButton)) {
+        triggerButton.disabled = false;
+        triggerButton.innerHTML = originalButtonHtml;
+      }
+      return false;
+    }
+  }
+
+  async function cancelGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
+    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+    if (triggerButton) {
+      triggerButton.disabled = true;
+      triggerButton.innerHTML =
+        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+    }
+
+    try {
+      const response = await fetch(
+        `/api/group_documents/${encodeURIComponent(documentId)}/cancel-generated-artifact`,
+        { method: "POST" }
+      );
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseData.error || `Server responded with status ${response.status}`
+        );
+      }
+
+      showGroupWorkspaceMessage(
+        responseData.message || "Generated artifact request canceled.",
+        "success"
+      );
+      refreshCurrentGroupDocumentView();
+      return true;
+    } catch (error) {
+      showGroupWorkspaceMessage(
+        error.message || "Failed to cancel the generated artifact request.",
+        "danger"
+      );
+      if (triggerButton && document.body.contains(triggerButton)) {
+        triggerButton.disabled = false;
+        triggerButton.innerHTML = originalButtonHtml;
+      }
+      return false;
+    }
+  }
+
+  window.approveGroupGeneratedArtifactDocument = approveGroupGeneratedArtifactDocument;
+  window.denyGroupGeneratedArtifactDocument = denyGroupGeneratedArtifactDocument;
+  window.cancelGroupGeneratedArtifactDocument = cancelGroupGeneratedArtifactDocument;
+  window.openGroupGeneratedArtifactApprovalModal = openGroupGeneratedArtifactApprovalModal;
 
   // --- Render Group Document Row ---
   function renderGroupDocumentRow(doc, userRole) {
@@ -5220,148 +5495,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
         wireGroupFolderGeneratedArtifactApproveButtons(docs);
 
       // Wire search
-
-  async function approveGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
-    if (!["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup)) {
-      showGroupWorkspaceMessage(
-        "You do not have permission to approve generated artifacts in this group.",
-        "danger"
-      );
-      return;
-    }
-
-    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
-    if (triggerButton) {
-      triggerButton.disabled = true;
-      triggerButton.innerHTML =
-        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-    }
-
-    try {
-      const response = await fetch(
-        `/api/group_documents/${encodeURIComponent(documentId)}/approve-generated-artifact`,
-        { method: "POST" }
-      );
-      const responseData = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(
-          responseData.error || `Server responded with status ${response.status}`
-        );
-      }
-
-      showGroupWorkspaceMessage(
-        responseData.message || "Generated artifact approved.",
-        "success"
-      );
-      if (groupCurrentFolder) {
-        renderGroupFolderContents(groupCurrentFolder);
-        return;
-      }
-      fetchGroupDocuments();
-    } catch (error) {
-      showGroupWorkspaceMessage(
-        error.message || "Failed to approve the generated artifact.",
-        "danger"
-      );
-      if (triggerButton && document.body.contains(triggerButton)) {
-        triggerButton.disabled = false;
-        triggerButton.innerHTML = originalButtonHtml;
-      }
-    }
-  }
-
-  async function denyGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
-    if (!["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup)) {
-      showGroupWorkspaceMessage(
-        "You do not have permission to deny generated artifacts in this group.",
-        "danger"
-      );
-      return;
-    }
-
-    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
-    if (triggerButton) {
-      triggerButton.disabled = true;
-      triggerButton.innerHTML =
-        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-    }
-
-    try {
-      const response = await fetch(
-        `/api/group_documents/${encodeURIComponent(documentId)}/deny-generated-artifact`,
-        { method: "POST" }
-      );
-      const responseData = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(
-          responseData.error || `Server responded with status ${response.status}`
-        );
-      }
-
-      showGroupWorkspaceMessage(
-        responseData.message || "Generated artifact denied.",
-        "success"
-      );
-      if (groupCurrentFolder) {
-        renderGroupFolderContents(groupCurrentFolder);
-        return;
-      }
-      fetchGroupDocuments();
-    } catch (error) {
-      showGroupWorkspaceMessage(
-        error.message || "Failed to deny the generated artifact.",
-        "danger"
-      );
-      if (triggerButton && document.body.contains(triggerButton)) {
-        triggerButton.disabled = false;
-        triggerButton.innerHTML = originalButtonHtml;
-      }
-    }
-  }
-
-  async function cancelGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
-    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
-    if (triggerButton) {
-      triggerButton.disabled = true;
-      triggerButton.innerHTML =
-        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-    }
-
-    try {
-      const response = await fetch(
-        `/api/group_documents/${encodeURIComponent(documentId)}/cancel-generated-artifact`,
-        { method: "POST" }
-      );
-      const responseData = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(
-          responseData.error || `Server responded with status ${response.status}`
-        );
-      }
-
-      showGroupWorkspaceMessage(
-        responseData.message || "Generated artifact request canceled.",
-        "success"
-      );
-      if (groupCurrentFolder) {
-        renderGroupFolderContents(groupCurrentFolder);
-        return;
-      }
-      fetchGroupDocuments();
-    } catch (error) {
-      showGroupWorkspaceMessage(
-        error.message || "Failed to cancel the generated artifact request.",
-        "danger"
-      );
-      if (triggerButton && document.body.contains(triggerButton)) {
-        triggerButton.disabled = false;
-        triggerButton.innerHTML = originalButtonHtml;
-      }
-    }
-  }
-  window.approveGroupGeneratedArtifactDocument = approveGroupGeneratedArtifactDocument;
-  window.denyGroupGeneratedArtifactDocument = denyGroupGeneratedArtifactDocument;
-  window.cancelGroupGeneratedArtifactDocument = cancelGroupGeneratedArtifactDocument;
       const si = document.getElementById('group-folder-search-input');
       const sb = document.getElementById('group-folder-search-btn');
       if (si) {

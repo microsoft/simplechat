@@ -2008,7 +2008,11 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body" id="approveSharedModalBody">
-        <!-- Populated by JS -->
+        <p class="mb-2">
+          This file was shared with you by <strong id="approveSharedModalOwnerName">the owner</strong>
+          <span class="text-muted d-none" id="approveSharedModalOwnerEmailWrapper">(<span id="approveSharedModalOwnerEmail"></span>)</span>.
+        </p>
+        <p class="mb-0">Do you want to approve access to this shared document?</p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-sm btn-danger action-btn-wide me-1" id="approveSharedModalDenyBtn">Deny</button>
@@ -2209,14 +2213,14 @@
     });
   </script>
 
-  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-utils.js') }}"></script>
-  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-documents.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/workspace/workspace-documents-sharing.js') }}"></script>
-  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-prompts.js') }}"></script>
-  <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/workspace_sidebar_nav.js') }}"></script>
-  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}"></script>
-  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}"></script>
-  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-tutorial.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-utils.js') }}?v={{ config['VERSION'] }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-documents.js') }}?v={{ config['VERSION'] }}"></script>
+  <script src="{{ url_for('static', filename='js/workspace/workspace-documents-sharing.js') }}?v={{ config['VERSION'] }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-prompts.js') }}?v={{ config['VERSION'] }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}?v={{ config['VERSION'] }}"></script>
+  <script src="{{ url_for('static', filename='js/workspace_sidebar_nav.js') }}?v={{ config['VERSION'] }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}?v={{ config['VERSION'] }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}?v={{ config['VERSION'] }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-tutorial.js') }}?v={{ config['VERSION'] }}"></script>
 
 {% endblock %}

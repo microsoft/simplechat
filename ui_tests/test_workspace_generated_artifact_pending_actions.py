@@ -1,12 +1,12 @@
 # test_workspace_generated_artifact_pending_actions.py
 """
 UI test for pending generated artifact workspace actions.
-Version: 0.241.128
-Implemented in: 0.241.128
+Version: 0.241.134
+Implemented in: 0.241.134
 
-This test ensures pending generated artifact rows expose approve and deny
-actions for managers and cancel actions for requesters in both the group and
-public workspace UIs.
+This test ensures group workspace pending generated artifact rows collapse to a
+single modal launcher while public workspace rows retain their inline pending
+actions.
 """
 
 import os
@@ -88,13 +88,31 @@ def test_pending_generated_artifact_actions_render_for_group_and_public_workspac
         managed_group_row = page.locator('#group-doc-row-group-managed')
         requester_group_row = page.locator('#group-doc-row-group-requester')
 
-        expect(managed_group_row.get_by_role('button', name='Approve')).to_be_visible()
-        expect(managed_group_row.get_by_role('button', name='Deny')).to_be_visible()
+        managed_group_action_button = managed_group_row.get_by_role('button', name='Approve')
+        requester_group_action_button = requester_group_row.get_by_role('button', name='Review')
+
+        expect(managed_group_action_button).to_be_visible()
+        expect(managed_group_action_button).to_have_class(r'.*btn-success.*')
+        assert managed_group_row.get_by_role('button', name='Deny').count() == 0
         assert managed_group_row.get_by_role('button', name='Cancel').count() == 0
 
-        expect(requester_group_row.get_by_role('button', name='Cancel')).to_be_visible()
+        managed_group_action_button.click()
+        expect(page.locator('#groupGeneratedArtifactApprovalModal')).to_be_visible()
+        expect(page.locator('#groupGeneratedArtifactApprovalModalApproveBtn')).to_be_visible()
+        expect(page.locator('#groupGeneratedArtifactApprovalModalSecondaryActionBtn')).to_have_text('Deny')
+        page.locator('#groupGeneratedArtifactApprovalModalCancelBtn').click()
+
+        expect(requester_group_action_button).to_be_visible()
+        expect(requester_group_action_button).to_have_class(r'.*btn-success.*')
+        assert requester_group_row.get_by_role('button', name='Cancel').count() == 0
         assert requester_group_row.get_by_role('button', name='Approve').count() == 0
         assert requester_group_row.get_by_role('button', name='Deny').count() == 0
+
+        requester_group_action_button.click()
+        expect(page.locator('#groupGeneratedArtifactApprovalModal')).to_be_visible()
+        expect(page.locator('#groupGeneratedArtifactApprovalModalApproveBtn')).to_be_hidden()
+        expect(page.locator('#groupGeneratedArtifactApprovalModalSecondaryActionBtn')).to_have_text('Cancel Request')
+        page.locator('#groupGeneratedArtifactApprovalModalCancelBtn').click()
 
         page.goto(f"{BASE_URL}/public_workspaces", wait_until="domcontentloaded")
         page.wait_for_function("() => typeof renderPublicDocumentRow === 'function'")

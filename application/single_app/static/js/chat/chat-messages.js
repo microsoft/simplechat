@@ -2239,9 +2239,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return tableWrapper;
   }
 
+  function formatGeneratedAnalysisPreviewBlock(previewBlock) {
+    previewBlock.className = 'generated-analysis-preview-block small bg-light border rounded p-2 mb-0 overflow-auto text-break';
+    previewBlock.style.whiteSpace = 'pre-wrap';
+    previewBlock.style.wordBreak = 'break-word';
+    previewBlock.style.overflowWrap = 'anywhere';
+    previewBlock.style.maxWidth = '100%';
+    return previewBlock;
+  }
+
   function buildGeneratedTabularPreviewFallback(previewRows) {
-    const previewBlock = document.createElement('pre');
-    previewBlock.className = 'small bg-light border rounded p-2 mb-0 overflow-auto';
+    const previewBlock = formatGeneratedAnalysisPreviewBlock(document.createElement('pre'));
 
     try {
       previewBlock.textContent = JSON.stringify(previewRows || [], null, 2);
@@ -2253,8 +2261,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   }
 
   function buildGeneratedAnalysisPreviewText(previewText) {
-    const previewBlock = document.createElement('pre');
-    previewBlock.className = 'small bg-light border rounded p-2 mb-0 overflow-auto';
+    const previewBlock = formatGeneratedAnalysisPreviewBlock(document.createElement('pre'));
     previewBlock.textContent = String(previewText || '').trim();
     return previewBlock;
   }

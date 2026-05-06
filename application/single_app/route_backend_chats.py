@@ -1712,7 +1712,14 @@ def _build_tabular_generated_output_system_message(output_metadata):
     )
 
 
-async def _generate_tabular_structured_output_entries(user_question, source_candidate, gpt_model, settings):
+async def _generate_tabular_structured_output_entries(
+    user_question,
+    source_candidate,
+    gpt_model,
+    settings,
+    output_format='json',
+    thought_callback=None,
+):
     from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 
@@ -1749,14 +1756,69 @@ async def _generate_tabular_structured_output_entries(user_question, source_cand
                 api_version=settings.get('azure_openai_gpt_api_version'),
             )
 
+    normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
+    output_format_label = normalized_output_format.upper()
     row_batches = _build_tabular_generated_output_row_batches(rows)
+    total_batches = len(row_batches)
+    log_event(
+        '[Tabular Generated Output] Preparing structured export batches',
+        {
+            'source_file_name': source_candidate.get('filename'),
+            'output_format': normalized_output_format,
+            'row_count': len(rows),
+            'batch_count': total_batches,
+        },
+        debug_only=True,
+    )
+    await emit_tabular_post_processing_thought(
+        thought_callback,
+        f"Preparing structured {output_format_label} export from tabular results",
+        detail=f"rows={len(rows)}; batches={total_batches}",
+        activity=build_tabular_post_processing_activity_payload(
+            'tabular.generated_output',
+            f"Preparing structured {output_format_label} export",
+            'running',
+            phase='structuring',
+            output_format=normalized_output_format,
+            file_name=source_candidate.get('filename'),
+            batch_index=0,
+            batch_count=total_batches,
+        ),
+    )
     merged_entries = []
     for batch_index, batch_rows in enumerate(row_batches):
+        batch_number = batch_index + 1
+        log_event(
+            '[Tabular Generated Output] Building structured export batch',
+            {
+                'source_file_name': source_candidate.get('filename'),
+                'output_format': normalized_output_format,
+                'batch_number': batch_number,
+                'batch_count': total_batches,
+                'row_count': len(batch_rows),
+            },
+            debug_only=True,
+        )
+        await emit_tabular_post_processing_thought(
+            thought_callback,
+            f"Building structured {output_format_label} export batch {batch_number} of {total_batches}",
+            detail=f"batch={batch_number}/{total_batches}; rows={len(batch_rows)}",
+            activity=build_tabular_post_processing_activity_payload(
+                'tabular.generated_output',
+                f"Structured {output_format_label} export (batch {batch_number} of {total_batches})",
+                'running',
+                phase='structuring',
+                output_format=normalized_output_format,
+                file_name=source_candidate.get('filename'),
+                batch_index=batch_number,
+                batch_count=total_batches,
+            ),
+        )
         batch_prompt = _build_tabular_generated_output_batch_prompt(
             user_question,
             batch_rows,
             batch_index,
-            len(row_batches),
+            total_batches,
             source_candidate,
         )
 
@@ -1769,6 +1831,21 @@ async def _generate_tabular_structured_output_entries(user_question, source_cand
                 'Never add markdown, explanation text, or omit rows.'
             )
             if attempt_number > 1:
+                await emit_tabular_post_processing_thought(
+                    thought_callback,
+                    f"Retrying structured {output_format_label} export batch {batch_number} of {total_batches}",
+                    detail=f"batch={batch_number}/{total_batches}; attempt={attempt_number}",
+                    activity=build_tabular_post_processing_activity_payload(
+                        'tabular.generated_output',
+                        f"Structured {output_format_label} export retry (batch {batch_number} of {total_batches})",
+                        'running',
+                        phase='structuring',
+                        output_format=normalized_output_format,
+                        file_name=source_candidate.get('filename'),
+                        batch_index=batch_number,
+                        batch_count=total_batches,
+                    ),
+                )
                 chat_history.add_system_message(
                     f'The previous attempt did not return the required {len(batch_rows)} JSON object(s). '
                     'Retry now and preserve the input row count exactly.'
@@ -1783,6 +1860,32 @@ async def _generate_tabular_structured_output_entries(user_question, source_cand
                 break
 
         if parsed_entries is None or len(parsed_entries) != len(batch_rows):
+            await emit_tabular_post_processing_thought(
+                thought_callback,
+                f"Structured {output_format_label} export failed on batch {batch_number} of {total_batches}",
+                detail=f"batch={batch_number}/{total_batches}; rows={len(batch_rows)}",
+                activity=build_tabular_post_processing_activity_payload(
+                    'tabular.generated_output',
+                    f"Structured {output_format_label} export failed",
+                    'failed',
+                    phase='structuring',
+                    output_format=normalized_output_format,
+                    file_name=source_candidate.get('filename'),
+                    batch_index=batch_number,
+                    batch_count=total_batches,
+                ),
+            )
+            log_event(
+                '[Tabular Generated Output] Structured export batch failed',
+                {
+                    'source_file_name': source_candidate.get('filename'),
+                    'output_format': normalized_output_format,
+                    'batch_number': batch_number,
+                    'batch_count': total_batches,
+                    'row_count': len(batch_rows),
+                },
+                debug_only=True,
+            )
             return None
 
         merged_entries.extend(parsed_entries)
@@ -1790,7 +1893,14 @@ async def _generate_tabular_structured_output_entries(user_question, source_cand
     return merged_entries
 
 
-async def maybe_create_tabular_generated_output(user_question, invocations, gpt_model, settings, conversation_id):
+async def maybe_create_tabular_generated_output(
+    user_question,
+    invocations,
+    gpt_model,
+    settings,
+    conversation_id,
+    thought_callback=None,
+):
     """Build, upload, and describe a generated tabular JSON/CSV export when requested."""
     if not question_requests_tabular_generated_output(user_question):
         return None
@@ -1810,6 +1920,8 @@ async def maybe_create_tabular_generated_output(user_question, invocations, gpt_
             source_candidate,
             gpt_model,
             settings,
+            output_format=output_format,
+            thought_callback=thought_callback,
         )
         if output_entries is None:
             return None
@@ -1825,6 +1937,31 @@ async def maybe_create_tabular_generated_output(user_question, invocations, gpt_
         source_candidate.get('filename'),
         output_format,
     )
+    output_format_label = str(output_format or 'json').upper()
+    await emit_tabular_post_processing_thought(
+        thought_callback,
+        f"Uploading generated {output_format_label} export to this chat",
+        detail=f"file={generated_file_name}; rows={len(output_entries)}",
+        activity=build_tabular_post_processing_activity_payload(
+            'tabular.generated_output',
+            f"Uploading generated {output_format_label} export",
+            'running',
+            phase='uploading',
+            output_format=output_format,
+            file_name=generated_file_name,
+        ),
+    )
+    log_event(
+        '[Tabular Generated Output] Uploading generated export artifact',
+        {
+            'conversation_id': conversation_id,
+            'source_file_name': source_candidate.get('filename'),
+            'generated_file_name': generated_file_name,
+            'output_format': output_format,
+            'row_count': len(output_entries),
+        },
+        debug_only=True,
+    )
     upload_result = upload_generated_analysis_artifact_for_current_user(
         conversation_id=conversation_id,
         file_name=generated_file_name,
@@ -1838,19 +1975,44 @@ async def maybe_create_tabular_generated_output(user_question, invocations, gpt_
     )
 
     preview_rows = output_entries[:TABULAR_GENERATED_OUTPUT_PREVIEW_ROWS]
+    uploaded_file_name = upload_result.get('message', {}).get('file_name') or generated_file_name
+    await emit_tabular_post_processing_thought(
+        thought_callback,
+        f"Prepared downloadable {output_format_label} export",
+        detail=f"file={uploaded_file_name}; rows={len(output_entries)}",
+        activity=build_tabular_post_processing_activity_payload(
+            'tabular.generated_output',
+            f"Generated {output_format_label} export ready",
+            'completed',
+            phase='completed',
+            output_format=output_format,
+            file_name=uploaded_file_name,
+        ),
+    )
+    log_event(
+        '[Tabular Generated Output] Generated export ready',
+        {
+            'conversation_id': conversation_id,
+            'source_file_name': source_candidate.get('filename'),
+            'generated_file_name': uploaded_file_name,
+            'output_format': output_format,
+            'row_count': len(output_entries),
+        },
+        debug_only=True,
+    )
     return {
         'capability': 'tabular',
         'artifact_message_id': upload_result.get('message', {}).get('id'),
         'conversation_id': conversation_id,
         'storage_scope': 'chat',
-        'file_name': upload_result.get('message', {}).get('file_name') or generated_file_name,
+        'file_name': uploaded_file_name,
         'output_format': output_format,
         'row_count': len(output_entries),
         'source_file_name': source_candidate.get('filename'),
         'selected_sheet': source_candidate.get('selected_sheet'),
         'preview_rows': preview_rows,
         'summary': (
-            f"Saved {len(output_entries)} row(s) to {upload_result.get('message', {}).get('file_name') or generated_file_name} "
+            f"Saved {len(output_entries)} row(s) to {uploaded_file_name} "
             'in this chat as a downloadable export.'
         ),
     }
@@ -4788,6 +4950,124 @@ def build_tabular_activity_payload(invocation_or_start, state):
     return payload
 
 
+def build_tabular_post_processing_activity_payload(
+    activity_key,
+    title,
+    state,
+    *,
+    phase=None,
+    output_format=None,
+    file_name=None,
+    batch_index=None,
+    batch_count=None,
+):
+    """Build a stable activity payload for non-tool tabular post-processing work."""
+    payload = {
+        'activity_key': str(activity_key or 'tabular.post_processing').strip() or 'tabular.post_processing',
+        'kind': 'tabular_post_processing',
+        'title': str(title or 'Tabular post-processing').strip() or 'Tabular post-processing',
+        'status': str(state or 'running').strip().lower() or 'running',
+        'state': str(state or 'running').strip().lower() or 'running',
+        'lane_key': 'tabular',
+        'lane_label': 'Tabular',
+    }
+
+    normalized_phase = str(phase or '').strip().lower()
+    if normalized_phase:
+        payload['phase'] = normalized_phase
+
+    normalized_output_format = str(output_format or '').strip().lower()
+    if normalized_output_format:
+        payload['output_format'] = normalized_output_format
+
+    normalized_file_name = str(file_name or '').strip()
+    if normalized_file_name:
+        payload['file_name'] = normalized_file_name
+
+    if batch_index is not None:
+        payload['batch_index'] = int(batch_index)
+    if batch_count is not None:
+        payload['batch_count'] = int(batch_count)
+
+    return payload
+
+
+def build_tabular_analysis_lifecycle_activity_payload(
+    title,
+    state,
+    *,
+    phase='analysis',
+    attempt_number=None,
+    attempt_count=None,
+):
+    """Build a stable activity payload for long-running tabular analysis lifecycle work."""
+    payload = {
+        'activity_key': 'tabular.analysis.lifecycle',
+        'kind': 'tabular_analysis_lifecycle',
+        'title': str(title or 'Analyzing workbook evidence').strip() or 'Analyzing workbook evidence',
+        'status': str(state or 'running').strip().lower() or 'running',
+        'state': str(state or 'running').strip().lower() or 'running',
+        'lane_key': 'tabular',
+        'lane_label': 'Tabular',
+    }
+
+    normalized_phase = str(phase or '').strip().lower()
+    if normalized_phase:
+        payload['phase'] = normalized_phase
+
+    if attempt_number is not None:
+        payload['attempt_number'] = int(attempt_number)
+    if attempt_count is not None:
+        payload['attempt_count'] = int(attempt_count)
+
+    return payload
+
+
+async def emit_tabular_post_processing_thought(thought_callback, content, detail=None, activity=None):
+    """Emit a tabular post-processing thought through an optional callback."""
+    if not callable(thought_callback):
+        return
+
+    thought_payload = {
+        'step_type': 'tabular_analysis',
+        'content': str(content or '').strip(),
+    }
+    if detail is not None:
+        thought_payload['detail'] = detail
+    if isinstance(activity, dict) and activity:
+        thought_payload['activity'] = activity
+
+    callback_result = thought_callback(thought_payload)
+    if inspect.isawaitable(callback_result):
+        await callback_result
+
+
+async def emit_tabular_analysis_lifecycle_thought(
+    thought_callback,
+    content,
+    *,
+    detail=None,
+    title=None,
+    state='running',
+    phase='analysis',
+    attempt_number=None,
+    attempt_count=None,
+):
+    """Emit a long-running lifecycle thought for tabular analysis progress."""
+    await emit_tabular_post_processing_thought(
+        thought_callback,
+        content,
+        detail=detail,
+        activity=build_tabular_analysis_lifecycle_activity_payload(
+            title or 'Analyzing workbook evidence',
+            state,
+            phase=phase,
+            attempt_number=attempt_number,
+            attempt_count=attempt_count,
+        ),
+    )
+
+
 def format_live_tabular_invocation_start_thought(invocation_start):
     """Build a live thought payload for an in-flight tabular tool invocation."""
     parameters = getattr(invocation_start, 'parameters', {}) or {}
@@ -4855,7 +5135,7 @@ def register_tabular_invocation_thought_callback(
     live_thought_callback=None,
 ):
     """Register a callback that persists and optionally streams tabular tool thoughts."""
-    callback_key = f"{user_id}:{conversation_id}:tabular:{uuid.uuid4()}"
+    callback_key = f"{user_id}:{conversation_id}"
 
     def add_and_publish_live_thought(thought_payload):
         thought_tracker.add_thought(
@@ -5353,7 +5633,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    source_hint="workspace", group_id=None,
                                    public_workspace_id=None,
                                    execution_mode='analysis',
-                                   tabular_file_contexts=None):
+                                   tabular_file_contexts=None,
+                                   thought_callback=None):
     """Run lightweight SK with TabularProcessingPlugin to analyze tabular data.
 
     Creates a temporary Kernel with only the TabularProcessingPlugin, uses the
@@ -5903,6 +6184,18 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         for attempt_number in range(1, 4):
             force_tool_use = attempt_number > 1 or (attempt_number == 1 and analysis_requires_immediate_tool_choice)
+            if callable(thought_callback) and attempt_number > 1:
+                await emit_tabular_analysis_lifecycle_thought(
+                    thought_callback,
+                    f"Retrying workbook analysis (attempt {attempt_number} of 3)",
+                    detail='Continuing tabular analysis after the previous pass did not finish with a usable final answer.',
+                    title=f"Analyzing workbook evidence (attempt {attempt_number} of 3)",
+                    state='running',
+                    phase='retry',
+                    attempt_number=attempt_number,
+                    attempt_count=3,
+                )
+
             # 4. Build chat history with pre-loaded schemas
             chat_history = SKChatHistory()
             chat_history.add_system_message(build_system_prompt(
@@ -6782,7 +7075,8 @@ async def run_tabular_analysis_with_multi_file_support(user_question, tabular_fi
                                                        source_hint='workspace', group_id=None,
                                                        public_workspace_id=None,
                                                        execution_mode='analysis',
-                                                       tabular_file_contexts=None):
+                                                       tabular_file_contexts=None,
+                                                       thought_callback=None):
     """Run deterministic multi-file helpers first, then fall back to the SK planner."""
     analysis_file_contexts = normalize_tabular_file_contexts_for_analysis(
         tabular_filenames=tabular_filenames,
@@ -6827,6 +7121,7 @@ async def run_tabular_analysis_with_multi_file_support(user_question, tabular_fi
         group_id=group_id,
         public_workspace_id=public_workspace_id,
         execution_mode=execution_mode,
+        thought_callback=thought_callback,
     )
 
 
@@ -6841,6 +7136,7 @@ async def run_tabular_analysis_with_thought_tracking(user_question, tabular_file
     """Run tabular analysis while streaming/persisting live tool thoughts when available."""
     plugin_logger = get_plugin_logger()
     callback_key = None
+    tabular_progress_callback = None
     live_tool_thoughts_enabled = False
 
     try:
@@ -6854,6 +7150,33 @@ async def run_tabular_analysis_with_thought_tracking(user_question, tabular_file
             )
             live_tool_thoughts_enabled = True
 
+            def record_and_publish_tabular_progress_thought(thought_payload):
+                thought_tracker.add_thought(
+                    thought_payload['step_type'],
+                    thought_payload['content'],
+                    detail=thought_payload.get('detail'),
+                    activity=thought_payload.get('activity'),
+                )
+
+                if callable(live_thought_callback):
+                    live_payload = dict(thought_payload)
+                    live_payload['message_id'] = getattr(thought_tracker, 'message_id', None)
+                    live_payload['step_index'] = thought_tracker.current_index - 1
+                    live_thought_callback(live_payload)
+
+            tabular_progress_callback = record_and_publish_tabular_progress_thought
+
+            await emit_tabular_analysis_lifecycle_thought(
+                tabular_progress_callback,
+                'Tabular analysis is running',
+                detail=f"Preparing workbook evidence across {len(tabular_filenames or [])} file(s).",
+                title='Analyzing workbook evidence',
+                state='running',
+                phase='analysis',
+                attempt_number=1,
+                attempt_count=3,
+            )
+
         tabular_analysis = await run_tabular_analysis_with_multi_file_support(
             user_question=user_question,
             tabular_filenames=tabular_filenames,
@@ -6866,8 +7189,31 @@ async def run_tabular_analysis_with_thought_tracking(user_question, tabular_file
             group_id=group_id,
             public_workspace_id=public_workspace_id,
             execution_mode=execution_mode,
+            thought_callback=tabular_progress_callback,
         )
+
+        if callable(tabular_progress_callback):
+            await emit_tabular_analysis_lifecycle_thought(
+                tabular_progress_callback,
+                'Tabular analysis complete; preparing final response',
+                detail='Workbook evidence is ready for final response synthesis.',
+                title='Preparing final tabular response',
+                state='completed',
+                phase='handoff',
+            )
+
         return tabular_analysis, live_tool_thoughts_enabled
+    except Exception as exc:
+        if callable(tabular_progress_callback):
+            await emit_tabular_analysis_lifecycle_thought(
+                tabular_progress_callback,
+                'Tabular analysis stopped before completion',
+                detail=str(exc),
+                title='Tabular analysis stopped',
+                state='failed',
+                phase='failed',
+            )
+        raise
     finally:
         if callback_key:
             plugin_logger.deregister_callbacks(callback_key)
@@ -10000,6 +10346,14 @@ def register_route_backend_chats(app):
                     file_context['file_name'] for file_context in workspace_tabular_file_contexts
                 }
 
+            def record_tabular_post_processing_thought(thought_payload):
+                thought_tracker.add_thought(
+                    thought_payload.get('step_type', 'tabular_analysis'),
+                    thought_payload.get('content', ''),
+                    detail=thought_payload.get('detail'),
+                    activity=thought_payload.get('activity'),
+                )
+
             if (hybrid_search_enabled or history_grounded_search_used) and workspace_tabular_files and is_tabular_processing_enabled(settings):
                 tabular_source_hint = determine_tabular_source_hint(
                     effective_document_scope,
@@ -10054,15 +10408,11 @@ def register_route_backend_chats(app):
                     gpt_model=gpt_model,
                     settings=settings,
                     conversation_id=conversation_id,
+                    thought_callback=record_tabular_post_processing_thought,
                 ))
                 if tabular_generated_output:
                     generated_tabular_outputs_list.append(tabular_generated_output)
                     generated_analysis_artifacts_list.append(tabular_generated_output)
-                    thought_tracker.add_thought(
-                        'tabular_analysis',
-                        f"Prepared downloadable {str(tabular_generated_output.get('output_format') or 'json').upper()} export",
-                        detail=f"file={tabular_generated_output.get('file_name')}; rows={tabular_generated_output.get('row_count')}"
-                    )
 
                 if tabular_analysis:
                     tabular_system_msg = build_tabular_computed_results_system_message(
@@ -10267,15 +10617,11 @@ def register_route_backend_chats(app):
                         gpt_model=gpt_model,
                         settings=settings,
                         conversation_id=conversation_id,
+                        thought_callback=record_tabular_post_processing_thought,
                     ))
                     if chat_tabular_generated_output:
                         generated_tabular_outputs_list.append(chat_tabular_generated_output)
                         generated_analysis_artifacts_list.append(chat_tabular_generated_output)
-                        thought_tracker.add_thought(
-                            'tabular_analysis',
-                            f"Prepared downloadable {str(chat_tabular_generated_output.get('output_format') or 'json').upper()} export",
-                            detail=f"file={chat_tabular_generated_output.get('file_name')}; rows={chat_tabular_generated_output.get('row_count')}"
-                        )
 
                     if chat_tabular_analysis:
                         # Inject pre-computed analysis results as context
@@ -12072,6 +12418,28 @@ def register_route_backend_chats(app):
                         )
                     )
 
+                def record_and_publish_streaming_thought(thought_payload):
+                    thought_tracker.add_thought(
+                        thought_payload.get('step_type', 'tabular_analysis'),
+                        thought_payload.get('content', ''),
+                        detail=thought_payload.get('detail'),
+                        activity=thought_payload.get('activity'),
+                    )
+
+                    if not callable(publish_background_event):
+                        return
+
+                    publish_background_event(
+                        serialize_thought_event(
+                            thought_payload.get('step_type', 'tabular_analysis'),
+                            thought_payload.get('content', ''),
+                            thought_tracker.current_index - 1,
+                            detail=thought_payload.get('detail'),
+                            activity=thought_payload.get('activity'),
+                            progress=thought_payload.get('progress'),
+                        )
+                    )
+
                 # Content Safety check (matching non-streaming path)
                 blocked = False
                 if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
@@ -12645,15 +13013,11 @@ def register_route_backend_chats(app):
                         gpt_model=gpt_model,
                         settings=settings,
                         conversation_id=conversation_id,
+                        thought_callback=record_and_publish_streaming_thought,
                     ))
                     if tabular_generated_output:
                         generated_tabular_outputs_list.append(tabular_generated_output)
                         generated_analysis_artifacts_list.append(tabular_generated_output)
-                        yield emit_thought(
-                            'tabular_analysis',
-                            f"Prepared downloadable {str(tabular_generated_output.get('output_format') or 'json').upper()} export",
-                            detail=f"file={tabular_generated_output.get('file_name')}; rows={tabular_generated_output.get('row_count')}"
-                        )
 
                     if tabular_analysis:
                         system_messages_for_augmentation.append({
@@ -12840,15 +13204,11 @@ def register_route_backend_chats(app):
                             gpt_model=gpt_model,
                             settings=settings,
                             conversation_id=conversation_id,
+                            thought_callback=record_and_publish_streaming_thought,
                         ))
                         if chat_tabular_generated_output:
                             generated_tabular_outputs_list.append(chat_tabular_generated_output)
                             generated_analysis_artifacts_list.append(chat_tabular_generated_output)
-                            yield emit_thought(
-                                'tabular_analysis',
-                                f"Prepared downloadable {str(chat_tabular_generated_output.get('output_format') or 'json').upper()} export",
-                                detail=f"file={chat_tabular_generated_output.get('file_name')}; rows={chat_tabular_generated_output.get('row_count')}"
-                            )
 
                         if chat_tabular_analysis:
                             conversation_history_for_api.append({
