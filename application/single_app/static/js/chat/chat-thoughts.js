@@ -71,7 +71,7 @@ function renderProgressBar(percent, status, failedWindows, ariaLabel) {
     const progressBarClasses = getProgressBarClasses(status, failedWindows);
 
     return `<div class="progress" role="progressbar" aria-label="${escapeHtml(ariaLabel)}" aria-valuenow="${safePercent}" aria-valuemin="0" aria-valuemax="100">
-        <div class="${progressBarClasses}" style="width: ${safePercent}%;">${safePercent}%</div>
+        <div class="${progressBarClasses}" style="width: ${safePercent}%;"></div>
     </div>`;
 }
 
@@ -150,9 +150,29 @@ function createAgentActivityState() {
         latestContent: '',
         latestDetail: '',
         latestStepType: '',
+        category: '',
         completed: false,
         maxPercent: 0,
     };
+}
+
+function isTabularActivityPayload(activity) {
+    if (!activity || typeof activity !== 'object') {
+        return false;
+    }
+
+    return activity.kind === 'tabular_tool_invocation'
+        || activity.lane_key === 'tabular'
+        || activity.plugin_name === 'TabularProcessingPlugin';
+}
+
+function isTabularThought(thoughtData) {
+    const stepType = String(thoughtData?.step_type || '').trim().toLowerCase();
+    if (stepType === 'tabular_analysis') {
+        return true;
+    }
+
+    return isTabularActivityPayload(thoughtData?.activity);
 }
 
 function resetStreamingAgentActivityState(targetMessageId = null) {
@@ -229,6 +249,12 @@ function updateAgentActivityState(state, thoughtData, preserveMaxPercent = true)
     const normalizedContent = content.toLowerCase();
     const stepType = String(thoughtData.step_type || '').trim().toLowerCase();
 
+    if (isTabularThought(thoughtData)) {
+        state.category = 'tabular';
+    } else if (!state.category && (stepType === 'agent_tool_call' || normalizedContent.startsWith('sending to agent'))) {
+        state.category = 'agent';
+    }
+
     if (stepType === 'agent_tool_call' || normalizedContent.startsWith('sending to agent')) {
         state.dispatchStarted = true;
     }
@@ -247,6 +273,9 @@ function updateAgentActivityState(state, thoughtData, preserveMaxPercent = true)
         const activityPayload = thoughtData.activity;
         const activityKey = activityPayload.activity_key || activityPayload.title || `${thoughtData.step_index || state.activities.size}`;
         const previousActivity = state.activities.get(activityKey) || {};
+        if (!state.category) {
+            state.category = isTabularActivityPayload(activityPayload) ? 'tabular' : 'agent';
+        }
         state.activities.set(activityKey, {
             ...previousActivity,
             ...activityPayload,
@@ -307,14 +336,25 @@ function renderAgentActivityProgress(state, options = {}) {
     const counters = getAgentActivityCounters(state);
     const isCompleted = state.completed || (counters.totalCount > 0 && counters.runningCount === 0);
     const percent = computeAgentActivityPercent(state, counters, isCompleted);
+    const isTabular = state.category === 'tabular';
     const status = isCompleted
         ? (counters.failedCount > 0 ? 'completed_with_failures' : 'completed')
         : 'running';
     const runningActivity = [...counters.activities].reverse().find(activity => getNormalizedActivityStatus(activity) === 'running');
     const summaryParts = [];
+    const progressTitle = isTabular ? 'Tabular analysis' : 'Agent progress';
+    const progressLabel = isTabular ? 'Tabular analysis progress' : 'Agent progress';
+    const currentStepPrefix = isTabular ? 'Current tabular step' : 'Current tool';
+    const initialStatusText = isTabular ? 'Gathering workbook evidence' : 'Connecting to the selected agent';
+    const completedStatusText = isTabular ? 'Workbook evidence ready' : 'Response ready';
+    const iconClass = isTabular ? 'bi-table text-info' : 'bi-robot text-info';
 
     if (counters.totalCount > 0) {
-        summaryParts.push(buildProgressSummaryLabel(counters.finishedCount, counters.totalCount, 'tool'));
+        if (isTabular) {
+            summaryParts.push(buildProgressSummaryLabel(counters.finishedCount, counters.totalCount, 'tool call'));
+        } else {
+            summaryParts.push(buildProgressSummaryLabel(counters.finishedCount, counters.totalCount, 'tool'));
+        }
     }
     if (counters.runningCount > 0) {
         summaryParts.push(`${counters.runningCount} running`);
@@ -323,19 +363,20 @@ function renderAgentActivityProgress(state, options = {}) {
         summaryParts.push(`${counters.failedCount} failed`);
     }
     if (isCompleted) {
-        summaryParts.push('Response ready');
+        summaryParts.push(completedStatusText);
     }
 
-    const summaryText = summaryParts.join(' | ') || 'Connecting to the selected agent';
+    const summaryText = summaryParts.join(' | ') || initialStatusText;
     const currentActivityText = runningActivity?.title
-        ? `Current tool: ${runningActivity.title}`
+        ? `${currentStepPrefix}: ${runningActivity.title}`
         : (isLive
-            ? (state.latestContent || 'Connecting to the selected agent')
-            : 'Agent activity captured for this response');
+            ? (state.latestContent || initialStatusText)
+            : (isTabular ? 'Tabular activity captured for this response' : 'Agent activity captured for this response'));
 
     if (!isLive && isCompleted) {
         const summaryIconClass = counters.failedCount > 0 ? 'bi-exclamation-triangle text-warning' : 'bi-check-circle text-success';
         const summaryBadgeClass = counters.failedCount > 0 ? 'text-bg-warning text-dark' : 'text-bg-success';
+        const completionTitle = isTabular ? 'Tabular analysis complete' : 'Agent activity complete';
 
         return `<div class="streaming-thought-display agent-progress-card" data-agent-progress-state="${escapeHtml(status)}" data-agent-progress-percent="${percent}">
         <div class="card border-success-subtle shadow-sm">
@@ -344,14 +385,14 @@ function renderAgentActivityProgress(state, options = {}) {
                     <div class="d-flex align-items-start gap-2 flex-grow-1">
                         <i class="bi ${summaryIconClass} mt-1"></i>
                         <div>
-                            <div class="small fw-semibold text-body">Agent activity complete</div>
+                            <div class="small fw-semibold text-body">${escapeHtml(completionTitle)}</div>
                             <div class="text-muted small">${escapeHtml(currentActivityText)}</div>
                         </div>
                     </div>
                     <span class="badge ${summaryBadgeClass}">${counters.failedCount > 0 ? 'Completed with issues' : 'Completed'}</span>
                 </div>
                 <div class="text-muted small mb-2">${escapeHtml(summaryText)}</div>
-                <div class="small text-body">${escapeHtml(state.latestContent || 'Response ready')}</div>
+                <div class="small text-body">${escapeHtml(state.latestContent || completedStatusText)}</div>
             </div>
         </div>
     </div>`;
@@ -362,9 +403,9 @@ function renderAgentActivityProgress(state, options = {}) {
             <div class="card-body py-3 px-3">
                 <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
                     <div class="d-flex align-items-start gap-2 flex-grow-1">
-                        <i class="bi bi-robot text-info mt-1"></i>
+                        <i class="bi ${iconClass} mt-1"></i>
                         <div>
-                            <div class="small fw-semibold text-body">Agent progress</div>
+                            <div class="small fw-semibold text-body">${escapeHtml(progressTitle)}</div>
                             <div class="text-muted small">${escapeHtml(currentActivityText)}</div>
                         </div>
                     </div>
@@ -372,9 +413,9 @@ function renderAgentActivityProgress(state, options = {}) {
                 </div>
                 <div class="text-muted small mb-2">${escapeHtml(summaryText)}</div>
                 <div class="mb-2">
-                    ${renderProgressBar(percent, status, counters.failedCount, 'Agent progress')}
+                    ${renderProgressBar(percent, status, counters.failedCount, progressLabel)}
                 </div>
-                <div class="small text-body">${escapeHtml(state.latestContent || 'Connecting to the selected agent')}</div>
+                <div class="small text-body">${escapeHtml(state.latestContent || initialStatusText)}</div>
             </div>
         </div>
     </div>`;

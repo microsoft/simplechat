@@ -1,12 +1,13 @@
 # test_profile_fact_memory_editor.py
 """
 UI test for the profile fact-memory editor.
-Version: 0.241.004
-Implemented in: 0.240.079; 0.240.082; 0.240.083; 0.241.003; 0.241.004
+Version: 0.241.114
+Implemented in: 0.240.079; 0.240.082; 0.240.083; 0.241.003; 0.241.004; 0.241.114
 
 This test ensures a signed-in user can create, edit, retag, and delete
 fact-memory entries from the profile page using the compact summary and modal editor
-without browser parse or runtime errors breaking the workflow.
+without browser parse or runtime errors breaking the workflow, including nested
+delete confirmation stacking above the manager dialog.
 """
 
 import os
@@ -125,8 +126,32 @@ def test_profile_fact_memory_editor(playwright):
 
         updated_item.get_by_role('button', name='Delete memory').click()
         expect(page.get_by_role('dialog', name='Delete Fact Memory')).to_be_visible()
+        modal_stack = page.evaluate(
+            """
+            () => {
+                const managerModal = document.getElementById('factMemoryManagerModal');
+                const deleteModal = document.getElementById('factMemoryDeleteModal');
+                const backdrops = Array.from(document.querySelectorAll('.modal-backdrop.show'));
+                const topBackdrop = backdrops.length ? backdrops[backdrops.length - 1] : null;
+
+                return {
+                    managerZIndex: Number(window.getComputedStyle(managerModal).zIndex || 0),
+                    deleteZIndex: Number(window.getComputedStyle(deleteModal).zIndex || 0),
+                    backdropZIndex: Number(topBackdrop ? window.getComputedStyle(topBackdrop).zIndex || 0 : 0),
+                    managerVisible: managerModal.classList.contains('show'),
+                    deleteVisible: deleteModal.classList.contains('show'),
+                };
+            }
+            """
+        )
+        assert modal_stack['managerVisible'] is True
+        assert modal_stack['deleteVisible'] is True
+        assert modal_stack['deleteZIndex'] > modal_stack['managerZIndex']
+        assert modal_stack['managerZIndex'] < modal_stack['backdropZIndex'] < modal_stack['deleteZIndex']
         page.locator('#confirm-delete-fact-memory-btn').click()
         expect(page.locator('#fact-memory-status')).to_contain_text('deleted')
+        expect(page.get_by_role('dialog', name='Manage Fact Memories')).to_be_visible()
+        expect(page.locator('body')).to_have_class(re.compile(r'.*\bmodal-open\b.*'))
         expect(page.locator(f'#fact-memory-modal-list [data-fact-memory-id="{created_fact_id}"]')).to_have_count(0)
         expect(page.locator('#fact-memory-count')).to_have_text(str(initial_count))
         created_fact_id = None

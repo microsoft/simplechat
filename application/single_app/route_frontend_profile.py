@@ -15,7 +15,11 @@ def register_route_frontend_profile(app):
     @login_required
     def profile():
         user = session.get('user')
-        return render_template('profile.html', user=user)
+        initial_tab = str(request.args.get('tab', 'stats') or 'stats').strip().lower()
+        if initial_tab not in {'stats', 'settings', 'feedback', 'violations'}:
+            initial_tab = 'stats'
+
+        return render_template('profile.html', user=user, initial_tab=initial_tab)
 
     def serialize_fact_memory_item(fact_item):
         return {

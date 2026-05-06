@@ -25,6 +25,7 @@ def register_route_frontend_safety(app):
     @enabled_required("enable_content_safety")
     def my_safety_violations():
         """
-        Displays the logged-in user's safety violations.
-        """        
-        return render_template('my_safety_violations.html')
+        Redirects the user to the consolidated profile violations tab.
+        """
+
+        return redirect(url_for('profile', tab='violations'))

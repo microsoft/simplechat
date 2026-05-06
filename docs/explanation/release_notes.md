@@ -4,6 +4,32 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.122)**
+
+#### Bug Fixes
+
+*   **Chat-Scoped Generated Tabular Exports**
+    *   Fixed large tabular JSON and CSV export requests so the generated file now stays attached to the active chat instead of being pushed through the personal workspace document pipeline.
+    *   Assistant replies now keep the exhaustive dataset in a downloadable chat artifact with the existing preview card, which makes large structured outputs more reliable while keeping the visible answer concise.
+    *   Personal conversation deletion and retention cleanup now remove blob-backed generated chat files when archiving is disabled, closing the lifecycle gap for conversation-scoped exports.
+    *   (Ref: generated tabular exports, `route_backend_chats.py`, `functions_simplechat_operations.py`, `route_enhanced_citations.py`, `route_backend_conversations.py`, `functions_retention_policy.py`, `chat-messages.js`)
+
+### **(v0.241.114)**
+
+#### Bug Fixes
+
+*   **Fact Memory Delete Confirmation Layering**
+    *   Fixed the profile fact-memory workflow so the delete confirmation now opens above the Manage Fact Memories editor instead of appearing underneath it.
+    *   Users can now confirm or cancel a delete without closing the editor first, and the manager modal remains active so they can continue reviewing saved memories immediately after the confirmation closes.
+    *   Added focused UI regression coverage for the stacked modal behavior.
+    *   (Ref: fact memory management, `profile.html`, `test_profile_fact_memory_editor.py`)
+
+*   **Live Tabular Analysis Thought Progress**
+    *   Fixed long-running tabular analysis chats so workbook tool activity now streams into the thoughts panel while the answer is still being prepared, instead of waiting until the tabular pass completes.
+    *   Tabular requests now show a dedicated progress card with the current step, running and completed tool-call counts, and a clearer completion state when workbook evidence is ready.
+    *   Added focused UI regression coverage for the live tabular progress card and kept the adjacent agent-progress behavior covered.
+    *   (Ref: tabular analysis streaming, `route_backend_chats.py`, `chat-thoughts.js`, `test_chat_tabular_thought_progress.py`, `test_chat_agent_thought_progress.py`)
+
 ### **(v0.241.111)**
 
 #### Bug Fixes

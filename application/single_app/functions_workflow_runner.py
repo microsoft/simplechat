@@ -33,7 +33,7 @@ from config import (
     cosmos_conversations_container,
     cosmos_messages_container,
 )
-from functions_activity_logging import log_conversation_creation, log_workflow_run
+from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
 from functions_collaboration import (
     create_collaboration_message_notifications,
@@ -77,6 +77,83 @@ def _utc_now():
 
 def _utc_now_iso():
     return _utc_now().isoformat()
+
+
+def _coerce_token_count(value):
+    try:
+        if value in (None, ''):
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_token_usage(payload):
+    candidate = payload
+    if isinstance(payload, dict) and payload.get('usage') is not None:
+        candidate = payload.get('usage')
+    elif getattr(payload, 'usage', None) is not None:
+        candidate = getattr(payload, 'usage')
+
+    if isinstance(candidate, dict):
+        prompt_tokens = _coerce_token_count(candidate.get('prompt_tokens'))
+        completion_tokens = _coerce_token_count(candidate.get('completion_tokens'))
+        total_tokens = _coerce_token_count(candidate.get('total_tokens'))
+    else:
+        prompt_tokens = _coerce_token_count(getattr(candidate, 'prompt_tokens', None))
+        completion_tokens = _coerce_token_count(getattr(candidate, 'completion_tokens', None))
+        total_tokens = _coerce_token_count(getattr(candidate, 'total_tokens', None))
+
+    if total_tokens is None and (prompt_tokens is not None or completion_tokens is not None):
+        total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+
+    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+        return None
+
+    return {
+        'prompt_tokens': prompt_tokens or 0,
+        'completion_tokens': completion_tokens or 0,
+        'total_tokens': total_tokens or 0,
+    }
+
+
+def _create_token_usage_aggregate():
+    return {
+        'prompt_tokens': 0,
+        'completion_tokens': 0,
+        'total_tokens': 0,
+        'request_count': 0,
+    }
+
+
+def _accumulate_token_usage(aggregate, payload):
+    usage = _extract_token_usage(payload)
+    if not usage:
+        return None
+
+    aggregate['prompt_tokens'] += usage.get('prompt_tokens', 0)
+    aggregate['completion_tokens'] += usage.get('completion_tokens', 0)
+    aggregate['total_tokens'] += usage.get('total_tokens', 0)
+    aggregate['request_count'] += 1
+    return usage
+
+
+def _finalize_token_usage(aggregate):
+    if not isinstance(aggregate, dict):
+        return None
+
+    if not any(aggregate.get(key) for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')):
+        return None
+
+    token_usage = {
+        'prompt_tokens': int(aggregate.get('prompt_tokens', 0) or 0),
+        'completion_tokens': int(aggregate.get('completion_tokens', 0) or 0),
+        'total_tokens': int(aggregate.get('total_tokens', 0) or 0),
+    }
+    request_count = _coerce_token_count(aggregate.get('request_count'))
+    if request_count:
+        token_usage['request_count'] = request_count
+    return token_usage
 
 
 def _strip_agent_citation_artifact_refs(agent_citations):
@@ -1394,6 +1471,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         'agent_name': result.get('agent_name'),
         'metadata': {
             'source': 'workflow',
+            'token_usage': result.get('token_usage'),
             'workflow': {
                 'workflow_id': workflow.get('id'),
                 'workflow_name': workflow.get('name'),
@@ -1415,6 +1493,29 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         },
     }
     cosmos_messages_container.upsert_item(assistant_doc)
+
+    token_usage = result.get('token_usage') if isinstance(result.get('token_usage'), dict) else None
+    if token_usage and token_usage.get('total_tokens'):
+        try:
+            log_token_usage(
+                user_id=str(workflow.get('user_id') or '').strip(),
+                token_type='chat',
+                total_tokens=token_usage.get('total_tokens'),
+                model=result.get('model_deployment_name'),
+                workspace_type='personal',
+                prompt_tokens=token_usage.get('prompt_tokens'),
+                completion_tokens=token_usage.get('completion_tokens'),
+                conversation_id=conversation.get('id'),
+                message_id=assistant_message_id,
+                additional_context={
+                    'workflow_id': workflow.get('id'),
+                    'run_id': run_id,
+                    'document_action_type': document_action.get('type'),
+                    'request_count': token_usage.get('request_count'),
+                },
+            )
+        except Exception as exc:
+            debug_print(f'[WorkflowRunner] Failed to log workflow token usage: {exc}')
 
     conversation['last_updated'] = timestamp
     conversation['workflow_id'] = workflow.get('id')
@@ -1877,6 +1978,7 @@ def _execute_exhaustive_review_workflow(
         f"documents={len(review_config.get('document_ids') or [])} | "
         f'max_documents={workflow_review_max_documents}'
     )
+    token_usage_aggregate = _create_token_usage_aggregate()
 
     if workflow.get('runner_type') == 'agent':
         with _ensure_execution_context(user_id):
@@ -1920,6 +2022,7 @@ def _execute_exhaustive_review_workflow(
                     result = asyncio.run(loaded_agent.invoke([
                         ChatMessageContent(role='user', content=prompt_text),
                     ]))
+                    _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
                 review_result = run_exhaustive_document_review(
@@ -1939,12 +2042,14 @@ def _execute_exhaustive_review_workflow(
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
+                token_usage = _finalize_token_usage(token_usage_aggregate)
 
                 return {
                     'reply': _resolve_document_action_reply(review_result),
                     'review_result': review_result,
                     'review_coverage': review_result.get('coverage') or {},
                     'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
+                    'token_usage': token_usage,
                     'provider': 'agent',
                     'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                     'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
@@ -1981,6 +2086,7 @@ def _execute_exhaustive_review_workflow(
             model=deployment_name,
             messages=[{'role': 'user', 'content': prompt_text}],
         )
+        _accumulate_token_usage(token_usage_aggregate, completion)
         if not getattr(completion, 'choices', None):
             return ''
         return _extract_message_text(completion.choices[0].message.content)
@@ -2000,12 +2106,14 @@ def _execute_exhaustive_review_workflow(
         activity_callback=activity_callback,
         max_documents=workflow_review_max_documents,
     )
+    token_usage = _finalize_token_usage(token_usage_aggregate)
     debug_print(
         '[WorkflowExhaustiveReview] Completed workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'provider={provider} | '
         f'model={deployment_name} | '
+        f"total_tokens={(token_usage or {}).get('total_tokens', 0)} | "
         f"processed_windows={(review_result.get('coverage') or {}).get('processed_windows', 0)} | "
         f"failed_windows={(review_result.get('coverage') or {}).get('failed_windows', 0)}"
     )
@@ -2014,6 +2122,7 @@ def _execute_exhaustive_review_workflow(
         'review_result': review_result,
         'review_coverage': review_result.get('coverage') or {},
         'model_deployment_name': deployment_name,
+        'token_usage': token_usage,
         'provider': provider,
     }
 
@@ -2046,6 +2155,7 @@ def _execute_document_comparison_workflow(
         f"left_document_id={comparison_config.get('left_document_id')} | "
         f"right_count={len(comparison_config.get('right_document_ids') or [])}"
     )
+    token_usage_aggregate = _create_token_usage_aggregate()
 
     if workflow.get('runner_type') == 'agent':
         with _ensure_execution_context(user_id):
@@ -2089,6 +2199,7 @@ def _execute_document_comparison_workflow(
                     result = asyncio.run(loaded_agent.invoke([
                         ChatMessageContent(role='user', content=prompt_text),
                     ]))
+                    _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
                 comparison_result = run_document_comparison(
@@ -2101,12 +2212,14 @@ def _execute_document_comparison_workflow(
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
+                token_usage = _finalize_token_usage(token_usage_aggregate)
 
                 return {
                     'reply': _resolve_document_action_reply(comparison_result),
                     'review_result': comparison_result,
                     'review_coverage': comparison_result.get('coverage') or {},
                     'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
+                    'token_usage': token_usage,
                     'provider': 'agent',
                     'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                     'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
@@ -2143,6 +2256,7 @@ def _execute_document_comparison_workflow(
             model=deployment_name,
             messages=[{'role': 'user', 'content': prompt_text}],
         )
+        _accumulate_token_usage(token_usage_aggregate, completion)
         if not getattr(completion, 'choices', None):
             return ''
         return _extract_message_text(completion.choices[0].message.content)
@@ -2155,12 +2269,14 @@ def _execute_document_comparison_workflow(
         activity_callback=activity_callback,
         conversation_id=conversation_id,
     )
+    token_usage = _finalize_token_usage(token_usage_aggregate)
     debug_print(
         '[WorkflowDocumentComparison] Completed workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'provider={provider} | '
         f'model={deployment_name} | '
+        f"total_tokens={(token_usage or {}).get('total_tokens', 0)} | "
         f"processed_windows={(comparison_result.get('coverage') or {}).get('processed_windows', 0)} | "
         f"failed_windows={(comparison_result.get('coverage') or {}).get('failed_windows', 0)}"
     )
@@ -2169,6 +2285,7 @@ def _execute_document_comparison_workflow(
         'review_result': comparison_result,
         'review_coverage': comparison_result.get('coverage') or {},
         'model_deployment_name': deployment_name,
+        'token_usage': token_usage,
         'provider': provider,
     }
 

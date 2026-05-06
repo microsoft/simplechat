@@ -18,6 +18,7 @@ from functions_settings import get_settings, update_settings, cosmos_user_settin
 from functions_group import get_user_groups, cosmos_groups_container
 from functions_public_workspaces import get_user_public_workspaces, cosmos_public_workspaces_container
 from functions_documents import delete_document, delete_document_chunks
+from functions_simplechat_operations import delete_blob_backed_chat_message_files
 from functions_activity_logging import log_conversation_deletion, log_conversation_archival
 from functions_notifications import create_notification, create_group_notification, create_public_workspace_notification
 from functions_debug import debug_print
@@ -612,6 +613,9 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
                 parameters=message_params,
                 partition_key=conversation_id
             ))
+
+            if not archiving_enabled and workspace_type == 'personal':
+                delete_blob_backed_chat_message_files(messages)
             
             for msg in messages:
                 if archiving_enabled:

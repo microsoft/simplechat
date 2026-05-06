@@ -26,7 +26,7 @@ def register_route_frontend_feedback(app):
     @enabled_required("enable_user_feedback")
     def my_feedback():
         """
-        Renders the "My Feedback" page for the current user.
+        Redirects the user to the consolidated profile feedback tab.
         """
-        
-        return render_template("my_feedback.html")
+
+        return redirect(url_for('profile', tab='feedback'))

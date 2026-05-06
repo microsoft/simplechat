@@ -1,8 +1,8 @@
 # test_chat_message_citations_without_augmentation.py
 """
 UI test for assistant citations without augmentation.
-Version: 0.241.097
-Implemented in: 0.241.097
+Version: 0.241.122
+Implemented in: 0.241.122
 
 This test ensures assistant messages still surface stored citations in the
 message footer and metadata drawer when citation arrays are present but the
@@ -103,6 +103,32 @@ def test_chat_message_citations_render_when_augmented_is_false(playwright):
         "**/api/message/assistant-review-1/metadata",
         lambda route: _fulfill_json(route, message_payload),
     )
+    page.route(
+        "**/api/enhanced_citations/document_metadata?doc_id=663babf8-a384-44e4-b079-a2d8355329ad",
+        lambda route: _fulfill_json(
+            route,
+            {
+                "id": "663babf8-a384-44e4-b079-a2d8355329ad",
+                "document_id": "663babf8-a384-44e4-b079-a2d8355329ad",
+                "file_name": "6 Hour Shenandoah River Race Maps 2025.pdf",
+                "enhanced_citations": True,
+            },
+        ),
+    )
+    page.route(
+        "**/api/enhanced_citations/pdf?doc_id=663babf8-a384-44e4-b079-a2d8355329ad**",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/pdf",
+            body=(
+                b"%PDF-1.4\n"
+                b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+                b"2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n"
+                b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n"
+                b"trailer<</Root 1 0 R>>\n%%EOF"
+            ),
+        ),
+    )
 
     try:
         page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
@@ -111,6 +137,7 @@ def test_chat_message_citations_render_when_augmented_is_false(playwright):
         page.evaluate(
             """
             async (payload) => {
+                window.enableEnhancedCitations = true;
                 currentConversationId = payload.conversation_id;
                 window.currentConversationId = payload.conversation_id;
 
@@ -140,9 +167,29 @@ def test_chat_message_citations_render_when_augmented_is_false(playwright):
 
         citation_toggle.click()
         inline_citations = message.locator('#citations-assistant-review-1 a.hybrid-citation-link')
-        expect(inline_citations).to_have_count(2)
+        expect(inline_citations).to_have_count(3)
         expect(inline_citations.filter(has_text='Coverage, Coverage: Overall summary')).to_be_visible()
-        expect(inline_citations.filter(has_text='6 Hour Shenandoah River Race Maps 2025.pdf')).to_be_visible()
+
+        source_file_citation = inline_citations.filter(has_text='6 Hour Shenandoah River Race Maps 2025.pdf')
+        expect(source_file_citation).to_be_visible()
+
+        metadata_summary_citation = inline_citations.filter(has_text='Coverage: Document summary')
+        expect(metadata_summary_citation).to_be_visible()
+
+        source_file_citation.click()
+        pdf_modal = page.locator('#pdfModal')
+        expect(pdf_modal).to_be_visible()
+        expect(pdf_modal.locator('#pdfModalTitle')).to_contain_text('PDF Document - Page 1')
+
+        pdf_modal.locator('.btn-close').click()
+
+        metadata_summary_citation.click()
+        metadata_modal = page.locator('#metadata-modal')
+        expect(metadata_modal).to_be_visible()
+        expect(metadata_modal.locator('#metadata-file-name')).to_have_text('6 Hour Shenandoah River Race Maps 2025.pdf')
+        expect(metadata_modal.locator('#metadata-open-source-btn')).to_be_visible()
+
+        metadata_modal.locator('.btn-close').click()
 
         metadata_button = message.locator('.metadata-info-btn')
         with page.expect_response('**/api/message/assistant-review-1/metadata'):
@@ -151,8 +198,8 @@ def test_chat_message_citations_render_when_augmented_is_false(playwright):
         metadata_drawer = message.locator('.message-metadata-drawer')
         expect(metadata_drawer).to_be_visible()
         expect(metadata_drawer).to_contain_text('Citations')
-        expect(metadata_drawer).to_contain_text('Documents 2')
-        expect(metadata_drawer.locator('a.hybrid-citation-link')).to_have_count(2)
+        expect(metadata_drawer).to_contain_text('Documents 3')
+        expect(metadata_drawer.locator('a.hybrid-citation-link')).to_have_count(3)
     finally:
         context.close()
         browser.close()

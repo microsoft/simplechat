@@ -204,12 +204,12 @@
             {% endif %}
             {% if app_settings.enable_user_feedback %}
             <li>
-              <a class="dropdown-item" href="{{ url_for('my_feedback') }}">My Feedback</a>
+              <a class="dropdown-item" href="{{ url_for('profile', tab='feedback') }}">My Feedback</a>
             </li>
             {% endif %}
             {% if app_settings.enable_content_safety %}
             <li>
-              <a class="dropdown-item" href="{{ url_for('my_safety_violations') }}">My Safety Violations</a>
+              <a class="dropdown-item" href="{{ url_for('profile', tab='violations') }}">My Safety Violations</a>
             </li>
             {% endif %}
             {% if 'Admin' in session['user']['roles'] %}

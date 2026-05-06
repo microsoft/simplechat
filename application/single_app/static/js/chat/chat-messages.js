@@ -1289,23 +1289,67 @@ function createCitationsHtml(
     hybridCitations.forEach((cite, index) => {
       const citationId =
         cite.citation_id || `${cite.chunk_id}_${cite.page_number || index}`; // Fallback ID
+      const fileName = cite.file_name || 'Document';
+      const documentId = cite.document_id || '';
       const locationLabel = cite.location_label || (cite.sheet_name ? 'Sheet' : 'Page');
       const locationValue = cite.location_value || cite.sheet_name || cite.page_number || 'N/A';
-      const displayText = `${escapeHtml(cite.file_name)}, ${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
-      const sheetNameAttribute = cite.sheet_name
-        ? `data-sheet-name="${escapeHtml(cite.sheet_name)}"`
-        : '';
-
+      const displayText = `${escapeHtml(fileName)}, ${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
       // Check if this is a metadata citation
       const isMetadata = cite.metadata_type ? true : false;
       const metadataType = cite.metadata_type || '';
       const metadataContent = cite.metadata_content || '';
+      const sheetNameAttribute = cite.sheet_name
+        ? `data-sheet-name="${escapeHtml(cite.sheet_name)}"`
+        : '';
+      const enhancedTargetValue = isMetadata && documentId
+        ? (cite.sheet_name || (cite.page_number && cite.page_number !== 'Metadata' ? cite.page_number : '1'))
+        : '';
+      const enhancedTargetAttribute = enhancedTargetValue
+        ? `data-enhanced-target="${escapeHtml(String(enhancedTargetValue))}"`
+        : '';
+      const documentIdAttribute = documentId
+        ? `data-document-id="${escapeHtml(documentId)}"`
+        : '';
+      const fileNameAttribute = `data-file-name="${escapeHtml(fileName)}"`;
+
+      if (isMetadata && documentId) {
+        const summaryText = `${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
+        citationsHtml += `
+              <a href="#"
+                 class="btn btn-sm citation-button hybrid-citation-link"
+                 data-citation-id="${escapeHtml(citationId)}"
+                 ${sheetNameAttribute}
+                 ${enhancedTargetAttribute}
+                 ${documentIdAttribute}
+                 ${fileNameAttribute}
+                 data-is-metadata="false"
+                 title="Open source document: ${escapeHtml(fileName)}">
+                  <i class="bi bi-file-earmark-text me-1"></i>${escapeHtml(fileName)}
+              </a>
+              <a href="#"
+                 class="btn btn-sm citation-button hybrid-citation-link metadata-citation"
+                 data-citation-id="${escapeHtml(citationId)}"
+                 ${sheetNameAttribute}
+                 ${enhancedTargetAttribute}
+                 ${documentIdAttribute}
+                 ${fileNameAttribute}
+                 data-is-metadata="true"
+                 data-metadata-type="${escapeHtml(metadataType)}"
+                 data-metadata-content="${escapeHtml(metadataContent)}"
+                 title="View source summary: ${displayText}">
+                  <i class="bi bi-tags me-1"></i>${summaryText}
+              </a>`;
+        return;
+      }
 
       citationsHtml += `
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
                   ${sheetNameAttribute}
+                 ${enhancedTargetAttribute}
+                 ${documentIdAttribute}
+                 ${fileNameAttribute}
                  data-is-metadata="${isMetadata}"
                  data-metadata-type="${escapeHtml(metadataType)}"
                  data-metadata-content="${escapeHtml(metadataContent)}"
@@ -2032,6 +2076,276 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       </div>`;
   }
 
+  function getGeneratedTabularOutputs(fullMessageObject = null) {
+    const rawOutputs = fullMessageObject?.metadata?.generated_tabular_outputs;
+    if (!Array.isArray(rawOutputs)) {
+      return [];
+    }
+
+    return rawOutputs.filter(output => {
+      if (!output || typeof output !== 'object') {
+        return false;
+      }
+
+      return Boolean(
+        String(output.document_id || '').trim()
+        || String(output.artifact_message_id || '').trim()
+      );
+    });
+  }
+
+  function getGeneratedTabularStorageNote(outputMetadata) {
+    const storageScope = String(outputMetadata?.storage_scope || '').trim().toLowerCase();
+    if (storageScope === 'chat') {
+      return 'Saved to this chat for download in this conversation.';
+    }
+
+    return 'Saved to your personal workspace for reuse in future chats.';
+  }
+
+  function formatGeneratedTabularRowCount(rowCount) {
+    const normalizedRowCount = Number.parseInt(rowCount, 10);
+    if (!Number.isFinite(normalizedRowCount) || normalizedRowCount < 0) {
+      return '';
+    }
+
+    return normalizedRowCount.toLocaleString();
+  }
+
+  function formatGeneratedTabularPreviewValue(value, maxLength = 120) {
+    let formattedValue = '';
+
+    if (value === null || typeof value === 'undefined') {
+      formattedValue = '';
+    } else if (typeof value === 'string') {
+      formattedValue = value;
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      formattedValue = String(value);
+    } else {
+      try {
+        formattedValue = JSON.stringify(value);
+      } catch (error) {
+        formattedValue = String(value);
+      }
+    }
+
+    if (formattedValue.length <= maxLength) {
+      return formattedValue;
+    }
+
+    return `${formattedValue.slice(0, maxLength - 1)}…`;
+  }
+
+  function isGeneratedTabularPreviewObjectRow(row) {
+    return Boolean(row) && typeof row === 'object' && !Array.isArray(row);
+  }
+
+  function buildGeneratedTabularPreviewTable(previewRows) {
+    if (!Array.isArray(previewRows) || !previewRows.length || !previewRows.every(isGeneratedTabularPreviewObjectRow)) {
+      return null;
+    }
+
+    const previewColumns = [];
+    previewRows.forEach(row => {
+      Object.keys(row).forEach(columnName => {
+        if (!previewColumns.includes(columnName)) {
+          previewColumns.push(columnName);
+        }
+      });
+    });
+
+    if (!previewColumns.length) {
+      return null;
+    }
+
+    const displayedColumns = previewColumns.slice(0, 4);
+    const tableWrapper = document.createElement('div');
+    tableWrapper.className = 'table-responsive small border rounded';
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm align-middle mb-0';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    displayedColumns.forEach(columnName => {
+      const headerCell = document.createElement('th');
+      headerCell.scope = 'col';
+      headerCell.textContent = columnName;
+      headerRow.appendChild(headerCell);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    previewRows.forEach(row => {
+      const tableRow = document.createElement('tr');
+      displayedColumns.forEach(columnName => {
+        const valueCell = document.createElement('td');
+        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName]);
+        tableRow.appendChild(valueCell);
+      });
+      tbody.appendChild(tableRow);
+    });
+    table.appendChild(tbody);
+    tableWrapper.appendChild(table);
+
+    if (previewColumns.length > displayedColumns.length) {
+      const hiddenColumnsNotice = document.createElement('div');
+      hiddenColumnsNotice.className = 'small text-muted mt-2';
+      hiddenColumnsNotice.textContent = `Preview limited to ${displayedColumns.length} of ${previewColumns.length} fields.`;
+      tableWrapper.appendChild(hiddenColumnsNotice);
+    }
+
+    return tableWrapper;
+  }
+
+  function buildGeneratedTabularPreviewFallback(previewRows) {
+    const previewBlock = document.createElement('pre');
+    previewBlock.className = 'small bg-light border rounded p-2 mb-0 overflow-auto';
+
+    try {
+      previewBlock.textContent = JSON.stringify(previewRows || [], null, 2);
+    } catch (error) {
+      previewBlock.textContent = String(previewRows || '[]');
+    }
+
+    return previewBlock;
+  }
+
+  function triggerGeneratedTabularOutputDownload(outputMetadata) {
+    const normalizedDocId = String(outputMetadata?.document_id || '').trim();
+    const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
+    const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
+
+    let downloadHref = '';
+    if (normalizedArtifactMessageId && normalizedConversationId) {
+      downloadHref = `/api/chat_artifacts/download?conversation_id=${encodeURIComponent(normalizedConversationId)}&message_id=${encodeURIComponent(normalizedArtifactMessageId)}`;
+    } else if (normalizedDocId) {
+      downloadHref = `/api/workspace_documents/download?doc_id=${encodeURIComponent(normalizedDocId)}`;
+    }
+
+    if (!downloadHref) {
+      showToast('Generated export is missing download metadata.', 'warning');
+      return;
+    }
+
+    const downloadLink = document.createElement('a');
+    downloadLink.href = downloadHref;
+    downloadLink.rel = 'noopener';
+    downloadLink.className = 'd-none';
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+  }
+
+  function createGeneratedTabularOutputCard(outputMetadata) {
+    const card = document.createElement('section');
+    card.className = 'generated-tabular-output-card border rounded p-3 mt-3';
+
+    const outputFormat = String(outputMetadata?.output_format || 'json').trim().toLowerCase() || 'json';
+    const fileName = String(outputMetadata?.file_name || `generated-output.${outputFormat}`).trim() || `generated-output.${outputFormat}`;
+    const rowCountLabel = formatGeneratedTabularRowCount(outputMetadata?.row_count);
+    const sourceFileName = String(outputMetadata?.source_file_name || '').trim();
+    const selectedSheet = String(outputMetadata?.selected_sheet || '').trim();
+    const summary = String(outputMetadata?.summary || '').trim();
+    const previewRows = Array.isArray(outputMetadata?.preview_rows) ? outputMetadata.preview_rows : [];
+
+    const header = document.createElement('div');
+    header.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2';
+
+    const headerText = document.createElement('div');
+    const title = document.createElement('h6');
+    title.className = 'mb-1';
+    title.textContent = `Generated ${outputFormat.toUpperCase()} export`;
+    headerText.appendChild(title);
+
+    const fileNameText = document.createElement('div');
+    fileNameText.className = 'small text-muted text-break';
+    fileNameText.textContent = fileName;
+    headerText.appendChild(fileNameText);
+    header.appendChild(headerText);
+
+    if (rowCountLabel) {
+      const rowCountBadge = document.createElement('span');
+      rowCountBadge.className = 'badge text-bg-light';
+      rowCountBadge.textContent = `${rowCountLabel} rows`;
+      header.appendChild(rowCountBadge);
+    }
+
+    card.appendChild(header);
+
+    const storageNote = document.createElement('div');
+    storageNote.className = 'small text-muted mt-2';
+    storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
+    card.appendChild(storageNote);
+
+    if (sourceFileName || selectedSheet) {
+      const sourceNote = document.createElement('div');
+      sourceNote.className = 'small text-muted';
+      const sourceSegments = [];
+      if (sourceFileName) {
+        sourceSegments.push(`Source: ${sourceFileName}`);
+      }
+      if (selectedSheet) {
+        sourceSegments.push(`Sheet: ${selectedSheet}`);
+      }
+      sourceNote.textContent = sourceSegments.join(' | ');
+      card.appendChild(sourceNote);
+    }
+
+    if (summary) {
+      const summaryText = document.createElement('p');
+      summaryText.className = 'small mb-0 mt-2';
+      summaryText.textContent = summary;
+      card.appendChild(summaryText);
+    }
+
+    if (previewRows.length) {
+      const previewLabel = document.createElement('div');
+      previewLabel.className = 'small fw-semibold mt-3 mb-2';
+      previewLabel.textContent = 'Preview';
+      card.appendChild(previewLabel);
+
+      const previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
+      card.appendChild(previewContent);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'd-flex flex-wrap gap-2 mt-3';
+
+    const downloadButton = document.createElement('button');
+    downloadButton.type = 'button';
+    downloadButton.className = 'btn btn-sm btn-outline-primary generated-tabular-download-btn';
+    downloadButton.textContent = `Download ${outputFormat.toUpperCase()}`;
+    downloadButton.addEventListener('click', () => {
+      triggerGeneratedTabularOutputDownload(outputMetadata);
+    });
+    actions.appendChild(downloadButton);
+
+    card.appendChild(actions);
+
+    return card;
+  }
+
+  function hydrateGeneratedTabularOutputs(messageDiv, fullMessageObject = null) {
+    const generatedOutputsContainer = messageDiv.querySelector('.generated-tabular-outputs-container');
+    if (!(generatedOutputsContainer instanceof HTMLElement)) {
+      return;
+    }
+
+    generatedOutputsContainer.replaceChildren();
+    const generatedOutputs = getGeneratedTabularOutputs(fullMessageObject);
+    if (!generatedOutputs.length) {
+      generatedOutputsContainer.classList.add('d-none');
+      return;
+    }
+
+    generatedOutputs.forEach(outputMetadata => {
+      generatedOutputsContainer.appendChild(createGeneratedTabularOutputCard(outputMetadata));
+    });
+    generatedOutputsContainer.classList.remove('d-none');
+  }
+
   function renderInlineExportButtonContent(button, labelText, iconHtml) {
     button.innerHTML = `${iconHtml || ''}${labelText}`;
   }
@@ -2349,6 +2663,7 @@ export function appendMessage(
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
                   ${inlineAssistantExportActionsHtml}
+                      <div class="generated-tabular-outputs-container d-none"></div>
             <div class="inline-visualizations-container d-none"></div>
                     ${citationContentContainerHtml}
                     ${thoughtsHtml.containerHtml}
@@ -2362,6 +2677,7 @@ export function appendMessage(
 
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
+    hydrateGeneratedTabularOutputs(messageDiv, fullMessageObject);
     
     // Auto-play TTS if enabled (only for new messages, not when loading history)
     if (isNewMessage && typeof autoplayTTSIfEnabled === 'function') {

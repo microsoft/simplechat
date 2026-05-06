@@ -6,160 +6,275 @@
 {% endblock %}
 
 {% block head %}
-  <style>
-    /* Force fixed layout for consistency */
-    #safetyLogsTable {
-      table-layout: fixed;
-      width: 100%;
-    }
+<style>
+  .admin-page-header {
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    margin-bottom: 1.5rem;
+    padding: 1.75rem;
+  }
 
-    /* Adjust column widths as needed */
-    #safetyLogsTable th:nth-child(1), /* User */
-    #safetyLogsTable td:nth-child(1) {
-      width: 200px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-    #safetyLogsTable th:nth-child(2), /* Message */
-    #safetyLogsTable td:nth-child(2) {
-      width: 25%; /* Allow more space */
-      word-wrap: break-word; /* Allow wrapping */
-      white-space: normal;
-    }
-    #safetyLogsTable th:nth-child(3), /* Triggered Categories */
-    #safetyLogsTable td:nth-child(3) {
-      width: 180px;
-      word-wrap: break-word;
-      white-space: normal;
-    }
-     #safetyLogsTable th:nth-child(4), /* Status */
-    #safetyLogsTable td:nth-child(4) { width: 100px; }
-     #safetyLogsTable th:nth-child(5), /* Action */
-    #safetyLogsTable td:nth-child(5) { width: 110px; }
-     #safetyLogsTable th:nth-child(6), /* Notes */
-    #safetyLogsTable td:nth-child(6) {
-        width: 20%;
-        word-wrap: break-word;
-        white-space: normal;
-        overflow: hidden; /* Hide overflow if it gets too long */
-        max-height: 4.5em; /* Limit height roughly */
-        line-height: 1.5em;
-        position: relative; /* For potential tooltip or expand */
-    }
-    #safetyLogsTable td:nth-child(6):hover {
-        overflow: visible; /* Show on hover if needed */
-        max-height: none;
-        z-index: 1; /* Bring to front on hover */
-        background-color: #f8f9fa; /* slight highlight */
-    }
-     #safetyLogsTable th:nth-child(7), /* Created */
-    #safetyLogsTable td:nth-child(7) { width: 150px; }
-     #safetyLogsTable th:nth-child(8), /* Last Updated */
-    #safetyLogsTable td:nth-child(8) { width: 150px; }
-     #safetyLogsTable th:nth-child(9), /* Edit */
-    #safetyLogsTable td:nth-child(9) { width: 70px; text-align: center;}
+  .violations-nav-tabs .nav-link {
+    align-items: center;
+    display: inline-flex;
+    font-weight: 600;
+    gap: 0.5rem;
+  }
 
-    /* Ensure table cells align middle */
-    #safetyLogsTable td {
-        vertical-align: middle;
-    }
+  .surface-card {
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    height: 100%;
+    padding: 1.5rem;
+  }
 
-    /* Style for loading state */
-    .table-loading-row td {
-        text-align: center;
-        padding: 2rem;
-        color: #6c757d; /* text-muted */
-    }
-  </style>
+  .stat-value {
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 0.4rem;
+  }
+
+  .stat-label {
+    color: var(--bs-secondary-color);
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .summary-row {
+    align-items: center;
+    border-bottom: 1px solid var(--bs-border-color-translucent);
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem 0;
+  }
+
+  .summary-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  #safetyLogsTable {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  #safetyLogsTable td {
+    vertical-align: middle;
+  }
+
+  .table-message-cell {
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .table-details-cell {
+    text-align: center;
+    width: 92px;
+  }
+
+  .table-loading-row td {
+    color: var(--bs-secondary-color);
+    padding: 2rem 1rem;
+    text-align: center;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="container">
-  <h2>Safety Violations</h2>
-  <p class="text-muted">
-    Review and manage safety violations reported by the system. Use the filters to narrow down the list.
-  </p>
-  <hr/>
-
-  <!-- FILTERS ROW -->
-  <div class="row mb-3 align-items-end">
-    <div class="col-md-3">
-      <label for="filterStatus" class="form-label mb-1">Filter by Status:</label>
-      <select id="filterStatus" class="form-select form-select-sm">
-        <option value="">(All)</option>
-        <option value="New">New</option>
-        <option value="In-Review">In-Review</option>
-        <option value="Resolved">Resolved</option>
-        <option value="Dismissed">Dismissed</option>
-      </select>
-    </div>
-    <div class="col-md-3">
-      <label for="filterAction" class="form-label mb-1">Filter by Action:</label>
-      <select id="filterAction" class="form-select form-select-sm">
-        <option value="">(All)</option>
-        <option value="None">None</option>
-        <option value="WarnUser">WarnUser</option>
-        <option value="SuspendUser">SuspendUser</option>
-        <option value="Escalate">Escalate</option>
-        <option value="BlockUser">BlockUser</option>
-      </select>
-    </div>
-    <div class="col-md-6 text-md-end mt-2 mt-md-0">
-        <button id="applyFiltersBtn" class="btn btn-primary btn-sm">Apply Filters</button>
-        <button id="clearFiltersBtn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+<div class="container-fluid px-4 py-3">
+  <div class="admin-page-header">
+    <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+      <div>
+        <h2 class="mb-2">Safety Violations</h2>
+        <p class="text-muted mb-0">Monitor flagged conversations, track remediation status, and export the current filtered violation queue.</p>
+      </div>
+      <button type="button" class="btn btn-outline-primary" id="safetyExportBtn">
+        <i class="bi bi-download me-1"></i>Export CSV
+      </button>
     </div>
   </div>
 
-  <!-- Safety Violations Table -->
-  <table class="table table-striped" id="safetyLogsTable">
-    <thead>
-      <tr>
-        <!-- ID is intentionally hidden, but we keep the rest read-only in the table. -->
-        <th>User</th>
-        <th>Message</th>
-        <th>Triggered Categories</th>
-        <th>Status</th>
-        <th>Action</th>
-        <th>Notes</th>
-        <th>Edit</th>
-      </tr>
-    </thead>
-    <tbody>
-      <!-- Populated by JS -->
-      <tr class="table-loading-row">
-          <td colspan="9">
-              <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-              Loading logs...
-          </td>
-      </tr>
-    </tbody>
-  </table>
+  <ul class="nav nav-tabs violations-nav-tabs mb-3" id="safetyViolationTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="safety-stats-tab" data-bs-toggle="tab" data-bs-target="#safety-stats-pane" type="button" role="tab" aria-controls="safety-stats-pane" aria-selected="true">
+        <i class="bi bi-graph-up"></i>Stats
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="safety-data-tab" data-bs-toggle="tab" data-bs-target="#safety-data-pane" type="button" role="tab" aria-controls="safety-data-pane" aria-selected="false">
+        <i class="bi bi-table"></i>All Data
+      </button>
+    </li>
+  </ul>
 
-  <!-- PAGINATION & PAGE SIZE CONTROLS -->
-  <div class="d-flex align-items-center gap-3 mb-3">
-    <!-- Page Size Section -->
-    <div>
-      <label for="page-size-select" class="visually-hidden">Items per page:</label>
-      <select id="page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
-        <option value="10" selected>10</option>
-        <option value="20">20</option>
-        <option value="50">50</option>
-        <option value="100">100</option>
-      </select>
-      <span class="ms-1 small text-muted">items per page</span>
+  <div class="tab-content" id="safetyViolationTabContent">
+    <div class="tab-pane fade show active" id="safety-stats-pane" role="tabpanel" aria-labelledby="safety-stats-tab">
+      <div class="row g-3 mb-4">
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value" id="safetyTotalCount">-</div>
+            <div class="stat-label">Total</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-warning" id="safetyOpenCount">-</div>
+            <div class="stat-label">Open</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-success" id="safetyResolvedCount">-</div>
+            <div class="stat-label">Resolved</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-secondary" id="safetyDismissedCount">-</div>
+            <div class="stat-label">Dismissed</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-primary" id="safetyRecentCount">-</div>
+            <div class="stat-label">Recent 30 Days</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-info" id="safetyEscalatedCount">-</div>
+            <div class="stat-label">Escalated</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div class="surface-card">
+            <h5 class="mb-3"><i class="bi bi-clipboard-data me-2"></i>Status Distribution</h5>
+            <div class="summary-row">
+              <span>New</span>
+              <strong id="safetyStatsNewSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>In Review</span>
+              <strong id="safetyStatsInReviewSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Resolved</span>
+              <strong id="safetyStatsResolvedSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Dismissed</span>
+              <strong id="safetyStatsDismissedSummary">-</strong>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="surface-card">
+            <h5 class="mb-3"><i class="bi bi-tools me-2"></i>Action Distribution</h5>
+            <div class="summary-row">
+              <span>No action</span>
+              <strong id="safetyStatsNoneActionSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Warn user</span>
+              <strong id="safetyStatsWarnSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Suspend user</span>
+              <strong id="safetyStatsSuspendSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Escalate or block</span>
+              <strong id="safetyStatsEscalateSummary">-</strong>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Pagination Controls -->
-    <div id="pagination-container" class="d-flex gap-1 ms-auto">
-        <!-- Populated by JS -->
+    <div class="tab-pane fade" id="safety-data-pane" role="tabpanel" aria-labelledby="safety-data-tab">
+      <div class="surface-card">
+        <div class="row g-3 align-items-end mb-3">
+          <div class="col-md-3">
+            <label for="filterStatus" class="form-label mb-1">Status</label>
+            <select id="filterStatus" class="form-select form-select-sm">
+              <option value="">(All)</option>
+              <option value="New">New</option>
+              <option value="In-Review">In-Review</option>
+              <option value="Resolved">Resolved</option>
+              <option value="Dismissed">Dismissed</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label for="filterAction" class="form-label mb-1">Action</label>
+            <select id="filterAction" class="form-select form-select-sm">
+              <option value="">(All)</option>
+              <option value="None">None</option>
+              <option value="WarnUser">WarnUser</option>
+              <option value="SuspendUser">SuspendUser</option>
+              <option value="Escalate">Escalate</option>
+              <option value="BlockUser">BlockUser</option>
+            </select>
+          </div>
+          <div class="col-md-6 text-md-end">
+            <button id="applyFiltersBtn" class="btn btn-primary btn-sm">Apply Filters</button>
+            <button id="clearFiltersBtn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-striped align-middle" id="safetyLogsTable">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Message</th>
+                <th>Triggered Categories</th>
+                <th>Status</th>
+                <th>Action</th>
+                <th>Notes</th>
+                <th class="table-details-cell">Edit</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="table-loading-row">
+                <td colspan="7">
+                  <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                  Loading logs...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="d-flex align-items-center gap-3 mt-3">
+          <div>
+            <label for="page-size-select" class="visually-hidden">Items per page</label>
+            <select id="page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+            <span class="ms-1 small text-muted">items per page</span>
+          </div>
+          <div id="pagination-container" class="d-flex gap-1 ms-auto"></div>
+        </div>
+      </div>
     </div>
   </div>
+</div>
 
-</div> <!-- End Container -->
-
-<!-- ===== Modal for Editing a Single Violation ===== -->
-<!-- Keep the existing modal structure exactly as it was -->
 <div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
@@ -168,32 +283,18 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-
-        <!-- Read-only fields as plain text -->
         <div class="mb-3">
           <label class="form-label fw-bold">User:</label>
           <p id="editUserId" class="form-control-plaintext"></p>
         </div>
-
         <div class="mb-3">
           <label class="form-label fw-bold">Message:</label>
-          <p
-            id="editMessage"
-            class="form-control-plaintext"
-            style="white-space: pre-wrap;"
-          ></p>
+          <p id="editMessage" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
         </div>
-
         <div class="mb-3">
           <label class="form-label fw-bold">Triggered Categories:</label>
-          <p
-            id="editCategories"
-            class="form-control-plaintext"
-            style="white-space: pre-wrap;"
-          ></p>
+          <p id="editCategories" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
         </div>
-
-        <!-- Editable fields: Status, Action, Notes -->
         <div class="mb-3">
           <label class="form-label fw-bold">Status:</label>
           <select class="form-select" id="editStatus">
@@ -203,7 +304,6 @@
             <option value="Dismissed">Dismissed</option>
           </select>
         </div>
-
         <div class="mb-3">
           <label class="form-label fw-bold">Action:</label>
           <select class="form-select" id="editAction">
@@ -214,16 +314,14 @@
             <option value="BlockUser">BlockUser</option>
           </select>
         </div>
-
-        <div class="mb-3">
+        <div class="mb-0">
           <label class="form-label fw-bold">Notes:</label>
           <textarea class="form-control" id="editNotes" rows="3"></textarea>
         </div>
-
-        <!-- Hidden field for log ID -->
         <input type="hidden" id="editLogId" />
       </div>
       <div class="modal-footer">
+        <div id="safetyEditStatus" class="small text-danger me-auto"></div>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" id="saveChangesBtn" class="btn btn-primary">Save Changes</button>
       </div>
@@ -233,331 +331,5 @@
 {% endblock %}
 
 {% block scripts %}
-<!-- We still use jQuery here as it was used before -->
-<!-- <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script> -->
-<!-- Bootstrap JS is likely included in base.html -->
-
-<script>
-  // Helper function to escape HTML (optional, but good practice)
-  function escapeHtml(unsafe) {
-    if (unsafe === null || typeof unsafe === 'undefined') return '';
-    return unsafe.toString()
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-  }
-
-  // User lookup cache to avoid repeated API calls
-  const userCache = {};
-
-  // Function to lookup user info by ID
-  async function lookupUserInfo(userId) {
-    if (!userId) return { display_name: 'Unknown User', email: '' };
-    
-    // Check cache first
-    if (userCache[userId]) {
-      return userCache[userId];
-    }
-
-    try {
-      const response = await fetch(`/api/user/info/${userId}`);
-      if (response.ok) {
-        const userInfo = await response.json();
-        const userData = {
-          display_name: userInfo.display_name || 'Unknown User',
-          email: userInfo.email || ''
-        };
-        userCache[userId] = userData;
-        return userData;
-      }
-    } catch (error) {
-      console.warn('Failed to lookup user info for:', userId, error);
-    }
-    
-    // Fallback
-    const fallback = { display_name: 'Unknown User', email: '' };
-    userCache[userId] = fallback;
-    return fallback;
-  }
-
-  // Function to format user display (Name + Email)
-  function formatUserDisplay(userInfo, userId) {
-    if (!userInfo || (!userInfo.display_name && !userInfo.email)) {
-      return userId || 'Unknown User';
-    }
-    
-    const name = userInfo.display_name || 'Unknown User';
-    const email = userInfo.email;
-    
-    if (email) {
-      return `${name} (${email})`;
-    }
-    return name;
-  }
-
-  // State variables
-  let currentPage = 1;
-  let pageSize = 10; // Default page size
-
-  // DOM Elements
-  const tableBody = $("#safetyLogsTable tbody");
-  const paginationContainer = $("#pagination-container");
-  const pageSizeSelect = $("#page-size-select");
-  const filterStatusSelect = $("#filterStatus");
-  const filterActionSelect = $("#filterAction");
-  const applyFiltersBtn = $("#applyFiltersBtn");
-  const clearFiltersBtn = $("#clearFiltersBtn");
-  const editModal = new bootstrap.Modal(document.getElementById('editModal')); // Bootstrap 5 modal instance
-
-  // --- DATA FETCHING & RENDERING ---
-
-  function fetchSafetyLogs() {
-    // Show loading state
-    tableBody.html(`
-        <tr class="table-loading-row">
-            <td colspan="9">
-                <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                Loading logs...
-            </td>
-        </tr>
-    `);
-    paginationContainer.empty(); // Clear old pagination
-
-    const statusFilter = filterStatusSelect.val();
-    const actionFilter = filterActionSelect.val();
-
-    const params = new URLSearchParams({
-        page: currentPage,
-        page_size: pageSize,
-    });
-    if (statusFilter) params.append('status', statusFilter);
-    if (actionFilter) params.append('action', actionFilter);
-
-    $.get(`/api/safety/logs?${params.toString()}`)
-      .done(function(data) {
-        tableBody.empty(); // Clear loading row
-        if (data && data.logs && data.logs.length > 0) {
-          data.logs.forEach(log => renderLogRow(log));
-        } else {
-          tableBody.html('<tr><td colspan="9" class="text-center p-4 text-muted">No safety violations found matching the criteria.</td></tr>');
-        }
-        renderPaginationControls(data.page, data.page_size, data.total_count);
-      })
-      .fail(function(jqXHR, textStatus, errorThrown) {
-        console.error("Error fetching safety logs:", textStatus, errorThrown);
-        const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-        tableBody.html(`<tr><td colspan="9" class="text-center text-danger p-4">Error loading logs: ${escapeHtml(errorMsg)}</td></tr>`);
-        renderPaginationControls(1, pageSize, 0); // Show empty pagination on error
-      });
-  }
-
-  function renderLogRow(log) {
-    const row = $("<tr></tr>"); //.data("logId", log.id); // Not strictly needed if we pass log to edit handler
-
-    const categories = (log.triggered_categories || [])
-                          .map(cat => `${cat.category}(s=${cat.severity})`)
-                          .join(", ");
-
-    // Create user cell placeholder - will be updated with user lookup
-    const userCell = $("<td></td>").attr('title', log.user_id || "").text("Loading...");
-    
-    // Build cells using jQuery's .append() and .text() for safety
-    row.append(userCell);
-    row.append($("<td></td>").text(log.message || ""));
-    row.append($("<td></td>").text(categories));
-    row.append($("<td></td>").text(log.status || "New"));
-    row.append($("<td></td>").text(log.action || "None"));
-    row.append($("<td class='text-truncate'></td>").attr('title', log.notes || "").text(log.notes || "")); // Add text-truncate for notes, rely on hover style
-
-    // Edit button
-    const editBtn = $("<button class='btn btn-primary btn-sm'><i class='bi bi-pencil-fill'></i></button>")
-                        .attr('title', 'Edit Violation');
-    editBtn.click(function() {
-        openEditModal(log); // Pass the whole log object
-    });
-    row.append($("<td></td>").append(editBtn));
-
-    // Lookup user info asynchronously and update the cell
-    lookupUserInfo(log.user_id).then(userInfo => {
-      const userDisplayText = formatUserDisplay(userInfo, log.user_id);
-      userCell.text(userDisplayText);
-      userCell.attr('title', userDisplayText);
-    });
-
-    tableBody.append(row);
-  }
-
-  // --- PAGINATION CONTROL RENDERING (Adapted from workspace.html) ---
-  function renderPaginationControls(page, pageSize, totalCount) {
-        paginationContainer.empty(); // clear old
-        const totalPages = Math.ceil(totalCount / pageSize);
-
-        if (totalPages <= 1) return; // Don't show pagination if only one page
-
-        const createPageLink = (pageNum, text, isDisabled = false, isActive = false) => {
-            const li = $('<li>').addClass('page-item');
-            if (isDisabled) li.addClass('disabled');
-            if (isActive) li.addClass('active');
-
-            const a = $('<a>').addClass('page-link').attr('href', '#').html(text); // Use .html() for arrows
-            if (!isDisabled && !isActive) {
-                a.on('click', (e) => {
-                    e.preventDefault();
-                    currentPage = pageNum;
-                    fetchSafetyLogs();
-                });
-            } else if (isActive) {
-                 li.attr('aria-current', 'page');
-            }
-            li.append(a);
-            return li;
-        };
-
-        const ul = $('<ul>').addClass('pagination pagination-sm mb-0');
-
-        // Previous Button
-        ul.append(createPageLink(page - 1, '«', page <= 1));
-
-        // Page Number Logic (Ellipsis)
-        const maxPagesToShow = 5; // Max number of page links shown (excluding prev/next)
-        let startPage = 1;
-        let endPage = totalPages;
-
-        if (totalPages > maxPagesToShow) {
-            let maxPagesBeforeCurrent = Math.floor(maxPagesToShow / 2);
-            let maxPagesAfterCurrent = Math.ceil(maxPagesToShow / 2) - 1;
-
-            if (page <= maxPagesBeforeCurrent) {
-                startPage = 1;
-                endPage = maxPagesToShow;
-            } else if (page + maxPagesAfterCurrent >= totalPages) {
-                startPage = totalPages - maxPagesToShow + 1;
-                endPage = totalPages;
-            } else {
-                startPage = page - maxPagesBeforeCurrent;
-                endPage = page + maxPagesAfterCurrent;
-            }
-        }
-
-        // Add first page and ellipsis if needed
-        if (startPage > 1) {
-            ul.append(createPageLink(1, '1'));
-            if (startPage > 2) {
-                ul.append($('<li>').addClass('page-item disabled').html('<span class="page-link">...</span>'));
-            }
-        }
-
-        // Add page number links
-        for (let p = startPage; p <= endPage; p++) {
-            ul.append(createPageLink(p, p, false, p === page));
-        }
-
-        // Add last page and ellipsis if needed
-        if (endPage < totalPages) {
-            if (endPage < totalPages - 1) {
-                 ul.append($('<li>').addClass('page-item disabled').html('<span class="page-link">...</span>'));
-            }
-            ul.append(createPageLink(totalPages, totalPages));
-        }
-
-        // Next Button
-        ul.append(createPageLink(page + 1, '»', page >= totalPages));
-
-        paginationContainer.append(ul);
-    }
-
-  // --- MODAL HANDLING ---
-  function openEditModal(log) {
-    const categories = (log.triggered_categories || [])
-                          .map(cat => `${cat.category}(s=${cat.severity})`)
-                          .join(", ");
-
-    // Populate read-only fields - lookup user info
-    lookupUserInfo(log.user_id).then(userInfo => {
-      const userDisplayText = formatUserDisplay(userInfo, log.user_id);
-      $("#editUserId").text(userDisplayText);
-    });
-    
-    $("#editMessage").text(log.message || "");
-    $("#editCategories").text(categories || "None");
-
-    // Populate editable fields
-    $("#editStatus").val(log.status || "New");
-    $("#editAction").val(log.action || "None");
-    $("#editNotes").val(log.notes || "");
-
-    // Store the log ID
-    $("#editLogId").val(log.id);
-
-    // Show the modal
-    editModal.show();
-  }
-
-  // --- EVENT LISTENERS ---
-  $(document).ready(function() {
-    // Initial fetch
-    pageSize = parseInt(pageSizeSelect.val(), 10); // Get initial page size
-    fetchSafetyLogs();
-
-    // Page size change
-    pageSizeSelect.on("change", function() {
-      pageSize = parseInt($(this).val(), 10);
-      currentPage = 1; // Reset to first page
-      fetchSafetyLogs();
-    });
-
-    // Filter apply button
-    applyFiltersBtn.on('click', function() {
-        currentPage = 1; // Reset to first page when applying filters
-        fetchSafetyLogs();
-    });
-
-     // Filter clear button
-    clearFiltersBtn.on('click', function() {
-        filterStatusSelect.val(''); // Reset dropdowns
-        filterActionSelect.val('');
-        currentPage = 1; // Reset page
-        fetchSafetyLogs(); // Fetch with cleared filters
-    });
-
-    // Handle the "Save Changes" button in the modal
-    $("#saveChangesBtn").click(function() {
-      const logId     = $("#editLogId").val();
-      const newStatus = $("#editStatus").val();
-      const newAction = $("#editAction").val();
-      const newNotes  = $("#editNotes").val();
-
-      const saveButton = $(this);
-      saveButton.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...');
-
-      // Patch request
-      $.ajax({
-        url: "/api/safety/logs/" + logId,
-        type: "PATCH",
-        contentType: "application/json",
-        data: JSON.stringify({
-          status: newStatus,
-          action: newAction,
-          notes: newNotes
-        }),
-        success: function(response) {
-          // alert("Updated successfully."); // Optional: use a less intrusive notification
-          editModal.hide(); // Close the modal using the Bootstrap instance
-          fetchSafetyLogs(); // Refresh the current page of the table <<< KEY CHANGE
-        },
-        error: function(jqXHR, textStatus, errorThrown) {
-          console.error("Error updating safety log:", textStatus, errorThrown);
-           const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-          alert("Error updating: " + escapeHtml(errorMsg));
-        },
-        complete: function() {
-            // Re-enable button and restore text
-            saveButton.prop('disabled', false).text('Save Changes');
-        }
-      });
-    });
-  });
-</script>
+<script src="{{ url_for('static', filename='js/admin/admin-safety-violations.js') }}"></script>
 {% endblock %}

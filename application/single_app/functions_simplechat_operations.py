@@ -16,10 +16,13 @@ from flask import current_app, has_app_context, session
 
 from collaboration_models import normalize_collaboration_user
 from config import (
+    CLIENTS,
     cosmos_activity_logs_container,
     cosmos_conversations_container,
     cosmos_groups_container,
     cosmos_messages_container,
+    storage_account_personal_chat_container_name,
+    TABULAR_EXTENSIONS,
 )
 from functions_activity_logging import (
     log_chat_activity,
@@ -386,95 +389,142 @@ def upload_markdown_document_for_current_user(
     if not allowed_file(normalized_file_name, allowed_extensions={"md"}):
         raise ValueError("Only Markdown files are supported")
 
-    document_id = str(uuid.uuid4())
-    encoded_markdown_content = raw_markdown_content.encode("utf-8")
-    temp_file_path = _write_temp_markdown_file(raw_markdown_content)
-    resolved_group_id = None
+    return _upload_generated_document_for_current_user(
+        current_user_id=current_user_id,
+        normalized_file_name=normalized_file_name,
+        file_content_bytes=raw_markdown_content.encode("utf-8"),
+        normalized_workspace_scope=normalized_workspace_scope,
+        group_id=group_id,
+        default_group_id=default_group_id,
+        process_inline=False,
+    )
 
-    try:
-        if normalized_workspace_scope == "group":
-            resolved_group_id = _resolve_group_upload_target_for_current_user(
-                current_user_id,
-                group_id=group_id,
-                default_group_id=default_group_id,
+
+def upload_generated_document_for_current_user(
+    file_name: str,
+    file_content: Any,
+    workspace_scope: str = "personal",
+    group_id: str = "",
+    default_group_id: str = "",
+    process_inline: bool = False,
+) -> Dict[str, Any]:
+    """Upload generated JSON/CSV-style content into the current user's workspace."""
+    current_user_info = _require_current_user_info()
+    current_user_id = current_user_info["userId"]
+    normalized_workspace_scope = _normalize_document_workspace_scope(workspace_scope)
+    normalized_file_name = _normalize_generated_document_file_name(file_name)
+
+    if isinstance(file_content, bytes):
+        file_content_bytes = file_content
+    else:
+        file_content_bytes = str(file_content or "").encode("utf-8")
+
+    if not file_content_bytes.strip():
+        raise ValueError("file_content is required")
+    if not allowed_file(normalized_file_name):
+        raise ValueError("Generated file type is not supported")
+
+    return _upload_generated_document_for_current_user(
+        current_user_id=current_user_id,
+        normalized_file_name=normalized_file_name,
+        file_content_bytes=file_content_bytes,
+        normalized_workspace_scope=normalized_workspace_scope,
+        group_id=group_id,
+        default_group_id=default_group_id,
+        process_inline=process_inline,
+    )
+
+
+def upload_generated_chat_artifact_for_current_user(
+    conversation_id: str,
+    file_name: str,
+    file_content: Any,
+) -> Dict[str, Any]:
+    """Upload generated JSON/CSV-style content into the current user's current chat."""
+    current_user_info = _require_current_user_info()
+    current_user_id = current_user_info["userId"]
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_file_name = _normalize_generated_document_file_name(file_name)
+
+    if isinstance(file_content, bytes):
+        file_content_bytes = file_content
+    else:
+        file_content_bytes = str(file_content or "").encode("utf-8")
+
+    if not normalized_conversation_id:
+        raise ValueError("conversation_id is required")
+    if not file_content_bytes.strip():
+        raise ValueError("file_content is required")
+    if not allowed_file(normalized_file_name):
+        raise ValueError("Generated file type is not supported")
+
+    return _upload_generated_chat_artifact_for_current_user(
+        current_user_id=current_user_id,
+        conversation_id=normalized_conversation_id,
+        normalized_file_name=normalized_file_name,
+        file_content_bytes=file_content_bytes,
+    )
+
+
+def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) -> int:
+    """Delete blob-backed chat files referenced by the provided message documents."""
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        return 0
+
+    deleted_count = 0
+    deleted_targets = set()
+
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+
+        if str(message.get("file_content_source") or "").strip().lower() != "blob":
+            continue
+
+        blob_container = str(message.get("blob_container") or "").strip()
+        blob_path = str(message.get("blob_path") or "").strip()
+        if not blob_container or not blob_path:
+            continue
+
+        target = (blob_container, blob_path)
+        if target in deleted_targets:
+            continue
+
+        try:
+            blob_client = blob_service_client.get_blob_client(
+                container=blob_container,
+                blob=blob_path,
             )
-            create_document(
-                file_name=normalized_file_name,
-                group_id=resolved_group_id,
-                user_id=current_user_id,
-                document_id=document_id,
-                num_file_chunks=0,
-                status="Queued for processing",
-            )
-            update_document(
-                document_id=document_id,
-                user_id=current_user_id,
-                group_id=resolved_group_id,
-                percentage_complete=0,
-            )
-        else:
-            create_document(
-                file_name=normalized_file_name,
-                user_id=current_user_id,
-                document_id=document_id,
-                num_file_chunks=0,
-                status="Queued for processing",
-            )
-            update_document(
-                document_id=document_id,
-                user_id=current_user_id,
-                percentage_complete=0,
+            if not blob_client.exists():
+                deleted_targets.add(target)
+                continue
+
+            blob_client.delete_blob()
+            deleted_targets.add(target)
+            deleted_count += 1
+        except Exception as exc:
+            log_event(
+                "[SimpleChat] Failed to delete blob-backed chat file",
+                {
+                    "blob_container": blob_container,
+                    "blob_path": blob_path,
+                    "error": str(exc),
+                },
+                debug_only=True,
             )
 
-        _queue_document_upload_background_task(
-            document_id=document_id,
-            user_id=current_user_id,
-            temp_file_path=temp_file_path,
-            original_filename=normalized_file_name,
-            group_id=resolved_group_id,
-        )
-
-        if normalized_workspace_scope == "group":
-            invalidate_group_search_cache(resolved_group_id)
-            log_document_upload(
-                user_id=current_user_id,
-                container_type="group",
-                document_id=document_id,
-                file_size=len(encoded_markdown_content),
-                file_type=".md",
-            )
-        else:
-            invalidate_personal_search_cache(current_user_id)
-            log_document_upload(
-                user_id=current_user_id,
-                container_type="personal",
-                document_id=document_id,
-                file_size=len(encoded_markdown_content),
-                file_type=".md",
-            )
-
-        return {
-            "document": {
-                "id": document_id,
-                "file_name": normalized_file_name,
-                "status": "Queued for processing",
-                "workspace_scope": normalized_workspace_scope,
-                "group_id": resolved_group_id,
-            },
-            "message": f"Queued Markdown document '{normalized_file_name}' for processing.",
-        }
-    except Exception:
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-        raise
+    return deleted_count
 
 
 def create_group_for_current_user(name: str, description: str = "") -> Dict[str, Any]:
     settings = _require_group_workspaces_enabled()
     _require_group_creation_enabled(settings)
+
     normalized_name = str(name or "").strip() or "Untitled Group"
     normalized_description = str(description or "").strip()
     current_user = _require_current_user_info()
+
     group_doc = create_group(normalized_name, normalized_description)
     _notify_group_created(group_doc=group_doc, actor_user=current_user)
     return group_doc
@@ -1017,10 +1067,32 @@ def _normalize_markdown_file_name(file_name: str) -> str:
     return f"{normalized_base_name}.md"
 
 
+def _normalize_generated_document_file_name(file_name: str) -> str:
+    normalized_file_name = str(file_name or "").replace("\\", "/").split("/")[-1].strip()
+    if not normalized_file_name:
+        normalized_file_name = "generated_tabular_output.json"
+
+    base_name, extension = os.path.splitext(normalized_file_name)
+    normalized_extension = extension.lower().strip()
+    if normalized_extension in {".json", ".csv"} and base_name.strip():
+        return normalized_file_name
+
+    normalized_base_name = base_name.strip() or normalized_file_name.strip() or "generated_tabular_output"
+    return f"{normalized_base_name}.json"
+
+
 def _write_temp_markdown_file(markdown_content: str) -> str:
     sc_temp_files_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else None
     with tempfile.NamedTemporaryFile(delete=False, suffix=".md", dir=sc_temp_files_dir) as temp_file:
         temp_file.write(str(markdown_content or "").encode("utf-8"))
+        return temp_file.name
+
+
+def _write_temp_generated_file(file_content_bytes: bytes, suffix: str) -> str:
+    sc_temp_files_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else None
+    normalized_suffix = suffix if suffix.startswith('.') else f'.{suffix}' if suffix else '.json'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=normalized_suffix, dir=sc_temp_files_dir) as temp_file:
+        temp_file.write(file_content_bytes)
         return temp_file.name
 
 
@@ -1057,6 +1129,199 @@ def _queue_document_upload_background_task(
         return
 
     process_document_upload_background(**task_kwargs)
+
+
+def _upload_generated_document_for_current_user(
+    current_user_id: str,
+    normalized_file_name: str,
+    file_content_bytes: bytes,
+    normalized_workspace_scope: str,
+    group_id: str = "",
+    default_group_id: str = "",
+    process_inline: bool = False,
+) -> Dict[str, Any]:
+    document_id = str(uuid.uuid4())
+    file_extension = os.path.splitext(normalized_file_name)[1].lower() or '.json'
+    temp_file_path = _write_temp_generated_file(file_content_bytes, file_extension)
+    resolved_group_id = None
+    initial_status = "Processing file..." if process_inline else "Queued for processing"
+
+    try:
+        if normalized_workspace_scope == "group":
+            resolved_group_id = _resolve_group_upload_target_for_current_user(
+                current_user_id,
+                group_id=group_id,
+                default_group_id=default_group_id,
+            )
+            create_document(
+                file_name=normalized_file_name,
+                group_id=resolved_group_id,
+                user_id=current_user_id,
+                document_id=document_id,
+                num_file_chunks=0,
+                status=initial_status,
+            )
+            update_document(
+                document_id=document_id,
+                user_id=current_user_id,
+                group_id=resolved_group_id,
+                percentage_complete=0,
+            )
+        else:
+            create_document(
+                file_name=normalized_file_name,
+                user_id=current_user_id,
+                document_id=document_id,
+                num_file_chunks=0,
+                status=initial_status,
+            )
+            update_document(
+                document_id=document_id,
+                user_id=current_user_id,
+                percentage_complete=0,
+            )
+
+        if process_inline:
+            process_document_upload_background(
+                document_id=document_id,
+                user_id=current_user_id,
+                temp_file_path=temp_file_path,
+                original_filename=normalized_file_name,
+                group_id=resolved_group_id,
+            )
+        else:
+            _queue_document_upload_background_task(
+                document_id=document_id,
+                user_id=current_user_id,
+                temp_file_path=temp_file_path,
+                original_filename=normalized_file_name,
+                group_id=resolved_group_id,
+            )
+
+        if normalized_workspace_scope == "group":
+            invalidate_group_search_cache(resolved_group_id)
+            log_document_upload(
+                user_id=current_user_id,
+                container_type="group",
+                document_id=document_id,
+                file_size=len(file_content_bytes),
+                file_type=file_extension,
+            )
+        else:
+            invalidate_personal_search_cache(current_user_id)
+            log_document_upload(
+                user_id=current_user_id,
+                container_type="personal",
+                document_id=document_id,
+                file_size=len(file_content_bytes),
+                file_type=file_extension,
+            )
+
+        return {
+            "document": {
+                "id": document_id,
+                "file_name": normalized_file_name,
+                "status": "Processing complete" if process_inline else "Queued for processing",
+            },
+            "workspace_scope": normalized_workspace_scope,
+            "group_id": resolved_group_id,
+        }
+    except Exception:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise
+
+
+def _upload_generated_chat_artifact_for_current_user(
+    current_user_id: str,
+    conversation_id: str,
+    normalized_file_name: str,
+    file_content_bytes: bytes,
+) -> Dict[str, Any]:
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError(f"Conversation {conversation_id} not found") from exc
+
+    if str(conversation_item.get("user_id") or "").strip() != current_user_id:
+        raise PermissionError("Forbidden")
+
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        raise RuntimeError("Blob storage client not available")
+
+    artifact_message_id = f"{conversation_id}_generated_file_{uuid.uuid4().hex}"
+    blob_path = (
+        f"{current_user_id}/{conversation_id}/generated/"
+        f"{artifact_message_id}/{normalized_file_name}"
+    )
+    blob_client = blob_service_client.get_blob_client(
+        container=storage_account_personal_chat_container_name,
+        blob=blob_path,
+    )
+    blob_client.upload_blob(
+        file_content_bytes,
+        overwrite=True,
+        metadata={
+            "conversation_id": conversation_id,
+            "user_id": current_user_id,
+            "generated_artifact": "true",
+        },
+    )
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    current_thread_id = str(uuid.uuid4())
+    previous_thread_id = _get_latest_personal_thread_id(conversation_id)
+    file_extension = os.path.splitext(normalized_file_name)[1].lower().lstrip(".")
+
+    message_doc = {
+        "id": artifact_message_id,
+        "conversation_id": conversation_id,
+        "role": "file",
+        "filename": normalized_file_name,
+        "is_table": file_extension in TABULAR_EXTENSIONS,
+        "file_content_source": "blob",
+        "blob_container": storage_account_personal_chat_container_name,
+        "blob_path": blob_path,
+        "timestamp": timestamp,
+        "model_deployment_name": None,
+        "metadata": {
+            "is_generated_chat_artifact": True,
+            "generated_artifact_storage_scope": "chat",
+            "thread_info": {
+                "thread_id": current_thread_id,
+                "previous_thread_id": previous_thread_id,
+                "active_thread": False,
+                "thread_attempt": 1,
+            },
+        },
+    }
+    cosmos_messages_container.upsert_item(message_doc)
+
+    log_event(
+        "[SimpleChat] Generated chat artifact saved",
+        {
+            "conversation_id": conversation_id,
+            "message_id": artifact_message_id,
+            "file_name": normalized_file_name,
+            "blob_path": blob_path,
+            "storage_scope": "chat",
+        },
+        debug_only=True,
+    )
+
+    return {
+        "message": {
+            "id": artifact_message_id,
+            "file_name": normalized_file_name,
+            "blob_container": storage_account_personal_chat_container_name,
+            "blob_path": blob_path,
+        },
+        "conversation_id": conversation_id,
+    }
 
 
 def _resolve_group_upload_target_for_current_user(

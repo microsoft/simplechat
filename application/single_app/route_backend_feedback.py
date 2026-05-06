@@ -1,9 +1,23 @@
 # route_backend_feedback.py
 
+import csv
+import io
+
+from flask import make_response
+
 from config import *
 from functions_authentication import *
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security   
+
+
+ALLOWED_FEEDBACK_TYPES = {"Positive", "Negative", "Neutral"}
+ALLOWED_PAGE_SIZES = {10, 20, 50, 100}
+FEEDBACK_TYPE_NORMALIZATION = {
+    "positive": "Positive",
+    "negative": "Negative",
+    "neutral": "Neutral",
+}
 
 
 def _authorize_feedback_conversation(user_id, conversation_id):
@@ -21,6 +35,182 @@ def _authorize_feedback_conversation(user_id, conversation_id):
 
     return conversation_item
 
+
+def _get_feedback_session_user_id():
+    if "user" not in session:
+        return None
+
+    return session["user"].get("oid") or session["user"].get("sub")
+
+
+def _normalize_feedback_page_size(page_size):
+    return page_size if page_size in ALLOWED_PAGE_SIZES else 10
+
+
+def _normalize_feedback_type(feedback_type):
+    if not isinstance(feedback_type, str):
+        return None
+
+    return FEEDBACK_TYPE_NORMALIZATION.get(feedback_type.strip().lower())
+
+
+def _parse_feedback_filters():
+    filter_type = _normalize_feedback_type(request.args.get('type', None, type=str))
+
+    filter_ack_str = request.args.get('ack', None, type=str)
+    filter_ack_bool = None
+    if filter_ack_str == 'true':
+        filter_ack_bool = True
+    elif filter_ack_str == 'false':
+        filter_ack_bool = False
+
+    return filter_type, filter_ack_bool
+
+
+def _serialize_feedback_item(item):
+    normalized_feedback_type = _normalize_feedback_type(item.get("feedbackType"))
+
+    return {
+        "id": item.get("id"),
+        "userId": item.get("userId"),
+        "prompt": item.get("prompt"),
+        "aiResponse": item.get("aiResponse"),
+        "feedbackType": normalized_feedback_type or item.get("feedbackType"),
+        "reason": item.get("reason"),
+        "timestamp": item.get("timestamp"),
+        "adminReview": item.get("adminReview", {}),
+    }
+
+
+def _query_feedback_items(user_id=None, filter_type=None, filter_ack_bool=None):
+    query = "SELECT * FROM c"
+    where_clauses = []
+    parameters = []
+
+    if user_id:
+        where_clauses.append("c.userId = @userId")
+        parameters.append({"name": "@userId", "value": user_id})
+
+    if filter_ack_bool is not None:
+        where_clauses.append("c.adminReview.acknowledged = @ack")
+        parameters.append({"name": "@ack", "value": filter_ack_bool})
+
+    if where_clauses:
+        query += " WHERE " + " AND ".join(where_clauses)
+
+    query += " ORDER BY c.timestamp DESC"
+
+    items = list(cosmos_feedback_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+
+    serialized_items = [_serialize_feedback_item(item) for item in items]
+
+    if filter_type:
+        serialized_items = [
+            item for item in serialized_items
+            if item.get("feedbackType") == filter_type
+        ]
+
+    return serialized_items
+
+
+def _paginate_feedback_items(items, page, page_size):
+    if page < 1:
+        page = 1
+
+    page_size = _normalize_feedback_page_size(page_size)
+    offset = (page - 1) * page_size
+    return items[offset: offset + page_size], page, page_size
+
+
+def _build_feedback_stats(items):
+    stats = {
+        "total_count": len(items),
+        "positive_count": 0,
+        "negative_count": 0,
+        "neutral_count": 0,
+        "acknowledged_count": 0,
+        "unacknowledged_count": 0,
+        "recent_30_day_count": 0,
+        "latest_timestamp": items[0].get('timestamp') if items else None,
+    }
+
+    recent_cutoff = datetime.utcnow() - timedelta(days=30)
+
+    for item in items:
+        feedback_type = _normalize_feedback_type(item.get('feedbackType')) or item.get('feedbackType')
+        if feedback_type == 'Positive':
+            stats['positive_count'] += 1
+        elif feedback_type == 'Negative':
+            stats['negative_count'] += 1
+        elif feedback_type == 'Neutral':
+            stats['neutral_count'] += 1
+
+        acknowledged = bool((item.get('adminReview') or {}).get('acknowledged'))
+        if acknowledged:
+            stats['acknowledged_count'] += 1
+        else:
+            stats['unacknowledged_count'] += 1
+
+        timestamp = item.get('timestamp')
+        if timestamp:
+            try:
+                parsed_timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                if parsed_timestamp.replace(tzinfo=None) >= recent_cutoff:
+                    stats['recent_30_day_count'] += 1
+            except ValueError:
+                pass
+
+    return stats
+
+
+def _build_feedback_export_response(items, filename_prefix, include_user_id=False):
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    headers = [
+        'Timestamp',
+        'Feedback Type',
+        'Reason',
+        'Prompt',
+        'AI Response',
+        'Acknowledged',
+        'Admin Notes',
+        'Admin Response',
+        'Admin Action',
+    ]
+    if include_user_id:
+        headers.insert(1, 'User ID')
+
+    writer.writerow(headers)
+
+    for item in items:
+        admin_review = item.get('adminReview') or {}
+        row = [
+            item.get('timestamp') or '',
+            item.get('feedbackType') or '',
+            item.get('reason') or '',
+            item.get('prompt') or '',
+            item.get('aiResponse') or '',
+            'Yes' if admin_review.get('acknowledged') else 'No',
+            admin_review.get('analysisNotes') or '',
+            admin_review.get('responseToUser') or '',
+            admin_review.get('actionTaken') or '',
+        ]
+        if include_user_id:
+            row.insert(1, item.get('userId') or '')
+        writer.writerow(row)
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = (
+        f'attachment; filename={filename_prefix}_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv'
+    )
+    return response
+
 def register_route_backend_feedback(app):
 
     @app.route("/feedback/submit", methods=["POST"])
@@ -37,7 +227,7 @@ def register_route_backend_feedback(app):
         data = request.get_json() or {}
         messageId = data.get("messageId")          # This is the ID of the specific AI message
         conversationId = data.get("conversationId") # This is the ID of the conversation
-        feedbackType = data.get("feedbackType")
+        feedbackType = _normalize_feedback_type(data.get("feedbackType"))
         reason = data.get("reason", "")
         user_id = None
         if "user" in session:
@@ -165,89 +355,18 @@ def register_route_backend_feedback(app):
         Return feedback for admin review with pagination and filtering.
         """
         try:
-            # --- Pagination Parameters ---
             page = request.args.get('page', 1, type=int)
             page_size = request.args.get('page_size', 10, type=int)
-            if page < 1: page = 1
-            if page_size not in [10, 20, 50]: page_size = 10 # Enforce allowed sizes
-            offset = (page - 1) * page_size
+            filter_type, filter_ack_bool = _parse_feedback_filters()
+            items = _query_feedback_items(
+                filter_type=filter_type,
+                filter_ack_bool=filter_ack_bool,
+            )
+            paginated_items, page, page_size = _paginate_feedback_items(items, page, page_size)
+            total_count = len(items)
 
-            # --- Filter Parameters ---
-            filter_type = request.args.get('type', None, type=str)
-            filter_ack_str = request.args.get('ack', None, type=str) # Keep as string first
-
-            # --- Build Query ---
-            base_query = "SELECT * FROM c"
-            count_query = "SELECT VALUE COUNT(1) FROM c"
-            where_clauses = []
-            parameters = []
-
-            # Filter by Feedback Type
-            if filter_type and filter_type in ["Positive", "Negative", "Neutral"]:
-                where_clauses.append("c.feedbackType = @type")
-                parameters.append({"name": "@type", "value": filter_type})
-
-            # Filter by Acknowledged Status
-            filter_ack_bool = None
-            if filter_ack_str == 'true':
-                filter_ack_bool = True
-            elif filter_ack_str == 'false':
-                filter_ack_bool = False
-
-            if filter_ack_bool is not None:
-                # Querying nested properties requires dot notation
-                where_clauses.append("c.adminReview.acknowledged = @ack")
-                parameters.append({"name": "@ack", "value": filter_ack_bool})
-
-            # --- Construct Full Queries ---
-            if where_clauses:
-                query_suffix = " WHERE " + " AND ".join(where_clauses)
-                base_query += query_suffix
-                count_query += query_suffix
-
-            # Add Ordering (e.g., by timestamp descending) - adjust field if needed
-            base_query += " ORDER BY c.timestamp DESC" # Important for consistent pagination
-
-            # Add Pagination
-            base_query += " OFFSET @offset LIMIT @limit"
-            parameters.extend([
-                {"name": "@offset", "value": offset},
-                {"name": "@limit", "value": page_size}
-            ])
-
-            # --- Execute Queries ---
-            # Count Query (first, to know total pages)
-            total_count_result = list(cosmos_feedback_container.query_items(
-                query=count_query,
-                parameters=parameters[:-2], # Exclude offset/limit params for count
-                enable_cross_partition_query=True
-            ))
-            total_count = total_count_result[0] if total_count_result else 0
-
-            # Data Query
-            items = list(cosmos_feedback_container.query_items(
-                query=base_query,
-                parameters=parameters,
-                enable_cross_partition_query=True
-            ))
-
-            # --- Format Results ---
-            results = []
-            for f in items:
-                results.append({
-                    "id": f["id"],
-                    "userId": f.get("userId"),
-                    "prompt": f.get("prompt"),
-                    "aiResponse": f.get("aiResponse"),
-                    "feedbackType": f.get("feedbackType"),
-                    "reason": f.get("reason"),
-                    "timestamp": f.get("timestamp"),
-                    "adminReview": f.get("adminReview", {})
-                })
-
-            # --- Return JSON Response ---
             return jsonify({
-                "feedback": results,
+                "feedback": paginated_items,
                 "page": page,
                 "page_size": page_size,
                 "total_count": total_count,
@@ -260,6 +379,40 @@ def register_route_backend_feedback(app):
              import traceback
              traceback.print_exc()
              return jsonify({"error": f"Failed to retrieve feedback: {str(e)}"}), 500
+
+    @app.route("/feedback/review/stats", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @feedback_admin_required
+    @enabled_required("enable_user_feedback")
+    def feedback_review_stats():
+        """Return aggregate feedback review statistics for the admin page."""
+        try:
+            filter_type, filter_ack_bool = _parse_feedback_filters()
+            items = _query_feedback_items(
+                filter_type=filter_type,
+                filter_ack_bool=filter_ack_bool,
+            )
+            return jsonify(_build_feedback_stats(items))
+        except Exception as e:
+            return jsonify({"error": f"Failed to retrieve feedback stats: {str(e)}"}), 500
+
+    @app.route("/feedback/review/export", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @feedback_admin_required
+    @enabled_required("enable_user_feedback")
+    def feedback_review_export():
+        """Export feedback review rows as CSV for the active filter set."""
+        try:
+            filter_type, filter_ack_bool = _parse_feedback_filters()
+            items = _query_feedback_items(
+                filter_type=filter_type,
+                filter_ack_bool=filter_ack_bool,
+            )
+            return _build_feedback_export_response(items, 'feedback_review_export', include_user_id=True)
+        except Exception as e:
+            return jsonify({"error": f"Failed to export feedback: {str(e)}"}), 500
 
     @app.route("/feedback/review/<feedbackId>", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -282,7 +435,7 @@ def register_route_backend_feedback(app):
                 "userId": feedback_doc.get("userId"),
                 "prompt": feedback_doc.get("prompt"),
                 "aiResponse": feedback_doc.get("aiResponse"),
-                "feedbackType": feedback_doc.get("feedbackType"),
+                "feedbackType": _normalize_feedback_type(feedback_doc.get("feedbackType")) or feedback_doc.get("feedbackType"),
                 "reason": feedback_doc.get("reason"),
                 "timestamp": feedback_doc.get("timestamp"),
                 "adminReview": feedback_doc.get("adminReview", {})
@@ -377,89 +530,75 @@ def register_route_backend_feedback(app):
             type (str): Filter by feedbackType (Positive, Negative, Neutral).
             ack (str): Filter by acknowledged status ('true', 'false').
         """
-        user_id = None
-        if "user" in session:
-            user_id = session["user"].get("oid") or session["user"].get("sub")
+        user_id = _get_feedback_session_user_id()
         if not user_id:
             return jsonify({"error": "No user ID found in session"}), 403
 
         try:
-            # --- Pagination Parameters ---
             page = int(request.args.get('page', 1))
             page_size = int(request.args.get('page_size', 10))
-            if page < 1: page = 1
-            if page_size < 1: page_size = 10
-            offset = (page - 1) * page_size
-
-            # --- Filtering Parameters ---
-            filter_type = request.args.get('type', None)
-            filter_ack_str = request.args.get('ack', None) # 'true' or 'false'
-
-            # --- Build Query ---
-            query_conditions = ["c.userId = @userId"]
-            parameters = [{"name": "@userId", "value": user_id}]
-
-            if filter_type:
-                query_conditions.append("c.feedbackType = @type")
-                parameters.append({"name": "@type", "value": filter_type})
-
-            if filter_ack_str is not None:
-                filter_ack_bool = filter_ack_str.lower() == 'true'
-                # Query Cosmos DB boolean. Assumes adminReview.acknowledged is stored as boolean
-                # Adjust the path if 'adminReview' might not exist (use IS_DEFINED or check existence)
-                # For simplicity, assuming adminReview object exists if filtering by ack status
-                query_conditions.append("c.adminReview.acknowledged = @ackStatus")
-                parameters.append({"name": "@ackStatus", "value": filter_ack_bool})
-                # More robust: query_conditions.append("(IS_DEFINED(c.adminReview) ? c.adminReview.acknowledged : false) = @ackStatus") if false should be default
-
-            # Base query structure
-            where_clause = " WHERE " + " AND ".join(query_conditions)
-            query = f"SELECT * FROM c {where_clause} ORDER BY c.timestamp DESC"
-            count_query = f"SELECT VALUE COUNT(1) FROM c {where_clause}"
-
-            # --- Execute Queries ---
-            # 1. Get total count
-            count_results = list(cosmos_feedback_container.query_items(
-                query=count_query,
-                parameters=parameters,
-                enable_cross_partition_query=True # Adjust based on partition key
-            ))
-            total_count = count_results[0] if count_results else 0
-
-            # 2. Get paginated items
-            all_matching_items = list(cosmos_feedback_container.query_items(
-                query=query,
-                parameters=parameters,
-                enable_cross_partition_query=True
-            ))
-
-            # Apply pagination slicing
-            paginated_items = all_matching_items[offset : offset + page_size]
-
-            # Format results (as done previously)
-            results = []
-            for f in paginated_items:
-                results.append({
-                    "id": f["id"],
-                    "userId": f.get("userId"),
-                    "prompt": f.get("prompt"),
-                    "aiResponse": f.get("aiResponse"),
-                    "feedbackType": f.get("feedbackType"),
-                    "reason": f.get("reason"),
-                    "timestamp": f.get("timestamp"),
-                    "adminReview": f.get("adminReview", {}) # Ensure adminReview is an empty dict if missing
-                })
+            filter_type, filter_ack_bool = _parse_feedback_filters()
+            items = _query_feedback_items(
+                user_id=user_id,
+                filter_type=filter_type,
+                filter_ack_bool=filter_ack_bool,
+            )
+            paginated_items, page, page_size = _paginate_feedback_items(items, page, page_size)
 
             return jsonify({
-                "feedback": results,
+                "feedback": paginated_items,
                 "page": page,
                 "page_size": page_size,
-                "total_count": total_count
+                "total_count": len(items)
             }), 200
 
         except Exception as e:
             print(f"Error in feedback_my: {str(e)}")
             return jsonify({"error": f"An error occurred while fetching your feedback: {str(e)}"}), 500
+
+    @app.route("/feedback/my/stats", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_feedback")
+    def feedback_my_stats():
+        """Return aggregate feedback statistics for the current user."""
+        user_id = _get_feedback_session_user_id()
+        if not user_id:
+            return jsonify({"error": "No user ID found in session"}), 403
+
+        try:
+            filter_type, filter_ack_bool = _parse_feedback_filters()
+            items = _query_feedback_items(
+                user_id=user_id,
+                filter_type=filter_type,
+                filter_ack_bool=filter_ack_bool,
+            )
+            return jsonify(_build_feedback_stats(items))
+        except Exception as e:
+            return jsonify({"error": f"Failed to retrieve feedback stats: {str(e)}"}), 500
+
+    @app.route("/feedback/my/export", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_feedback")
+    def feedback_my_export():
+        """Export the current user's feedback rows as CSV for the active filter set."""
+        user_id = _get_feedback_session_user_id()
+        if not user_id:
+            return jsonify({"error": "No user ID found in session"}), 403
+
+        try:
+            filter_type, filter_ack_bool = _parse_feedback_filters()
+            items = _query_feedback_items(
+                user_id=user_id,
+                filter_type=filter_type,
+                filter_ack_bool=filter_ack_bool,
+            )
+            return _build_feedback_export_response(items, 'my_feedback_export', include_user_id=False)
+        except Exception as e:
+            return jsonify({"error": f"Failed to export feedback: {str(e)}"}), 500
 
 
 def run_prompt_against_gpt(prompt):

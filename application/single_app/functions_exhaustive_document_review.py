@@ -1,7 +1,9 @@
 # functions_exhaustive_document_review.py
 """Shared exhaustive document review services."""
 
+import json
 import logging
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from functions_appinsights import log_event
@@ -391,7 +393,122 @@ def _build_window_review_prompt(review_prompt, document_payload, window_payload,
     )
 
 
-def _build_reduction_prompt(review_prompt, items, stage_label, failed_range_labels):
+def _prompt_requests_per_source_output(review_prompt):
+    prompt_text = str(review_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    source_output_markers = (
+        'one object per comment',
+        'one row per comment',
+        'one object per submission',
+        'one row per submission',
+        'one object per document',
+        'one row per document',
+        'one object per source',
+        'one row per source',
+        'each object must contain',
+        'each row must contain',
+        'exactly these fields',
+        'treat each standalone document as one comment',
+    )
+    return any(marker in prompt_text for marker in source_output_markers)
+
+
+def _prompt_requests_json_array_output(review_prompt):
+    prompt_text = str(review_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    json_markers = (
+        'json array',
+        'valid json',
+        'return only json',
+        'return only valid json',
+        '```json',
+    )
+    source_markers = (
+        'one object per comment',
+        'one object per submission',
+        'one object per document',
+        'each object must contain',
+        'exactly these fields',
+        'comment_id',
+    )
+    return any(marker in prompt_text for marker in json_markers) and any(
+        marker in prompt_text for marker in source_markers
+    )
+
+
+def _prompt_requests_json_code_block(review_prompt):
+    prompt_text = str(review_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    return 'code block' in prompt_text or '```json' in prompt_text
+
+
+def _clean_json_code_fence(response_content):
+    cleaned = str(response_content or '').strip()
+    if not cleaned:
+        return ''
+
+    cleaned = re.sub(r'(?is)^```(?:json)?\s*', '', cleaned)
+    cleaned = re.sub(r'(?is)\s*```$', '', cleaned)
+    return cleaned.strip()
+
+
+def _try_parse_json_review_output(review_text):
+    cleaned = _clean_json_code_fence(review_text)
+    if not cleaned:
+        return None
+
+    decoder = json.JSONDecoder()
+    try:
+        parsed_value, _ = decoder.raw_decode(cleaned)
+        return parsed_value
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+
+    for start_index, character in enumerate(cleaned):
+        if character not in '[{':
+            continue
+        try:
+            parsed_value, _ = decoder.raw_decode(cleaned[start_index:])
+            return parsed_value
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+
+    return None
+
+
+def _coerce_json_review_entries(parsed_value):
+    if isinstance(parsed_value, dict):
+        return [parsed_value]
+    if isinstance(parsed_value, list) and all(isinstance(item, dict) for item in parsed_value):
+        return parsed_value
+    return None
+
+
+def _merge_json_review_items(items, wrap_in_code_block=False):
+    combined_entries = []
+    for item in items:
+        parsed_value = _try_parse_json_review_output(item.get('text', ''))
+        entries = _coerce_json_review_entries(parsed_value)
+        if entries is None:
+            return ''
+        combined_entries.extend(entries)
+
+    if not combined_entries:
+        return ''
+
+    json_text = json.dumps(combined_entries, indent=2)
+    if wrap_in_code_block:
+        return f'```json\n{json_text}\n```'
+    return json_text
+
+
+def _build_reduction_prompt(review_prompt, items, stage_label, failed_range_labels, preserve_source_outputs=False):
     combined_sections = []
     for item in items:
         combined_sections.append(
@@ -407,14 +524,61 @@ def _build_reduction_prompt(review_prompt, items, stage_label, failed_range_labe
             f"{'; '.join(failed_range_labels)}\n\n"
         )
 
+    preservation_note = ''
+    combine_instruction = 'Combine the review notes below into one coherent answer.'
+    if preserve_source_outputs:
+        preservation_note = (
+            'This is a lossless consolidation step. Every distinct source document or comment represented '
+            'below must remain represented in the output. If the original task asks for one object or row '
+            'per comment, submission, or document, preserve that itemization. Do not sample, cap, or silently '
+            'drop represented entries.\n\n'
+        )
+        combine_instruction = (
+            'Combine the review notes below into one coherent answer without dropping or collapsing represented '
+            'source entries.'
+        )
+
     return (
         'You are consolidating exhaustive document review outputs. Preserve material findings, unresolved '
         'questions, and any coverage caveats. Do not drop important issues just to make the answer shorter.\n\n'
         f'Stage: {stage_label}\n'
         f'Task instructions:\n{review_prompt}\n\n'
         f'{failed_note}'
-        'Combine the review notes below into one coherent answer.\n\n'
+        f'{preservation_note}'
+        f'{combine_instruction}\n\n'
         f'<WindowReviews>\n{combined_text}\n</WindowReviews>'
+    )
+
+
+def _build_document_reduction_prompt(review_prompt, document_name, items, stage_label, failed_range_labels):
+    combined_sections = []
+    for item in items:
+        combined_sections.append(
+            f"[{item.get('label')}]\n{item.get('text', '')}"
+        )
+
+    failed_note = ''
+    if failed_range_labels:
+        failed_note = (
+            'Some windows for this document failed during earlier processing. Treat those slices as uncovered '
+            'gaps and mention them explicitly if they matter. Failed slices: '
+            f"{'; '.join(failed_range_labels)}\n\n"
+        )
+
+    combined_text = '\n\n'.join(combined_sections)
+    return (
+        'You are consolidating exhaustive document review outputs for a single source document. Every slice '
+        'below belongs to the same source document or comment submission. Preserve material findings, '
+        'unresolved questions, required fields, and any coverage caveats. Keep the output format required by '
+        'the original task. If the task expects one object or row per comment or submission, return the '
+        'final object or row set for this document only. Do not replace document-level findings with a generic '
+        'summary.\n\n'
+        f'Stage: {stage_label}\n'
+        f'Source document: {document_name}\n'
+        f'Task instructions:\n{review_prompt}\n\n'
+        f'{failed_note}'
+        'Combine the slice reviews below into one document-level answer.\n\n'
+        f'<DocumentWindowReviews>\n{combined_text}\n</DocumentWindowReviews>'
     )
 
 
@@ -423,6 +587,63 @@ def _build_reduction_batches(items, batch_size):
     for start_index in range(0, len(items), batch_size):
         reduction_batches.append(items[start_index:start_index + batch_size])
     return reduction_batches
+
+
+def _reduce_document_review_items(
+    review_prompt,
+    document_name,
+    items,
+    invoke_prompt,
+    failed_range_labels,
+    reduction_batch_size,
+    max_reduction_rounds,
+):
+    current_items = list(items or [])
+    reduction_round = 1
+
+    while len(current_items) > 1 and reduction_round <= max_reduction_rounds:
+        next_items = []
+        batches = _build_reduction_batches(current_items, reduction_batch_size)
+        for batch_index, batch_items in enumerate(batches, start=1):
+            reduction_prompt = _build_document_reduction_prompt(
+                review_prompt,
+                document_name,
+                batch_items,
+                stage_label=f'document-reduction-{reduction_round}.{batch_index}',
+                failed_range_labels=failed_range_labels,
+            )
+            reduced_text = str(invoke_prompt(
+                reduction_prompt,
+                stage='reduction',
+                metadata={
+                    'reduction_scope': 'document',
+                    'document_name': document_name,
+                    'reduction_round': reduction_round,
+                    'batch_index': batch_index,
+                    'item_count': len(batch_items),
+                },
+            ) or '').strip()
+            if not reduced_text:
+                raise RuntimeError(
+                    f'Exhaustive review document reduction returned an empty response for {document_name} '
+                    f'at round {reduction_round}, batch {batch_index}.'
+                )
+            next_items.append({
+                'label': f'{document_name} reduction {reduction_round}.{batch_index}',
+                'text': reduced_text,
+                'document_name': document_name,
+                'source_labels': [item.get('label') for item in batch_items],
+            })
+        current_items = next_items
+        reduction_round += 1
+
+    if len(current_items) > 1:
+        raise RuntimeError(
+            f'Exhaustive review document reduction exceeded the configured round limit for {document_name} '
+            f'with {len(current_items)} intermediate items remaining.'
+        )
+
+    return current_items[0] if current_items else None
 
 
 def _format_coverage_summary(coverage):
@@ -550,6 +771,9 @@ def run_exhaustive_document_review(
     document_runs = []
     reduction_items = []
     failed_range_labels = []
+    preserve_source_outputs = _prompt_requests_per_source_output(normalized_review_prompt)
+    json_array_output_requested = _prompt_requests_json_array_output(normalized_review_prompt)
+    json_code_block_requested = _prompt_requests_json_code_block(normalized_review_prompt)
 
     for document_index, document_id in enumerate(targets.get('document_ids', []), start=1):
         document_payload = get_document_chunks_payload(
@@ -628,6 +852,7 @@ def run_exhaustive_document_review(
         )
         document_summary['status'] = 'running'
         document_summary['status_text'] = f"Starting document {document_index} of {coverage.get('document_count', 0)}"
+        document_reduction_items = []
         _set_progress_meta(
             coverage,
             phase='reviewing',
@@ -784,7 +1009,7 @@ def run_exhaustive_document_review(
                     status='running',
                     percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
                 )
-                reduction_items.append({
+                document_reduction_items.append({
                     'label': window_label,
                     'text': review_text,
                     'document_id': document_id,
@@ -828,6 +1053,29 @@ def run_exhaustive_document_review(
                     percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
                 )
                 failed_range_labels.append(window_label)
+
+        if document_reduction_items:
+            document_result = document_reduction_items[0]
+            if len(document_reduction_items) > 1:
+                document_result = _reduce_document_review_items(
+                    normalized_review_prompt,
+                    document_name,
+                    document_reduction_items,
+                    invoke_prompt,
+                    document_summary.get('failed_ranges', []),
+                    reduction_batch_size,
+                    max_reduction_rounds,
+                )
+
+            document_result_text = str(document_result.get('text', '') or '').strip()
+            if document_result_text:
+                reduction_items.append({
+                    'label': document_name,
+                    'text': document_result_text,
+                    'document_id': document_id,
+                    'document_name': document_name,
+                    'source_labels': [item.get('label') for item in document_reduction_items],
+                })
 
         document_summary['active_window_number'] = None
         document_summary['active_attempt_number'] = None
@@ -875,6 +1123,29 @@ def run_exhaustive_document_review(
         raise RuntimeError('No document windows were reviewed successfully.')
 
     current_items = reduction_items
+    final_analysis_reply = ''
+
+    if json_array_output_requested:
+        _set_progress_meta(
+            coverage,
+            phase='reducing',
+            phase_label='Combining review findings',
+            phase_detail='Merging structured review output',
+            status='running',
+            percent_override=96,
+            phase_step=1,
+            phase_total_steps=1,
+        )
+        final_analysis_reply = _merge_json_review_items(
+            current_items,
+            wrap_in_code_block=json_code_block_requested,
+        )
+        if final_analysis_reply:
+            debug_print(
+                '[ExhaustiveReview] Completed structured merge | '
+                f'items={len(current_items)}'
+            )
+
     reduction_round = 1
     reduction_step_total = _estimate_reduction_step_total(
         len(current_items),
@@ -882,85 +1153,96 @@ def run_exhaustive_document_review(
         max_reduction_rounds,
     )
     completed_reduction_steps = 0
-    while len(current_items) > 1 and reduction_round <= max_reduction_rounds:
-        next_items = []
-        batches = _build_reduction_batches(current_items, reduction_batch_size)
-        for batch_index, batch_items in enumerate(batches, start=1):
-            reduction_step_index = completed_reduction_steps + 1
-            reduction_progress_percent = 90
-            if reduction_step_total > 0:
-                reduction_progress_percent = _scale_progress_percent(
-                    int(round(((reduction_step_index - 1) / reduction_step_total) * 100)),
-                    90,
-                    99,
+    if not final_analysis_reply:
+        while len(current_items) > 1 and reduction_round <= max_reduction_rounds:
+            next_items = []
+            batches = _build_reduction_batches(current_items, reduction_batch_size)
+            for batch_index, batch_items in enumerate(batches, start=1):
+                reduction_step_index = completed_reduction_steps + 1
+                reduction_progress_percent = 90
+                if reduction_step_total > 0:
+                    reduction_progress_percent = _scale_progress_percent(
+                        int(round(((reduction_step_index - 1) / reduction_step_total) * 100)),
+                        90,
+                        99,
+                    )
+                _set_progress_meta(
+                    coverage,
+                    phase='reducing',
+                    phase_label='Combining review findings',
+                    phase_detail=f'Reduction batch {reduction_step_index} of {reduction_step_total}',
+                    status='running',
+                    percent_override=reduction_progress_percent,
+                    phase_step=reduction_step_index,
+                    phase_total_steps=reduction_step_total,
                 )
-            _set_progress_meta(
-                coverage,
-                phase='reducing',
-                phase_label='Combining review findings',
-                phase_detail=f'Reduction batch {reduction_step_index} of {reduction_step_total}',
-                status='running',
-                percent_override=reduction_progress_percent,
-                phase_step=reduction_step_index,
-                phase_total_steps=reduction_step_total,
-            )
-            debug_print(
-                '[ExhaustiveReview] Starting reduction batch | '
-                f'round={reduction_round} | '
-                f'batch={batch_index}/{len(batches)} | '
-                f'items={len(batch_items)}'
-            )
-            if callable(activity_callback):
-                activity_callback({
-                    'type': 'reduction_started',
-                    'reduction_round': reduction_round,
-                    'batch_index': batch_index,
-                    'batch_count': len(batches),
-                    'reduction_step_index': reduction_step_index,
-                    'reduction_step_total': reduction_step_total,
-                    'item_count': len(batch_items),
-                    'progress': _build_progress_snapshot(coverage),
-                })
-            reduction_prompt = _build_reduction_prompt(
-                normalized_review_prompt,
-                batch_items,
-                stage_label=f'reduction-{reduction_round}.{batch_index}',
-                failed_range_labels=failed_range_labels,
-            )
-            reduced_text = str(invoke_prompt(
-                reduction_prompt,
-                stage='reduction',
-                metadata={
-                    'reduction_round': reduction_round,
-                    'batch_index': batch_index,
-                    'item_count': len(batch_items),
-                },
-            ) or '').strip()
-            if not reduced_text:
                 debug_print(
-                    '[ExhaustiveReview] Reduction failed | '
+                    '[ExhaustiveReview] Starting reduction batch | '
                     f'round={reduction_round} | '
-                    f'batch={batch_index} | error=empty reduction response'
+                    f'batch={batch_index}/{len(batches)} | '
+                    f'items={len(batch_items)}'
                 )
-                raise RuntimeError(
-                    f'Exhaustive review reduction returned an empty response at round {reduction_round}, batch {batch_index}.'
+                if callable(activity_callback):
+                    activity_callback({
+                        'type': 'reduction_started',
+                        'reduction_round': reduction_round,
+                        'batch_index': batch_index,
+                        'batch_count': len(batches),
+                        'reduction_step_index': reduction_step_index,
+                        'reduction_step_total': reduction_step_total,
+                        'item_count': len(batch_items),
+                        'progress': _build_progress_snapshot(coverage),
+                    })
+                reduction_prompt = _build_reduction_prompt(
+                    normalized_review_prompt,
+                    batch_items,
+                    stage_label=f'reduction-{reduction_round}.{batch_index}',
+                    failed_range_labels=failed_range_labels,
+                    preserve_source_outputs=preserve_source_outputs,
                 )
+                reduced_text = str(invoke_prompt(
+                    reduction_prompt,
+                    stage='reduction',
+                    metadata={
+                        'reduction_scope': 'global',
+                        'reduction_round': reduction_round,
+                        'batch_index': batch_index,
+                        'item_count': len(batch_items),
+                    },
+                ) or '').strip()
+                if not reduced_text:
+                    debug_print(
+                        '[ExhaustiveReview] Reduction failed | '
+                        f'round={reduction_round} | '
+                        f'batch={batch_index} | error=empty reduction response'
+                    )
+                    raise RuntimeError(
+                        f'Exhaustive review reduction returned an empty response at round {reduction_round}, batch {batch_index}.'
+                    )
 
-            source_labels = [item.get('label') for item in batch_items]
-            debug_print(
-                '[ExhaustiveReview] Completed reduction batch | '
-                f'round={reduction_round} | '
-                f'batch={batch_index}/{len(batches)} | '
-                f'sources={len(source_labels)}'
+                source_labels = [item.get('label') for item in batch_items]
+                debug_print(
+                    '[ExhaustiveReview] Completed reduction batch | '
+                    f'round={reduction_round} | '
+                    f'batch={batch_index}/{len(batches)} | '
+                    f'sources={len(source_labels)}'
+                )
+                next_items.append({
+                    'label': f'Reduction {reduction_round}.{batch_index}',
+                    'text': reduced_text,
+                    'source_labels': source_labels,
+                })
+                completed_reduction_steps += 1
+            current_items = next_items
+            reduction_round += 1
+
+        if len(current_items) > 1:
+            raise RuntimeError(
+                'Exhaustive review reduction exceeded the configured round limit '
+                f'with {len(current_items)} intermediate items remaining.'
             )
-            next_items.append({
-                'label': f'Reduction {reduction_round}.{batch_index}',
-                'text': reduced_text,
-                'source_labels': source_labels,
-            })
-            completed_reduction_steps += 1
-        current_items = next_items
-        reduction_round += 1
+
+        final_analysis_reply = current_items[0].get('text', '').strip()
 
     _set_progress_meta(
         coverage,
@@ -971,7 +1253,7 @@ def run_exhaustive_document_review(
         percent_override=100,
     )
 
-    final_reply = current_items[0].get('text', '').strip()
+    final_reply = final_analysis_reply
     coverage_summary = _format_coverage_summary(coverage)
     if include_coverage_summary and coverage_summary:
         final_reply = f"{final_reply}\n\n{coverage_summary}".strip()
@@ -1006,7 +1288,7 @@ def run_exhaustive_document_review(
 
     return {
         'reply': final_reply,
-        'analysis_reply': current_items[0].get('text', '').strip(),
+        'analysis_reply': final_analysis_reply,
         'coverage': coverage,
         'documents': coverage.get('documents', []),
         'document_ids': targets.get('document_ids', []),

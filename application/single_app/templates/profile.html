@@ -179,6 +179,68 @@
     .fact-memory-pagination-summary {
         min-height: 1.5rem;
     }
+
+    .profile-nav-tabs .nav-link {
+        align-items: center;
+        display: inline-flex;
+        font-weight: 600;
+        gap: 0.5rem;
+    }
+
+    .summary-stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        line-height: 1;
+        margin-bottom: 0.35rem;
+    }
+
+    .summary-stat-label {
+        color: var(--bs-secondary-color);
+        font-size: 0.85rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+    }
+
+    .table-section-card {
+        background: var(--bs-body-bg);
+        border: 1px solid var(--bs-border-color);
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        margin-bottom: 2rem;
+        padding: 1.5rem;
+    }
+
+    .table-loading-row td {
+        color: var(--bs-secondary-color);
+        padding: 2rem 1rem;
+        text-align: center;
+    }
+
+    .table-details-cell {
+        text-align: center;
+        width: 90px;
+    }
+
+    .table-note-cell {
+        max-width: 240px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .table-message-cell {
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .profile-empty-state {
+        color: var(--bs-secondary-color);
+        padding: 2rem 1rem;
+        text-align: center;
+    }
     
     @keyframes spin {
         0% { transform: rotate(0deg); }
@@ -216,6 +278,77 @@
             </div>
         </div>
     </div>
+
+    <ul class="nav nav-tabs profile-nav-tabs mb-3" id="profileTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button
+                class="nav-link {% if initial_tab == 'stats' %}active{% endif %}"
+                id="profile-stats-tab"
+                data-bs-toggle="tab"
+                data-bs-target="#profile-stats-pane"
+                data-profile-tab="stats"
+                type="button"
+                role="tab"
+                aria-controls="profile-stats-pane"
+                aria-selected="{% if initial_tab == 'stats' %}true{% else %}false{% endif %}"
+            >
+                <i class="bi bi-graph-up"></i>Stats
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button
+                class="nav-link {% if initial_tab == 'settings' %}active{% endif %}"
+                id="profile-settings-tab"
+                data-bs-toggle="tab"
+                data-bs-target="#profile-settings-pane"
+                data-profile-tab="settings"
+                type="button"
+                role="tab"
+                aria-controls="profile-settings-pane"
+                aria-selected="{% if initial_tab == 'settings' %}true{% else %}false{% endif %}"
+            >
+                <i class="bi bi-sliders"></i>Settings
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button
+                class="nav-link {% if initial_tab == 'feedback' %}active{% endif %}"
+                id="profile-feedback-tab"
+                data-bs-toggle="tab"
+                data-bs-target="#profile-feedback-pane"
+                data-profile-tab="feedback"
+                type="button"
+                role="tab"
+                aria-controls="profile-feedback-pane"
+                aria-selected="{% if initial_tab == 'feedback' %}true{% else %}false{% endif %}"
+            >
+                <i class="bi bi-chat-left-text"></i>Feedback
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button
+                class="nav-link {% if initial_tab == 'violations' %}active{% endif %}"
+                id="profile-violations-tab"
+                data-bs-toggle="tab"
+                data-bs-target="#profile-violations-pane"
+                data-profile-tab="violations"
+                type="button"
+                role="tab"
+                aria-controls="profile-violations-pane"
+                aria-selected="{% if initial_tab == 'violations' %}true{% else %}false{% endif %}"
+            >
+                <i class="bi bi-shield-exclamation"></i>Violations
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="profileTabContent">
+        <div
+            class="tab-pane fade {% if initial_tab == 'stats' %}show active{% endif %}"
+            id="profile-stats-pane"
+            role="tabpanel"
+            aria-labelledby="profile-stats-tab"
+        >
 
     <!-- Cached Metrics Info -->
     <div class="alert alert-info mb-3" role="alert">
@@ -340,6 +473,15 @@
             </div>
         </div>
     </div>
+
+        </div>
+
+        <div
+            class="tab-pane fade {% if initial_tab == 'settings' %}show active{% endif %}"
+            id="profile-settings-pane"
+            role="tabpanel"
+            aria-labelledby="profile-settings-tab"
+        >
 
     <div class="section-card" id="tutorial-preferences">
         <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
@@ -617,7 +759,348 @@
     </div>
     {% endif %}
 
+        </div>
+
+        <div
+            class="tab-pane fade {% if initial_tab == 'feedback' %}show active{% endif %}"
+            id="profile-feedback-pane"
+            role="tabpanel"
+            aria-labelledby="profile-feedback-tab"
+        >
+            <div class="section-card">
+                <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+                    <div>
+                        <h5 class="mb-2"><i class="bi bi-chat-left-text me-2"></i>My Feedback</h5>
+                        <p class="text-muted mb-0">Review the feedback you have submitted, inspect admin follow-up, and export the current filtered set.</p>
+                    </div>
+                    {% if app_settings.enable_user_feedback %}
+                    <button type="button" class="btn btn-outline-primary" id="profile-feedback-export-btn">
+                        <i class="bi bi-download me-1"></i>Export Feedback
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if app_settings.enable_user_feedback %}
+            <div class="row g-3 mb-4">
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="summary-stat-value" id="profile-feedback-total-count">-</div>
+                        <div class="summary-stat-label">Total Feedback</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="summary-stat-value text-success" id="profile-feedback-positive-count">-</div>
+                        <div class="summary-stat-label">Positive</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="summary-stat-value text-danger" id="profile-feedback-negative-count">-</div>
+                        <div class="summary-stat-label">Negative</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="summary-stat-value text-primary" id="profile-feedback-acknowledged-count">-</div>
+                        <div class="summary-stat-label">Acknowledged</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-section-card">
+                <div class="row g-3 align-items-end mb-3">
+                    <div class="col-md-3">
+                        <label for="profile-feedback-filter-type" class="form-label mb-1">Feedback Type</label>
+                        <select id="profile-feedback-filter-type" class="form-select form-select-sm">
+                            <option value="">(All)</option>
+                            <option value="Positive">Positive</option>
+                            <option value="Negative">Negative</option>
+                            <option value="Neutral">Neutral</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="profile-feedback-filter-ack" class="form-label mb-1">Acknowledged</label>
+                        <select id="profile-feedback-filter-ack" class="form-select form-select-sm">
+                            <option value="">(All)</option>
+                            <option value="true">Acknowledged</option>
+                            <option value="false">Not Acknowledged</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 text-md-end">
+                        <button type="button" class="btn btn-primary btn-sm" id="profile-feedback-apply-filters-btn">Apply Filters</button>
+                        <button type="button" class="btn btn-secondary btn-sm ms-1" id="profile-feedback-clear-filters-btn">Clear Filters</button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-striped align-middle" id="profile-feedback-table">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Prompt</th>
+                                <th>AI Response</th>
+                                <th>Feedback</th>
+                                <th>Reason</th>
+                                <th>Acknowledged</th>
+                                <th>Admin Action</th>
+                                <th class="table-details-cell">Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-loading-row">
+                                <td colspan="8">
+                                    <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                                    Loading feedback...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex align-items-center gap-3 mt-3">
+                    <div>
+                        <label for="profile-feedback-page-size" class="visually-hidden">Feedback items per page</label>
+                        <select id="profile-feedback-page-size" class="form-select form-select-sm d-inline-block" style="width:auto;">
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                        <span class="ms-1 small text-muted">items per page</span>
+                    </div>
+                    <div id="profile-feedback-pagination" class="d-flex gap-1 ms-auto"></div>
+                </div>
+            </div>
+            {% else %}
+            <div class="alert alert-secondary" role="alert">
+                <i class="bi bi-info-circle me-2"></i>User feedback is currently disabled for this environment.
+            </div>
+            {% endif %}
+        </div>
+
+        <div
+            class="tab-pane fade {% if initial_tab == 'violations' %}show active{% endif %}"
+            id="profile-violations-pane"
+            role="tabpanel"
+            aria-labelledby="profile-violations-tab"
+        >
+            <div class="section-card">
+                <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+                    <div>
+                        <h5 class="mb-2"><i class="bi bi-shield-exclamation me-2"></i>My Safety Violations</h5>
+                        <p class="text-muted mb-0">Review flagged messages, update your own notes, and export the current filtered set.</p>
+                    </div>
+                    {% if app_settings.enable_content_safety %}
+                    <button type="button" class="btn btn-outline-primary" id="profile-violations-export-btn">
+                        <i class="bi bi-download me-1"></i>Export Violations
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if app_settings.enable_content_safety %}
+            <div class="row g-3 mb-4">
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="summary-stat-value" id="profile-violations-total-count">-</div>
+                        <div class="summary-stat-label">Total Violations</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="summary-stat-value text-warning" id="profile-violations-open-count">-</div>
+                        <div class="summary-stat-label">Open</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="summary-stat-value text-success" id="profile-violations-resolved-count">-</div>
+                        <div class="summary-stat-label">Resolved</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="summary-stat-value text-primary" id="profile-violations-recent-count">-</div>
+                        <div class="summary-stat-label">Recent 30 Days</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-section-card">
+                <div class="row g-3 align-items-end mb-3">
+                    <div class="col-md-3">
+                        <label for="profile-violations-filter-status" class="form-label mb-1">Status</label>
+                        <select id="profile-violations-filter-status" class="form-select form-select-sm">
+                            <option value="">(All)</option>
+                            <option value="New">New</option>
+                            <option value="In-Review">In-Review</option>
+                            <option value="Resolved">Resolved</option>
+                            <option value="Dismissed">Dismissed</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="profile-violations-filter-action" class="form-label mb-1">Action</label>
+                        <select id="profile-violations-filter-action" class="form-select form-select-sm">
+                            <option value="">(All)</option>
+                            <option value="None">None</option>
+                            <option value="WarnUser">WarnUser</option>
+                            <option value="SuspendUser">SuspendUser</option>
+                            <option value="Escalate">Escalate</option>
+                            <option value="BlockUser">BlockUser</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 text-md-end">
+                        <button type="button" class="btn btn-primary btn-sm" id="profile-violations-apply-filters-btn">Apply Filters</button>
+                        <button type="button" class="btn btn-secondary btn-sm ms-1" id="profile-violations-clear-filters-btn">Clear Filters</button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-striped align-middle" id="profile-violations-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Message</th>
+                                <th>Triggered Categories</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                                <th>Your Notes</th>
+                                <th class="table-details-cell">View/Edit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-loading-row">
+                                <td colspan="7">
+                                    <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                                    Loading violations...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex align-items-center gap-3 mt-3">
+                    <div>
+                        <label for="profile-violations-page-size" class="visually-hidden">Violation items per page</label>
+                        <select id="profile-violations-page-size" class="form-select form-select-sm d-inline-block" style="width:auto;">
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                        <span class="ms-1 small text-muted">items per page</span>
+                    </div>
+                    <div id="profile-violations-pagination" class="d-flex gap-1 ms-auto"></div>
+                </div>
+            </div>
+            {% else %}
+            <div class="alert alert-secondary" role="alert">
+                <i class="bi bi-info-circle me-2"></i>Content safety logging is currently disabled for this environment.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
     <p class="text-muted mt-4 text-center">Version: {{ config['VERSION'] }}</p>
+</div>
+
+<div class="modal fade" id="profileFeedbackDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Feedback Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Timestamp:</label>
+                    <p id="profile-feedback-detail-timestamp" class="form-control-plaintext"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Your Prompt:</label>
+                    <p id="profile-feedback-detail-prompt" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">AI Response Received:</label>
+                    <p id="profile-feedback-detail-response" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Your Feedback:</label>
+                    <p id="profile-feedback-detail-type" class="form-control-plaintext"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Your Reason:</label>
+                    <p id="profile-feedback-detail-reason" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+                </div>
+                <hr />
+                <h6 class="text-muted mb-3">Admin Review Information</h6>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Acknowledged by Admin:</label>
+                    <p id="profile-feedback-detail-acknowledged" class="form-control-plaintext"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Admin Analysis Notes:</label>
+                    <p id="profile-feedback-detail-analysis" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Admin Response:</label>
+                    <p id="profile-feedback-detail-admin-response" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+                </div>
+                <div class="mb-0">
+                    <label class="form-label fw-bold">Admin Action Taken:</label>
+                    <p id="profile-feedback-detail-action" class="form-control-plaintext"></p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="profileViolationDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Violation Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">ID:</label>
+                    <p id="profile-violation-detail-id" class="form-control-plaintext"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Message:</label>
+                    <p id="profile-violation-detail-message" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Triggered Categories:</label>
+                    <p id="profile-violation-detail-categories" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Status:</label>
+                    <p id="profile-violation-detail-status" class="form-control-plaintext"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Action:</label>
+                    <p id="profile-violation-detail-action" class="form-control-plaintext"></p>
+                </div>
+                <div class="mb-0">
+                    <label for="profile-violation-detail-user-notes" class="form-label fw-bold">Your Notes:</label>
+                    <textarea class="form-control" id="profile-violation-detail-user-notes" rows="4"></textarea>
+                    <div id="profile-violation-save-status" class="small text-muted mt-2"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <input type="hidden" id="profile-violation-detail-hidden-id" />
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="profile-violation-save-btn">Save Notes</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Microphone Permission Instructions Modal -->
@@ -866,6 +1349,12 @@
 
 <script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
 <script>
+window.profilePageConfig = {
+    initialTab: {{ initial_tab|tojson }},
+    feedbackEnabled: {{ app_settings.enable_user_feedback|tojson }},
+    contentSafetyEnabled: {{ app_settings.enable_content_safety|tojson }}
+};
+
 // Initialize charts
 let loginChart, conversationChart, documentChart, tokenChart, storageChart;
 let factMemoryEntries = [];
@@ -875,6 +1364,9 @@ const FACT_MEMORY_PAGE_SIZE = 5;
 const FACT_MEMORY_TYPE_INSTRUCTION = 'instruction';
 const FACT_MEMORY_TYPE_FACT = 'fact';
 const FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer';
+const FACT_MEMORY_DELETE_BACKDROP_CLASS = 'fact-memory-delete-backdrop';
+const FACT_MEMORY_DELETE_BACKDROP_Z_INDEX = '1060';
+const FACT_MEMORY_DELETE_MODAL_Z_INDEX = '1065';
 let pendingFactMemoryDeleteId = null;
 let factMemoryDeleteModalInstance = null;
 let factMemoryManagerModalInstance = null;
@@ -906,6 +1398,15 @@ function updateProfileHeroImage() {
     }
 }
 
+function activateProfileTab(tabName) {
+    const targetButton = document.querySelector(`#profileTabs [data-profile-tab="${tabName}"]`);
+    if (!targetButton || typeof bootstrap === 'undefined' || !bootstrap.Tab) {
+        return;
+    }
+
+    bootstrap.Tab.getOrCreateInstance(targetButton).show();
+}
+
 function handleProfileFeatureAction() {
     const url = new URL(window.location.href);
     const featureAction = url.searchParams.get('feature_action') || '';
@@ -916,6 +1417,8 @@ function handleProfileFeatureAction() {
 
     const retentionSection = document.getElementById('retention-policy-settings');
     const retentionSelect = document.getElementById('conversation_retention_days');
+
+    activateProfileTab('settings');
 
     if (retentionSection) {
         retentionSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -928,6 +1431,7 @@ function handleProfileFeatureAction() {
     }
 
     url.searchParams.delete('feature_action');
+    url.searchParams.set('tab', 'settings');
     window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }
 
@@ -1317,6 +1821,59 @@ function openFactMemoryModal() {
     factMemoryManagerModalInstance.show();
 }
 
+function getLatestModalBackdrop() {
+    const backdrops = document.querySelectorAll('.modal-backdrop');
+    return backdrops.length ? backdrops[backdrops.length - 1] : null;
+}
+
+function applyFactMemoryDeleteModalStacking() {
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+    const managerModalElement = document.getElementById('factMemoryManagerModal');
+    if (!deleteModalElement || !managerModalElement || !managerModalElement.classList.contains('show')) {
+        return;
+    }
+
+    deleteModalElement.style.zIndex = FACT_MEMORY_DELETE_MODAL_Z_INDEX;
+
+    const backdrop = getLatestModalBackdrop();
+    if (backdrop) {
+        backdrop.classList.add(FACT_MEMORY_DELETE_BACKDROP_CLASS);
+        backdrop.style.zIndex = FACT_MEMORY_DELETE_BACKDROP_Z_INDEX;
+    }
+}
+
+function resetFactMemoryDeleteModalStacking() {
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+    if (deleteModalElement) {
+        deleteModalElement.style.zIndex = '';
+    }
+
+    document.querySelectorAll(`.${FACT_MEMORY_DELETE_BACKDROP_CLASS}`).forEach((backdrop) => {
+        backdrop.style.zIndex = '';
+        backdrop.classList.remove(FACT_MEMORY_DELETE_BACKDROP_CLASS);
+    });
+
+    const managerModalElement = document.getElementById('factMemoryManagerModal');
+    if (managerModalElement && managerModalElement.classList.contains('show')) {
+        document.body.classList.add('modal-open');
+    }
+}
+
+function ensureFactMemoryDeleteModalInstance() {
+    const modalElement = document.getElementById('factMemoryDeleteModal');
+    if (!modalElement || typeof bootstrap === 'undefined') {
+        return null;
+    }
+
+    if (!factMemoryDeleteModalInstance) {
+        modalElement.addEventListener('shown.bs.modal', applyFactMemoryDeleteModalStacking);
+        modalElement.addEventListener('hidden.bs.modal', resetFactMemoryDeleteModalStacking);
+        factMemoryDeleteModalInstance = new bootstrap.Modal(modalElement);
+    }
+
+    return factMemoryDeleteModalInstance;
+}
+
 async function loadFactMemory() {
     const refreshButton = document.getElementById('fact-memory-refresh-btn');
     const originalButtonHtml = refreshButton ? refreshButton.innerHTML : '';
@@ -1468,16 +2025,12 @@ async function saveFactMemory(factId) {
 
 function requestFactMemoryDelete(factId) {
     pendingFactMemoryDeleteId = factId;
-    const modalElement = document.getElementById('factMemoryDeleteModal');
-    if (!modalElement || typeof bootstrap === 'undefined') {
+    const deleteModal = ensureFactMemoryDeleteModalInstance();
+    if (!deleteModal) {
         return;
     }
 
-    if (!factMemoryDeleteModalInstance) {
-        factMemoryDeleteModalInstance = new bootstrap.Modal(modalElement);
-    }
-
-    factMemoryDeleteModalInstance.show();
+    deleteModal.show();
 }
 
 async function confirmDeleteFactMemory() {
@@ -2589,5 +3142,6 @@ async function saveTTSSettings() {
 }
 {% endif %}
 </script>
+<script src="{{ url_for('static', filename='js/profile/profile-tabs.js') }}"></script>
 
 {% endblock %}

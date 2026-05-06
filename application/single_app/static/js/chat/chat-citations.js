@@ -255,7 +255,7 @@ export function showImagePopup(imageSrc) {
   modal.show();
 }
 
-export function showMetadataModal(metadataType, metadataContent, fileName) {
+export function showMetadataModal(metadataType, metadataContent, fileName, sourceCitation = null) {
   // Create or reuse the metadata modal
   let modalContainer = document.getElementById("metadata-modal");
   if (!modalContainer) {
@@ -283,6 +283,11 @@ export function showMetadataModal(metadataType, metadataContent, fileName) {
               <strong>Content:</strong>
               <div id="metadata-content" class="mt-2 p-3 bg-light rounded" style="white-space: pre-wrap; max-height: 60vh; overflow-y: auto;"></div>
             </div>
+            <div class="mt-3 d-flex justify-content-end">
+              <button type="button" class="btn btn-outline-primary d-none" id="metadata-open-source-btn">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Open source document
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -295,18 +300,48 @@ export function showMetadataModal(metadataType, metadataContent, fileName) {
   const fileNameEl = modalContainer.querySelector("#metadata-file-name");
   const metadataTypeEl = modalContainer.querySelector("#metadata-type");
   const metadataContentEl = modalContainer.querySelector("#metadata-content");
+  const openSourceBtn = modalContainer.querySelector("#metadata-open-source-btn");
 
   if (modalTitle) {
     modalTitle.textContent = `Document Metadata - ${metadataType.charAt(0).toUpperCase() + metadataType.slice(1)}`;
   }
   if (fileNameEl) {
-    fileNameEl.textContent = fileName;
+    fileNameEl.textContent = fileName || 'Document';
   }
   if (metadataTypeEl) {
     metadataTypeEl.textContent = metadataType.charAt(0).toUpperCase() + metadataType.slice(1);
   }
   if (metadataContentEl) {
     metadataContentEl.textContent = metadataContent;
+  }
+
+  if (openSourceBtn) {
+    const sourceDocumentId = String(sourceCitation?.documentId || '').trim();
+    const sourceCitationId = String(sourceCitation?.citationId || '').trim();
+    const sourcePageNumber = sourceCitation?.pageNumber;
+    const enhancedTarget = sourceCitation?.enhancedTarget;
+    const sourceSheetName = sourceCitation?.sheetName || null;
+
+    if (sourceDocumentId && sourceCitationId) {
+      openSourceBtn.classList.remove('d-none');
+      openSourceBtn.onclick = () => {
+        const modalInstance = bootstrap.Modal.getInstance(modalContainer);
+        if (modalInstance) {
+          modalInstance.hide();
+        }
+
+        const enhancedCitationTarget = enhancedTarget !== undefined && enhancedTarget !== null && enhancedTarget !== ''
+          ? enhancedTarget
+          : sourcePageNumber !== undefined && sourcePageNumber !== null && sourcePageNumber !== ''
+          ? sourcePageNumber
+          : 1;
+
+        void showEnhancedCitationModal(sourceDocumentId, enhancedCitationTarget, sourceCitationId, sourceSheetName);
+      };
+    } else {
+      openSourceBtn.classList.add('d-none');
+      openSourceBtn.onclick = null;
+    }
   }
 
   const modal = new bootstrap.Modal(modalContainer);
@@ -770,13 +805,24 @@ if (chatboxEl) {
           // Show metadata content directly in a modal
           const metadataType = target.getAttribute("data-metadata-type");
           const metadataContent = target.getAttribute("data-metadata-content");
-          const fileName = citationId.split('_')[0]; // Extract filename from citation ID
-          
-          showMetadataModal(metadataType, metadataContent, fileName);
+          const fileName = target.getAttribute("data-file-name") || 'Document';
+          const documentId = target.getAttribute("data-document-id");
+            const enhancedTarget = target.getAttribute("data-enhanced-target");
+          const sheetName = target.getAttribute("data-sheet-name");
+          const { pageNumber } = parseDocIdAndPage(citationId);
+
+          showMetadataModal(metadataType, metadataContent, fileName, {
+            documentId,
+            citationId,
+            pageNumber,
+              enhancedTarget,
+            sheetName,
+          });
           return;
       }
 
       const { docId, pageNumber } = parseDocIdAndPage(citationId);
+          const enhancedTarget = target.getAttribute("data-enhanced-target");
       const sheetName = target.getAttribute("data-sheet-name");
 
       // Safety check: Ensure docId and pageNumber were parsed correctly
@@ -818,7 +864,7 @@ if (chatboxEl) {
       if (attemptEnhanced) {
           // console.log(`Attempting Enhanced Citation for ${docId}, page/timestamp ${pageNumber}, citationId ${citationId}`);
           // Use new enhanced citation system that supports multiple file types
-          showEnhancedCitationModal(docId, pageNumber, citationId, sheetName);
+          showEnhancedCitationModal(docId, enhancedTarget || pageNumber, citationId, sheetName);
       } else {
           // console.log(`Fetching Text Citation for ${citationId}`);
           // Use text citation if globally disabled OR explicitly disabled for this doc OR if parsing failed earlier

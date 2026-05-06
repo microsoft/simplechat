@@ -9,6 +9,7 @@ import requests
 import mimetypes
 import io
 import pandas
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings, enabled_required
@@ -18,6 +19,44 @@ from functions_public_workspaces import get_user_visible_public_workspace_ids_fr
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
 from functions_debug import debug_print
+
+
+def _get_authorized_chat_artifact_message(user_id, conversation_id, message_id):
+    normalized_conversation_id = str(conversation_id or '').strip()
+    normalized_message_id = str(message_id or '').strip()
+    if not normalized_conversation_id or not normalized_message_id:
+        raise ValueError('conversation_id and message_id are required')
+
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=normalized_conversation_id,
+            partition_key=normalized_conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError('Conversation not found') from exc
+
+    if str(conversation_item.get('user_id') or '').strip() != str(user_id or '').strip():
+        raise PermissionError('Forbidden')
+
+    try:
+        message_item = cosmos_messages_container.read_item(
+            item=normalized_message_id,
+            partition_key=normalized_conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError('Chat artifact not found') from exc
+
+    metadata = message_item.get('metadata', {}) or {}
+    if message_item.get('role') != 'file' or not metadata.get('is_generated_chat_artifact', False):
+        raise LookupError('Chat artifact not found')
+
+    if str(message_item.get('file_content_source') or '').strip().lower() != 'blob':
+        raise LookupError('Chat artifact content is unavailable')
+
+    if not str(message_item.get('blob_container') or '').strip() or not str(message_item.get('blob_path') or '').strip():
+        raise LookupError('Chat artifact content is unavailable')
+
+    return message_item
 
 
 def _sanitize_tabular_preview_value(value):
@@ -401,6 +440,66 @@ def register_enhanced_citations_routes(app):
 
         except Exception as e:
             debug_print(f"Error serving tabular workspace citation: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/workspace_documents/download", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def download_workspace_document():
+        """Serve an authorized workspace document blob as a direct download."""
+        doc_id = request.args.get("doc_id")
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            return serve_enhanced_citation_content(raw_doc, force_download=True)
+        except Exception as e:
+            debug_print(f"Error serving workspace document download: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/chat_artifacts/download", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def download_chat_artifact():
+        """Serve an authorized generated chat artifact as a direct download."""
+        conversation_id = request.args.get("conversation_id")
+        message_id = request.args.get("message_id")
+        if not conversation_id or not message_id:
+            return jsonify({"error": "conversation_id and message_id are required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            message_item = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
+            return serve_enhanced_citation_content(
+                {
+                    'file_name': message_item.get('filename') or 'generated-artifact',
+                    'blob_container': message_item.get('blob_container'),
+                    'blob_path': message_item.get('blob_path'),
+                },
+                force_download=True,
+            )
+        except PermissionError:
+            return jsonify({"error": "Forbidden"}), 403
+        except LookupError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as e:
+            debug_print(f"Error serving chat artifact download: {e}")
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/enhanced_citations/tabular_preview", methods=["GET"])

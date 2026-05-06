@@ -9,7 +9,6 @@ from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_
 from semantic_kernel_fact_memory_store import FactMemoryStore
 from semantic_kernel_loader import initialize_semantic_kernel
 from semantic_kernel_plugins.plugin_invocation_thoughts import (
-    format_plugin_invocation_thought,
     register_plugin_invocation_thought_callback,
 )
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
@@ -17,6 +16,8 @@ from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_a
 import builtins
 import asyncio, types
 import ast
+import csv
+import io
 import inspect
 import json
 import os
@@ -26,7 +27,7 @@ import re
 import traceback
 from urllib.parse import urlparse
 import threading
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 from config import *
 from flask import Response, copy_current_request_context, g, stream_with_context
 from functions_authentication import *
@@ -66,6 +67,7 @@ from functions_document_actions import (
 )
 from functions_thoughts import ThoughtTracker
 from functions_workflow_runner import _execute_document_action_workflow
+from functions_simplechat_operations import upload_generated_chat_artifact_for_current_user
 
 
 def _strip_agent_citation_artifact_refs(agent_citations):
@@ -105,6 +107,10 @@ ALLOWED_STREAM_CLIENT_EVENTS = {
     'stream_recovery_attached',
     'stream_recovery_unavailable',
 }
+TABULAR_GENERATED_OUTPUT_PREVIEW_ROWS = 3
+TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS = 25
+TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS = 18000
+TABULAR_STRUCTURED_EXPORT_MAX_RETRY_ATTEMPTS = 2
 
 
 def _safe_int(value, default=0):
@@ -1351,6 +1357,425 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
         "If a tool summary includes a full scalar value list, you may enumerate those values directly in the final answer. "
         "If a tool summary includes the full matching rows from a row or text search, use the surrounding cell context in those rows when deciding which content is relevant to the user's question."
     )
+
+
+def get_tabular_generated_output_format(user_question):
+    """Return the requested generated-output file format when the user asked for one."""
+    normalized_question = str(user_question or '').strip().lower()
+    if not normalized_question:
+        return None
+
+    json_markers = (
+        'json array',
+        'json file',
+        'download json',
+        'save json',
+        'make a json',
+        'create a json',
+        'return json',
+        'valid json',
+    )
+    csv_markers = (
+        'csv file',
+        'download csv',
+        'save csv',
+        'make a csv',
+        'create a csv',
+        'make a table',
+        'download table',
+        'spreadsheet',
+        'table file',
+    )
+
+    if any(marker in normalized_question for marker in json_markers):
+        return 'json'
+    if any(marker in normalized_question for marker in csv_markers):
+        return 'csv'
+    return None
+
+
+def question_requests_tabular_generated_output(user_question):
+    """Return True when the prompt asks for a downloadable structured tabular export."""
+    normalized_question = str(user_question or '').strip().lower()
+    requested_format = get_tabular_generated_output_format(user_question)
+    if not normalized_question or not requested_format:
+        return False
+
+    exhaustive_markers = (
+        'all rows',
+        'every row',
+        'full json',
+        'full csv',
+        'download',
+        'save',
+        'export',
+        'one object per',
+        'one row per',
+        'each object',
+        'each row',
+    )
+    return any(marker in normalized_question for marker in exhaustive_markers)
+
+
+def question_requests_tabular_structured_object_output(user_question):
+    """Return True when the prompt wants one structured object per source row."""
+    normalized_question = str(user_question or '').strip().lower()
+    if not normalized_question or not get_tabular_generated_output_format(user_question):
+        return False
+
+    structured_markers = (
+        'one object per comment',
+        'one json object per comment',
+        'one object per row',
+        'one row per comment',
+        'one object per submission',
+        'one object for each row',
+        'for each row',
+        'each object must contain',
+        'exactly these fields',
+    )
+    return any(marker in normalized_question for marker in structured_markers)
+
+
+def _clean_tabular_generated_json_code_fence(response_content):
+    cleaned = str(response_content or '').strip()
+    if not cleaned:
+        return ''
+
+    cleaned = re.sub(r'(?is)^```(?:json)?\s*', '', cleaned)
+    cleaned = re.sub(r'(?is)\s*```$', '', cleaned)
+    return cleaned.strip()
+
+
+def _parse_tabular_generated_json_entries(response_content):
+    cleaned = _clean_tabular_generated_json_code_fence(response_content)
+    if not cleaned:
+        return None
+
+    decoder = json.JSONDecoder()
+    parsed_value = None
+    try:
+        parsed_value, _ = decoder.raw_decode(cleaned)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed_value = None
+
+    if parsed_value is None:
+        for start_index, character in enumerate(cleaned):
+            if character not in '[{':
+                continue
+            try:
+                parsed_value, _ = decoder.raw_decode(cleaned[start_index:])
+                break
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+
+    if isinstance(parsed_value, dict):
+        return [parsed_value]
+    if isinstance(parsed_value, list) and all(isinstance(item, dict) for item in parsed_value):
+        return parsed_value
+    return None
+
+
+def _serialize_tabular_generated_output_value(value):
+    if value is None:
+        return ''
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, default=str, ensure_ascii=False)
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+    return str(value)
+
+
+def _build_tabular_generated_output_csv(entries):
+    ordered_columns = []
+    seen_columns = set()
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        for key in entry.keys():
+            normalized_key = str(key or '').strip()
+            if not normalized_key or normalized_key in seen_columns:
+                continue
+            seen_columns.add(normalized_key)
+            ordered_columns.append(normalized_key)
+
+    if not ordered_columns:
+        ordered_columns = ['value']
+
+    output_buffer = io.StringIO()
+    writer = csv.DictWriter(output_buffer, fieldnames=ordered_columns)
+    writer.writeheader()
+    for entry in entries or []:
+        serialized_row = {}
+        if isinstance(entry, dict):
+            for field_name in ordered_columns:
+                serialized_row[field_name] = _serialize_tabular_generated_output_value(entry.get(field_name))
+        writer.writerow(serialized_row)
+    return output_buffer.getvalue()
+
+
+def _sanitize_tabular_generated_output_base_name(file_name):
+    base_name = os.path.splitext(str(file_name or '').strip())[0]
+    normalized_base_name = re.sub(r'[^A-Za-z0-9._-]+', '_', base_name).strip('._')
+    return normalized_base_name or 'tabular_output'
+
+
+def _build_tabular_generated_output_file_name(source_file_name, output_format):
+    timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    normalized_base_name = _sanitize_tabular_generated_output_base_name(source_file_name)
+    normalized_extension = 'csv' if output_format == 'csv' else 'json'
+    return f"{normalized_base_name}_generated_{timestamp_suffix}.{normalized_extension}"
+
+
+def _build_tabular_generated_output_row_batches(rows):
+    batches = []
+    current_batch = []
+    current_batch_chars = 0
+
+    for row in rows or []:
+        row_text = json.dumps(row, default=str, ensure_ascii=False)
+        if current_batch and (
+            len(current_batch) >= TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS
+            or current_batch_chars + len(row_text) > TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS
+        ):
+            batches.append(current_batch)
+            current_batch = []
+            current_batch_chars = 0
+
+        current_batch.append(row)
+        current_batch_chars += len(row_text)
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
+def _build_tabular_generated_output_source_candidate(invocations):
+    best_candidate = None
+    best_score = None
+
+    for invocation in invocations or []:
+        if get_tabular_invocation_error_message(invocation):
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation)
+        if not isinstance(result_payload, dict):
+            continue
+
+        data_rows = result_payload.get('data')
+        if not isinstance(data_rows, list) or not data_rows:
+            continue
+
+        returned_rows = _safe_int(result_payload.get('returned_rows'))
+        total_matches = _safe_int(result_payload.get('total_matches'))
+        full_result_available = bool(
+            returned_rows > 0
+            and len(data_rows) == returned_rows
+            and total_matches == returned_rows
+        )
+
+        function_name = getattr(invocation, 'function_name', '')
+        function_rank = {
+            'query_tabular_data': 3,
+            'filter_rows': 2,
+            'search_rows': 1,
+        }.get(function_name, 0)
+
+        score = (
+            1 if full_result_available else 0,
+            returned_rows,
+            function_rank,
+        )
+        if best_score is not None and score <= best_score:
+            continue
+
+        best_candidate = {
+            'function_name': function_name,
+            'filename': result_payload.get('filename'),
+            'selected_sheet': result_payload.get('selected_sheet'),
+            'rows': data_rows,
+            'row_count': returned_rows or len(data_rows),
+            'total_matches': total_matches,
+            'full_result_available': full_result_available,
+        }
+        best_score = score
+
+    return best_candidate
+
+
+def _build_tabular_generated_output_batch_prompt(user_question, batch_rows, batch_index, total_batches, source_candidate):
+    source_file_name = str(source_candidate.get('filename') or 'unknown file').strip() or 'unknown file'
+    selected_sheet = str(source_candidate.get('selected_sheet') or '').strip()
+    batch_rows_json = json.dumps(batch_rows, indent=2, default=str, ensure_ascii=False)
+    selected_sheet_line = f"Worksheet: {selected_sheet}\n" if selected_sheet else ''
+
+    return (
+        'Transform the tabular input rows below into structured output for the user.\n\n'
+        f'User instructions:\n{user_question}\n\n'
+        'Return ONLY a valid JSON array.\n'
+        f'Return exactly {len(batch_rows)} JSON object(s), one per input row, in the same order.\n'
+        'Do not drop, merge, summarize, or cap rows.\n'
+        'If a requested field cannot be derived, include the field with null or an empty string instead of omitting the row.\n'
+        'Do not wrap the JSON in markdown fences.\n\n'
+        f'Source file: {source_file_name}\n'
+        f'{selected_sheet_line}'
+        f'Batch: {batch_index + 1}/{total_batches}\n\n'
+        f'Input rows:\n{batch_rows_json}'
+    )
+
+
+def _build_tabular_generated_output_system_message(output_metadata):
+    output_format = str(output_metadata.get('output_format') or 'json').upper()
+    file_name = str(output_metadata.get('file_name') or 'generated output').strip() or 'generated output'
+    row_count = _safe_int(output_metadata.get('row_count'))
+
+    return (
+        f'A full downloadable {output_format} export containing {row_count} row(s) has already been prepared '
+        f'for the user and attached to this chat as "{file_name}". '
+        'Do not inline the full dataset in the assistant reply. Give a concise summary, mention that the full export is attached in the UI, '
+        'and rely on the attached preview/download controls for the exhaustive output.'
+    )
+
+
+async def _generate_tabular_structured_output_entries(user_question, source_candidate, gpt_model, settings):
+    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+    from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
+
+    rows = source_candidate.get('rows') or []
+    if not rows:
+        return None
+
+    enable_gpt_apim = settings.get('enable_gpt_apim', False)
+    if enable_gpt_apim:
+        chat_service = AzureChatCompletion(
+            service_id='tabular-generated-output',
+            deployment_name=gpt_model,
+            endpoint=settings.get('azure_apim_gpt_endpoint'),
+            api_key=settings.get('azure_apim_gpt_subscription_key'),
+            api_version=settings.get('azure_apim_gpt_api_version'),
+        )
+    else:
+        auth_type = settings.get('azure_openai_gpt_authentication_type')
+        if auth_type == 'managed_identity':
+            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
+            chat_service = AzureChatCompletion(
+                service_id='tabular-generated-output',
+                deployment_name=gpt_model,
+                endpoint=settings.get('azure_openai_gpt_endpoint'),
+                api_version=settings.get('azure_openai_gpt_api_version'),
+                ad_token_provider=token_provider,
+            )
+        else:
+            chat_service = AzureChatCompletion(
+                service_id='tabular-generated-output',
+                deployment_name=gpt_model,
+                endpoint=settings.get('azure_openai_gpt_endpoint'),
+                api_key=settings.get('azure_openai_gpt_key'),
+                api_version=settings.get('azure_openai_gpt_api_version'),
+            )
+
+    row_batches = _build_tabular_generated_output_row_batches(rows)
+    merged_entries = []
+    for batch_index, batch_rows in enumerate(row_batches):
+        batch_prompt = _build_tabular_generated_output_batch_prompt(
+            user_question,
+            batch_rows,
+            batch_index,
+            len(row_batches),
+            source_candidate,
+        )
+
+        parsed_entries = None
+        for attempt_number in range(1, TABULAR_STRUCTURED_EXPORT_MAX_RETRY_ATTEMPTS + 1):
+            chat_history = SKChatHistory()
+            chat_history.add_system_message(
+                'You transform tabular input rows into deterministic structured output. '
+                'Return only a valid JSON array with one object per input row. '
+                'Never add markdown, explanation text, or omit rows.'
+            )
+            if attempt_number > 1:
+                chat_history.add_system_message(
+                    f'The previous attempt did not return the required {len(batch_rows)} JSON object(s). '
+                    'Retry now and preserve the input row count exactly.'
+                )
+            chat_history.add_user_message(batch_prompt)
+
+            execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output')
+            result = await chat_service.get_chat_message_contents(chat_history, execution_settings)
+            if result and result[0].content:
+                parsed_entries = _parse_tabular_generated_json_entries(result[0].content)
+            if parsed_entries is not None and len(parsed_entries) == len(batch_rows):
+                break
+
+        if parsed_entries is None or len(parsed_entries) != len(batch_rows):
+            return None
+
+        merged_entries.extend(parsed_entries)
+
+    return merged_entries
+
+
+async def maybe_create_tabular_generated_output(user_question, invocations, gpt_model, settings, conversation_id):
+    """Build, upload, and describe a generated tabular JSON/CSV export when requested."""
+    if not question_requests_tabular_generated_output(user_question):
+        return None
+
+    source_candidate = _build_tabular_generated_output_source_candidate(invocations)
+    if not source_candidate or not source_candidate.get('full_result_available'):
+        return None
+
+    output_format = get_tabular_generated_output_format(user_question)
+    rows = source_candidate.get('rows') or []
+    if not output_format or not rows:
+        return None
+
+    if question_requests_tabular_structured_object_output(user_question):
+        output_entries = await _generate_tabular_structured_output_entries(
+            user_question,
+            source_candidate,
+            gpt_model,
+            settings,
+        )
+        if output_entries is None:
+            return None
+    else:
+        output_entries = rows
+
+    if output_format == 'csv':
+        serialized_output = _build_tabular_generated_output_csv(output_entries)
+    else:
+        serialized_output = json.dumps(output_entries, indent=2, default=str, ensure_ascii=False)
+
+    generated_file_name = _build_tabular_generated_output_file_name(
+        source_candidate.get('filename'),
+        output_format,
+    )
+    upload_result = upload_generated_chat_artifact_for_current_user(
+        conversation_id=conversation_id,
+        file_name=generated_file_name,
+        file_content=serialized_output,
+    )
+
+    preview_rows = output_entries[:TABULAR_GENERATED_OUTPUT_PREVIEW_ROWS]
+    return {
+        'artifact_message_id': upload_result.get('message', {}).get('id'),
+        'conversation_id': conversation_id,
+        'storage_scope': 'chat',
+        'file_name': upload_result.get('message', {}).get('file_name') or generated_file_name,
+        'output_format': output_format,
+        'row_count': len(output_entries),
+        'source_file_name': source_candidate.get('filename'),
+        'selected_sheet': source_candidate.get('selected_sheet'),
+        'preview_rows': preview_rows,
+        'summary': (
+            f"Saved {len(output_entries)} row(s) to {upload_result.get('message', {}).get('file_name') or generated_file_name} "
+            'in this chat as a downloadable export.'
+        ),
+    }
 
 
 def user_requested_chart_visualization(user_message):
@@ -4221,6 +4646,137 @@ def get_tabular_tool_thought_payloads(invocations):
     return thought_payloads
 
 
+def build_tabular_activity_payload(invocation_or_start, state):
+    """Build a stable activity payload for live tabular tool progress updates."""
+    plugin_name = str(getattr(invocation_or_start, 'plugin_name', '') or 'TabularProcessingPlugin').strip()
+    function_name = str(getattr(invocation_or_start, 'function_name', '') or 'tabular_tool').strip()
+    parameters = getattr(invocation_or_start, 'parameters', {}) or {}
+    sheet_name = str(parameters.get('sheet_name') or '').strip()
+    title = function_name
+    if sheet_name:
+        title = f"{function_name} [{sheet_name}]"
+
+    payload = {
+        'activity_key': getattr(invocation_or_start, 'invocation_id', None) or f"tabular.{function_name}",
+        'kind': 'tabular_tool_invocation',
+        'title': title,
+        'status': state,
+        'state': state,
+        'lane_key': 'tabular',
+        'lane_label': 'Tabular',
+        'plugin_name': plugin_name,
+        'function_name': function_name,
+    }
+
+    filename = parameters.get('filename')
+    if filename:
+        payload['filename'] = filename
+    if sheet_name:
+        payload['sheet_name'] = sheet_name
+
+    return payload
+
+
+def format_live_tabular_invocation_start_thought(invocation_start):
+    """Build a live thought payload for an in-flight tabular tool invocation."""
+    parameters = getattr(invocation_start, 'parameters', {}) or {}
+    function_name = str(getattr(invocation_start, 'function_name', '') or 'tabular_tool').strip()
+    filename = parameters.get('filename')
+    sheet_name = parameters.get('sheet_name')
+
+    content = f"Starting tabular tool {function_name}"
+    if filename:
+        content = f"Starting tabular tool {function_name} on {filename}"
+    if filename and sheet_name:
+        content = f"Starting tabular tool {function_name} on {filename} [{sheet_name}]"
+
+    detail_parts = []
+    for parameter_name, parameter_value in parameters.items():
+        if parameter_name in get_tabular_thought_excluded_parameter_names():
+            continue
+
+        rendered_value = format_tabular_thought_parameter_value(parameter_value)
+        if rendered_value is None:
+            continue
+
+        detail_parts.append(f"{parameter_name}={rendered_value}")
+
+    detail_parts.append('status=running')
+    detail = '; '.join(detail_parts) if detail_parts else None
+
+    return {
+        'step_type': 'tabular_analysis',
+        'content': content,
+        'detail': detail,
+        'activity': build_tabular_activity_payload(invocation_start, 'running'),
+    }
+
+
+def format_live_tabular_invocation_thought(invocation):
+    """Build a live thought payload from a completed tabular tool invocation."""
+    thought_payloads = get_tabular_tool_thought_payloads([invocation])
+    if thought_payloads:
+        content, detail = thought_payloads[0]
+    else:
+        function_name = str(getattr(invocation, 'function_name', '') or 'tabular_tool').strip()
+        content = f"Tabular tool {function_name}"
+        detail = None
+
+    error_message = get_tabular_invocation_error_message(invocation)
+    success = getattr(invocation, 'success', True) and not error_message
+
+    return {
+        'step_type': 'tabular_analysis',
+        'content': content,
+        'detail': detail,
+        'activity': build_tabular_activity_payload(
+            invocation,
+            'failed' if not success else 'completed',
+        ),
+    }
+
+
+def register_tabular_invocation_thought_callback(
+    plugin_logger,
+    thought_tracker,
+    user_id,
+    conversation_id,
+    live_thought_callback=None,
+):
+    """Register a callback that persists and optionally streams tabular tool thoughts."""
+    callback_key = f"{user_id}:{conversation_id}:tabular:{uuid.uuid4()}"
+
+    def add_and_publish_live_thought(thought_payload):
+        thought_tracker.add_thought(
+            thought_payload['step_type'],
+            thought_payload['content'],
+            detail=thought_payload.get('detail'),
+            activity=thought_payload.get('activity'),
+        )
+
+        if callable(live_thought_callback):
+            live_payload = dict(thought_payload)
+            live_payload['message_id'] = getattr(thought_tracker, 'message_id', None)
+            live_payload['step_index'] = thought_tracker.current_index - 1
+            live_thought_callback(live_payload)
+
+    def on_plugin_invocation_start(invocation_start):
+        if str(getattr(invocation_start, 'plugin_name', '') or '').strip() != 'TabularProcessingPlugin':
+            return
+
+        add_and_publish_live_thought(format_live_tabular_invocation_start_thought(invocation_start))
+
+    def on_plugin_invocation(invocation):
+        if str(getattr(invocation, 'plugin_name', '') or '').strip() != 'TabularProcessingPlugin':
+            return
+
+        add_and_publish_live_thought(format_live_tabular_invocation_thought(invocation))
+
+    plugin_logger.register_start_callback(callback_key, on_plugin_invocation_start)
+    plugin_logger.register_callback(callback_key, on_plugin_invocation)
+    return callback_key
+
+
 def get_tabular_status_thought_payloads(invocations, analysis_succeeded):
     """Return additional tabular status thoughts for retries and fallbacks."""
     successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(invocations)
@@ -6163,6 +6719,49 @@ async def run_tabular_analysis_with_multi_file_support(user_question, tabular_fi
     )
 
 
+async def run_tabular_analysis_with_thought_tracking(user_question, tabular_filenames, user_id,
+                                                     conversation_id, gpt_model, settings,
+                                                     source_hint='workspace', group_id=None,
+                                                     public_workspace_id=None,
+                                                     execution_mode='analysis',
+                                                     tabular_file_contexts=None,
+                                                     thought_tracker=None,
+                                                     live_thought_callback=None):
+    """Run tabular analysis while streaming/persisting live tool thoughts when available."""
+    plugin_logger = get_plugin_logger()
+    callback_key = None
+    live_tool_thoughts_enabled = False
+
+    try:
+        if thought_tracker is not None and user_id and conversation_id:
+            callback_key = register_tabular_invocation_thought_callback(
+                plugin_logger,
+                thought_tracker,
+                user_id,
+                conversation_id,
+                live_thought_callback=live_thought_callback,
+            )
+            live_tool_thoughts_enabled = True
+
+        tabular_analysis = await run_tabular_analysis_with_multi_file_support(
+            user_question=user_question,
+            tabular_filenames=tabular_filenames,
+            tabular_file_contexts=tabular_file_contexts,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            gpt_model=gpt_model,
+            settings=settings,
+            source_hint=source_hint,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            execution_mode=execution_mode,
+        )
+        return tabular_analysis, live_tool_thoughts_enabled
+    finally:
+        if callback_key:
+            plugin_logger.deregister_callbacks(callback_key)
+
+
 def resolve_foundry_scope_for_auth(auth_settings, endpoint=None):
     """Resolve the correct scope for Foundry-backed inference authentication."""
     auth_settings = auth_settings or {}
@@ -7432,6 +8031,7 @@ def register_route_backend_chats(app):
             'agent_display_name': execution_result.get('agent_display_name'),
             'agent_name': execution_result.get('agent_name'),
             'metadata': {
+                'token_usage': execution_result.get('token_usage'),
                 'user_info': response_message_context.get('user_info'),
                 'thread_info': {
                     'thread_id': response_message_context.get('thread_id'),
@@ -7447,6 +8047,38 @@ def register_route_backend_chats(app):
             },
         })
         cosmos_messages_container.upsert_item(assistant_doc)
+
+        token_usage = execution_result.get('token_usage') if isinstance(execution_result.get('token_usage'), dict) else None
+        if token_usage and token_usage.get('total_tokens'):
+            try:
+                workspace_type = 'personal'
+                effective_active_group_id = active_group_ids[0] if active_group_ids else None
+                effective_active_public_workspace_id = active_public_workspace_ids[0] if active_public_workspace_ids else None
+                if effective_active_public_workspace_id:
+                    workspace_type = 'public'
+                elif effective_active_group_id:
+                    workspace_type = 'group'
+
+                log_token_usage(
+                    user_id=user_id,
+                    token_type='chat',
+                    total_tokens=token_usage.get('total_tokens'),
+                    model=execution_result.get('model_deployment_name'),
+                    workspace_type=workspace_type,
+                    prompt_tokens=token_usage.get('prompt_tokens'),
+                    completion_tokens=token_usage.get('completion_tokens'),
+                    conversation_id=conversation_id,
+                    message_id=assistant_message_id,
+                    group_id=effective_active_group_id,
+                    public_workspace_id=effective_active_public_workspace_id,
+                    additional_context={
+                        'document_action_type': normalized_action.get('type'),
+                        'runner_type': runner_type,
+                        'request_count': token_usage.get('request_count'),
+                    },
+                )
+            except Exception as log_error:
+                debug_print(f'[ChatDocumentAction] Failed to log token usage: {log_error}')
 
         if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
             conversation_item['title'] = (user_message[:30] + '...') if len(user_message) > 30 else user_message
@@ -7514,6 +8146,7 @@ def register_route_backend_chats(app):
             'thoughts_enabled': thought_tracker.enabled,
             'review_coverage': execution_result.get('review_coverage') or {},
             'document_action': normalized_action,
+            'token_usage': execution_result.get('token_usage'),
         }), 200
 
     def execute_exhaustive_review_chat_request(data=None, publish_background_event=None):
@@ -7746,6 +8379,7 @@ def register_route_backend_chats(app):
             hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
             web_search_citations_list = []
+            generated_tabular_outputs_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
             search_results = []
             selected_agent = None  # Initialize selected_agent early to prevent NameError
@@ -9260,7 +9894,13 @@ def register_route_backend_chats(app):
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                 )
 
-                tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
+                thought_tracker.add_thought(
+                    'tabular_analysis',
+                    f"Starting tabular analysis across {len(workspace_tabular_files)} file(s)",
+                    detail=f"files={tabular_filenames_str}; mode={tabular_execution_mode}",
+                )
+
+                tabular_analysis, streamed_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                     user_question=user_message,
                     tabular_filenames=workspace_tabular_files,
                     tabular_file_contexts=workspace_tabular_file_contexts,
@@ -9272,20 +9912,37 @@ def register_route_backend_chats(app):
                     group_id=effective_active_group_id if tabular_source_hint == 'group' else None,
                     public_workspace_id=effective_active_public_workspace_id if tabular_source_hint == 'public' else None,
                     execution_mode=tabular_execution_mode,
+                    thought_tracker=thought_tracker,
                 ))
                 tabular_invocations = get_new_plugin_invocations(
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
                     baseline_tabular_invocation_count
                 )
-                tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
-                for thought_content, thought_detail in tabular_thought_payloads:
-                    thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+                if not streamed_tabular_tool_thoughts:
+                    tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
+                    for thought_content, thought_detail in tabular_thought_payloads:
+                        thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
                 tabular_status_thought_payloads = get_tabular_status_thought_payloads(
                     tabular_invocations,
                     analysis_succeeded=bool(tabular_analysis),
                 )
                 for thought_content, thought_detail in tabular_status_thought_payloads:
                     thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+
+                tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                    user_question=user_message,
+                    invocations=tabular_invocations,
+                    gpt_model=gpt_model,
+                    settings=settings,
+                    conversation_id=conversation_id,
+                ))
+                if tabular_generated_output:
+                    generated_tabular_outputs_list.append(tabular_generated_output)
+                    thought_tracker.add_thought(
+                        'tabular_analysis',
+                        f"Prepared downloadable {str(tabular_generated_output.get('output_format') or 'json').upper()} export",
+                        detail=f"file={tabular_generated_output.get('file_name')}; rows={tabular_generated_output.get('row_count')}"
+                    )
 
                 if tabular_analysis:
                     tabular_system_msg = build_tabular_computed_results_system_message(
@@ -9302,6 +9959,11 @@ def register_route_backend_chats(app):
                     'role': 'system',
                     'content': tabular_system_msg
                 })
+                if tabular_generated_output:
+                    system_messages_for_augmentation.append({
+                        'role': 'system',
+                        'content': _build_tabular_generated_output_system_message(tabular_generated_output)
+                    })
 
                 if tabular_analysis:
                     tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -9447,7 +10109,13 @@ def register_route_backend_chats(app):
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                     )
 
-                    chat_tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
+                    thought_tracker.add_thought(
+                        'tabular_analysis',
+                        f"Starting tabular analysis across {len(chat_tabular_files)} chat-uploaded file(s)",
+                        detail=f"files={chat_tabular_filenames_str}; mode={chat_tabular_execution_mode}",
+                    )
+
+                    chat_tabular_analysis, streamed_chat_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                         user_question=user_message,
                         tabular_filenames=chat_tabular_files,
                         user_id=user_id,
@@ -9456,20 +10124,37 @@ def register_route_backend_chats(app):
                         settings=settings,
                         source_hint="chat",
                         execution_mode=chat_tabular_execution_mode,
+                        thought_tracker=thought_tracker,
                     ))
                     chat_tabular_invocations = get_new_plugin_invocations(
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
                         baseline_tabular_invocation_count
                     )
-                    chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
-                    for thought_content, thought_detail in chat_tabular_thought_payloads:
-                        thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+                    if not streamed_chat_tabular_tool_thoughts:
+                        chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
+                        for thought_content, thought_detail in chat_tabular_thought_payloads:
+                            thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
                     chat_tabular_status_thought_payloads = get_tabular_status_thought_payloads(
                         chat_tabular_invocations,
                         analysis_succeeded=bool(chat_tabular_analysis),
                     )
                     for thought_content, thought_detail in chat_tabular_status_thought_payloads:
                         thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+
+                    chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                        user_question=user_message,
+                        invocations=chat_tabular_invocations,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        conversation_id=conversation_id,
+                    ))
+                    if chat_tabular_generated_output:
+                        generated_tabular_outputs_list.append(chat_tabular_generated_output)
+                        thought_tracker.add_thought(
+                            'tabular_analysis',
+                            f"Prepared downloadable {str(chat_tabular_generated_output.get('output_format') or 'json').upper()} export",
+                            detail=f"file={chat_tabular_generated_output.get('file_name')}; rows={chat_tabular_generated_output.get('row_count')}"
+                        )
 
                     if chat_tabular_analysis:
                         # Inject pre-computed analysis results as context
@@ -9481,6 +10166,12 @@ def register_route_backend_chats(app):
                             )
                         })
                         final_api_source_refs.append('system:tabular_results')
+                        if chat_tabular_generated_output:
+                            conversation_history_for_api.append({
+                                'role': 'system',
+                                'content': _build_tabular_generated_output_system_message(chat_tabular_generated_output)
+                            })
+                            final_api_source_refs.append('system:tabular_generated_output')
 
                         # Collect tool execution citations from SK tabular analysis
                         chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -9489,6 +10180,12 @@ def register_route_backend_chats(app):
 
                         debug_print(f"[Chat Tabular SK] Analysis injected, {len(chat_tabular_analysis)} chars")
                     else:
+                        if chat_tabular_generated_output:
+                            conversation_history_for_api.append({
+                                'role': 'system',
+                                'content': _build_tabular_generated_output_system_message(chat_tabular_generated_output)
+                            })
+                            final_api_source_refs.append('system:tabular_generated_output')
                         thought_tracker.add_thought(
                             'tabular_analysis',
                             "Tabular analysis could not compute results; using existing chat file context",
@@ -10359,6 +11056,7 @@ def register_route_backend_chats(app):
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
                     'history_context': history_debug_info,
+                    'generated_tabular_outputs': generated_tabular_outputs_list,
                     'thread_info': {
                         'thread_id': user_thread_id,  # Same thread as user message
                         'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
@@ -10490,6 +11188,7 @@ def register_route_backend_chats(app):
                 'hybrid_citations': hybrid_citations_list,
                 'web_search_citations': web_search_citations_list,
                 'agent_citations': prepared_agent_citations,
+                'metadata': assistant_doc.get('metadata', {}),
                 'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice,
                 'thoughts_enabled': thought_tracker.enabled
@@ -10837,6 +11536,7 @@ def register_route_backend_chats(app):
                 hybrid_citations_list = []
                 agent_citations_list = []
                 web_search_citations_list = []
+                generated_tabular_outputs_list = []
                 system_messages_for_augmentation = []
                 search_results = []
                 selected_agent = None
@@ -11773,7 +12473,13 @@ def register_route_backend_chats(app):
                         f"execution_mode={tabular_execution_mode} | baseline_invocations={baseline_tabular_invocation_count}"
                     )
 
-                    tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
+                    yield emit_thought(
+                        'tabular_analysis',
+                        f"Starting tabular analysis across {len(workspace_tabular_files)} file(s)",
+                        detail=f"files={tabular_filenames_str}; mode={tabular_execution_mode}"
+                    )
+
+                    tabular_analysis, streamed_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                         user_question=user_message,
                         tabular_filenames=workspace_tabular_files,
                         tabular_file_contexts=workspace_tabular_file_contexts,
@@ -11785,6 +12491,8 @@ def register_route_backend_chats(app):
                         group_id=effective_active_group_id if tabular_source_hint == 'group' else None,
                         public_workspace_id=effective_active_public_workspace_id if tabular_source_hint == 'public' else None,
                         execution_mode=tabular_execution_mode,
+                        thought_tracker=thought_tracker,
+                        live_thought_callback=publish_live_plugin_thought,
                     ))
                     tabular_invocations = get_new_plugin_invocations(
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -11794,15 +12502,31 @@ def register_route_backend_chats(app):
                         "[Streaming][Tabular SK] Completed workspace tabular analysis | "
                         f"analysis_returned={bool(tabular_analysis)} | new_invocations={len(tabular_invocations)}"
                     )
-                    tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
-                    for thought_content, thought_detail in tabular_thought_payloads:
-                        yield emit_thought('tabular_analysis', thought_content, thought_detail)
+                    if not streamed_tabular_tool_thoughts:
+                        tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
+                        for thought_content, thought_detail in tabular_thought_payloads:
+                            yield emit_thought('tabular_analysis', thought_content, thought_detail)
                     tabular_status_thought_payloads = get_tabular_status_thought_payloads(
                         tabular_invocations,
                         analysis_succeeded=bool(tabular_analysis),
                     )
                     for thought_content, thought_detail in tabular_status_thought_payloads:
                         yield emit_thought('tabular_analysis', thought_content, thought_detail)
+
+                    tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                        user_question=user_message,
+                        invocations=tabular_invocations,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        conversation_id=conversation_id,
+                    ))
+                    if tabular_generated_output:
+                        generated_tabular_outputs_list.append(tabular_generated_output)
+                        yield emit_thought(
+                            'tabular_analysis',
+                            f"Prepared downloadable {str(tabular_generated_output.get('output_format') or 'json').upper()} export",
+                            detail=f"file={tabular_generated_output.get('file_name')}; rows={tabular_generated_output.get('row_count')}"
+                        )
 
                     if tabular_analysis:
                         system_messages_for_augmentation.append({
@@ -11812,6 +12536,11 @@ def register_route_backend_chats(app):
                                 tabular_analysis,
                             )
                         })
+                        if tabular_generated_output:
+                            system_messages_for_augmentation.append({
+                                'role': 'system',
+                                'content': _build_tabular_generated_output_system_message(tabular_generated_output)
+                            })
 
                         tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
                         if tabular_sk_citations:
@@ -11824,6 +12553,11 @@ def register_route_backend_chats(app):
                                 execution_mode=tabular_execution_mode,
                             )
                         })
+                        if tabular_generated_output:
+                            system_messages_for_augmentation.append({
+                                'role': 'system',
+                                'content': _build_tabular_generated_output_system_message(tabular_generated_output)
+                            })
 
                         yield emit_thought(
                             'tabular_analysis',
@@ -11936,7 +12670,13 @@ def register_route_backend_chats(app):
                             f"baseline_invocations={baseline_tabular_invocation_count}"
                         )
 
-                        chat_tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
+                        yield emit_thought(
+                            'tabular_analysis',
+                            f"Starting tabular analysis across {len(chat_tabular_files)} chat-uploaded file(s)",
+                            detail=f"files={chat_tabular_filenames_str}; mode={chat_tabular_execution_mode}"
+                        )
+
+                        chat_tabular_analysis, streamed_chat_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                             user_question=user_message,
                             tabular_filenames=chat_tabular_files,
                             user_id=user_id,
@@ -11945,6 +12685,8 @@ def register_route_backend_chats(app):
                             settings=settings,
                             source_hint="chat",
                             execution_mode=chat_tabular_execution_mode,
+                            thought_tracker=thought_tracker,
+                            live_thought_callback=publish_live_plugin_thought,
                         ))
                         chat_tabular_invocations = get_new_plugin_invocations(
                             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -11954,15 +12696,31 @@ def register_route_backend_chats(app):
                             "[Streaming][Chat Tabular SK] Completed chat-uploaded tabular analysis | "
                             f"analysis_returned={bool(chat_tabular_analysis)} | new_invocations={len(chat_tabular_invocations)}"
                         )
-                        chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
-                        for thought_content, thought_detail in chat_tabular_thought_payloads:
-                            yield emit_thought('tabular_analysis', thought_content, thought_detail)
+                        if not streamed_chat_tabular_tool_thoughts:
+                            chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
+                            for thought_content, thought_detail in chat_tabular_thought_payloads:
+                                yield emit_thought('tabular_analysis', thought_content, thought_detail)
                         chat_tabular_status_thought_payloads = get_tabular_status_thought_payloads(
                             chat_tabular_invocations,
                             analysis_succeeded=bool(chat_tabular_analysis),
                         )
                         for thought_content, thought_detail in chat_tabular_status_thought_payloads:
                             yield emit_thought('tabular_analysis', thought_content, thought_detail)
+
+                        chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                            user_question=user_message,
+                            invocations=chat_tabular_invocations,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            conversation_id=conversation_id,
+                        ))
+                        if chat_tabular_generated_output:
+                            generated_tabular_outputs_list.append(chat_tabular_generated_output)
+                            yield emit_thought(
+                                'tabular_analysis',
+                                f"Prepared downloadable {str(chat_tabular_generated_output.get('output_format') or 'json').upper()} export",
+                                detail=f"file={chat_tabular_generated_output.get('file_name')}; rows={chat_tabular_generated_output.get('row_count')}"
+                            )
 
                         if chat_tabular_analysis:
                             conversation_history_for_api.append({
@@ -11973,6 +12731,12 @@ def register_route_backend_chats(app):
                                 )
                             })
                             final_api_source_refs.append('system:tabular_results')
+                            if chat_tabular_generated_output:
+                                conversation_history_for_api.append({
+                                    'role': 'system',
+                                    'content': _build_tabular_generated_output_system_message(chat_tabular_generated_output)
+                                })
+                                final_api_source_refs.append('system:tabular_generated_output')
 
                             # Collect tool execution citations
                             chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -11981,6 +12745,12 @@ def register_route_backend_chats(app):
 
                             debug_print(f"[Chat Tabular SK] Streaming: Analysis injected, {len(chat_tabular_analysis)} chars")
                         else:
+                            if chat_tabular_generated_output:
+                                conversation_history_for_api.append({
+                                    'role': 'system',
+                                    'content': _build_tabular_generated_output_system_message(chat_tabular_generated_output)
+                                })
+                                final_api_source_refs.append('system:tabular_generated_output')
                             yield emit_thought(
                                 'tabular_analysis',
                                 "Tabular analysis could not compute results; using existing chat file context",
@@ -12560,6 +13330,7 @@ def register_route_backend_chats(app):
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
                             'history_context': history_debug_info,
+                            'generated_tabular_outputs': generated_tabular_outputs_list,
                             'thread_info': {
                                 'thread_id': user_thread_id,
                                 'previous_thread_id': user_previous_thread_id,
@@ -12737,6 +13508,7 @@ def register_route_backend_chats(app):
                                 'error': error_msg,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
+                                'generated_tabular_outputs': generated_tabular_outputs_list,
                                 'thread_info': {
                                     'thread_id': user_thread_id,
                                     'previous_thread_id': user_previous_thread_id,
@@ -13843,6 +14615,10 @@ def build_conversation_history_segments(
         role = message.get('role')
         content = message.get('content')
         metadata = message.get('metadata', {})
+
+        if metadata.get('is_generated_chat_artifact', False):
+            history_message_source_refs.append(f"system:hidden_generated_artifact:{message.get('id', 'unknown')}")
+            continue
 
         thread_info = metadata.get('thread_info', {})
         active_thread = thread_info.get('active_thread')

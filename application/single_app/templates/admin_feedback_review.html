@@ -6,170 +6,264 @@
 {% endblock %}
 
 {% block head %}
-  <style>
-    /* Force fixed layout for consistency */
-    #feedback-table {
-      table-layout: fixed;
-      width: 100%;
-    }
+<style>
+  .admin-page-header {
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    margin-bottom: 1.5rem;
+    padding: 1.75rem;
+  }
 
-    /* Adjust column widths - align with safety violations where applicable */
-    #feedback-table th:nth-child(1), /* User */
-    #feedback-table td:nth-child(1) {
-        width: 180px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    #feedback-table th:nth-child(2), /* Prompt */
-    #feedback-table td:nth-child(2) {
-        width: 18%; /* Adjusted for consistency */
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    #feedback-table th:nth-child(3), /* AI Response */
-    #feedback-table td:nth-child(3) {
-        width: 18%; /* Adjusted for consistency */
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    #feedback-table th:nth-child(4), /* Feedback Type */
-    #feedback-table td:nth-child(4) {
-        width: 100px;
-    }
-     #feedback-table th:nth-child(5), /* Reason */
-    #feedback-table td:nth-child(5) {
-        width: 18%; /* Adjusted for consistency */
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    #feedback-table th:nth-child(6), /* Acknowledged */
-    #feedback-table td:nth-child(6) {
-        width: 120px;
-    }
-    #feedback-table th:nth-child(7), /* Action Taken */
-    #feedback-table td:nth-child(7) {
-        width: 15%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    #feedback-table th:nth-child(8), /* Edit */
-    #feedback-table td:nth-child(8) { 
-        width: 70px;
-        text-align: center;
-    }
-    #feedback-table th:nth-child(9), /* Retest */
-    #feedback-table td:nth-child(9) { 
-        width: 70px;
-        text-align: center;
-    }
+  .feedback-nav-tabs .nav-link {
+    align-items: center;
+    display: inline-flex;
+    font-weight: 600;
+    gap: 0.5rem;
+  }
 
-     /* Ensure table cells align middle */
-    #feedback-table td {
-        vertical-align: middle;
-    }
+  .surface-card {
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    height: 100%;
+    padding: 1.5rem;
+  }
 
-    /* Style for loading state */
-    .table-loading-row td {
-        text-align: center;
-        padding: 2rem;
-        color: #6c757d; /* text-muted */
-    }
+  .stat-value {
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 0.4rem;
+  }
 
-  </style>
+  .stat-label {
+    color: var(--bs-secondary-color);
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .summary-row {
+    align-items: center;
+    border-bottom: 1px solid var(--bs-border-color-translucent);
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem 0;
+  }
+
+  .summary-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  #feedback-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  #feedback-table td {
+    vertical-align: middle;
+  }
+
+  .table-message-cell {
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .table-details-cell {
+    text-align: center;
+    width: 92px;
+  }
+
+  .table-loading-row td {
+    color: var(--bs-secondary-color);
+    padding: 2rem 1rem;
+    text-align: center;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
-
-<div class="container">
-  <h2>Feedback Review</h2>
-  <p class="text-muted">
-    Review and analyze user feedback. Use the filters below to narrow down feedback by type or acknowledgment status.
-  </p>
-  <hr />
-
-  <!-- FILTERS ROW - Updated structure and classes -->
-  <div class="row mb-3 align-items-end">
-    <div class="col-md-3">
-      <label for="filterFeedbackType" class="form-label mb-1">Filter by Feedback Type:</label> 
-      <select id="filterFeedbackType" class="form-select form-select-sm">
-        <option value="">(All Types)</option>
-        <option value="Positive">Positive</option>
-        <option value="Negative">Negative</option>
-        <option value="Neutral">Neutral</option>
-      </select>
-    </div>
-    <div class="col-md-3">
-      <label for="filterAcknowledged" class="form-label mb-1">Filter by Acknowledged:</label> 
-      <select id="filterAcknowledged" class="form-select form-select-sm">
-        <option value="">(All Statuses)</option>
-        <option value="true">Acknowledged</option>
-        <option value="false">Not Acknowledged</option>
-      </select>
-    </div>
-    <div class="col-md-6 text-md-end mt-2 mt-md-0"> 
-         <button id="applyFiltersBtn" class="btn btn-primary btn-sm">Apply Filters</button>
-         <button id="clearFiltersBtn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+<div class="container-fluid px-4 py-3">
+  <div class="admin-page-header">
+    <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+      <div>
+        <h2 class="mb-2">Feedback Review</h2>
+        <p class="text-muted mb-0">Track user sentiment, monitor acknowledgement coverage, and export the current filtered review queue.</p>
+      </div>
+      <button type="button" class="btn btn-outline-primary" id="feedbackExportBtn">
+        <i class="bi bi-download me-1"></i>Export CSV
+      </button>
     </div>
   </div>
 
-  <!-- Feedback Table -->
-  <div class="table-responsive">
-      <table id="feedback-table" class="table table-striped">
-        <thead>
-          <tr>
-            <th title="User who submitted the feedback">User</th>
-            <th title="User's input that led to the AI response">Prompt</th>
-            <th title="The response generated by the AI">AI Response</th>
-            <th title="User's classification of the response">Feedback Type</th>
-            <th title="User's reason for the feedback">Reason</th>
-            <th title="Whether an admin has acknowledged this feedback">Acknowledged</th>
-            <th title="Action taken by admin based on feedback">Action Taken</th>
-            <th>Edit</th>
-            <th>Retest</th>
-          </tr>
-        </thead>
-        <tbody>
-          <!-- Populated via JS -->
-          <tr class="table-loading-row"> 
-              <td colspan="9">
-                  <div class="spinner-border spinner-border-sm me-2" role="status"> 
-                      <span class="visually-hidden">Loading...</span>
-                  </div>
+  <ul class="nav nav-tabs feedback-nav-tabs mb-3" id="feedbackReviewTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="feedback-stats-tab" data-bs-toggle="tab" data-bs-target="#feedback-stats-pane" type="button" role="tab" aria-controls="feedback-stats-pane" aria-selected="true">
+        <i class="bi bi-graph-up"></i>Stats
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="feedback-data-tab" data-bs-toggle="tab" data-bs-target="#feedback-data-pane" type="button" role="tab" aria-controls="feedback-data-pane" aria-selected="false">
+        <i class="bi bi-table"></i>All Data
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content" id="feedbackReviewTabContent">
+    <div class="tab-pane fade show active" id="feedback-stats-pane" role="tabpanel" aria-labelledby="feedback-stats-tab">
+      <div class="row g-3 mb-4">
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value" id="feedbackTotalCount">-</div>
+            <div class="stat-label">Total</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-success" id="feedbackPositiveCount">-</div>
+            <div class="stat-label">Positive</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-danger" id="feedbackNegativeCount">-</div>
+            <div class="stat-label">Negative</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-info" id="feedbackNeutralCount">-</div>
+            <div class="stat-label">Neutral</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-primary" id="feedbackAcknowledgedCount">-</div>
+            <div class="stat-label">Acknowledged</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-xl-2">
+          <div class="surface-card">
+            <div class="stat-value text-warning" id="feedbackRecentCount">-</div>
+            <div class="stat-label">Recent 30 Days</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div class="surface-card">
+            <h5 class="mb-3"><i class="bi bi-pie-chart me-2"></i>Feedback Mix</h5>
+            <div class="summary-row">
+              <span>Positive submissions</span>
+              <strong id="feedbackStatsPositiveSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Negative submissions</span>
+              <strong id="feedbackStatsNegativeSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Neutral submissions</span>
+              <strong id="feedbackStatsNeutralSummary">-</strong>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="surface-card">
+            <h5 class="mb-3"><i class="bi bi-clipboard-check me-2"></i>Review Queue</h5>
+            <div class="summary-row">
+              <span>Acknowledged</span>
+              <strong id="feedbackStatsAcknowledgedSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Waiting for review</span>
+              <strong id="feedbackStatsUnacknowledgedSummary">-</strong>
+            </div>
+            <div class="summary-row">
+              <span>Most recent matching feedback</span>
+              <strong id="feedbackStatsLatestTimestamp">-</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane fade" id="feedback-data-pane" role="tabpanel" aria-labelledby="feedback-data-tab">
+      <div class="surface-card">
+        <div class="row g-3 align-items-end mb-3">
+          <div class="col-md-3">
+            <label for="filterFeedbackType" class="form-label mb-1">Feedback Type</label>
+            <select id="filterFeedbackType" class="form-select form-select-sm">
+              <option value="">(All Types)</option>
+              <option value="Positive">Positive</option>
+              <option value="Negative">Negative</option>
+              <option value="Neutral">Neutral</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label for="filterAcknowledged" class="form-label mb-1">Acknowledged</label>
+            <select id="filterAcknowledged" class="form-select form-select-sm">
+              <option value="">(All Statuses)</option>
+              <option value="true">Acknowledged</option>
+              <option value="false">Not Acknowledged</option>
+            </select>
+          </div>
+          <div class="col-md-6 text-md-end">
+            <button id="applyFiltersBtn" class="btn btn-primary btn-sm">Apply Filters</button>
+            <button id="clearFiltersBtn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table id="feedback-table" class="table table-striped align-middle">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Prompt</th>
+                <th>AI Response</th>
+                <th>Feedback Type</th>
+                <th>Reason</th>
+                <th>Acknowledged</th>
+                <th>Action Taken</th>
+                <th class="table-details-cell">Edit</th>
+                <th class="table-details-cell">Retest</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="table-loading-row">
+                <td colspan="9">
+                  <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
                   Loading feedback...
-              </td>
-          </tr>
-        </tbody>
-      </table>
-  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-  <!-- Pagination Controls Area -->
-  <div class="d-flex align-items-center gap-3 mb-3">
-    <!-- Page Size Section -->
-    <div>
-      <label for="page-size-select" class="visually-hidden">Items per page:</label>
-      <select id="page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
-        <option value="10" selected>10</option>
-        <option value="20">20</option>
-        <option value="50">50</option>
-        <option value="100">100</option> 
-      </select>
-      <span class="ms-1 small text-muted">items per page</span>
-    </div>
-
-    <!-- Pagination Controls -->
-    <div id="pagination-container" class="d-flex gap-1 ms-auto">
-        
+        <div class="d-flex align-items-center gap-3 mt-3">
+          <div>
+            <label for="page-size-select" class="visually-hidden">Items per page</label>
+            <select id="page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+            <span class="ms-1 small text-muted">items per page</span>
+          </div>
+          <div id="pagination-container" class="d-flex gap-1 ms-auto"></div>
+        </div>
+      </div>
     </div>
   </div>
-
 </div>
-
-<!-- ===== Modal for Editing a Single Feedback Entry ===== -->
 
 <div class="modal fade" id="editFeedbackModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -179,80 +273,57 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        
-        <div id="editModalLoading" class="text-center" style="display: none;">
-            <div class="spinner-border" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Timestamp:</label>
+          <p id="editTimestamp" class="form-control-plaintext"></p>
         </div>
-        <div id="editModalContent">
-            <div class="mb-3">
-            <label class="form-label fw-bold">Timestamp:</label>
-            <p id="editTimestamp" class="form-control-plaintext"></p>
-            </div>
-
-            <div class="mb-3">
-            <label class="form-label fw-bold">User:</label>
-            <p id="editUserInfo" class="form-control-plaintext"></p>
-            </div>
-
-            <div class="mb-3">
-            <label class="form-label fw-bold">Prompt:</label>
-            <p id="editPrompt" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
-            </div>
-
-            <div class="mb-3">
-            <label class="form-label fw-bold">AI Response:</label>
-            <p id="editAiResponse" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
-            </div>
-
-            <div class="mb-3">
-            <label class="form-label fw-bold">Feedback Type:</label>
-            <p id="editFeedbackType" class="form-control-plaintext"></p>
-            </div>
-
-            <div class="mb-3">
-            <label class="form-label fw-bold">Reason:</label>
-            <p id="editReason" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
-            </div>
-
-            <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" id="editAcknowledged" />
-            <label class="form-check-label" for="editAcknowledged">Acknowledged</label>
-            </div>
-
-            <div class="mb-3">
-            <label class="form-label fw-bold">Analysis Notes:</label>
-            <textarea class="form-control" id="editAnalysisNotes" rows="2"></textarea>
-            </div>
-
-            <div class="mb-3">
-            <label class="form-label fw-bold">Response to User:</label>
-            <textarea class="form-control" id="editResponseToUser" rows="2"></textarea>
-            </div>
-
-            <div class="mb-3">
-            <label class="form-label fw-bold">Action Taken:</label>
-            <input type="text" class="form-control" id="editActionTaken" />
-            </div>
-
-            <input type="hidden" id="editFeedbackId" />
+        <div class="mb-3">
+          <label class="form-label fw-bold">User:</label>
+          <p id="editUserInfo" class="form-control-plaintext"></p>
         </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Prompt:</label>
+          <p id="editPrompt" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">AI Response:</label>
+          <p id="editAiResponse" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Feedback Type:</label>
+          <p id="editFeedbackType" class="form-control-plaintext"></p>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Reason:</label>
+          <p id="editReason" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+        </div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="editAcknowledged" />
+          <label class="form-check-label" for="editAcknowledged">Acknowledged</label>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Analysis Notes:</label>
+          <textarea class="form-control" id="editAnalysisNotes" rows="2"></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Response to User:</label>
+          <textarea class="form-control" id="editResponseToUser" rows="2"></textarea>
+        </div>
+        <div class="mb-0">
+          <label class="form-label fw-bold">Action Taken:</label>
+          <input type="text" class="form-control" id="editActionTaken" />
+        </div>
+        <input type="hidden" id="editFeedbackId" />
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-          Cancel
-        </button>
-        <button type="button" id="saveFeedbackChangesBtn" class="btn btn-primary">
-          Save Changes
-        </button>
+        <div id="feedbackEditStatus" class="small text-danger me-auto"></div>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="saveFeedbackChangesBtn" class="btn btn-primary">Save Changes</button>
       </div>
     </div>
   </div>
 </div>
 
-
-<!-- Modal to view retest results -->
 <div class="modal fade" id="retestModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
@@ -260,442 +331,12 @@
         <h5 class="modal-title">Retest Result</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body" id="retest-body">
-        <!-- Retest AI response goes here -->
-      </div>
+      <div class="modal-body" id="retest-body"></div>
     </div>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script>
-// --- State Variables ---
-let currentPage = 1;
-let pageSize = 10;
-
-// --- DOM Element References ---
-const tableBody = document.querySelector("#feedback-table tbody");
-const paginationContainer = document.getElementById("pagination-container");
-const pageSizeSelect = document.getElementById("page-size-select");
-const filterTypeSelect = document.getElementById("filterFeedbackType");
-const filterAckSelect = document.getElementById("filterAcknowledged");
-const applyFiltersBtn = document.getElementById("applyFiltersBtn"); // Added
-const clearFiltersBtn = document.getElementById("clearFiltersBtn"); // Added
-
-// --- Utility Functions ---
-function escapeHtml(unsafe) {
-    if (unsafe === null || typeof unsafe === 'undefined') return '';
-    return unsafe.toString()
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-  }
-
-// User lookup cache to avoid repeated API calls
-const userCache = {};
-
-// Function to lookup user info by ID
-async function lookupUserInfo(userId) {
-  if (!userId) return { display_name: 'Unknown User', email: '' };
-  
-  // Check cache first
-  if (userCache[userId]) {
-    return userCache[userId];
-  }
-
-  try {
-    const response = await fetch(`/api/user/info/${userId}`);
-    if (response.ok) {
-      const userInfo = await response.json();
-      const userData = {
-        display_name: userInfo.display_name || 'Unknown User',
-        email: userInfo.email || ''
-      };
-      userCache[userId] = userData;
-      return userData;
-    }
-  } catch (error) {
-    console.warn('Failed to lookup user info for:', userId, error);
-  }
-  
-  // Fallback
-  const fallback = { display_name: 'Unknown User', email: '' };
-  userCache[userId] = fallback;
-  return fallback;
-}
-
-// Function to format user display (Name + Email)
-function formatUserDisplay(userInfo, userId) {
-  if (!userInfo || (!userInfo.display_name && !userInfo.email)) {
-    return userId || 'Unknown User';
-  }
-  
-  const name = userInfo.display_name || 'Unknown User';
-  const email = userInfo.email;
-  
-  if (email) {
-    return `${name} (${email})`;
-  }
-  return name;
-}
-
-// --- Core Data Fetching and Rendering ---
-
-function fetchFeedbackData(page = currentPage) {
-  currentPage = page; // Update current page state
-  pageSize = parseInt(pageSizeSelect.value, 10);
-  const filterType = filterTypeSelect.value;
-  const filterAck = filterAckSelect.value;
-
-  // Show loading state in table
-  tableBody.innerHTML = `<tr class="table-loading-row"><td colspan="9"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div> Loading feedback...</td></tr>`;
-  paginationContainer.innerHTML = ""; // Clear old pagination
-
-  // Construct query parameters
-  const params = new URLSearchParams({
-    page: currentPage,
-    page_size: pageSize,
-  });
-  if (filterType) params.append('type', filterType);
-  if (filterAck) params.append('ack', filterAck);
-
-  // Assume backend endpoint `/feedback/review` handles pagination/filtering
-  fetch(`/feedback/review?${params.toString()}`)
-    .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
-    .then(data => {
-      populateTable(data.feedback);
-      renderPaginationControls(data.page, data.page_size, data.total_count);
-    })
-    .catch(err => {
-      console.error("Error loading feedback:", err);
-      tableBody.innerHTML = `<tr class="table-loading-row"><td colspan="9" class="text-danger">Error loading feedback: ${escapeHtml(err.error || err.message || 'Unknown error')}</td></tr>`;
-      renderPaginationControls(1, pageSize, 0); // Show empty pagination
-    });
-}
-
-function populateTable(feedbackItems) {
-  tableBody.innerHTML = ""; // Clear loading/previous content
-
-  if (!feedbackItems || feedbackItems.length === 0) {
-    tableBody.innerHTML = '<tr><td colspan="9" class="text-center p-4 text-muted">No feedback found matching the criteria.</td></tr>';
-    return;
-  }
-
-  // Process items sequentially to ensure user lookups complete before displaying
-  async function processItems() {
-    for (const item of feedbackItems) {
-      const ackText = item.adminReview?.acknowledged ? "Yes" : "No";
-      const promptText = escapeHtml(item.prompt || "");
-      const aiResponseText = escapeHtml(item.aiResponse || "");
-      const reasonText = escapeHtml(item.reason || "");
-      const actionTakenText = escapeHtml(item.adminReview?.actionTaken || "");
-      const feedbackTypeText = escapeHtml(item.feedbackType || "");
-
-      // Lookup user info - try both possible field names (userId and user_id)
-      const userId = item.userId || item.user_id;
-      const userInfo = await lookupUserInfo(userId);
-      const userDisplayText = formatUserDisplay(userInfo, userId);
-
-      const row = document.createElement("tr");
-      // Using textContent for safety where HTML isn't needed
-      row.innerHTML = `
-        <td title="${escapeHtml(userDisplayText)}"></td>
-        <td title="${promptText}"></td>
-        <td title="${aiResponseText}"></td>
-        <td></td>
-        <td title="${reasonText}"></td>
-        <td></td>
-        <td></td>
-        <td>
-          <button class="btn btn-sm btn-primary edit-feedback-btn" data-id="${item.id}" title="Edit Review Details">
-            <i class="bi bi-pencil-fill"></i>
-          </button>
-        </td>
-        <td>
-          <button class="btn btn-sm btn-secondary retest-btn" data-id="${item.id}"
-            data-prompt="${escapeHtml(item.prompt || "")}" title="Retest Original Prompt">
-            <i class="bi bi-arrow-clockwise"></i>
-          </button>
-        </td>
-      `;
-      // Set text content safely for columns potentially containing user input/html
-      row.cells[0].textContent = userDisplayText;
-      row.cells[1].textContent = item.prompt || "";
-      row.cells[2].textContent = item.aiResponse || "";
-      row.cells[3].textContent = feedbackTypeText;
-      row.cells[4].textContent = reasonText;
-      row.cells[5].textContent = ackText;
-      row.cells[6].textContent = actionTakenText;
-
-      tableBody.appendChild(row);
-    }
-  }
-  
-  processItems();
-}
-
-// --- Pagination Control Rendering (Keep As Is) ---
-function renderPaginationControls(page, pageSize, totalCount) {
-    paginationContainer.innerHTML = ""; // clear old
-    const totalPages = Math.ceil(totalCount / pageSize);
-
-    if (totalPages <= 1) return; // Don't show pagination if only one page
-
-    const ul = document.createElement('ul');
-    ul.classList.add('pagination', 'pagination-sm', 'mb-0');
-
-    // --- Create Page Link Helper ---
-    const createPageLink = (pageNum, text, isDisabled = false, isActive = false) => {
-        const li = document.createElement('li');
-        li.classList.add('page-item');
-        if (isDisabled) li.classList.add('disabled');
-        if (isActive) {
-             li.classList.add('active');
-             li.setAttribute('aria-current', 'page');
-        }
-
-        const a = document.createElement('a');
-        a.classList.add('page-link');
-        a.href = '#';
-        a.innerHTML = text; // Allow HTML for arrows like «
-
-        if (!isDisabled && !isActive) {
-            a.addEventListener('click', (e) => {
-                e.preventDefault();
-                fetchFeedbackData(pageNum); // Call fetch function on click
-            });
-        }
-        li.appendChild(a);
-        return li;
-    };
-
-    // Previous Button
-    ul.appendChild(createPageLink(page - 1, '«', page <= 1));
-
-    // Page Number Logic (Ellipsis) - Same as safety violations
-    const maxPagesToShow = 5;
-    let startPage = 1;
-    let endPage = totalPages;
-
-    if (totalPages > maxPagesToShow) {
-        let maxPagesBeforeCurrent = Math.floor(maxPagesToShow / 2);
-        let maxPagesAfterCurrent = Math.ceil(maxPagesToShow / 2) - 1;
-
-        if (page <= maxPagesBeforeCurrent) {
-            startPage = 1; endPage = maxPagesToShow;
-        } else if (page + maxPagesAfterCurrent >= totalPages) {
-            startPage = totalPages - maxPagesToShow + 1; endPage = totalPages;
-        } else {
-            startPage = page - maxPagesBeforeCurrent; endPage = page + maxPagesAfterCurrent;
-        }
-    }
-
-     // Add first page and ellipsis if needed
-     if (startPage > 1) {
-         ul.appendChild(createPageLink(1, '1'));
-         if (startPage > 2) {
-            const ellipsisLi = document.createElement('li');
-            ellipsisLi.classList.add('page-item', 'disabled');
-            ellipsisLi.innerHTML = `<span class="page-link">...</span>`;
-            ul.appendChild(ellipsisLi);
-         }
-     }
-
-    // Page links
-    for (let p = startPage; p <= endPage; p++) {
-        ul.appendChild(createPageLink(p, p, false, p === page));
-    }
-
-    // Add last page and ellipsis if needed
-     if (endPage < totalPages) {
-         if (endPage < totalPages - 1) {
-            const ellipsisLi = document.createElement('li');
-            ellipsisLi.classList.add('page-item', 'disabled');
-            ellipsisLi.innerHTML = `<span class="page-link">...</span>`;
-            ul.appendChild(ellipsisLi);
-         }
-        ul.appendChild(createPageLink(totalPages, totalPages));
-     }
-
-    // Next Button
-    ul.appendChild(createPageLink(page + 1, '»', page >= totalPages));
-
-    paginationContainer.appendChild(ul);
-}
-
-
-// --- Modal and Actions Logic (Keep As Is) ---
-
-function openEditModal(feedbackId) {
-  const modalEl = new bootstrap.Modal(document.getElementById("editFeedbackModal"));
-  const modalBodyContent = document.getElementById("editModalContent");
-  const loadingIndicator = document.getElementById("editModalLoading");
-
-  modalBodyContent.style.display = 'none';
-  loadingIndicator.style.display = 'block';
-  modalEl.show();
-
-  fetch(`/feedback/review/${feedbackId}`)
-    .then(r => {
-        if (!r.ok) { return r.json().then(err => Promise.reject(err)); }
-        return r.json();
-    })
-    .then(async (item) => {
-        document.getElementById("editTimestamp").textContent = item.timestamp ? new Date(item.timestamp).toLocaleString() : "N/A";
-        
-        // Lookup user info and display it
-        const userInfo = await lookupUserInfo(item.userId);
-        const userDisplayText = formatUserDisplay(userInfo, item.userId);
-        document.getElementById("editUserInfo").textContent = userDisplayText;
-        
-        document.getElementById("editPrompt").textContent = item.prompt || "";
-        document.getElementById("editAiResponse").textContent = item.aiResponse || "";
-        document.getElementById("editFeedbackType").textContent = item.feedbackType || "";
-        document.getElementById("editReason").textContent = item.reason || "";
-        const acknowledged = item.adminReview?.acknowledged ? true : false;
-        document.getElementById("editAcknowledged").checked = acknowledged;
-        document.getElementById("editAnalysisNotes").value = item.adminReview?.analysisNotes || "";
-        document.getElementById("editResponseToUser").value = item.adminReview?.responseToUser || "";
-        document.getElementById("editActionTaken").value = item.adminReview?.actionTaken || "";
-        document.getElementById("editFeedbackId").value = item.id;
-        loadingIndicator.style.display = 'none';
-        modalBodyContent.style.display = 'block';
-    })
-    .catch(err => {
-        console.error("Error fetching feedback details:", err);
-        modalBodyContent.innerHTML = `<div class="alert alert-danger">Failed to load feedback details: ${escapeHtml(err.error || err.message || 'Unknown error')}</div>`;
-         loadingIndicator.style.display = 'none';
-        modalBodyContent.style.display = 'block';
-    });
-}
-
-function saveChanges() {
-  const feedbackId = document.getElementById("editFeedbackId").value;
-  const saveButton = document.getElementById("saveFeedbackChangesBtn");
-
-  const payload = {
-    acknowledged: document.getElementById("editAcknowledged").checked,
-    analysisNotes: document.getElementById("editAnalysisNotes").value.trim(),
-    responseToUser: document.getElementById("editResponseToUser").value.trim(),
-    actionTaken: document.getElementById("editActionTaken").value.trim()
-  };
-
-  saveButton.disabled = true;
-  saveButton.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...`;
-
-  fetch(`/feedback/review/${feedbackId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-    .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
-    .then(data => {
-      // Assuming success if status is ok, or check data.success if backend sends it
-      const modalEl = bootstrap.Modal.getInstance(document.getElementById("editFeedbackModal"));
-      modalEl.hide();
-      fetchFeedbackData(currentPage); // Refresh the current page view
-    })
-    .catch(err => {
-        console.error("Update error:", err);
-        alert("Failed to save changes: " + (err.message || err.error || "Unknown error"));
-    })
-    .finally(() => {
-        saveButton.disabled = false;
-        saveButton.textContent = "Save Changes";
-    });
-}
-
-function retestPrompt(feedbackId, prompt) {
-  if (!prompt) {
-      alert("Cannot retest: Prompt is empty.");
-      return;
-  }
-  const retestButton = document.querySelector(`.retest-btn[data-id='${feedbackId}']`);
-  const originalButtonHtml = retestButton ? retestButton.innerHTML : '<i class="bi bi-arrow-clockwise"></i>';
-  if(retestButton) {
-      retestButton.disabled = true;
-      retestButton.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
-  }
-
-  const modalEl = new bootstrap.Modal(document.getElementById("retestModal"));
-  const retestBody = document.getElementById("retest-body");
-  retestBody.innerHTML = `<div class="text-center p-3"><div class="spinner-border" role="status"><span class="visually-hidden">Retesting...</span></div></div>`;
-  modalEl.show();
-
-  fetch(`/feedback/retest/${feedbackId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: prompt }),
-  })
-    .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
-    .then(data => {
-      retestBody.innerHTML = data.retestResponse ? `<p style="white-space: pre-wrap;">${escapeHtml(data.retestResponse)}</p>` : `<div class="alert alert-warning">${escapeHtml(data.error || 'No response returned.')}</div>`;
-    })
-    .catch(err => {
-        console.error("Retest error:", err);
-        retestBody.innerHTML = `<div class="alert alert-danger">Error during retest: ${escapeHtml(err.error || err.message || "Unknown error")}</div>`;
-    })
-    .finally(() => {
-         if(retestButton) {
-             retestButton.disabled = false;
-             retestButton.innerHTML = originalButtonHtml;
-         }
-    });
-}
-
-// --- Event Listeners Setup ---
-document.addEventListener("DOMContentLoaded", function() {
-  // 1) Initial data load
-  fetchFeedbackData(1);
-
-  // 2) Page size change
-  pageSizeSelect.addEventListener("change", () => {
-    fetchFeedbackData(1); // Go back to page 1 when size changes
-  });
-
-  // 3) Filter Buttons (NEW)
-  applyFiltersBtn.addEventListener('click', () => {
-      fetchFeedbackData(1); // Go back to page 1 when applying filters
-  });
-
-  clearFiltersBtn.addEventListener('click', () => {
-      filterTypeSelect.value = ''; // Reset dropdowns
-      filterAckSelect.value = '';
-      fetchFeedbackData(1); // Fetch with cleared filters, back to page 1
-  });
-
-  // 4) Save button inside edit modal
-  document.getElementById("saveFeedbackChangesBtn").addEventListener("click", saveChanges);
-
-  // 5) Event delegation for buttons inside the table body
-  tableBody.addEventListener("click", function(e) {
-    const targetButton = e.target.closest("button");
-    if (!targetButton) return;
-
-    if (targetButton.classList.contains("edit-feedback-btn")) {
-      const feedbackId = targetButton.getAttribute("data-id");
-      if (feedbackId) openEditModal(feedbackId);
-    }
-    else if (targetButton.classList.contains("retest-btn")) {
-      const feedbackId = targetButton.getAttribute("data-id");
-      const prompt = targetButton.getAttribute("data-prompt"); // Fetch prompt from data attribute
-      // Ensure prompt is correctly fetched before calling
-      if (feedbackId && typeof prompt === 'string') { // Check if prompt is a string (even empty)
-            retestPrompt(feedbackId, prompt);
-      } else {
-            console.warn("Could not retest: Prompt data attribute missing or invalid on button.", targetButton);
-            alert("Could not retest: prompt data is missing.");
-      }
-    }
-  });
-
-   // 6) Remove automatic filtering on select change (OLD logic)
-   // filterTypeSelect.addEventListener("change", () => { fetchFeedbackData(1); });
-   // filterAckSelect.addEventListener("change", () => { fetchFeedbackData(1); });
-});
-
-</script>
+<script src="{{ url_for('static', filename='js/admin/admin-feedback-review.js') }}"></script>
 {% endblock %}

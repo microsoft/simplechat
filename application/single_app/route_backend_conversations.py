@@ -16,8 +16,12 @@ from functions_image_messages import decode_image_content, get_complete_image_co
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request
 from functions_debug import debug_print
-from functions_message_artifacts import filter_assistant_artifact_items
-from functions_simplechat_operations import create_personal_conversation_for_current_user
+from functions_message_artifacts import (
+    build_message_artifact_payload_map,
+    filter_assistant_artifact_items,
+    hydrate_agent_citations_from_artifacts,
+)
+from functions_simplechat_operations import create_personal_conversation_for_current_user, delete_blob_backed_chat_message_files
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
@@ -90,13 +94,12 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
             partition_key=conversation_id,
         )
     except CosmosResourceNotFoundError as exc:
-        if conversation_item.get('user_id') != user_id:
-            raise PermissionError('Forbidden')
-    except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
 
     if conversation_item.get('user_id') != user_id:
         raise PermissionError('Forbidden')
+
+    return conversation_item
 
     return conversation_item
 
@@ -166,6 +169,7 @@ def register_route_backend_conversations(app):
                 query=message_query,
                 partition_key=conversation_id
             ))
+            artifact_payload_map = build_message_artifact_payload_map(all_items)
             all_items = filter_assistant_artifact_items(all_items)
             
             debug_print(f"Query returned {len(all_items)} total items (before filtering)")
@@ -173,7 +177,12 @@ def register_route_backend_conversations(app):
             # Filter for active_thread = True OR active_thread is not defined (backwards compatibility)
             filtered_items = []
             for item in all_items:
-                thread_info = item.get('metadata', {}).get('thread_info', {})
+                metadata = item.get('metadata', {}) or {}
+                if metadata.get('is_generated_chat_artifact', False):
+                    debug_print(f"  🫥 Excluding hidden generated artifact: id={item.get('id')}")
+                    continue
+
+                thread_info = metadata.get('thread_info', {})
                 active = thread_info.get('active_thread')
                 debug_print(f"Evaluating item id={item.get('id')}, role={item.get('role')}, active_thread={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
                 
@@ -186,6 +195,8 @@ def register_route_backend_conversations(app):
             
             all_items = filtered_items
             debug_print(f"After filtering: {len(all_items)} items remaining")
+
+            all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
 
             messages = hydrate_image_messages(
                 all_items,
@@ -385,6 +396,9 @@ def register_route_backend_conversations(app):
             partition_key=conversation_id
         ))
 
+        if not archiving_enabled:
+            delete_blob_backed_chat_message_files(results)
+
         for doc in results:
             if archiving_enabled:
                 archived_doc = dict(doc)
@@ -455,17 +469,8 @@ def register_route_backend_conversations(app):
             try:
                 # Verify the conversation exists and belongs to the user
                 try:
-                    conversation_item = cosmos_conversations_container.read_item(
-                        item=conversation_id,
-                        partition_key=conversation_id
-                    )
-                    
-                    # Check if the conversation belongs to the current user
-                    if conversation_item.get('user_id') != user_id:
-                        failed_ids.append(conversation_id)
-                        continue
-                        
-                except CosmosResourceNotFoundError:
+                    conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+                except (LookupError, PermissionError):
                     failed_ids.append(conversation_id)
                     continue
                 
@@ -491,6 +496,9 @@ def register_route_backend_conversations(app):
                     query=message_query,
                     partition_key=conversation_id
                 ))
+
+                if not archiving_enabled:
+                    delete_blob_backed_chat_message_files(messages)
                 
                 for message in messages:
                     if archiving_enabled:
