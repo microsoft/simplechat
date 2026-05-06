@@ -13,6 +13,7 @@ import {
   addConversationToList
 } from "./chat-conversations.js";
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
+import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
 import { autoplayTTSIfEnabled } from "./chat-tts.js";
@@ -2076,22 +2077,61 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       </div>`;
   }
 
-  function getGeneratedTabularOutputs(fullMessageObject = null) {
-    const rawOutputs = fullMessageObject?.metadata?.generated_tabular_outputs;
-    if (!Array.isArray(rawOutputs)) {
-      return [];
+  function normalizeGeneratedAnalysisArtifact(output, defaultCapability = 'analysis') {
+    if (!output || typeof output !== 'object') {
+      return null;
     }
 
-    return rawOutputs.filter(output => {
-      if (!output || typeof output !== 'object') {
-        return false;
+    const normalizedArtifactMessageId = String(output.artifact_message_id || '').trim();
+    const normalizedDocumentId = String(output.document_id || '').trim();
+    if (!normalizedArtifactMessageId && !normalizedDocumentId) {
+      return null;
+    }
+
+    return {
+      ...output,
+      capability: String(output.capability || defaultCapability || 'analysis').trim().toLowerCase() || 'analysis',
+      artifact_message_id: normalizedArtifactMessageId,
+      document_id: normalizedDocumentId,
+    };
+  }
+
+  function getGeneratedAnalysisArtifacts(fullMessageObject = null) {
+    const normalizedArtifacts = [];
+    const seenArtifacts = new Set();
+    const rawArtifacts = Array.isArray(fullMessageObject?.metadata?.generated_analysis_artifacts)
+      ? fullMessageObject.metadata.generated_analysis_artifacts
+      : [];
+    const rawTabularOutputs = Array.isArray(fullMessageObject?.metadata?.generated_tabular_outputs)
+      ? fullMessageObject.metadata.generated_tabular_outputs
+      : [];
+
+    const appendArtifact = (output, defaultCapability = 'analysis') => {
+      const normalizedArtifact = normalizeGeneratedAnalysisArtifact(output, defaultCapability);
+      if (!normalizedArtifact) {
+        return;
       }
 
-      return Boolean(
-        String(output.document_id || '').trim()
-        || String(output.artifact_message_id || '').trim()
-      );
-    });
+      const dedupeKey = normalizedArtifact.artifact_message_id
+        || normalizedArtifact.document_id
+        || `${String(normalizedArtifact.file_name || '').trim()}:${String(normalizedArtifact.output_format || '').trim()}`;
+
+      if (seenArtifacts.has(dedupeKey)) {
+        return;
+      }
+
+      seenArtifacts.add(dedupeKey);
+      normalizedArtifacts.push(normalizedArtifact);
+    };
+
+    rawArtifacts.forEach(output => appendArtifact(output, 'analysis'));
+    rawTabularOutputs.forEach(output => appendArtifact(output, 'tabular'));
+
+    return normalizedArtifacts;
+  }
+
+  function getGeneratedTabularOutputs(fullMessageObject = null) {
+    return getGeneratedAnalysisArtifacts(fullMessageObject).filter(output => output.capability === 'tabular');
   }
 
   function getGeneratedTabularStorageNote(outputMetadata) {
@@ -2212,6 +2252,25 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return previewBlock;
   }
 
+  function buildGeneratedAnalysisPreviewText(previewText) {
+    const previewBlock = document.createElement('pre');
+    previewBlock.className = 'small bg-light border rounded p-2 mb-0 overflow-auto';
+    previewBlock.textContent = String(previewText || '').trim();
+    return previewBlock;
+  }
+
+  function getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat) {
+    const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
+    if (capability === 'exhaustive_review') {
+      return `Exhaustive Review ${outputFormat.toUpperCase()} artifact`;
+    }
+    if (capability === 'comparison') {
+      return `Comparison ${outputFormat.toUpperCase()} artifact`;
+    }
+
+    return `Generated ${outputFormat.toUpperCase()} export`;
+  }
+
   function triggerGeneratedTabularOutputDownload(outputMetadata) {
     const normalizedDocId = String(outputMetadata?.document_id || '').trim();
     const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
@@ -2238,7 +2297,132 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     downloadLink.remove();
   }
 
-  function createGeneratedTabularOutputCard(outputMetadata) {
+  function resolveGeneratedArtifactPromotionTarget() {
+    const activeConversationScope = getActiveConversationScope();
+    const activeConversationContext = getActiveConversationContext();
+
+    if (activeConversationScope === 'group' && activeConversationContext.groupId) {
+      return {
+        workspace_scope: 'group',
+        group_id: activeConversationContext.groupId,
+        label: 'group workspace',
+      };
+    }
+
+    if (activeConversationScope === 'public' && activeConversationContext.publicWorkspaceId) {
+      return {
+        workspace_scope: 'public',
+        public_workspace_id: activeConversationContext.publicWorkspaceId,
+        label: 'public workspace',
+      };
+    }
+
+    const effectiveScopes = getEffectiveScopes();
+    const hasPersonalScope = Boolean(effectiveScopes?.personal);
+    const groupIds = Array.isArray(effectiveScopes?.groupIds)
+      ? effectiveScopes.groupIds.filter(Boolean)
+      : [];
+    const publicWorkspaceIds = Array.isArray(effectiveScopes?.publicWorkspaceIds)
+      ? effectiveScopes.publicWorkspaceIds.filter(Boolean)
+      : [];
+    const targetCount = (hasPersonalScope ? 1 : 0) + groupIds.length + publicWorkspaceIds.length;
+
+    if (targetCount !== 1) {
+      return {
+        error: 'Select exactly one workspace scope before adding this artifact.',
+      };
+    }
+
+    if (groupIds.length === 1) {
+      return {
+        workspace_scope: 'group',
+        group_id: groupIds[0],
+        label: 'group workspace',
+      };
+    }
+
+    if (publicWorkspaceIds.length === 1) {
+      return {
+        workspace_scope: 'public',
+        public_workspace_id: publicWorkspaceIds[0],
+        label: 'public workspace',
+      };
+    }
+
+    return {
+      workspace_scope: 'personal',
+      label: 'personal workspace',
+    };
+  }
+
+  async function promoteGeneratedArtifactToWorkspace(outputMetadata, promoteButton) {
+    const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
+    const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
+
+    if (!normalizedArtifactMessageId || !normalizedConversationId) {
+      showToast('Generated export is missing promotion metadata.', 'warning');
+      return;
+    }
+
+    const target = resolveGeneratedArtifactPromotionTarget();
+    if (target.error) {
+      showToast(target.error, 'warning');
+      return;
+    }
+
+    const originalButtonText = promoteButton?.textContent || 'Add to Workspace';
+    if (promoteButton) {
+      promoteButton.disabled = true;
+      promoteButton.textContent = 'Adding...';
+    }
+
+    try {
+      const requestPayload = {
+        conversation_id: normalizedConversationId,
+        message_id: normalizedArtifactMessageId,
+        workspace_scope: target.workspace_scope,
+      };
+      if (target.group_id) {
+        requestPayload.group_id = target.group_id;
+      }
+      if (target.public_workspace_id) {
+        requestPayload.public_workspace_id = target.public_workspace_id;
+      }
+
+      const response = await fetch('/api/chat_artifacts/promote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responseData?.error || `Server responded with status ${response.status}`);
+      }
+
+      const approvalRequired = Boolean(responseData?.approval_required);
+      const successMessage = approvalRequired
+        ? `Artifact submitted to the ${target.label} for approval.`
+        : `Artifact added to your ${target.label}.`;
+      showToast(successMessage, 'success');
+
+      if (promoteButton) {
+        promoteButton.classList.remove('btn-outline-secondary');
+        promoteButton.classList.add(approvalRequired ? 'btn-outline-warning' : 'btn-outline-success');
+        promoteButton.textContent = approvalRequired ? 'Pending Approval' : 'Added to Workspace';
+      }
+    } catch (error) {
+      if (promoteButton) {
+        promoteButton.disabled = false;
+        promoteButton.textContent = originalButtonText;
+      }
+      showToast(error.message || 'Failed to add the generated artifact to a workspace.', 'danger');
+    }
+  }
+
+  function createGeneratedAnalysisArtifactCard(outputMetadata) {
     const card = document.createElement('section');
     card.className = 'generated-tabular-output-card border rounded p-3 mt-3';
 
@@ -2249,6 +2433,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const selectedSheet = String(outputMetadata?.selected_sheet || '').trim();
     const summary = String(outputMetadata?.summary || '').trim();
     const previewRows = Array.isArray(outputMetadata?.preview_rows) ? outputMetadata.preview_rows : [];
+    const previewItems = Array.isArray(outputMetadata?.preview_items) ? outputMetadata.preview_items : [];
+    const previewLines = Array.isArray(outputMetadata?.preview_lines) ? outputMetadata.preview_lines : [];
+    const previewText = String(outputMetadata?.preview_text || '').trim();
 
     const header = document.createElement('div');
     header.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2';
@@ -2256,7 +2443,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const headerText = document.createElement('div');
     const title = document.createElement('h6');
     title.className = 'mb-1';
-    title.textContent = `Generated ${outputFormat.toUpperCase()} export`;
+    title.textContent = getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat);
     headerText.appendChild(title);
 
     const fileNameText = document.createElement('div');
@@ -2300,13 +2487,23 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       card.appendChild(summaryText);
     }
 
-    if (previewRows.length) {
+    if (previewRows.length || previewItems.length || previewLines.length || previewText) {
       const previewLabel = document.createElement('div');
       previewLabel.className = 'small fw-semibold mt-3 mb-2';
       previewLabel.textContent = 'Preview';
       card.appendChild(previewLabel);
 
-      const previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
+      let previewContent = null;
+      if (previewRows.length) {
+        previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
+      } else if (previewItems.length) {
+        previewContent = buildGeneratedTabularPreviewFallback(previewItems);
+      } else if (previewLines.length) {
+        previewContent = buildGeneratedAnalysisPreviewText(previewLines.join('\n'));
+      } else if (previewText) {
+        previewContent = buildGeneratedAnalysisPreviewText(previewText);
+      }
+
       card.appendChild(previewContent);
     }
 
@@ -2322,9 +2519,45 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     });
     actions.appendChild(downloadButton);
 
+    const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
+    const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
+    if (normalizedArtifactMessageId && normalizedConversationId) {
+      const promoteButton = document.createElement('button');
+      promoteButton.type = 'button';
+      promoteButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-promote-btn';
+      promoteButton.textContent = 'Add to Workspace';
+      promoteButton.addEventListener('click', () => {
+        promoteGeneratedArtifactToWorkspace(outputMetadata, promoteButton);
+      });
+      actions.appendChild(promoteButton);
+    }
+
     card.appendChild(actions);
 
     return card;
+  }
+
+  function createGeneratedTabularOutputCard(outputMetadata) {
+    return createGeneratedAnalysisArtifactCard(outputMetadata);
+  }
+
+  function hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject = null) {
+    const generatedOutputsContainer = messageDiv.querySelector('.generated-tabular-outputs-container');
+    if (!(generatedOutputsContainer instanceof HTMLElement)) {
+      return;
+    }
+
+    generatedOutputsContainer.replaceChildren();
+    const generatedOutputs = getGeneratedAnalysisArtifacts(fullMessageObject);
+    if (!generatedOutputs.length) {
+      generatedOutputsContainer.classList.add('d-none');
+      return;
+    }
+
+    generatedOutputs.forEach(outputMetadata => {
+      generatedOutputsContainer.appendChild(createGeneratedAnalysisArtifactCard(outputMetadata));
+    });
+    generatedOutputsContainer.classList.remove('d-none');
   }
 
   function hydrateGeneratedTabularOutputs(messageDiv, fullMessageObject = null) {
@@ -2677,7 +2910,7 @@ export function appendMessage(
 
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
-    hydrateGeneratedTabularOutputs(messageDiv, fullMessageObject);
+    hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     
     // Auto-play TTS if enabled (only for new messages, not when loading history)
     if (isNewMessage && typeof autoplayTTSIfEnabled === 'function') {

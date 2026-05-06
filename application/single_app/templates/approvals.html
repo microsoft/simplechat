@@ -38,6 +38,9 @@
                         <option value="delete_documents">Delete Documents</option>
                         <option value="delete_group">Delete Group</option>
                         <option value="delete_user_documents">Delete User Documents</option>
+                        <option value="warn_user">Warn User</option>
+                        <option value="suspend_user">Suspend User</option>
+                        <option value="block_user">Block User</option>
                     </select>
                 </div>
                 <div class="col-md-2">
@@ -57,7 +60,7 @@
                             <thead>
                                 <tr>
                                     <th>Request Type</th>
-                                    <th>Group Name</th>
+                                    <th>Target</th>
                                     <th>Requested By</th>
                                     <th>Created</th>
                                     <th>Status</th>
@@ -184,7 +187,7 @@
                 <!-- Cannot Approve Alert -->
                 <div class="alert alert-warning" id="cannotApproveAlert" style="display: none;">
                     <i class="bi bi-exclamation-triangle me-2"></i>
-                    <strong>Note:</strong> You cannot approve your own request. Another admin or group owner must review and approve this.
+                    <strong>Note:</strong> You are not an eligible reviewer for this request. Another eligible reviewer must approve it.
                 </div>
                 
                 <!-- Approval Details -->
@@ -194,7 +197,7 @@
                         <dt class="col-sm-4">Request Type:</dt>
                         <dd class="col-sm-8" id="approvalDetailType"></dd>
                         
-                        <dt class="col-sm-4">Group:</dt>
+                        <dt class="col-sm-4">Target:</dt>
                         <dd class="col-sm-8" id="approvalDetailGroup"></dd>
                         
                         <dt class="col-sm-4">Requested By:</dt>
@@ -503,6 +506,12 @@ window.ApprovalManager = {
             actionBadge = '<span class="badge bg-danger">Delete Group</span>';
         } else if (requestType === 'delete_user_documents') {
             actionBadge = '<span class="badge bg-warning text-dark">Delete User Documents</span>';
+        } else if (requestType === 'warn_user') {
+            actionBadge = '<span class="badge bg-warning text-dark">Warn User</span>';
+        } else if (requestType === 'suspend_user') {
+            actionBadge = '<span class="badge bg-warning text-dark">Suspend User</span>';
+        } else if (requestType === 'block_user') {
+            actionBadge = '<span class="badge bg-danger">Block User</span>';
         } else {
             actionBadge = '<span class="badge bg-secondary">Unknown</span>';
         }
@@ -579,7 +588,10 @@ window.ApprovalManager = {
             'transfer_ownership': 'Transfer Ownership',
             'delete_documents': 'Delete All Documents',
             'delete_group': 'Delete Entire Group',
-            'delete_user_documents': 'Delete User Documents'
+            'delete_user_documents': 'Delete User Documents',
+            'warn_user': 'Warn User',
+            'suspend_user': 'Suspend User',
+            'block_user': 'Block User'
         };
         const requestType = requestTypeMap[approval.request_type] || approval.request_type;
         

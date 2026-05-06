@@ -103,6 +103,8 @@
     </div>
   </div>
 
+  <div id="safetyPageStatusAlert" class="alert d-none mb-3" role="status" aria-live="polite"></div>
+
   <ul class="nav nav-tabs violations-nav-tabs mb-3" id="safetyViolationTabs" role="tablist">
     <li class="nav-item" role="presentation">
       <button class="nav-link active" id="safety-stats-tab" data-bs-toggle="tab" data-bs-target="#safety-stats-pane" type="button" role="tab" aria-controls="safety-stats-pane" aria-selected="true">
@@ -221,10 +223,10 @@
             <select id="filterAction" class="form-select form-select-sm">
               <option value="">(All)</option>
               <option value="None">None</option>
-              <option value="WarnUser">WarnUser</option>
-              <option value="SuspendUser">SuspendUser</option>
+              <option value="WarnUser">Warn user</option>
+              <option value="SuspendUser">Suspend user</option>
               <option value="Escalate">Escalate</option>
-              <option value="BlockUser">BlockUser</option>
+              <option value="BlockUser">Block user</option>
             </select>
           </div>
           <div class="col-md-6 text-md-end">
@@ -308,11 +310,24 @@
           <label class="form-label fw-bold">Action:</label>
           <select class="form-select" id="editAction">
             <option value="None">None</option>
-            <option value="WarnUser">WarnUser</option>
-            <option value="SuspendUser">SuspendUser</option>
+            <option value="WarnUser">Warn user</option>
+            <option value="SuspendUser">Suspend user</option>
             <option value="Escalate">Escalate</option>
-            <option value="BlockUser">BlockUser</option>
+            <option value="BlockUser">Block user</option>
           </select>
+        </div>
+        <div class="mb-3 d-none" id="safetyRemediationFields">
+          <div class="alert alert-info py-2" id="safetyRemediationHelp"></div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="editNotificationMessage">Notification</label>
+            <textarea class="form-control" id="editNotificationMessage" rows="5"></textarea>
+            <div class="form-text">This message is sent to the affected user. If approval is required, it is sent after the request is approved.</div>
+          </div>
+          <div class="d-none" id="safetySuspendUntilGroup">
+            <label class="form-label fw-bold" for="editSuspendUntil">Restore access on</label>
+            <input type="datetime-local" class="form-control" id="editSuspendUntil" />
+            <div class="form-text">Uses the same timed access restriction workflow as Control Center.</div>
+          </div>
         </div>
         <div class="mb-0">
           <label class="form-label fw-bold">Notes:</label>

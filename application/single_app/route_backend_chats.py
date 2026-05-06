@@ -67,7 +67,7 @@ from functions_document_actions import (
 )
 from functions_thoughts import ThoughtTracker
 from functions_workflow_runner import _execute_document_action_workflow
-from functions_simplechat_operations import upload_generated_chat_artifact_for_current_user
+from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
 
 
 def _strip_agent_citation_artifact_refs(agent_citations):
@@ -111,6 +111,77 @@ TABULAR_GENERATED_OUTPUT_PREVIEW_ROWS = 3
 TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS = 25
 TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS = 18000
 TABULAR_STRUCTURED_EXPORT_MAX_RETRY_ATTEMPTS = 2
+
+
+def _normalize_generated_analysis_artifact_metadata(raw_artifact, default_capability='analysis'):
+    if not isinstance(raw_artifact, dict):
+        return None
+
+    artifact_message_id = str(raw_artifact.get('artifact_message_id') or '').strip()
+    document_id = str(raw_artifact.get('document_id') or '').strip()
+    if not artifact_message_id and not document_id:
+        return None
+
+    normalized_artifact = dict(raw_artifact)
+    normalized_artifact['capability'] = (
+        str(raw_artifact.get('capability') or default_capability or 'analysis').strip().lower()
+        or 'analysis'
+    )
+    if artifact_message_id:
+        normalized_artifact['artifact_message_id'] = artifact_message_id
+    if document_id:
+        normalized_artifact['document_id'] = document_id
+
+    normalized_output_format = str(raw_artifact.get('output_format') or '').strip().lower()
+    if normalized_output_format:
+        normalized_artifact['output_format'] = normalized_output_format
+
+    normalized_conversation_id = str(raw_artifact.get('conversation_id') or '').strip()
+    if normalized_conversation_id:
+        normalized_artifact['conversation_id'] = normalized_conversation_id
+
+    return normalized_artifact
+
+
+def _build_generated_analysis_metadata(
+    generated_analysis_artifacts=None,
+    generated_tabular_outputs=None,
+):
+    normalized_artifacts = []
+    normalized_tabular_outputs = []
+    seen_artifacts = set()
+
+    def append_artifact(raw_artifact, default_capability='analysis'):
+        normalized_artifact = _normalize_generated_analysis_artifact_metadata(
+            raw_artifact,
+            default_capability=default_capability,
+        )
+        if not normalized_artifact:
+            return
+
+        dedupe_key = (
+            normalized_artifact.get('artifact_message_id')
+            or normalized_artifact.get('document_id')
+            or f"{normalized_artifact.get('file_name')}:{normalized_artifact.get('output_format')}"
+        )
+        if dedupe_key in seen_artifacts:
+            return
+
+        seen_artifacts.add(dedupe_key)
+        normalized_artifacts.append(normalized_artifact)
+        if normalized_artifact.get('capability') == 'tabular':
+            normalized_tabular_outputs.append(dict(normalized_artifact))
+
+    for artifact in generated_analysis_artifacts or []:
+        append_artifact(artifact, default_capability='analysis')
+
+    for artifact in generated_tabular_outputs or []:
+        append_artifact(artifact, default_capability='tabular')
+
+    return {
+        'generated_analysis_artifacts': normalized_artifacts,
+        'generated_tabular_outputs': normalized_tabular_outputs,
+    }
 
 
 def _safe_int(value, default=0):
@@ -1754,14 +1825,21 @@ async def maybe_create_tabular_generated_output(user_question, invocations, gpt_
         source_candidate.get('filename'),
         output_format,
     )
-    upload_result = upload_generated_chat_artifact_for_current_user(
+    upload_result = upload_generated_analysis_artifact_for_current_user(
         conversation_id=conversation_id,
         file_name=generated_file_name,
         file_content=serialized_output,
+        capability='tabular',
+        output_format=output_format,
+        summary=(
+            f"Saved {len(output_entries)} row(s) to {generated_file_name} "
+            'in this chat as a downloadable export.'
+        ),
     )
 
     preview_rows = output_entries[:TABULAR_GENERATED_OUTPUT_PREVIEW_ROWS]
     return {
+        'capability': 'tabular',
         'artifact_message_id': upload_result.get('message', {}).get('id'),
         'conversation_id': conversation_id,
         'storage_scope': 'chat',
@@ -3599,6 +3677,39 @@ def question_requests_tabular_exhaustive_results(user_question):
         'show me all',
     )
     if any(phrase in normalized_question for phrase in explicit_phrases):
+        return True
+
+    structured_row_patterns = (
+        r'\bone object per comment row\b',
+        r'\bone object per (?:comment|submission)\b',
+        r'\bone object per (?:comment|submission|input )?row\b',
+        r'\bone row per (?:comment|submission|input )?row\b',
+        r'\bone row per (?:comment|submission)\b',
+        r'\bone object for each row\b',
+    )
+    structured_output_markers = (
+        'json array',
+        'valid json',
+        'return only json',
+        'return only valid json',
+        'csv file',
+        'download csv',
+        'save csv',
+        'make a csv',
+        'create a csv',
+        'make a table',
+        'download table',
+        'spreadsheet',
+        'table file',
+        'each object must contain',
+        'each row must contain',
+        'exactly these fields',
+        'exactly these columns',
+        'these columns',
+    )
+    if any(re.search(pattern, normalized_question) for pattern in structured_row_patterns) and any(
+        marker in normalized_question for marker in structured_output_markers
+    ):
         return True
 
     return (
@@ -7260,6 +7371,7 @@ def register_route_backend_chats(app):
             'blocked': payload.get('blocked', False),
             'review_coverage': payload.get('review_coverage', {}),
             'document_action': payload.get('document_action', {}),
+            'metadata': payload.get('metadata', {}),
         })
 
     def _build_document_action_stream_content(event):
@@ -8015,6 +8127,10 @@ def register_route_backend_chats(app):
             created_timestamp=assistant_timestamp,
             user_info=response_message_context.get('user_info'),
         )
+        generated_analysis_metadata = _build_generated_analysis_metadata(
+            generated_analysis_artifacts=execution_result.get('generated_analysis_artifacts'),
+            generated_tabular_outputs=execution_result.get('generated_tabular_outputs'),
+        )
 
         assistant_doc = make_json_serializable({
             'id': assistant_message_id,
@@ -8039,6 +8155,7 @@ def register_route_backend_chats(app):
                     'active_thread': True,
                     'thread_attempt': assistant_thread_attempt,
                 },
+                **generated_analysis_metadata,
                 'exhaustive_review': {
                     'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
                     'coverage': execution_result.get('review_coverage') or {},
@@ -8147,6 +8264,7 @@ def register_route_backend_chats(app):
             'review_coverage': execution_result.get('review_coverage') or {},
             'document_action': normalized_action,
             'token_usage': execution_result.get('token_usage'),
+            'metadata': assistant_doc.get('metadata', {}),
         }), 200
 
     def execute_exhaustive_review_chat_request(data=None, publish_background_event=None):
@@ -8380,6 +8498,7 @@ def register_route_backend_chats(app):
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
             web_search_citations_list = []
             generated_tabular_outputs_list = []
+            generated_analysis_artifacts_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
             search_results = []
             selected_agent = None  # Initialize selected_agent early to prevent NameError
@@ -9938,6 +10057,7 @@ def register_route_backend_chats(app):
                 ))
                 if tabular_generated_output:
                     generated_tabular_outputs_list.append(tabular_generated_output)
+                    generated_analysis_artifacts_list.append(tabular_generated_output)
                     thought_tracker.add_thought(
                         'tabular_analysis',
                         f"Prepared downloadable {str(tabular_generated_output.get('output_format') or 'json').upper()} export",
@@ -10150,6 +10270,7 @@ def register_route_backend_chats(app):
                     ))
                     if chat_tabular_generated_output:
                         generated_tabular_outputs_list.append(chat_tabular_generated_output)
+                        generated_analysis_artifacts_list.append(chat_tabular_generated_output)
                         thought_tracker.add_thought(
                             'tabular_analysis',
                             f"Prepared downloadable {str(chat_tabular_generated_output.get('output_format') or 'json').upper()} export",
@@ -11037,6 +11158,10 @@ def register_route_backend_chats(app):
                 created_timestamp=assistant_timestamp,
                 user_info=user_info_for_assistant,
             )
+            generated_analysis_metadata = _build_generated_analysis_metadata(
+                generated_analysis_artifacts=generated_analysis_artifacts_list,
+                generated_tabular_outputs=generated_tabular_outputs_list,
+            )
 
             assistant_doc = make_json_serializable({
                 'id': assistant_message_id,
@@ -11056,7 +11181,7 @@ def register_route_backend_chats(app):
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
                     'history_context': history_debug_info,
-                    'generated_tabular_outputs': generated_tabular_outputs_list,
+                    **generated_analysis_metadata,
                     'thread_info': {
                         'thread_id': user_thread_id,  # Same thread as user message
                         'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
@@ -11537,6 +11662,7 @@ def register_route_backend_chats(app):
                 agent_citations_list = []
                 web_search_citations_list = []
                 generated_tabular_outputs_list = []
+                generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
                 search_results = []
                 selected_agent = None
@@ -12522,6 +12648,7 @@ def register_route_backend_chats(app):
                     ))
                     if tabular_generated_output:
                         generated_tabular_outputs_list.append(tabular_generated_output)
+                        generated_analysis_artifacts_list.append(tabular_generated_output)
                         yield emit_thought(
                             'tabular_analysis',
                             f"Prepared downloadable {str(tabular_generated_output.get('output_format') or 'json').upper()} export",
@@ -12716,6 +12843,7 @@ def register_route_backend_chats(app):
                         ))
                         if chat_tabular_generated_output:
                             generated_tabular_outputs_list.append(chat_tabular_generated_output)
+                            generated_analysis_artifacts_list.append(chat_tabular_generated_output)
                             yield emit_thought(
                                 'tabular_analysis',
                                 f"Prepared downloadable {str(chat_tabular_generated_output.get('output_format') or 'json').upper()} export",
@@ -13312,6 +13440,10 @@ def register_route_backend_chats(app):
                         created_timestamp=assistant_timestamp,
                         user_info=user_info_for_assistant,
                     )
+                    generated_analysis_metadata = _build_generated_analysis_metadata(
+                        generated_analysis_artifacts=generated_analysis_artifacts_list,
+                        generated_tabular_outputs=generated_tabular_outputs_list,
+                    )
 
                     assistant_doc = make_json_serializable({
                         'id': assistant_message_id,
@@ -13330,7 +13462,7 @@ def register_route_backend_chats(app):
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
                             'history_context': history_debug_info,
-                            'generated_tabular_outputs': generated_tabular_outputs_list,
+                            **generated_analysis_metadata,
                             'thread_info': {
                                 'thread_id': user_thread_id,
                                 'previous_thread_id': user_previous_thread_id,
@@ -13488,6 +13620,10 @@ def register_route_backend_chats(app):
                             created_timestamp=assistant_timestamp,
                             user_info=user_info_for_assistant,
                         )
+                        generated_analysis_metadata = _build_generated_analysis_metadata(
+                            generated_analysis_artifacts=generated_analysis_artifacts_list,
+                            generated_tabular_outputs=generated_tabular_outputs_list,
+                        )
                         
                         assistant_doc = make_json_serializable({
                             'id': assistant_message_id,
@@ -13508,7 +13644,7 @@ def register_route_backend_chats(app):
                                 'error': error_msg,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
-                                'generated_tabular_outputs': generated_tabular_outputs_list,
+                                **generated_analysis_metadata,
                                 'thread_info': {
                                     'thread_id': user_thread_id,
                                     'previous_thread_id': user_previous_thread_id,

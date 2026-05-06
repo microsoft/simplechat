@@ -69,6 +69,48 @@
     border-color: var(--bs-border-color) !important;
   }
 
+  .workspace-hero-card {
+    border-radius: 1rem;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  }
+  .workspace-hero-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, var(--workspace-hero-color, #0078d4) 0%, var(--workspace-hero-color-dark, #005a9e) 100%);
+    z-index: 0;
+  }
+  .workspace-hero-card > * {
+    position: relative;
+    z-index: 1;
+  }
+  .workspace-hero-placeholder,
+  .workspace-hero-logo {
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    border: 4px solid rgba(255, 255, 255, 0.28);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  }
+  .workspace-hero-placeholder {
+    background: rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    font-weight: 700;
+  }
+  .workspace-hero-logo {
+    object-fit: contain;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.15);
+  }
+
   /* === Grid View (Tag Folders) Styles === */
   .tag-folder-card {
     border: 1px solid transparent;
@@ -143,7 +185,29 @@
   </div>
 
   <div class="alert alert-info" id="user-public-role-display" style="display:none">
-    Your role in <strong id="active-public-name-role"></strong>: <span id="user-public-role" class="fw-bold"></span>
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+      <div>
+        Your role in <strong id="active-public-name-role"></strong>: <span id="user-public-role" class="fw-bold"></span>
+      </div>
+      <a class="btn btn-sm btn-outline-primary d-none" id="manage-active-public-btn" href="#">
+        <i class="bi bi-gear me-1"></i>Manage Public Workspace
+      </a>
+    </div>
+  </div>
+
+  <div class="workspace-hero-card d-none" id="active-public-hero">
+    <div class="row align-items-center g-3">
+      <div class="col-auto">
+        <img class="workspace-hero-logo d-none" id="active-public-hero-logo" alt="Active public workspace logo">
+        <div class="workspace-hero-placeholder" id="active-public-hero-initial">P</div>
+      </div>
+      <div class="col">
+        <div class="small text-uppercase opacity-75">Active Public Workspace</div>
+        <h3 class="mb-1" id="active-public-hero-name">No active workspace selected</h3>
+        <p class="mb-1 opacity-90"><i class="bi bi-person-circle me-2"></i><strong>Owner:</strong> <span id="active-public-hero-owner">-</span></p>
+        <p class="mb-0 opacity-75" id="active-public-hero-description">Choose an active public workspace to see its profile.</p>
+      </div>
+    </div>
   </div>
 
   <!-- Workspace Status Alert (shown for locked, upload_disabled, inactive) -->

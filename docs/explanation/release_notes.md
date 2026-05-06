@@ -4,6 +4,41 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.127)**
+
+#### New Features
+
+*   **Generated Artifact Workspace Promotion Approval**
+    *   Added an `Add to Workspace` action to generated analysis artifact cards in Chats so users can move reusable exports out of the conversation and into workspace documents.
+    *   Personal promotions now queue immediately, while group and public promotions create a visible pending workspace file that must be approved before it becomes usable for search and chat.
+    *   Group and public workspace document lists now show an `Approve` action for pending generated artifacts, and the requester receives approval workflow notifications as the file moves through review and processing.
+    *   (Ref: generated artifact promotion, `route_enhanced_citations.py`, `route_backend_group_documents.py`, `route_backend_public_documents.py`, `chat-messages.js`, `group_workspaces.html`, `public_workspace.js`, `test_generated_artifact_workspace_promotion.py`, `test_chat_generated_tabular_output_card.py`)
+
+#### Bug Fixes
+
+*   **Safety Violation Remediation Workflow**
+    *   Fixed the Safety Violations admin flow so `Warn user` now sends a user notification, `Suspend user` applies the same timed access restriction used by Control Center, and `Block user` applies the same indefinite deny path.
+    *   Safety admins who do not hold the required approval role now create a pending approval request instead of applying the remediation immediately, while eligible reviewers can still self-approve and execute their own request when policy allows it.
+    *   The safety review modal and shared approvals page now expose the notification details, suspension restore date, and explicit warn/suspend/block approval labels needed to review and execute those requests cleanly.
+    *   (Ref: `route_backend_safety.py`, `route_backend_control_center.py`, `functions_approvals.py`, `functions_safety_remediation.py`, `functions_notifications.py`, `admin_safety_violations.html`, `admin-safety-violations.js`, `approvals.html`, `test_safety_violation_remediation_approvals.py`)
+
+### **(v0.241.125)**
+
+#### Bug Fixes
+
+*   **Group and Public Workspace Hero Color Editing**
+    *   Fixed the group and public workspace manage pages so hero color selections now apply to the saved workspace branding instead of leaving those selectors effectively non-functional.
+    *   The manage-page hero preview now stays in sync with the selected color, and the saved branding metadata flows back through the workspace APIs for consistent rendering.
+    *   (Ref: workspace branding, `manage_group.js`, `manage_public_workspace.js`, `route_backend_groups.py`, `route_backend_public_workspaces.py`)
+
+#### User Interface Enhancements
+
+*   **Workspace Branding Heroes and Shortcuts**
+    *   Added logo upload support for group and public workspace manage pages so owners can brand those spaces with a persistent hero image in addition to the hero color.
+    *   Group and public workspace pages now show the active workspace hero card with the selected color, owner metadata, optional logo, and a direct manage button for the selected workspace.
+    *   Added focused functional and UI regression coverage for the branding metadata, hero rendering, and manage-page flows.
+    *   (Ref: `functions_workspace_branding.py`, `group_workspaces.html`, `public_workspaces.html`, `test_workspace_branding_hero_and_logo.py`, `test_workspace_active_hero_shortcuts.py`, `test_manage_group_page_branding.py`, `test_manage_public_workspace_page_load.py`)
+
 ### **(v0.241.122)**
 
 #### Bug Fixes

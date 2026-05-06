@@ -6,12 +6,41 @@ import io
 from flask import make_response
 
 from config import *
+from functions_appinsights import log_event
+from functions_approvals import (
+    TYPE_BLOCK_USER,
+    TYPE_SUSPEND_USER,
+    TYPE_WARN_USER,
+    approve_request,
+    create_approval_request,
+    get_approval_roles_for_request_type,
+    mark_approval_executed,
+)
 from functions_authentication import *
+from functions_safety_remediation import (
+    SAFETY_REMEDIATION_BLOCK,
+    SAFETY_REMEDIATION_SUSPEND,
+    SAFETY_REMEDIATION_WARNING,
+    execute_safety_violation_action,
+    resolve_safety_target_user,
+)
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
 
 ALLOWED_SAFETY_PAGE_SIZES = {10, 20, 50, 100}
+ALLOWED_SAFETY_STATUSES = {'New', 'In-Review', 'Resolved', 'Dismissed'}
+ALLOWED_SAFETY_ACTIONS = {'None', 'WarnUser', 'SuspendUser', 'Escalate', 'BlockUser'}
+SAFETY_REMEDIATION_ACTIONS = {
+    SAFETY_REMEDIATION_WARNING,
+    SAFETY_REMEDIATION_SUSPEND,
+    SAFETY_REMEDIATION_BLOCK,
+}
+SAFETY_ACTION_REQUEST_TYPE_MAP = {
+    SAFETY_REMEDIATION_WARNING: TYPE_WARN_USER,
+    SAFETY_REMEDIATION_SUSPEND: TYPE_SUSPEND_USER,
+    SAFETY_REMEDIATION_BLOCK: TYPE_BLOCK_USER,
+}
 
 
 def _get_safety_session_user_id():
@@ -44,6 +73,65 @@ def _format_triggered_categories(log_item):
             formatted_categories.append(category_name)
 
     return ', '.join(formatted_categories)
+
+
+def _get_safety_actor_context():
+    user = session.get('user', {}) or {}
+    actor_id = _get_safety_session_user_id()
+    return {
+        'id': actor_id,
+        'email': user.get('preferred_username') or user.get('email') or '',
+        'name': user.get('name') or user.get('preferred_username') or actor_id or 'Unknown User',
+        'roles': user.get('roles', []) or [],
+    }
+
+
+def _validate_safety_remediation_request(action, datetime_to_allow):
+    normalized_datetime_to_allow = datetime_to_allow or None
+    if normalized_datetime_to_allow:
+        try:
+            datetime.fromisoformat(
+                normalized_datetime_to_allow.replace('Z', '+00:00')
+                if 'Z' in normalized_datetime_to_allow
+                else normalized_datetime_to_allow
+            )
+        except ValueError as exc:
+            raise ValueError('Invalid datetime format. Use ISO 8601 format.') from exc
+
+    if action == SAFETY_REMEDIATION_SUSPEND and not normalized_datetime_to_allow:
+        raise ValueError('Suspend user actions require a restore date and time.')
+
+    if action == SAFETY_REMEDIATION_BLOCK:
+        return None
+
+    return normalized_datetime_to_allow
+
+
+def _actor_can_self_approve_safety_request(request_type, actor_roles):
+    required_roles = get_approval_roles_for_request_type(request_type)
+    return any(role in actor_roles for role in required_roles)
+
+
+def _build_safety_approval_metadata(
+    log_item,
+    action,
+    notification_title,
+    notification_message,
+    datetime_to_allow,
+    target_user,
+):
+    return {
+        'user_id': log_item.get('user_id'),
+        'user_name': target_user.get('display_name'),
+        'user_email': target_user.get('email'),
+        'safety_log_id': log_item.get('id'),
+        'violation_action': action,
+        'notification_title': notification_title,
+        'notification_message': notification_message,
+        'datetime_to_allow': datetime_to_allow,
+        'violation_message': log_item.get('message') or '',
+        'triggered_categories': log_item.get('triggered_categories') or [],
+    }
 
 
 def _query_safety_logs(user_id=None, filter_status=None, filter_action=None):
@@ -264,16 +352,35 @@ def register_route_backend_safety(app):
         Updates status, action, and notes on a safety log.
         Also sets timestamps (created_at if missing, and last_updated).
         """
-        data = request.json
+        data = request.get_json() or {}
         status = data.get("status")
         action = data.get("action")
         notes = data.get("notes")
+        notification_title = str(data.get('notification_title') or '').strip()
+        notification_message = str(data.get('notification_message') or '').strip()
+        datetime_to_allow = data.get('datetime_to_allow')
         
         try:
+            if status and status not in ALLOWED_SAFETY_STATUSES:
+                return jsonify({'error': 'Invalid safety status'}), 400
+
+            if action and action not in ALLOWED_SAFETY_ACTIONS:
+                return jsonify({'error': 'Invalid safety action'}), 400
+
             item = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
 
             if not item.get("created_at"):
                 item["created_at"] = datetime.utcnow().isoformat()
+
+            existing_request_status = str(item.get('action_request_status') or '').strip().lower()
+            if existing_request_status == 'pending':
+                return jsonify({
+                    'error': 'This violation already has a pending remediation approval request.'
+                }), 409
+
+            normalized_datetime_to_allow = None
+            if action in SAFETY_REMEDIATION_ACTIONS:
+                normalized_datetime_to_allow = _validate_safety_remediation_request(action, datetime_to_allow)
 
             if status:
                 item["status"] = status
@@ -283,13 +390,105 @@ def register_route_backend_safety(app):
             if notes is not None:
                 item["notes"] = notes
 
+            actor = _get_safety_actor_context()
+            if not actor.get('id'):
+                return jsonify({'error': 'No user ID found in session'}), 403
+
+            if action in SAFETY_REMEDIATION_ACTIONS:
+                target_user = resolve_safety_target_user(item.get('user_id'))
+                request_type = SAFETY_ACTION_REQUEST_TYPE_MAP[action]
+                approval_reason = notes or notification_message or f"Requested {action} for safety violation {log_id}."
+                approval_metadata = _build_safety_approval_metadata(
+                    item,
+                    action,
+                    notification_title,
+                    notification_message,
+                    normalized_datetime_to_allow,
+                    target_user,
+                )
+
+                approval = create_approval_request(
+                    request_type=request_type,
+                    group_id=item.get('user_id'),
+                    requester_id=actor['id'],
+                    requester_email=actor['email'],
+                    requester_name=actor['name'],
+                    reason=approval_reason,
+                    metadata=approval_metadata,
+                )
+
+                item['action_request_id'] = approval.get('id')
+                item['action_request_type'] = request_type
+                item['action_requested_at'] = approval.get('created_at')
+                item['action_execution_error'] = None
+                item['action_notification_title'] = notification_title or None
+                item['action_notification_message'] = notification_message or None
+                item['action_datetime_to_allow'] = normalized_datetime_to_allow
+
+                if _actor_can_self_approve_safety_request(request_type, actor['roles']):
+                    approval = approve_request(
+                        approval_id=approval['id'],
+                        group_id=approval['group_id'],
+                        approver_id=actor['id'],
+                        approver_email=actor['email'],
+                        approver_name=actor['name'],
+                        comment='Automatically approved by an eligible safety reviewer.',
+                        approval=approval,
+                    )
+
+                    execution_result = execute_safety_violation_action(
+                        action=action,
+                        safety_log=item,
+                        notification_title=notification_title,
+                        notification_message=notification_message,
+                        datetime_to_allow=normalized_datetime_to_allow,
+                        actor=actor,
+                    )
+
+                    mark_approval_executed(
+                        approval_id=approval['id'],
+                        group_id=approval['group_id'],
+                        success=execution_result['success'],
+                        result_message=execution_result['message'],
+                    )
+
+                    item['action_request_status'] = 'executed'
+                    item['action_approved_at'] = approval.get('approved_at')
+                    item['action_executed_at'] = datetime.utcnow().isoformat()
+                else:
+                    item['action_request_status'] = 'pending'
+                    item['action_approved_at'] = None
+                    item['action_executed_at'] = None
+
             item["last_updated"] = datetime.utcnow().isoformat()
 
             cosmos_safety_container.upsert_item(item)
 
+            if action in SAFETY_REMEDIATION_ACTIONS:
+                if item.get('action_request_status') == 'pending':
+                    return jsonify({
+                        'message': 'Safety log updated and remediation approval request created.',
+                        'approval_required': True,
+                        'approval_id': item.get('action_request_id'),
+                    }), 200
+
+                return jsonify({
+                    'message': 'Safety log updated and remediation executed successfully.',
+                    'approval_required': False,
+                    'approval_id': item.get('action_request_id'),
+                }), 200
+
             return jsonify({"message": "Safety log updated successfully."}), 200
         except exceptions.CosmosHttpResponseError as e:
             return jsonify({"error": str(e)}), 404
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+        except Exception as e:
+            log_event('[SafetyViolations] Failed to update safety log', {
+                'safety_log_id': log_id,
+                'error': str(e),
+            }, level=logging.ERROR)
+            return jsonify({'error': f'Failed to update safety log: {str(e)}'}), 500
         
     @app.route('/api/safety/logs/my', methods=['GET'])
     @swagger_route(security=get_auth_security())

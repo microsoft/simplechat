@@ -2,12 +2,12 @@
 # test_tabular_generated_output_exports.py
 """
 Functional test for generated tabular output exports.
-Version: 0.241.121
-Implemented in: 0.241.121
+Version: 0.241.125
+Implemented in: 0.241.125
 
-This test ensures large tabular structured-output requests persist reusable
-chat-scoped export metadata, expose a secure download route, and render a
-downloadable preview card in the chat UI.
+This test ensures large tabular structured-output requests now persist both
+generic analysis artifact metadata and tabular compatibility metadata, expose
+a secure download route, and render a downloadable preview card in the chat UI.
 """
 
 from pathlib import Path
@@ -19,25 +19,44 @@ CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
 CHAT_ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
 ENHANCED_CITATIONS_ROUTE_FILE = ROOT / "application" / "single_app" / "route_enhanced_citations.py"
 SIMPLECHAT_OPERATIONS_FILE = ROOT / "application" / "single_app" / "functions_simplechat_operations.py"
+FUNCTIONS_SETTINGS_FILE = ROOT / "application" / "single_app" / "functions_settings.py"
+SEARCH_SERVICE_FILE = ROOT / "application" / "single_app" / "functions_search_service.py"
 CHAT_MESSAGES_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-messages.js"
+EXPECTED_VERSION = "0.241.125"
 
 
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def read_current_version() -> str:
+    for line in read_text(CONFIG_FILE).splitlines():
+        stripped_line = line.strip()
+        if stripped_line.startswith('VERSION = '):
+            return stripped_line.split('"')[1]
+    raise AssertionError("Expected config.py to define VERSION")
+
+
 def test_generated_tabular_output_backend_plumbing() -> None:
     print("Testing generated tabular output backend plumbing...")
 
-    config_content = read_text(CONFIG_FILE)
+    current_version = read_current_version()
     chat_route_content = read_text(CHAT_ROUTE_FILE)
     simplechat_operations_content = read_text(SIMPLECHAT_OPERATIONS_FILE)
+    functions_settings_content = read_text(FUNCTIONS_SETTINGS_FILE)
+    search_service_content = read_text(SEARCH_SERVICE_FILE)
 
-    assert 'VERSION = "0.241.121"' in config_content, (
-        "Expected config.py version 0.241.121 for the chat-scoped generated tabular output export feature."
+    assert current_version == EXPECTED_VERSION, (
+        f"Expected config.py version {EXPECTED_VERSION} for the generated analysis artifact foundation feature."
+    )
+    assert 'def upload_generated_analysis_artifact_for_current_user(' in simplechat_operations_content, (
+        "Expected functions_simplechat_operations.py to expose upload_generated_analysis_artifact_for_current_user()."
     )
     assert 'def upload_generated_chat_artifact_for_current_user(' in simplechat_operations_content, (
         "Expected functions_simplechat_operations.py to expose upload_generated_chat_artifact_for_current_user()."
+    )
+    assert "max_generated_chat_artifact_size_mb" in functions_settings_content, (
+        "Expected functions_settings.py to define the generated analysis artifact size cap setting."
     )
     assert 'def delete_blob_backed_chat_message_files(' in simplechat_operations_content, (
         "Expected functions_simplechat_operations.py to expose chat blob cleanup for conversation deletion paths."
@@ -45,11 +64,14 @@ def test_generated_tabular_output_backend_plumbing() -> None:
     assert 'maybe_create_tabular_generated_output(' in chat_route_content, (
         "Expected route_backend_chats.py to create generated tabular outputs from tabular invocations."
     )
-    assert 'upload_generated_chat_artifact_for_current_user(' in chat_route_content, (
-        "Expected route_backend_chats.py to save generated exports into chat-scoped artifacts."
+    assert 'upload_generated_analysis_artifact_for_current_user(' in chat_route_content, (
+        "Expected route_backend_chats.py to save generated exports through the generic analysis artifact helper."
     )
-    assert chat_route_content.count("'generated_tabular_outputs': generated_tabular_outputs_list") >= 2, (
-        "Expected assistant message metadata to persist generated_tabular_outputs in the main and streaming save paths."
+    assert '_build_generated_analysis_metadata(' in chat_route_content, (
+        "Expected route_backend_chats.py to normalize generic generated analysis artifact metadata."
+    )
+    assert chat_route_content.count("**generated_analysis_metadata") >= 3, (
+        "Expected assistant message metadata to persist generated_analysis_artifacts in the document-action, main, and streaming save paths."
     )
     assert "'metadata': assistant_doc.get('metadata', {})" in chat_route_content, (
         "Expected the non-streaming chat response payload to expose assistant metadata for immediate UI rendering."
@@ -59,6 +81,9 @@ def test_generated_tabular_output_backend_plumbing() -> None:
     )
     assert "metadata.get('is_generated_chat_artifact', False)" in chat_route_content, (
         "Expected generated chat artifacts to stay out of reconstructed prompt history."
+    )
+    assert '"source_subtype": "generated_chat_artifact"' in search_service_content, (
+        "Expected generated chat artifacts to be distinguishable from normal chat uploads in search resolution."
     )
 
     print("Backend plumbing checks passed")
@@ -87,8 +112,14 @@ def test_generated_tabular_output_chat_ui_hooks() -> None:
 
     chat_messages_content = read_text(CHAT_MESSAGES_FILE)
 
+    assert 'function getGeneratedAnalysisArtifacts(fullMessageObject = null)' in chat_messages_content, (
+        "Expected chat-messages.js to normalize generic generated analysis artifact metadata from assistant messages."
+    )
     assert 'function getGeneratedTabularOutputs(fullMessageObject = null)' in chat_messages_content, (
         "Expected chat-messages.js to normalize generated tabular output metadata from assistant messages."
+    )
+    assert 'function hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject = null)' in chat_messages_content, (
+        "Expected chat-messages.js to hydrate generic generated analysis artifact cards into AI messages."
     )
     assert 'function hydrateGeneratedTabularOutputs(messageDiv, fullMessageObject = null)' in chat_messages_content, (
         "Expected chat-messages.js to hydrate a generated tabular output card into AI messages."
@@ -101,6 +132,9 @@ def test_generated_tabular_output_chat_ui_hooks() -> None:
     )
     assert 'Saved to this chat for download in this conversation.' in chat_messages_content, (
         "Expected generated export cards to describe chat-scoped storage to the user."
+    )
+    assert 'generated_analysis_artifacts' in chat_messages_content, (
+        "Expected generated export metadata normalization to read generic generated analysis artifacts first."
     )
     assert 'output.artifact_message_id' in chat_messages_content, (
         "Expected generated export metadata normalization to accept chat artifact ids."

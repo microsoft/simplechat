@@ -344,12 +344,9 @@ function loadWorkspaceInfo(callback) {
         $("#editWorkspaceContainer").show();
         $("#editWorkspaceName").val(ws.name);
         $("#editWorkspaceDescription").val(ws.description);
-        
-        // Set selected color
-        const color = ws.heroColor || '#0078d4';
-        $("#selectedColor").val(color);
-        updateHeroColor(color);
-        $(`.color-option[data-color="${color}"]`).addClass('selected');
+        $("#workspaceLogoFile").val('');
+
+        setSelectedWorkspaceHeroColor(ws.heroColor || '#0078d4');
       }
 
       // Show member actions for non-owners
@@ -380,26 +377,66 @@ function loadWorkspaceInfo(callback) {
 }
 
 // Update workspace name/description
-function updateWorkspaceInfo() {
+async function updateWorkspaceInfo() {
   const data = {
     name: $("#editWorkspaceName").val().trim(),
     description: $("#editWorkspaceDescription").val().trim(),
     heroColor: $("#selectedColor").val()
   };
-  $.ajax({
-    url: `/api/public_workspaces/${workspaceId}`,
-    method: "PATCH",
-    contentType: "application/json",
-    data: JSON.stringify(data),
-    success: function () {
-      alert("Workspace updated.");
-      loadWorkspaceInfo();
-    },
-    error: function (jq) {
-      const err = jq.responseJSON?.error || jq.statusText;
-      alert("Failed to update: " + err);
+
+  try {
+    const updateResponse = await fetch(`/api/public_workspaces/${workspaceId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const updatePayload = await updateResponse.json().catch(() => ({}));
+    if (!updateResponse.ok) {
+      throw new Error(updatePayload.error || 'Failed to update workspace.');
     }
+
+    const logoInput = document.getElementById('workspaceLogoFile');
+    const logoFile = logoInput?.files?.[0] || null;
+    if (logoFile) {
+      try {
+        await uploadWorkspaceLogo(logoFile);
+        alert('Workspace updated and logo uploaded.');
+      } catch (error) {
+        console.error(error);
+        loadWorkspaceInfo();
+        alert(`Workspace details saved, but logo upload failed: ${error.message}`);
+        return;
+      }
+    } else {
+      alert('Workspace updated.');
+    }
+
+    loadWorkspaceInfo();
+  } catch (error) {
+    console.error(error);
+    alert(error.message || 'Failed to update workspace.');
+  }
+}
+
+async function uploadWorkspaceLogo(file) {
+  const formData = new FormData();
+  formData.append('logo_file', file);
+
+  const response = await fetch(`/api/public_workspaces/${workspaceId}/logo`, {
+    method: 'POST',
+    body: formData,
   });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to upload workspace logo.');
+  }
+
+  const logoInput = document.getElementById('workspaceLogoFile');
+  if (logoInput) {
+    logoInput.value = '';
+  }
+
+  return payload;
 }
 
 // Load members list
@@ -668,6 +705,7 @@ function updateProfileHero(workspace, owner) {
   // Apply hero color
   const color = workspace.heroColor || '#0078d4';
   updateHeroColor(color);
+  updateWorkspaceHeroMedia(workspace);
 }
 
 // Update hero color
@@ -693,12 +731,42 @@ function adjustColorBrightness(color, percent) {
 // Initialize color picker
 function initializeColorPicker() {
   $('.color-option').on('click', function() {
-    $('.color-option').removeClass('selected');
-    $(this).addClass('selected');
     const color = $(this).data('color');
-    $('#selectedColor').val(color);
-    updateHeroColor(color);
+    setSelectedWorkspaceHeroColor(color);
   });
+}
+
+function setSelectedWorkspaceHeroColor(color) {
+  const normalizedColor = color || '#0078d4';
+  $('.color-option').removeClass('selected');
+  $(`.color-option[data-color="${normalizedColor}"]`).addClass('selected');
+  $('#selectedColor').val(normalizedColor);
+  updateHeroColor(normalizedColor);
+}
+
+function updateWorkspaceHeroMedia(workspace) {
+  const logoImage = document.getElementById('workspaceLogoImage');
+  const initialBadge = document.getElementById('workspaceInitial');
+  if (!logoImage || !initialBadge) {
+    return;
+  }
+
+  const hasLogo = Boolean(workspace?.hasLogo);
+  if (!hasLogo) {
+    logoImage.src = '';
+    logoImage.classList.add('d-none');
+    initialBadge.classList.remove('d-none');
+    return;
+  }
+
+  logoImage.onerror = function () {
+    logoImage.src = '';
+    logoImage.classList.add('d-none');
+    initialBadge.classList.remove('d-none');
+  };
+  logoImage.src = `/api/public_workspaces/${workspaceId}/logo?v=${encodeURIComponent(workspace.logoVersion || 1)}`;
+  logoImage.classList.remove('d-none');
+  initialBadge.classList.add('d-none');
 }
 
 // Load workspace stats

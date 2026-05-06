@@ -179,6 +179,48 @@ app_settings.app_title }} {% endblock %} {% block head %}
     color: #fff;
   }
 
+  .workspace-hero-card {
+    border-radius: 1rem;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  }
+  .workspace-hero-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, var(--workspace-hero-color, #0078d4) 0%, var(--workspace-hero-color-dark, #005a9e) 100%);
+    z-index: 0;
+  }
+  .workspace-hero-card > * {
+    position: relative;
+    z-index: 1;
+  }
+  .workspace-hero-placeholder,
+  .workspace-hero-logo {
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    border: 4px solid rgba(255, 255, 255, 0.28);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  }
+  .workspace-hero-placeholder {
+    background: rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    font-weight: 700;
+  }
+  .workspace-hero-logo {
+    object-fit: contain;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.15);
+  }
+
   /* === Grid View (Tag Folders) Styles === */
   .tag-folder-card {
     border: 1px solid transparent;
@@ -264,8 +306,30 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 
   <div class="alert alert-info" id="user-role-display" style="display: none">
-    Your role in <strong id="active-group-name-role"></strong>:
-    <span id="user-role" class="fw-bold"></span>
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+      <div>
+        Your role in <strong id="active-group-name-role"></strong>:
+        <span id="user-role" class="fw-bold"></span>
+      </div>
+      <a class="btn btn-sm btn-outline-primary d-none" id="manage-active-group-btn" href="#">
+        <i class="bi bi-gear me-1"></i>Manage Group
+      </a>
+    </div>
+  </div>
+
+  <div class="workspace-hero-card d-none" id="active-group-hero">
+    <div class="row align-items-center g-3">
+      <div class="col-auto">
+        <img class="workspace-hero-logo d-none" id="active-group-hero-logo" alt="Active group logo">
+        <div class="workspace-hero-placeholder" id="active-group-hero-initial">G</div>
+      </div>
+      <div class="col">
+        <div class="small text-uppercase opacity-75">Active Group Workspace</div>
+        <h3 class="mb-1" id="active-group-hero-name">No active group selected</h3>
+        <p class="mb-1 opacity-90"><i class="bi bi-person-circle me-2"></i><strong>Owner:</strong> <span id="active-group-hero-owner">-</span></p>
+        <p class="mb-0 opacity-75" id="active-group-hero-description">Choose an active group to see its workspace profile.</p>
+      </div>
+    </div>
   </div>
 
   <!-- Group Status Alert (shown for locked, upload_disabled, inactive) -->
@@ -2899,6 +2963,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
           userRoleInActiveGroup = null;
           activeGroupName = "";
           document.getElementById("user-role-display").style.display = "none";
+          updateActiveGroupHero(null);
+          updateManageGroupButton(null);
           // Clear tables or show message
           if (groupDocumentsTableBody)
             groupDocumentsTableBody.innerHTML =
@@ -3023,6 +3089,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const canManageDocs = ["Owner", "Admin", "DocumentManager"].includes(
       userRoleInActiveGroup
     );
+    const activeGroup = userGroups.find(group => group.id === activeGroupId) || null;
     const roleDisplay = document.getElementById("user-role-display");
     const roleSpan = document.getElementById("user-role");
     const activeGroupNameRoleEl = document.getElementById(
@@ -3039,7 +3106,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     // Control visibility of upload section and its divider
     // Check BOTH role AND group status - must have permission AND group must be active
-    const activeGroup = userGroups.find(g => g.id === activeGroupId);
     const groupStatus = activeGroup ? (activeGroup.status || 'active') : 'active';
     const groupAllowsUpload = (groupStatus === 'active');
     const showUpload = canManageDocs && groupAllowsUpload;
@@ -3048,7 +3114,90 @@ app_settings.app_title }} {% endblock %} {% block head %}
       uploadSection.style.display = showUpload ? "block" : "none";
     if (uploadHr) uploadHr.style.display = showUpload ? "block" : "none";
 
+    updateActiveGroupHero(activeGroup);
+    updateManageGroupButton(activeGroup);
+
     notifyGroupWorkspaceContext();
+  }
+
+  function updateActiveGroupHero(activeGroup) {
+    const heroCard = document.getElementById("active-group-hero");
+    const heroName = document.getElementById("active-group-hero-name");
+    const heroOwner = document.getElementById("active-group-hero-owner");
+    const heroDescription = document.getElementById("active-group-hero-description");
+    const heroInitial = document.getElementById("active-group-hero-initial");
+    const heroLogo = document.getElementById("active-group-hero-logo");
+
+    if (!heroCard || !heroName || !heroOwner || !heroDescription || !heroInitial || !heroLogo) {
+      return;
+    }
+
+    if (!activeGroup) {
+      heroCard.classList.add("d-none");
+      heroLogo.src = "";
+      heroLogo.classList.add("d-none");
+      heroInitial.classList.remove("d-none");
+      return;
+    }
+
+    const heroColor = activeGroup.heroColor || "#0078d4";
+    heroCard.style.setProperty("--workspace-hero-color", heroColor);
+    heroCard.style.setProperty(
+      "--workspace-hero-color-dark",
+      adjustWorkspaceHeroColor(heroColor, -30)
+    );
+    heroName.textContent = activeGroup.name || "Unnamed Group";
+    heroOwner.textContent = activeGroup.owner?.displayName || "Unknown";
+    heroDescription.textContent = activeGroup.description || "No description provided";
+    heroInitial.textContent = (activeGroup.name || "G").charAt(0).toUpperCase();
+    heroCard.classList.remove("d-none");
+
+    if (activeGroup.hasLogo) {
+      heroLogo.onerror = function () {
+        heroLogo.src = "";
+        heroLogo.classList.add("d-none");
+        heroInitial.classList.remove("d-none");
+      };
+      heroLogo.src = `/api/groups/${activeGroup.id}/logo?v=${encodeURIComponent(activeGroup.logoVersion || 1)}`;
+      heroLogo.classList.remove("d-none");
+      heroInitial.classList.add("d-none");
+      return;
+    }
+
+    heroLogo.src = "";
+    heroLogo.classList.add("d-none");
+    heroInitial.classList.remove("d-none");
+  }
+
+  function updateManageGroupButton(activeGroup) {
+    const manageButton = document.getElementById("manage-active-group-btn");
+    if (!manageButton) {
+      return;
+    }
+
+    if (!activeGroup?.id) {
+      manageButton.classList.add("d-none");
+      manageButton.removeAttribute("href");
+      return;
+    }
+
+    manageButton.href = `/groups/${encodeURIComponent(activeGroup.id)}`;
+    manageButton.classList.remove("d-none");
+  }
+
+  function adjustWorkspaceHeroColor(color, percent) {
+    const numericColor = parseInt(String(color).replace("#", ""), 16);
+    const amount = Math.round(2.55 * percent);
+    const red = (numericColor >> 16) + amount;
+    const green = ((numericColor >> 8) & 0x00FF) + amount;
+    const blue = (numericColor & 0x0000FF) + amount;
+
+    return `#${(
+      0x1000000 +
+      (red < 255 ? (red < 1 ? 0 : red) : 255) * 0x10000 +
+      (green < 255 ? (green < 1 ? 0 : green) : 255) * 0x100 +
+      (blue < 255 ? (blue < 1 ? 0 : blue) : 255)
+    ).toString(16).slice(1)}`;
   }
 
 
@@ -3216,6 +3365,166 @@ app_settings.app_title }} {% endblock %} {% block head %}
       });
   }
 
+  function isPendingGeneratedArtifactDocument(doc) {
+    return (
+      String((doc && doc.generated_artifact_promotion_status) || "")
+        .trim()
+        .toLowerCase() === "pending_approval"
+    );
+  }
+
+  function showGroupWorkspaceMessage(message, variant = "info") {
+    if (typeof window.showToast === "function") {
+      window.showToast(message, variant);
+      return;
+    }
+
+    showGroupDocumentDeleteFeedback(message, variant);
+  }
+
+  function buildGroupGeneratedArtifactApproveButton(documentId, fileName) {
+    const approveButton = document.createElement("button");
+    approveButton.type = "button";
+    approveButton.className =
+      "btn btn-sm btn-outline-success me-1 action-btn-wide text-start";
+    approveButton.setAttribute(
+      "aria-label",
+      `Approve generated artifact ${String(fileName || "document").trim() || "document"}`
+    );
+
+    const icon = document.createElement("i");
+    icon.className = "bi bi-check2-circle me-1";
+    icon.setAttribute("aria-hidden", "true");
+    approveButton.appendChild(icon);
+    approveButton.appendChild(document.createTextNode("Approve"));
+
+    approveButton.addEventListener("click", () => {
+      window.approveGroupGeneratedArtifactDocument(documentId, approveButton);
+    });
+
+    return approveButton;
+  }
+
+  function buildGroupGeneratedArtifactDenyButton(documentId, fileName) {
+    const denyButton = document.createElement("button");
+    denyButton.type = "button";
+    denyButton.className =
+      "btn btn-sm btn-outline-danger me-1 action-btn-wide text-start";
+    denyButton.setAttribute(
+      "aria-label",
+      `Deny generated artifact ${String(fileName || "document").trim() || "document"}`
+    );
+
+    const icon = document.createElement("i");
+    icon.className = "bi bi-x-circle me-1";
+    icon.setAttribute("aria-hidden", "true");
+    denyButton.appendChild(icon);
+    denyButton.appendChild(document.createTextNode("Deny"));
+
+    denyButton.addEventListener("click", () => {
+      window.denyGroupGeneratedArtifactDocument(documentId, denyButton);
+    });
+
+    return denyButton;
+  }
+
+  function buildGroupGeneratedArtifactCancelButton(documentId, fileName) {
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className =
+      "btn btn-sm btn-outline-secondary me-1 action-btn-wide text-start";
+    cancelButton.setAttribute(
+      "aria-label",
+      `Cancel generated artifact ${String(fileName || "document").trim() || "document"}`
+    );
+
+    const icon = document.createElement("i");
+    icon.className = "bi bi-x-lg me-1";
+    icon.setAttribute("aria-hidden", "true");
+    cancelButton.appendChild(icon);
+    cancelButton.appendChild(document.createTextNode("Cancel"));
+
+    cancelButton.addEventListener("click", () => {
+      window.cancelGroupGeneratedArtifactDocument(documentId, cancelButton);
+    });
+
+    return cancelButton;
+  }
+
+  function getGroupGeneratedArtifactRequesterId(doc) {
+    return String(
+      (doc && (doc.generated_artifact_requested_by_user_id || doc.user_id)) || ""
+    )
+      .trim();
+  }
+
+  function getCurrentWorkspaceUserId() {
+    return String(
+      window.current_user_id || window.currentUser?.id || window.currentUser?.user_id || ""
+    ).trim();
+  }
+
+  function getGroupGeneratedArtifactActionButtons(doc, userRole) {
+    if (!isPendingGeneratedArtifactDocument(doc)) {
+      return [];
+    }
+
+    const actionButtons = [];
+    const documentId = String((doc && doc.id) || "").trim();
+    if (!documentId) {
+      return actionButtons;
+    }
+
+    const groupStatus = window.currentGroupStatus || "active";
+    const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRole);
+    const requesterId = getGroupGeneratedArtifactRequesterId(doc);
+    const currentUserId = getCurrentWorkspaceUserId();
+    const isRequester = !!currentUserId && requesterId === currentUserId;
+    const fileName = doc.file_name || "document";
+
+    if (canManage && groupStatus === "active") {
+      actionButtons.push(
+        buildGroupGeneratedArtifactApproveButton(documentId, fileName)
+      );
+    }
+
+    if (canManage && !isRequester) {
+      actionButtons.push(buildGroupGeneratedArtifactDenyButton(documentId, fileName));
+    }
+
+    if (isRequester) {
+      actionButtons.push(
+        buildGroupGeneratedArtifactCancelButton(documentId, fileName)
+      );
+    }
+
+    return actionButtons;
+  }
+
+  function prependGroupGeneratedArtifactActionButtons(actionsCell, doc, userRole) {
+    if (!(actionsCell instanceof HTMLElement)) {
+      return;
+    }
+
+    const actionButtons = getGroupGeneratedArtifactActionButtons(doc, userRole);
+    if (!actionButtons.length) {
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    actionButtons.forEach((button) => fragment.appendChild(button));
+    actionsCell.prepend(fragment);
+  }
+
+  function wireGroupFolderGeneratedArtifactApproveButtons(docs) {
+    const rows = document.querySelectorAll("#group-folder-docs-table tbody tr");
+    docs.forEach((doc, index) => {
+      const row = rows[index];
+      const actionsCell = row && row.children ? row.children[3] : null;
+      prependGroupGeneratedArtifactActionButtons(actionsCell, doc, userRoleInActiveGroup);
+    });
+  }
+
   // --- Render Group Document Row ---
   function renderGroupDocumentRow(doc, userRole) {
     // Added userRole param
@@ -3230,6 +3539,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       docStatus.toLowerCase().includes("error");
     const hasError = docStatus.toLowerCase().includes("error");
     const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRole); // Check role for actions
+    const isPendingGeneratedArtifact = isPendingGeneratedArtifactDocument(doc);
     const isSelected = groupSelectedDocuments.has(docId);
 
     const docRow = document.createElement("tr");
@@ -3382,6 +3692,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
             ${actionsDropdown}
         </td>
     `;
+
+    const actionsCell = docRow.querySelector("td:last-child");
+    prependGroupGeneratedArtifactActionButtons(actionsCell, doc, userRole);
+
     docRow.__docData = doc; // Attach the full doc object for reference
     groupDocumentsTableBody.appendChild(docRow);
 
@@ -4902,9 +5216,152 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       container.innerHTML = html;
       wireGroupBackButton(container);
-  refreshGroupSelectionState();
+        refreshGroupSelectionState();
+        wireGroupFolderGeneratedArtifactApproveButtons(docs);
 
       // Wire search
+
+  async function approveGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
+    if (!["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup)) {
+      showGroupWorkspaceMessage(
+        "You do not have permission to approve generated artifacts in this group.",
+        "danger"
+      );
+      return;
+    }
+
+    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+    if (triggerButton) {
+      triggerButton.disabled = true;
+      triggerButton.innerHTML =
+        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+    }
+
+    try {
+      const response = await fetch(
+        `/api/group_documents/${encodeURIComponent(documentId)}/approve-generated-artifact`,
+        { method: "POST" }
+      );
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseData.error || `Server responded with status ${response.status}`
+        );
+      }
+
+      showGroupWorkspaceMessage(
+        responseData.message || "Generated artifact approved.",
+        "success"
+      );
+      if (groupCurrentFolder) {
+        renderGroupFolderContents(groupCurrentFolder);
+        return;
+      }
+      fetchGroupDocuments();
+    } catch (error) {
+      showGroupWorkspaceMessage(
+        error.message || "Failed to approve the generated artifact.",
+        "danger"
+      );
+      if (triggerButton && document.body.contains(triggerButton)) {
+        triggerButton.disabled = false;
+        triggerButton.innerHTML = originalButtonHtml;
+      }
+    }
+  }
+
+  async function denyGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
+    if (!["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup)) {
+      showGroupWorkspaceMessage(
+        "You do not have permission to deny generated artifacts in this group.",
+        "danger"
+      );
+      return;
+    }
+
+    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+    if (triggerButton) {
+      triggerButton.disabled = true;
+      triggerButton.innerHTML =
+        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+    }
+
+    try {
+      const response = await fetch(
+        `/api/group_documents/${encodeURIComponent(documentId)}/deny-generated-artifact`,
+        { method: "POST" }
+      );
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseData.error || `Server responded with status ${response.status}`
+        );
+      }
+
+      showGroupWorkspaceMessage(
+        responseData.message || "Generated artifact denied.",
+        "success"
+      );
+      if (groupCurrentFolder) {
+        renderGroupFolderContents(groupCurrentFolder);
+        return;
+      }
+      fetchGroupDocuments();
+    } catch (error) {
+      showGroupWorkspaceMessage(
+        error.message || "Failed to deny the generated artifact.",
+        "danger"
+      );
+      if (triggerButton && document.body.contains(triggerButton)) {
+        triggerButton.disabled = false;
+        triggerButton.innerHTML = originalButtonHtml;
+      }
+    }
+  }
+
+  async function cancelGroupGeneratedArtifactDocument(documentId, triggerButton = null) {
+    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+    if (triggerButton) {
+      triggerButton.disabled = true;
+      triggerButton.innerHTML =
+        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+    }
+
+    try {
+      const response = await fetch(
+        `/api/group_documents/${encodeURIComponent(documentId)}/cancel-generated-artifact`,
+        { method: "POST" }
+      );
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseData.error || `Server responded with status ${response.status}`
+        );
+      }
+
+      showGroupWorkspaceMessage(
+        responseData.message || "Generated artifact request canceled.",
+        "success"
+      );
+      if (groupCurrentFolder) {
+        renderGroupFolderContents(groupCurrentFolder);
+        return;
+      }
+      fetchGroupDocuments();
+    } catch (error) {
+      showGroupWorkspaceMessage(
+        error.message || "Failed to cancel the generated artifact request.",
+        "danger"
+      );
+      if (triggerButton && document.body.contains(triggerButton)) {
+        triggerButton.disabled = false;
+        triggerButton.innerHTML = originalButtonHtml;
+      }
+    }
+  }
+  window.approveGroupGeneratedArtifactDocument = approveGroupGeneratedArtifactDocument;
+  window.denyGroupGeneratedArtifactDocument = denyGroupGeneratedArtifactDocument;
+  window.cancelGroupGeneratedArtifactDocument = cancelGroupGeneratedArtifactDocument;
       const si = document.getElementById('group-folder-search-input');
       const sb = document.getElementById('group-folder-search-btn');
       if (si) {

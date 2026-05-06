@@ -7,6 +7,14 @@ from functions_public_workspaces import *
 from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
+from functions_workspace_branding import (
+    DEFAULT_WORKSPACE_HERO_COLOR,
+    decode_workspace_logo_base64,
+    get_workspace_logo_metadata,
+    is_allowed_workspace_logo_file,
+    normalize_workspace_hero_color,
+    prepare_workspace_logo_image_for_storage,
+)
 
 
 def is_user_in_admins(user_id, admins_list):
@@ -156,20 +164,23 @@ def register_route_backend_public_workspaces(app):
 
         mapped = []
         for ws in slice_ws:
-            # determine userRole
-            if ws["owner"]["userId"] == user_id:
-                role = "Owner"
-            elif user_id in ws.get("admins", []):
-                role = "Admin"
-            else:
-                # documentManagers list of dicts
-                dm_ids = [dm["userId"] for dm in ws.get("documentManagers", [])]
-                role = "DocumentManager" if user_id in dm_ids else None
+            role = get_user_role_in_public_workspace(ws, user_id)
+            owner = ws.get("owner", {}) or {}
+            logo_metadata = get_workspace_logo_metadata(ws)
 
             mapped.append({
                 "id": ws["id"],
                 "name": ws.get("name", ""),
                 "description": ws.get("description", ""),
+                "owner": {
+                    "displayName": owner.get("displayName", ""),
+                    "email": owner.get("email", ""),
+                },
+                "heroColor": normalize_workspace_hero_color(
+                    ws.get("heroColor"),
+                    DEFAULT_WORKSPACE_HERO_COLOR,
+                ),
+                **logo_metadata,
                 "userRole": role,
                 "status": ws.get("status", "active"),
                 "isActive": (ws["id"] == active_id)
@@ -248,7 +259,10 @@ def register_route_backend_public_workspaces(app):
         data = request.get_json() or {}
         ws["name"] = data.get("name", ws.get("name"))
         ws["description"] = data.get("description", ws.get("description"))
-        ws["heroColor"] = data.get("heroColor", ws.get("heroColor", "#0078d4"))
+        ws["heroColor"] = normalize_workspace_hero_color(
+            data.get("heroColor"),
+            ws.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
+        )
         ws["modifiedDate"] = datetime.utcnow().isoformat()
 
         try:
@@ -256,6 +270,77 @@ def register_route_backend_public_workspaces(app):
             return jsonify({"message": "Updated"}), 200
         except exceptions.CosmosHttpResponseError as ex:
             return jsonify({"error": str(ex)}), 400
+
+    @app.route("/api/public_workspaces/<ws_id>/logo", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def api_get_public_workspace_logo(ws_id):
+        ws = find_public_workspace_by_id(ws_id)
+        if not ws:
+            return jsonify({"error": "Workspace not found"}), 404
+
+        logo_base64 = str(ws.get("logoBase64") or "").strip()
+        if not logo_base64:
+            return jsonify({"error": "Workspace logo not found"}), 404
+
+        try:
+            logo_bytes = decode_workspace_logo_base64(logo_base64)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Stored workspace logo is invalid"}), 500
+
+        return send_file(
+            BytesIO(logo_bytes),
+            mimetype="image/png",
+            max_age=3600,
+            download_name="workspace-logo.png",
+        )
+
+    @app.route("/api/public_workspaces/<ws_id>/logo", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def api_upload_public_workspace_logo(ws_id):
+        info = get_current_user_info()
+        user_id = info["userId"]
+
+        ws = find_public_workspace_by_id(ws_id)
+        if not ws:
+            return jsonify({"error": "Workspace not found"}), 404
+        if ws["owner"]["userId"] != user_id:
+            return jsonify({"error": "Only owner can update the workspace logo"}), 403
+
+        logo_file = request.files.get("logo_file")
+        if not logo_file or not logo_file.filename:
+            return jsonify({"error": "No logo file provided"}), 400
+
+        if not is_allowed_workspace_logo_file(logo_file.filename):
+            return jsonify({"error": "Unsupported image type. Allowed: png, jpg, jpeg"}), 400
+
+        try:
+            processed_logo = prepare_workspace_logo_image_for_storage(
+                logo_file.read(),
+                logo_file.filename,
+            )
+        except (ValueError, OSError) as ex:
+            return jsonify({"error": str(ex)}), 400
+
+        current_logo_version = get_workspace_logo_metadata(ws)["logoVersion"]
+        ws["logoBase64"] = processed_logo["base64_str"]
+        ws["logoVersion"] = current_logo_version + 1
+        ws["modifiedDate"] = datetime.utcnow().isoformat()
+
+        try:
+            cosmos_public_workspaces_container.upsert_item(ws)
+        except exceptions.CosmosHttpResponseError as ex:
+            return jsonify({"error": str(ex)}), 400
+
+        return jsonify({
+            "message": "Workspace logo updated",
+            "logoVersion": ws["logoVersion"],
+        }), 200
 
     @app.route("/api/public_workspaces/<ws_id>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())

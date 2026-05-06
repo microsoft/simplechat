@@ -1,12 +1,14 @@
 # test_chat_generated_tabular_output_card.py
 """
 UI test for chat generated tabular output cards.
-Version: 0.241.121
-Implemented in: 0.241.121
+Version: 0.241.129
+Implemented in: 0.241.129
 
-This test ensures assistant replies with generated tabular output metadata
-render a reusable export card, preserve untrusted values as text, and trigger
-the chat artifact download endpoint when the user clicks the download button.
+This test ensures assistant replies with generic generated analysis artifact
+metadata render a reusable export card, preserve untrusted values as text, and
+trigger the chat artifact download endpoint plus the workspace-promotion action
+when the user clicks the card buttons without introducing page-level JavaScript
+errors.
 """
 
 import json
@@ -42,6 +44,8 @@ def test_chat_generated_tabular_output_card(playwright):
     _require_ui_env()
 
     download_requests = []
+    promote_requests = []
+    page_errors = []
 
     browser = playwright.chromium.launch()
     context = browser.new_context(
@@ -50,6 +54,7 @@ def test_chat_generated_tabular_output_card(playwright):
         accept_downloads=True,
     )
     page = context.new_page()
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
 
     page.route(
         "**/api/user/settings",
@@ -72,6 +77,22 @@ def test_chat_generated_tabular_output_card(playwright):
         "**/api/chat_artifacts/download?conversation_id=generated-tabular-output-test&message_id=generated-export-123",
         handle_generated_download,
     )
+
+    def handle_promote(route):
+        promote_requests.append(json.loads(route.request.post_data or "{}"))
+        _fulfill_json(
+            route,
+            {
+                "approval_required": False,
+                "workspace_scope": "personal",
+                "document": {
+                    "id": "workspace-doc-123",
+                    "file_name": "comments.json",
+                },
+            },
+        )
+
+    page.route("**/api/chat_artifacts/promote", handle_promote)
 
     try:
         page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
@@ -103,8 +124,9 @@ def test_chat_generated_tabular_output_card(playwright):
                         role: 'assistant',
                         content: 'I prepared a reusable export for every comment row.',
                         metadata: {
-                            generated_tabular_outputs: [
+                            generated_analysis_artifacts: [
                                 {
+                                    capability: 'tabular',
                                     artifact_message_id: 'generated-export-123',
                                     conversation_id: 'generated-tabular-output-test',
                                     storage_scope: 'chat',
@@ -157,6 +179,15 @@ def test_chat_generated_tabular_output_card(playwright):
         assert download_requests == [
             f'{BASE_URL}/api/chat_artifacts/download?conversation_id=generated-tabular-output-test&message_id=generated-export-123'
         ]
+
+        page.get_by_role('button', name='Add to Workspace').click()
+        expect(page.get_by_role('button', name='Added to Workspace')).to_be_visible()
+
+        assert len(promote_requests) == 1
+        assert promote_requests[0]["conversation_id"] == "generated-tabular-output-test"
+        assert promote_requests[0]["message_id"] == "generated-export-123"
+        assert promote_requests[0]["workspace_scope"] == "personal"
+        assert page_errors == []
     finally:
         context.close()
         browser.close()

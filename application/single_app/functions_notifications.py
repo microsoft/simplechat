@@ -103,6 +103,18 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-x-circle',
         'color': 'danger'
     },
+    'safety_violation_warning': {
+        'icon': 'bi-shield-exclamation',
+        'color': 'warning'
+    },
+    'safety_violation_suspension': {
+        'icon': 'bi-slash-circle',
+        'color': 'warning'
+    },
+    'safety_violation_block': {
+        'icon': 'bi-shield-lock',
+        'color': 'danger'
+    },
     'agent_template_pending_admin': {
         'icon': 'bi-layers',
         'color': 'warning'

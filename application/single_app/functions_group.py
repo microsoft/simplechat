@@ -5,6 +5,8 @@ import functions_authentication
 import functions_settings
 from typing import Iterable
 
+from functions_workspace_branding import DEFAULT_WORKSPACE_HERO_COLOR
+
 
 def create_group(name, description):
     """Creates a new group. The creator is the Owner by default."""
@@ -19,6 +21,9 @@ def create_group(name, description):
         "id": new_group_id,
         "name": name,
         "description": description,
+        "heroColor": DEFAULT_WORKSPACE_HERO_COLOR,
+        "logoBase64": "",
+        "logoVersion": 1,
         "owner":
             {
                 "id": user_info["userId"],

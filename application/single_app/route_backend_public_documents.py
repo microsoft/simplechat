@@ -1,15 +1,44 @@
 # route_backend_public_documents.py
 
+from datetime import datetime, timezone
+
 from config import *
 
 from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_simplechat_operations import download_blob_content, queue_generated_document_processing
 from utils_cache import invalidate_public_workspace_search_cache
 from flask import current_app
 from functions_debug import *
 from swagger_wrapper import swagger_route, get_auth_security
+
+
+PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES = [
+    'approval_request_pending',
+    'approval_request_pending_submitter',
+]
+
+
+def _cleanup_public_generated_artifact_notifications(document_id, public_workspace_id):
+    delete_notifications_by_metadata(
+        metadata_filters={
+            'document_id': document_id,
+            'public_workspace_id': public_workspace_id,
+            'request_type': 'generated_artifact_promotion',
+        },
+        notification_types=PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES,
+    )
+
+
+def _get_generated_artifact_actor_name(user_info, fallback_user_id):
+    return (
+        str((user_info or {}).get('displayName') or '').strip()
+        or str((user_info or {}).get('email') or '').strip()
+        or fallback_user_id
+    )
 
 def register_route_backend_public_documents(app):
     """
@@ -456,6 +485,239 @@ def register_route_backend_public_documents(app):
             return jsonify({'message':'Deleted', **delete_result}), 200
         except Exception as e:
             return jsonify({'error':str(e)}), 500
+
+    @app.route('/api/public_documents/<doc_id>/approve-generated-artifact', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_approve_public_generated_artifact(doc_id):
+        """Approve a generated chat artifact promotion into the active public workspace."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            active_ws, ws_doc, _ = require_active_public_workspace(user_id)
+
+            allowed, reason = check_public_workspace_status_allows_operation(ws_doc, 'upload')
+            if not allowed:
+                return jsonify({'error': reason}), 403
+
+            document_item = get_document_metadata(
+                document_id=doc_id,
+                user_id=user_id,
+                public_workspace_id=active_ws,
+            )
+            if not document_item:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+
+            promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
+            if promotion_status != 'pending_approval':
+                return jsonify({'error': 'Document is not awaiting generated artifact approval'}), 400
+
+            owner_user_id = str(document_item.get('user_id') or '').strip()
+            source_blob_container = str(document_item.get('generated_artifact_source_blob_container') or '').strip()
+            source_blob_path = str(document_item.get('generated_artifact_source_blob_path') or '').strip()
+            if not owner_user_id or not source_blob_container or not source_blob_path:
+                return jsonify({'error': 'Generated artifact source is incomplete'}), 400
+
+            artifact_bytes = download_blob_content(source_blob_container, source_blob_path)
+            approver_info = get_current_user_info() or {}
+            approver_name = (
+                str(approver_info.get('displayName') or '').strip()
+                or str(approver_info.get('email') or '').strip()
+                or user_id
+            )
+
+            try:
+                update_document(
+                    document_id=doc_id,
+                    user_id=owner_user_id,
+                    public_workspace_id=active_ws,
+                    status='Queued for processing',
+                    percentage_complete=0,
+                    generated_artifact_promotion_status='approved',
+                    generated_artifact_approved_at=datetime.now(timezone.utc).isoformat(),
+                    generated_artifact_approved_by_user_id=user_id,
+                    generated_artifact_approved_by_display_name=approver_name,
+                )
+                queue_generated_document_processing(
+                    document_id=doc_id,
+                    owner_user_id=owner_user_id,
+                    normalized_file_name=str(document_item.get('file_name') or 'generated-artifact.json').strip() or 'generated-artifact.json',
+                    file_content_bytes=artifact_bytes,
+                    public_workspace_id=active_ws,
+                )
+            except Exception as exc:
+                update_document(
+                    document_id=doc_id,
+                    user_id=owner_user_id,
+                    public_workspace_id=active_ws,
+                    status=f'Approval failed: {str(exc)}',
+                    generated_artifact_promotion_status='approval_failed',
+                )
+                raise
+
+            _cleanup_public_generated_artifact_notifications(doc_id, active_ws)
+            invalidate_public_workspace_search_cache(active_ws)
+
+            workspace_name = str(ws_doc.get('name') or 'this public workspace').strip() or 'this public workspace'
+            create_notification(
+                user_id=owner_user_id,
+                notification_type='approval_request_approved',
+                title='Generated artifact approved',
+                message=f"{str(document_item.get('file_name') or 'Your generated artifact').strip()} was approved for {workspace_name} and is now processing.",
+                link_url='/public_workspaces',
+                link_context={
+                    'workspace_type': 'public',
+                    'public_workspace_id': active_ws,
+                    'document_id': doc_id,
+                },
+                metadata={
+                    'document_id': doc_id,
+                    'public_workspace_id': active_ws,
+                    'request_type': 'generated_artifact_promotion',
+                },
+            )
+
+            return jsonify({
+                'message': 'Generated artifact approved and queued for processing',
+                'document_id': doc_id,
+            }), 200
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as e:
+            return jsonify({'error': f'Error approving generated artifact: {str(e)}'}), 500
+
+    @app.route('/api/public_documents/<doc_id>/deny-generated-artifact', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_deny_public_generated_artifact(doc_id):
+        """Deny a pending generated chat artifact promotion in the active public workspace."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            active_ws, ws_doc, role = require_active_public_workspace(user_id)
+            if role not in ['Owner', 'Admin', 'DocumentManager']:
+                return jsonify({'error': 'Access denied'}), 403
+
+            document_item = get_document_metadata(
+                document_id=doc_id,
+                user_id=user_id,
+                public_workspace_id=active_ws,
+            )
+            if not document_item:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+
+            promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
+            if promotion_status != 'pending_approval':
+                return jsonify({'error': 'Document is not awaiting generated artifact approval'}), 400
+
+            requester_user_id = (
+                str(document_item.get('generated_artifact_requested_by_user_id') or '').strip()
+                or str(document_item.get('user_id') or '').strip()
+            )
+            document_name = str(document_item.get('file_name') or 'This generated artifact').strip() or 'This generated artifact'
+            workspace_name = str(ws_doc.get('name') or 'this public workspace').strip() or 'this public workspace'
+            denier_name = _get_generated_artifact_actor_name(get_current_user_info(), user_id)
+
+            delete_document_revision(
+                user_id=user_id,
+                document_id=doc_id,
+                delete_mode='all_versions',
+                public_workspace_id=active_ws,
+            )
+            _cleanup_public_generated_artifact_notifications(doc_id, active_ws)
+            invalidate_public_workspace_search_cache(active_ws)
+
+            if requester_user_id:
+                create_notification(
+                    user_id=requester_user_id,
+                    notification_type='approval_request_denied',
+                    title='Generated artifact denied',
+                    message=f"{document_name} was denied for {workspace_name} by {denier_name}.",
+                    link_url='/public_workspaces',
+                    link_context={
+                        'workspace_type': 'public',
+                        'public_workspace_id': active_ws,
+                    },
+                    metadata={
+                        'document_id': doc_id,
+                        'public_workspace_id': active_ws,
+                        'request_type': 'generated_artifact_promotion',
+                    },
+                )
+
+            return jsonify({'message': 'Generated artifact request denied and removed from the public workspace.'}), 200
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as e:
+            return jsonify({'error': f'Error denying generated artifact: {str(e)}'}), 500
+
+    @app.route('/api/public_documents/<doc_id>/cancel-generated-artifact', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_cancel_public_generated_artifact(doc_id):
+        """Cancel a pending generated chat artifact promotion requested by the current user."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            active_ws, _, _ = require_active_public_workspace(user_id)
+
+            document_item = get_document_metadata(
+                document_id=doc_id,
+                user_id=user_id,
+                public_workspace_id=active_ws,
+            )
+            if not document_item:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+
+            promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
+            if promotion_status != 'pending_approval':
+                return jsonify({'error': 'Document is not awaiting generated artifact approval'}), 400
+
+            requester_user_id = (
+                str(document_item.get('generated_artifact_requested_by_user_id') or '').strip()
+                or str(document_item.get('user_id') or '').strip()
+            )
+            if requester_user_id != user_id:
+                return jsonify({'error': 'Only the requester can cancel this generated artifact request'}), 403
+
+            delete_document_revision(
+                user_id=user_id,
+                document_id=doc_id,
+                delete_mode='all_versions',
+                public_workspace_id=active_ws,
+            )
+            _cleanup_public_generated_artifact_notifications(doc_id, active_ws)
+            invalidate_public_workspace_search_cache(active_ws)
+
+            return jsonify({'message': 'Generated artifact request canceled.'}), 200
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as e:
+            return jsonify({'error': f'Error canceling generated artifact: {str(e)}'}), 500
 
     @app.route('/api/public_documents/<doc_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())

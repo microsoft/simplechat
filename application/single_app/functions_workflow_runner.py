@@ -4,7 +4,9 @@ Workflow execution helpers for personal workflows.
 """
 
 import asyncio
+import json
 import logging
+import os
 import re
 import uuid
 from contextlib import contextmanager
@@ -61,7 +63,9 @@ from functions_message_artifacts import (
 )
 from functions_notifications import create_workflow_priority_notification
 from functions_personal_workflows import save_personal_workflow_run
-from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
+from functions_search_service import resolve_document_context
+from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
+from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, normalize_model_endpoints
 from functions_thoughts import ThoughtTracker
 from semantic_kernel_loader import load_user_semantic_kernel
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
@@ -69,6 +73,11 @@ from semantic_kernel_plugins.plugin_invocation_thoughts import register_plugin_i
 
 
 _workflow_runner_app = None
+EXHAUSTIVE_REVIEW_ARTIFACT_REPLY_CHAR_THRESHOLD = 12000
+EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_ITEM_COUNT = 3
+EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_COUNT = 5
+EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_LENGTH = 220
+TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
 
 
 def _utc_now():
@@ -77,6 +86,290 @@ def _utc_now():
 
 def _utc_now_iso():
     return _utc_now().isoformat()
+
+
+def _strip_markdown_code_fence(text):
+    normalized_text = str(text or '').strip()
+    if not normalized_text.startswith('```'):
+        return normalized_text
+
+    code_fence_match = re.fullmatch(r'```(?:[a-zA-Z0-9_-]+)?\s*(.*?)\s*```', normalized_text, re.DOTALL)
+    if not code_fence_match:
+        return normalized_text
+
+    return str(code_fence_match.group(1) or '').strip()
+
+
+def _parse_json_artifact_payload(text):
+    normalized_text = _strip_markdown_code_fence(text)
+    if not normalized_text:
+        return None
+
+    try:
+        return json.loads(normalized_text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _prompt_explicitly_requests_artifact(review_prompt):
+    prompt_text = str(review_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    artifact_markers = (
+        'download',
+        'export',
+        'artifact',
+        'save as',
+        'save it as',
+        'save to file',
+        'json file',
+        'csv file',
+        'markdown file',
+    )
+    return any(marker in prompt_text for marker in artifact_markers)
+
+
+def _normalize_generated_artifact_file_stem(value, fallback_value='analysis-artifact'):
+    normalized_value = re.sub(r'[^a-z0-9._-]+', '-', str(value or '').strip().lower()).strip('-._')
+    return normalized_value or fallback_value
+
+
+def _build_exhaustive_review_artifact_file_name(review_result, output_format):
+    document_summaries = review_result.get('documents') if isinstance(review_result.get('documents'), list) else []
+    primary_label = ''
+    if document_summaries:
+        first_document = document_summaries[0] if isinstance(document_summaries[0], dict) else {}
+        primary_label = (
+            first_document.get('title')
+            or first_document.get('file_name')
+            or first_document.get('document_name')
+            or ''
+        )
+
+    base_name = _normalize_generated_artifact_file_stem(primary_label, fallback_value='exhaustive-review')
+    if len(document_summaries) > 1:
+        base_name = f'{base_name}-and-{len(document_summaries) - 1}-more'
+
+    return f'{base_name}-exhaustive-review.{output_format}'
+
+
+def _build_exhaustive_review_preview_lines(review_text):
+    preview_lines = []
+    for line in _strip_markdown_code_fence(review_text).splitlines():
+        normalized_line = str(line or '').strip()
+        if not normalized_line:
+            continue
+
+        if len(normalized_line) > EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_LENGTH:
+            normalized_line = f'{normalized_line[:EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_LENGTH - 1]}…'
+        preview_lines.append(normalized_line)
+        if len(preview_lines) >= EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_COUNT:
+            break
+
+    return preview_lines
+
+
+def _build_exhaustive_review_artifact_summary(document_count, output_format):
+    normalized_document_count = max(0, int(document_count or 0))
+    source_label = f'{normalized_document_count} source' if normalized_document_count == 1 else f'{normalized_document_count} sources'
+    return (
+        f'Saved the full exhaustive review for {source_label} in this chat as a downloadable '
+        f'{str(output_format or "json").upper()} artifact.'
+    )
+
+
+def _build_exhaustive_review_artifact_reply(document_count, output_format):
+    normalized_document_count = max(0, int(document_count or 0))
+    document_label = f'{normalized_document_count} source document' if normalized_document_count == 1 else f'{normalized_document_count} source documents'
+    return (
+        f'I reviewed {document_label} and saved the full results as a downloadable '
+        f'{str(output_format or "json").upper()} artifact attached to this chat. '
+        'The card below includes a short preview.'
+    )
+
+
+def _maybe_create_exhaustive_review_generated_artifacts(review_result, review_prompt, conversation_id=''):
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_conversation_id or not has_request_context():
+        return {'artifacts': [], 'assistant_reply': None}
+
+    review_result = review_result if isinstance(review_result, dict) else {}
+    analysis_reply = str(review_result.get('analysis_reply') or '').strip()
+    if not analysis_reply:
+        return {'artifacts': [], 'assistant_reply': None}
+
+    json_payload = _parse_json_artifact_payload(analysis_reply)
+    explicit_artifact_request = _prompt_explicitly_requests_artifact(review_prompt)
+    should_generate_artifact = (
+        explicit_artifact_request
+        or json_payload is not None
+        or len(analysis_reply) >= EXHAUSTIVE_REVIEW_ARTIFACT_REPLY_CHAR_THRESHOLD
+    )
+    if not should_generate_artifact:
+        return {'artifacts': [], 'assistant_reply': None}
+
+    document_summaries = review_result.get('documents') if isinstance(review_result.get('documents'), list) else []
+    document_count = len(document_summaries)
+    output_format = 'json' if json_payload is not None else 'md'
+    preview_items = []
+    preview_lines = []
+
+    if output_format == 'json':
+        serialized_output = json.dumps(json_payload, indent=2, ensure_ascii=False)
+        if isinstance(json_payload, list):
+            preview_items = json_payload[:EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_ITEM_COUNT]
+        elif isinstance(json_payload, dict):
+            preview_items = [json_payload]
+    else:
+        serialized_output = analysis_reply
+        preview_lines = _build_exhaustive_review_preview_lines(analysis_reply)
+
+    file_name = _build_exhaustive_review_artifact_file_name(review_result, output_format)
+    summary = _build_exhaustive_review_artifact_summary(document_count, output_format)
+
+    try:
+        upload_result = upload_generated_analysis_artifact_for_current_user(
+            conversation_id=normalized_conversation_id,
+            file_name=file_name,
+            file_content=serialized_output,
+            capability='exhaustive_review',
+            output_format=output_format,
+            summary=summary,
+        )
+    except Exception as exc:
+        debug_print(
+            '[WorkflowExhaustiveReview] Generated artifact upload skipped | '
+            f'conversation_id={normalized_conversation_id} | error={exc}'
+        )
+        return {'artifacts': [], 'assistant_reply': None}
+
+    artifact_payload = {
+        'capability': 'exhaustive_review',
+        'artifact_message_id': upload_result.get('message', {}).get('id'),
+        'conversation_id': normalized_conversation_id,
+        'storage_scope': 'chat',
+        'file_name': upload_result.get('message', {}).get('file_name') or file_name,
+        'output_format': output_format,
+        'summary': summary,
+    }
+    if preview_items:
+        artifact_payload['preview_items'] = preview_items
+    if preview_lines:
+        artifact_payload['preview_lines'] = preview_lines
+
+    return {
+        'artifacts': [artifact_payload],
+        'assistant_reply': _build_exhaustive_review_artifact_reply(document_count, output_format),
+    }
+
+
+def _build_comparison_artifact_file_name(comparison_result, output_format):
+    left_document = comparison_result.get('left_document') if isinstance(comparison_result.get('left_document'), dict) else {}
+    left_document_name = (
+        left_document.get('document_name')
+        or left_document.get('file_name')
+        or left_document.get('title')
+        or 'comparison'
+    )
+    right_documents = comparison_result.get('right_documents') if isinstance(comparison_result.get('right_documents'), list) else []
+    base_name = _normalize_generated_artifact_file_stem(left_document_name, fallback_value='comparison')
+    if right_documents:
+        base_name = f'{base_name}-vs-{len(right_documents)}-targets'
+    return f'{base_name}-comparison.{output_format}'
+
+
+def _build_comparison_artifact_summary(left_document_name, right_count, output_format):
+    target_label = '1 target' if int(right_count or 0) == 1 else f'{int(right_count or 0)} targets'
+    return (
+        f'Saved the full comparison for {left_document_name or "the selected source"} against {target_label} '
+        f'in this chat as a downloadable {str(output_format or "json").upper()} artifact.'
+    )
+
+
+def _build_comparison_artifact_reply(left_document_name, right_count, output_format):
+    target_label = '1 target' if int(right_count or 0) == 1 else f'{int(right_count or 0)} targets'
+    return (
+        f'I compared {left_document_name or "the selected source"} against {target_label} and saved the full '
+        f'results as a downloadable {str(output_format or "json").upper()} artifact attached to this chat. '
+        'The card below includes a short preview.'
+    )
+
+
+def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_prompt, conversation_id=''):
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_conversation_id or not has_request_context():
+        return {'artifacts': [], 'assistant_reply': None}
+
+    comparison_result = comparison_result if isinstance(comparison_result, dict) else {}
+    analysis_reply = str(comparison_result.get('analysis_reply') or '').strip()
+    if not analysis_reply:
+        return {'artifacts': [], 'assistant_reply': None}
+
+    json_payload = _parse_json_artifact_payload(analysis_reply)
+    explicit_artifact_request = _prompt_explicitly_requests_artifact(comparison_prompt)
+    should_generate_artifact = (
+        explicit_artifact_request
+        or json_payload is not None
+        or len(analysis_reply) >= EXHAUSTIVE_REVIEW_ARTIFACT_REPLY_CHAR_THRESHOLD
+    )
+    if not should_generate_artifact:
+        return {'artifacts': [], 'assistant_reply': None}
+
+    left_document = comparison_result.get('left_document') if isinstance(comparison_result.get('left_document'), dict) else {}
+    left_document_name = str(left_document.get('document_name') or 'the selected source').strip() or 'the selected source'
+    right_documents = comparison_result.get('right_documents') if isinstance(comparison_result.get('right_documents'), list) else []
+    output_format = 'json' if json_payload is not None else 'md'
+    preview_items = []
+    preview_lines = []
+
+    if output_format == 'json':
+        serialized_output = json.dumps(json_payload, indent=2, ensure_ascii=False)
+        if isinstance(json_payload, list):
+            preview_items = json_payload[:EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_ITEM_COUNT]
+        elif isinstance(json_payload, dict):
+            preview_items = [json_payload]
+    else:
+        serialized_output = analysis_reply
+        preview_lines = _build_exhaustive_review_preview_lines(analysis_reply)
+
+    file_name = _build_comparison_artifact_file_name(comparison_result, output_format)
+    summary = _build_comparison_artifact_summary(left_document_name, len(right_documents), output_format)
+
+    try:
+        upload_result = upload_generated_analysis_artifact_for_current_user(
+            conversation_id=normalized_conversation_id,
+            file_name=file_name,
+            file_content=serialized_output,
+            capability='comparison',
+            output_format=output_format,
+            summary=summary,
+        )
+    except Exception as exc:
+        debug_print(
+            '[WorkflowDocumentComparison] Generated artifact upload skipped | '
+            f'conversation_id={normalized_conversation_id} | error={exc}'
+        )
+        return {'artifacts': [], 'assistant_reply': None}
+
+    artifact_payload = {
+        'capability': 'comparison',
+        'artifact_message_id': upload_result.get('message', {}).get('id'),
+        'conversation_id': normalized_conversation_id,
+        'storage_scope': 'chat',
+        'file_name': upload_result.get('message', {}).get('file_name') or file_name,
+        'output_format': output_format,
+        'summary': summary,
+    }
+    if preview_items:
+        artifact_payload['preview_items'] = preview_items
+    if preview_lines:
+        artifact_payload['preview_lines'] = preview_lines
+
+    return {
+        'artifacts': [artifact_payload],
+        'assistant_reply': _build_comparison_artifact_reply(left_document_name, len(right_documents), output_format),
+    }
 
 
 def _coerce_token_count(value):
@@ -216,15 +509,10 @@ def _normalize_invocation_timestamp(raw_timestamp):
     return str(raw_timestamp)
 
 
-def _build_agent_citations_from_invocations(user_id, conversation_id):
-    if not user_id or not conversation_id:
-        return []
-
-    plugin_logger = get_plugin_logger()
-    plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+def _build_agent_citations_from_plugin_invocations(plugin_invocations):
     detailed_citations = []
 
-    for invocation in plugin_invocations:
+    for invocation in plugin_invocations or []:
         tool_name = build_agent_citation_tool_label(
             invocation.plugin_name,
             invocation.function_name,
@@ -245,6 +533,414 @@ def _build_agent_citations_from_invocations(user_id, conversation_id):
         })
 
     return detailed_citations
+
+
+def _build_agent_citations_from_invocations(user_id, conversation_id):
+    if not user_id or not conversation_id:
+        return []
+
+    plugin_logger = get_plugin_logger()
+    plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+    return _build_agent_citations_from_plugin_invocations(plugin_invocations)
+
+
+def _is_tabular_document_file(file_name):
+    normalized_file_name = str(file_name or '').strip()
+    if not normalized_file_name:
+        return False
+
+    return os.path.splitext(normalized_file_name)[1].lower() in TABULAR_DOCUMENT_EXTENSIONS
+
+
+def _normalize_tabular_source_hint(scope):
+    normalized_scope = str(scope or '').strip().lower()
+    if normalized_scope == 'personal':
+        return 'workspace'
+    if normalized_scope in {'workspace', 'group', 'public', 'chat'}:
+        return normalized_scope
+    return 'workspace'
+
+
+def _resolve_tabular_document_action_documents(action_config, user_id, conversation_id=''):
+    action_config = action_config if isinstance(action_config, dict) else {}
+    action_type = str(action_config.get('type') or '').strip().lower()
+
+    document_ids = []
+    role_by_document_id = {}
+    if action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
+        document_ids = [
+            str(document_id).strip()
+            for document_id in list(action_config.get('document_ids') or [])
+            if str(document_id).strip()
+        ]
+    elif action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+        left_document_id = str(action_config.get('left_document_id') or '').strip()
+        right_document_ids = [
+            str(document_id).strip()
+            for document_id in list(action_config.get('right_document_ids') or [])
+            if str(document_id).strip()
+        ]
+        if left_document_id:
+            document_ids.append(left_document_id)
+            role_by_document_id[left_document_id] = 'left'
+        for document_id in right_document_ids:
+            document_ids.append(document_id)
+            role_by_document_id[document_id] = 'right'
+
+    if not document_ids:
+        return []
+
+    resolved_documents = []
+    for document_id in document_ids:
+        document_context = resolve_document_context(
+            document_id=document_id,
+            user_id=user_id,
+            doc_scope=action_config.get('doc_scope'),
+            active_group_ids=action_config.get('active_group_ids'),
+            active_public_workspace_id=action_config.get('active_public_workspace_id'),
+            conversation_id=conversation_id,
+        )
+        if not isinstance(document_context, dict):
+            return []
+
+        document_item = document_context.get('document') if isinstance(document_context.get('document'), dict) else {}
+        file_name = str(document_item.get('file_name') or document_item.get('title') or '').strip()
+        if not _is_tabular_document_file(file_name):
+            return []
+
+        document_name = str(document_item.get('title') or file_name or document_id).strip() or document_id
+        resolved_documents.append({
+            'document_id': document_id,
+            'document_name': document_name,
+            'file_name': file_name,
+            'scope': str(document_context.get('scope') or '').strip().lower() or 'personal',
+            'source_hint': _normalize_tabular_source_hint(document_context.get('scope')),
+            'group_id': str(document_context.get('group_id') or '').strip() or None,
+            'public_workspace_id': str(document_context.get('public_workspace_id') or '').strip() or None,
+            'role_label': role_by_document_id.get(document_id),
+        })
+
+    return resolved_documents
+
+
+def _resolve_tabular_document_action_model_name(workflow, settings):
+    candidate_model_name = str(workflow.get('legacy_model_deployment') or '').strip()
+    if candidate_model_name:
+        return candidate_model_name
+
+    for candidate in (
+        settings.get('azure_apim_gpt_deployment'),
+        settings.get('azure_openai_gpt_deployment'),
+    ):
+        normalized_candidate = str(candidate or '').strip()
+        if normalized_candidate:
+            return normalized_candidate.split(',')[0].strip()
+
+    selected_models = settings.get('gpt_model', {}).get('selected') if isinstance(settings.get('gpt_model'), dict) else []
+    if isinstance(selected_models, list) and selected_models:
+        selected_model = selected_models[0] if isinstance(selected_models[0], dict) else {}
+        for key in ('deploymentName', 'deployment', 'displayName'):
+            normalized_candidate = str(selected_model.get(key) or '').strip()
+            if normalized_candidate:
+                return normalized_candidate
+
+    return ''
+
+
+def _truncate_tabular_document_action_analysis(tabular_analysis, max_chars=8000):
+    rendered_analysis = str(tabular_analysis or '').strip()
+    if len(rendered_analysis) <= max_chars:
+        return rendered_analysis
+
+    return f"{rendered_analysis[:max_chars]}\n[Computed tabular results truncated for prompt budget.]"
+
+
+def _build_tabular_document_action_coverage(tabular_documents, phase_label):
+    document_summaries = []
+    for tabular_document in tabular_documents or []:
+        document_summaries.append({
+            'document_id': tabular_document.get('document_id'),
+            'document_name': tabular_document.get('document_name'),
+            'file_name': tabular_document.get('file_name'),
+            'title': tabular_document.get('document_name'),
+            'scope': tabular_document.get('scope'),
+            'scope_id': (
+                tabular_document.get('public_workspace_id')
+                or tabular_document.get('group_id')
+                or None
+            ),
+            'role_label': tabular_document.get('role_label'),
+            'total_windows': 1,
+            'processed_windows': 1,
+            'failed_windows': 0,
+            'total_chunks': 1,
+            'processed_chunks': 1,
+            'failed_chunks': 0,
+            'total_pages': 0,
+            'status': 'completed',
+            'status_text': 'Completed tabular analysis',
+            'active_window_number': None,
+            'active_attempt_number': None,
+            'failed_ranges': [],
+            'ranges': [],
+        })
+
+    completed_document_count = len(document_summaries)
+    return {
+        'document_count': completed_document_count,
+        'total_windows': completed_document_count,
+        'processed_windows': completed_document_count,
+        'failed_windows': 0,
+        'total_chunks': completed_document_count,
+        'processed_chunks': completed_document_count,
+        'failed_chunks': 0,
+        'retries': 0,
+        'window_unit': 'tabular',
+        'documents': document_summaries,
+        'progress_meta': {
+            'phase': 'completed',
+            'phase_label': phase_label,
+            'phase_detail': 'Prepared from tabular tool-backed results',
+            'status': 'completed',
+            'percent_override': 100,
+            'phase_step': 1,
+            'phase_total_steps': 1,
+        },
+    }
+
+
+def _build_tabular_review_action_prompt(review_prompt, tabular_documents):
+    # Import lazily to avoid a circular dependency with route_backend_chats.
+    from route_backend_chats import build_tabular_computed_results_system_message
+
+    prompt_sections = [
+        'You are completing a deterministic document review using tool-backed tabular analysis.',
+        'Use the computed tabular results below as the primary evidence. Do not say the analysis still needs to be run.',
+        'If the computed results are insufficient for a conclusion, say so explicitly.',
+        f'Review request:\n{str(review_prompt or "").strip()}',
+    ]
+
+    for tabular_document in tabular_documents or []:
+        prompt_sections.append(
+            build_tabular_computed_results_system_message(
+                tabular_document.get('document_name') or tabular_document.get('file_name') or 'the selected tabular document',
+                _truncate_tabular_document_action_analysis(tabular_document.get('analysis')),
+            )
+        )
+
+    prompt_sections.append(
+        'Write one cohesive review that highlights concrete facts, counts, trends, anomalies, risks, open questions, and recommended follow-up based on the computed results.'
+    )
+    return '\n\n'.join(section for section in prompt_sections if section)
+
+
+def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, right_documents):
+    # Import lazily to avoid a circular dependency with route_backend_chats.
+    from route_backend_chats import build_tabular_computed_results_system_message
+
+    prompt_sections = [
+        'You are completing a deterministic document comparison using tool-backed tabular analysis.',
+        'Treat the source document as the primary baseline and compare each target document against it.',
+        'Use the computed tabular results below as authoritative evidence for row-level facts, calculations, and numeric conclusions.',
+        f'Comparison request:\n{str(comparison_prompt or "").strip()}',
+    ]
+
+    prompt_sections.append(
+        build_tabular_computed_results_system_message(
+            f"source document {left_document.get('document_name') or left_document.get('file_name') or 'Source'}",
+            _truncate_tabular_document_action_analysis(left_document.get('analysis')),
+        )
+    )
+
+    for right_document in right_documents or []:
+        prompt_sections.append(
+            build_tabular_computed_results_system_message(
+                f"target document {right_document.get('document_name') or right_document.get('file_name') or 'Target'}",
+                _truncate_tabular_document_action_analysis(right_document.get('analysis')),
+            )
+        )
+
+    prompt_sections.append(
+        'Explain what matches, what differs, what changed, what is missing, and which discrepancies or risks matter most for the user request. Organize the answer clearly by target document when there is more than one.'
+    )
+    return '\n\n'.join(section for section in prompt_sections if section)
+
+
+def _build_tabular_analysis_request_prompt(action_type, task_prompt, tabular_document):
+    if action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+        role_label = tabular_document.get('role_label') or 'document'
+        document_name = tabular_document.get('document_name') or tabular_document.get('file_name') or 'the selected document'
+        return (
+            f'Summarize the tabular facts in the {role_label} workbook {document_name} that matter for the comparison request below. '
+            'Focus on counts, totals, identifiers, dates, statuses, trends, anomalies, and any row-level evidence that would matter in a comparison.\n\n'
+            f'Comparison request:\n{str(task_prompt or "").strip()}'
+        )
+
+    return str(task_prompt or '').strip()
+
+
+def _maybe_execute_tabular_document_action(
+    action_type,
+    workflow,
+    action_config,
+    settings,
+    conversation_id='',
+    invoke_prompt=None,
+):
+    if action_type not in {DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW, DOCUMENT_ACTION_TYPE_COMPARISON}:
+        return None
+    if not callable(invoke_prompt) or not is_tabular_processing_enabled(settings):
+        return None
+
+    user_id = str(workflow.get('user_id') or '').strip()
+    if not user_id:
+        return None
+
+    tabular_documents = _resolve_tabular_document_action_documents(
+        action_config,
+        user_id,
+        conversation_id=conversation_id,
+    )
+    if not tabular_documents:
+        return None
+
+    gpt_model = _resolve_tabular_document_action_model_name(workflow, settings)
+    if not gpt_model:
+        return None
+
+    # Import lazily to avoid a circular dependency with route_backend_chats.
+    from route_backend_chats import get_new_plugin_invocations, run_tabular_analysis_with_thought_tracking
+
+    plugin_logger = get_plugin_logger()
+    baseline_invocation_count = 0
+    if conversation_id:
+        baseline_invocation_count = len(
+            plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+        )
+
+    try:
+        for tabular_document in tabular_documents:
+            tabular_analysis, _ = asyncio.run(
+                run_tabular_analysis_with_thought_tracking(
+                    user_question=_build_tabular_analysis_request_prompt(
+                        action_type,
+                        workflow.get('task_prompt', ''),
+                        tabular_document,
+                    ),
+                    tabular_filenames={tabular_document.get('file_name')},
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    gpt_model=gpt_model,
+                    settings=settings,
+                    source_hint=tabular_document.get('source_hint', 'workspace'),
+                    group_id=tabular_document.get('group_id'),
+                    public_workspace_id=tabular_document.get('public_workspace_id'),
+                    execution_mode='analysis',
+                    tabular_file_contexts=[{
+                        'file_name': tabular_document.get('file_name'),
+                        'source_hint': tabular_document.get('source_hint', 'workspace'),
+                        'group_id': tabular_document.get('group_id'),
+                        'public_workspace_id': tabular_document.get('public_workspace_id'),
+                    }],
+                )
+            )
+            if not str(tabular_analysis or '').strip():
+                raise ValueError(
+                    f"Tabular analysis returned no computed results for {tabular_document.get('document_name') or tabular_document.get('file_name') or tabular_document.get('document_id')}."
+                )
+            tabular_document['analysis'] = str(tabular_analysis).strip()
+    except Exception as exc:
+        log_event(
+            f'[WorkflowDocumentAction] Tabular document-action helper skipped: {exc}',
+            extra={
+                'conversation_id': conversation_id,
+                'workflow_id': str(workflow.get('id') or '').strip(),
+                'action_type': action_type,
+                'document_count': len(tabular_documents),
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        if conversation_id:
+            plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+        return None
+
+    tabular_invocations = []
+    if conversation_id:
+        invocations_after = plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+        tabular_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
+    tabular_agent_citations = _build_agent_citations_from_plugin_invocations(tabular_invocations)
+
+    if action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
+        review_result = {
+            'reply': '',
+            'analysis_reply': str(invoke_prompt(
+                _build_tabular_review_action_prompt(workflow.get('task_prompt', ''), tabular_documents),
+                stage='tabular_review',
+                metadata={
+                    'action_type': action_type,
+                    'document_ids': [tabular_document.get('document_id') for tabular_document in tabular_documents],
+                },
+            ) or '').strip(),
+            'coverage': _build_tabular_document_action_coverage(tabular_documents, 'Review complete'),
+            'documents': [],
+            'document_ids': [tabular_document.get('document_id') for tabular_document in tabular_documents],
+            'doc_scope': action_config.get('doc_scope'),
+            'window_unit': 'tabular',
+            'window_size': None,
+            'window_percent': None,
+        }
+        if not review_result['analysis_reply']:
+            raise RuntimeError('Tabular review synthesis returned an empty response.')
+        review_result['reply'] = review_result['analysis_reply']
+        review_result['documents'] = review_result['coverage'].get('documents', [])
+        return {
+            'result': review_result,
+            'agent_citations': tabular_agent_citations,
+            'generated_tabular_outputs': [],
+        }
+
+    left_document = tabular_documents[0] if tabular_documents else {}
+    right_documents = tabular_documents[1:]
+    comparison_result = {
+        'reply': '',
+        'analysis_reply': str(invoke_prompt(
+            _build_tabular_comparison_action_prompt(
+                workflow.get('task_prompt', ''),
+                left_document,
+                right_documents,
+            ),
+            stage='tabular_comparison',
+            metadata={
+                'action_type': action_type,
+                'left_document_id': left_document.get('document_id'),
+                'right_document_ids': [tabular_document.get('document_id') for tabular_document in right_documents],
+            },
+        ) or '').strip(),
+        'coverage': _build_tabular_document_action_coverage(tabular_documents, 'Comparison complete'),
+        'documents': [],
+        'left_document': {
+            'document_id': left_document.get('document_id'),
+            'document_name': left_document.get('document_name'),
+        },
+        'right_documents': [
+            {
+                'document_id': tabular_document.get('document_id'),
+                'document_name': tabular_document.get('document_name'),
+            }
+            for tabular_document in right_documents
+        ],
+        'comparison_items': [],
+    }
+    if not comparison_result['analysis_reply']:
+        raise RuntimeError('Tabular comparison synthesis returned an empty response.')
+    comparison_result['reply'] = comparison_result['analysis_reply']
+    comparison_result['documents'] = comparison_result['coverage'].get('documents', [])
+    return {
+        'result': comparison_result,
+        'agent_citations': tabular_agent_citations,
+        'generated_tabular_outputs': [],
+    }
 
 
 def _build_response_preview(text, max_length=220):
@@ -2025,35 +2721,58 @@ def _execute_exhaustive_review_workflow(
                     _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
-                review_result = run_exhaustive_document_review(
-                    user_id=user_id,
-                    review_prompt=workflow.get('task_prompt', ''),
-                    document_ids=review_config.get('document_ids'),
+                tabular_action_payload = _maybe_execute_tabular_document_action(
+                    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                    workflow,
+                    review_config,
+                    settings,
+                    conversation_id=conversation_id,
                     invoke_prompt=invoke_prompt,
-                    doc_scope=review_config.get('doc_scope'),
-                    active_group_ids=review_config.get('active_group_ids'),
-                    active_public_workspace_id=review_config.get('active_public_workspace_id'),
-                    window_unit=review_config.get('window_unit'),
-                    window_size=review_config.get('window_size'),
-                    window_percent=review_config.get('window_percent'),
-                    max_retries_per_window=review_config.get('max_retries_per_window'),
-                    activity_callback=activity_callback,
-                    max_documents=workflow_review_max_documents,
+                )
+                if tabular_action_payload:
+                    review_result = tabular_action_payload.get('result') or {}
+                else:
+                    review_result = run_exhaustive_document_review(
+                        user_id=user_id,
+                        review_prompt=workflow.get('task_prompt', ''),
+                        document_ids=review_config.get('document_ids'),
+                        invoke_prompt=invoke_prompt,
+                        doc_scope=review_config.get('doc_scope'),
+                        active_group_ids=review_config.get('active_group_ids'),
+                        active_public_workspace_id=review_config.get('active_public_workspace_id'),
+                        window_unit=review_config.get('window_unit'),
+                        window_size=review_config.get('window_size'),
+                        window_percent=review_config.get('window_percent'),
+                        max_retries_per_window=review_config.get('max_retries_per_window'),
+                        activity_callback=activity_callback,
+                        max_documents=workflow_review_max_documents,
+                    )
+                exhaustive_review_artifact_payload = _maybe_create_exhaustive_review_generated_artifacts(
+                    review_result,
+                    workflow.get('task_prompt', ''),
+                    conversation_id=conversation_id,
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+                if not agent_citations:
+                    agent_citations = list((tabular_action_payload or {}).get('agent_citations') or [])
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
                 token_usage = _finalize_token_usage(token_usage_aggregate)
 
                 return {
-                    'reply': _resolve_document_action_reply(review_result),
+                    'reply': (
+                        exhaustive_review_artifact_payload.get('assistant_reply')
+                        or _resolve_document_action_reply(review_result)
+                    ),
                     'review_result': review_result,
                     'review_coverage': review_result.get('coverage') or {},
+                    'generated_analysis_artifacts': exhaustive_review_artifact_payload.get('artifacts', []),
                     'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
                     'token_usage': token_usage,
                     'provider': 'agent',
                     'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                     'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
                     'agent_citations': agent_citations,
+                    'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
                     'alert_targets': alert_targets,
                 }
             finally:
@@ -2091,20 +2810,36 @@ def _execute_exhaustive_review_workflow(
             return ''
         return _extract_message_text(completion.choices[0].message.content)
 
-    review_result = run_exhaustive_document_review(
-        user_id=user_id,
-        review_prompt=workflow.get('task_prompt', ''),
-        document_ids=review_config.get('document_ids'),
+    tabular_action_payload = _maybe_execute_tabular_document_action(
+        DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+        workflow,
+        review_config,
+        settings,
+        conversation_id=conversation_id,
         invoke_prompt=invoke_model_prompt,
-        doc_scope=review_config.get('doc_scope'),
-        active_group_ids=review_config.get('active_group_ids'),
-        active_public_workspace_id=review_config.get('active_public_workspace_id'),
-        window_unit=review_config.get('window_unit'),
-        window_size=review_config.get('window_size'),
-        window_percent=review_config.get('window_percent'),
-        max_retries_per_window=review_config.get('max_retries_per_window'),
-        activity_callback=activity_callback,
-        max_documents=workflow_review_max_documents,
+    )
+    if tabular_action_payload:
+        review_result = tabular_action_payload.get('result') or {}
+    else:
+        review_result = run_exhaustive_document_review(
+            user_id=user_id,
+            review_prompt=workflow.get('task_prompt', ''),
+            document_ids=review_config.get('document_ids'),
+            invoke_prompt=invoke_model_prompt,
+            doc_scope=review_config.get('doc_scope'),
+            active_group_ids=review_config.get('active_group_ids'),
+            active_public_workspace_id=review_config.get('active_public_workspace_id'),
+            window_unit=review_config.get('window_unit'),
+            window_size=review_config.get('window_size'),
+            window_percent=review_config.get('window_percent'),
+            max_retries_per_window=review_config.get('max_retries_per_window'),
+            activity_callback=activity_callback,
+            max_documents=workflow_review_max_documents,
+        )
+    exhaustive_review_artifact_payload = _maybe_create_exhaustive_review_generated_artifacts(
+        review_result,
+        workflow.get('task_prompt', ''),
+        conversation_id=conversation_id,
     )
     token_usage = _finalize_token_usage(token_usage_aggregate)
     debug_print(
@@ -2118,12 +2853,18 @@ def _execute_exhaustive_review_workflow(
         f"failed_windows={(review_result.get('coverage') or {}).get('failed_windows', 0)}"
     )
     return {
-        'reply': _resolve_document_action_reply(review_result),
+        'reply': (
+            exhaustive_review_artifact_payload.get('assistant_reply')
+            or _resolve_document_action_reply(review_result)
+        ),
         'review_result': review_result,
         'review_coverage': review_result.get('coverage') or {},
+        'generated_analysis_artifacts': exhaustive_review_artifact_payload.get('artifacts', []),
         'model_deployment_name': deployment_name,
         'token_usage': token_usage,
         'provider': provider,
+        'agent_citations': list((tabular_action_payload or {}).get('agent_citations') or []),
+        'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
     }
 
 
@@ -2202,28 +2943,51 @@ def _execute_document_comparison_workflow(
                     _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
-                comparison_result = run_document_comparison(
-                    user_id=user_id,
-                    comparison_prompt=workflow.get('task_prompt', ''),
-                    action_config=comparison_config,
+                tabular_action_payload = _maybe_execute_tabular_document_action(
+                    DOCUMENT_ACTION_TYPE_COMPARISON,
+                    workflow,
+                    comparison_config,
+                    settings,
+                    conversation_id=conversation_id,
                     invoke_prompt=invoke_prompt,
-                    activity_callback=activity_callback,
+                )
+                if tabular_action_payload:
+                    comparison_result = tabular_action_payload.get('result') or {}
+                else:
+                    comparison_result = run_document_comparison(
+                        user_id=user_id,
+                        comparison_prompt=workflow.get('task_prompt', ''),
+                        action_config=comparison_config,
+                        invoke_prompt=invoke_prompt,
+                        activity_callback=activity_callback,
+                        conversation_id=conversation_id,
+                    )
+                comparison_artifact_payload = _maybe_create_comparison_generated_artifacts(
+                    comparison_result,
+                    workflow.get('task_prompt', ''),
                     conversation_id=conversation_id,
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+                if not agent_citations:
+                    agent_citations = list((tabular_action_payload or {}).get('agent_citations') or [])
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
                 token_usage = _finalize_token_usage(token_usage_aggregate)
 
                 return {
-                    'reply': _resolve_document_action_reply(comparison_result),
+                    'reply': (
+                        comparison_artifact_payload.get('assistant_reply')
+                        or _resolve_document_action_reply(comparison_result)
+                    ),
                     'review_result': comparison_result,
                     'review_coverage': comparison_result.get('coverage') or {},
+                    'generated_analysis_artifacts': comparison_artifact_payload.get('artifacts', []),
                     'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
                     'token_usage': token_usage,
                     'provider': 'agent',
                     'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                     'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
                     'agent_citations': agent_citations,
+                    'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
                     'alert_targets': alert_targets,
                 }
             finally:
@@ -2261,12 +3025,28 @@ def _execute_document_comparison_workflow(
             return ''
         return _extract_message_text(completion.choices[0].message.content)
 
-    comparison_result = run_document_comparison(
-        user_id=user_id,
-        comparison_prompt=workflow.get('task_prompt', ''),
-        action_config=comparison_config,
+    tabular_action_payload = _maybe_execute_tabular_document_action(
+        DOCUMENT_ACTION_TYPE_COMPARISON,
+        workflow,
+        comparison_config,
+        settings,
+        conversation_id=conversation_id,
         invoke_prompt=invoke_model_prompt,
-        activity_callback=activity_callback,
+    )
+    if tabular_action_payload:
+        comparison_result = tabular_action_payload.get('result') or {}
+    else:
+        comparison_result = run_document_comparison(
+            user_id=user_id,
+            comparison_prompt=workflow.get('task_prompt', ''),
+            action_config=comparison_config,
+            invoke_prompt=invoke_model_prompt,
+            activity_callback=activity_callback,
+            conversation_id=conversation_id,
+        )
+    comparison_artifact_payload = _maybe_create_comparison_generated_artifacts(
+        comparison_result,
+        workflow.get('task_prompt', ''),
         conversation_id=conversation_id,
     )
     token_usage = _finalize_token_usage(token_usage_aggregate)
@@ -2281,12 +3061,18 @@ def _execute_document_comparison_workflow(
         f"failed_windows={(comparison_result.get('coverage') or {}).get('failed_windows', 0)}"
     )
     return {
-        'reply': _resolve_document_action_reply(comparison_result),
+        'reply': (
+            comparison_artifact_payload.get('assistant_reply')
+            or _resolve_document_action_reply(comparison_result)
+        ),
         'review_result': comparison_result,
         'review_coverage': comparison_result.get('coverage') or {},
+        'generated_analysis_artifacts': comparison_artifact_payload.get('artifacts', []),
         'model_deployment_name': deployment_name,
         'token_usage': token_usage,
         'provider': provider,
+        'agent_citations': list((tabular_action_payload or {}).get('agent_citations') or []),
+        'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
     }
 
 

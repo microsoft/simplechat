@@ -8,6 +8,11 @@ from functions_activity_logging import *
 from functions_approvals import *
 from functions_documents import update_document, delete_document, delete_document_chunks
 from functions_group import delete_group
+from functions_safety_remediation import (
+    execute_safety_violation_action,
+    get_safety_log_item,
+    update_safety_log_action_state,
+)
 from utils_cache import invalidate_group_search_cache
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
@@ -6376,6 +6381,9 @@ def register_route_backend_control_center(app):
             elif request_type == TYPE_DELETE_USER_DOCUMENTS:
                 # Execute delete user documents
                 result = _execute_delete_user_documents(approval, executor_id, executor_email, executor_name)
+
+            elif request_type in {TYPE_WARN_USER, TYPE_SUSPEND_USER, TYPE_BLOCK_USER}:
+                result = _execute_safety_violation_request(approval, executor_id, executor_email, executor_name)
             
             else:
                 result = {'success': False, 'message': f'Unknown request type: {request_type}'}
@@ -6391,6 +6399,20 @@ def register_route_backend_control_center(app):
             return result
             
         except Exception as e:
+            if approval.get('request_type') in {TYPE_WARN_USER, TYPE_SUSPEND_USER, TYPE_BLOCK_USER}:
+                safety_log_id = approval.get('metadata', {}).get('safety_log_id')
+                if safety_log_id:
+                    try:
+                        update_safety_log_action_state(safety_log_id, {
+                            'action_request_status': 'failed',
+                            'action_request_id': approval.get('id'),
+                            'action_request_type': approval.get('request_type'),
+                            'action_approved_at': approval.get('approved_at'),
+                            'action_execution_error': str(e),
+                        })
+                    except Exception as update_error:
+                        debug_print(f"Error updating failed safety remediation state: {update_error}")
+
             # Mark as failed
             mark_approval_executed(
                 approval_id=approval['id'],
@@ -6399,6 +6421,43 @@ def register_route_backend_control_center(app):
                 result_message=f"Execution error: {str(e)}"
             )
             raise
+
+    def _execute_safety_violation_request(approval, executor_id, executor_email, executor_name):
+        """Execute an approved safety violation warning or user access restriction."""
+        metadata = approval.get('metadata', {}) or {}
+        safety_log_id = metadata.get('safety_log_id')
+        if not safety_log_id:
+            return {'success': False, 'message': 'Approval metadata is missing the safety log reference.'}
+
+        safety_log = get_safety_log_item(safety_log_id)
+        action = metadata.get('violation_action')
+        if not action:
+            return {'success': False, 'message': 'Approval metadata is missing the violation action.'}
+
+        result = execute_safety_violation_action(
+            action=action,
+            safety_log=safety_log,
+            notification_title=metadata.get('notification_title') or '',
+            notification_message=metadata.get('notification_message') or '',
+            datetime_to_allow=metadata.get('datetime_to_allow'),
+            actor={
+                'id': executor_id,
+                'email': executor_email,
+                'name': executor_name,
+            },
+        )
+
+        update_safety_log_action_state(safety_log_id, {
+            'action_request_status': 'executed',
+            'action_request_id': approval.get('id'),
+            'action_request_type': approval.get('request_type'),
+            'action_requested_at': approval.get('created_at'),
+            'action_approved_at': approval.get('approved_at'),
+            'action_executed_at': datetime.utcnow().isoformat(),
+            'action_execution_error': None,
+        })
+
+        return result
 
     def _execute_take_ownership(approval, executor_id, executor_email, executor_name):
         """Execute admin take ownership action."""

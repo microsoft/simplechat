@@ -23,7 +23,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
+    background: linear-gradient(135deg, var(--hero-color, #0078d4) 0%, var(--hero-color-dark, #005a9e) 100%);
     z-index: 0;
   }
 
@@ -47,6 +47,18 @@
     color: white;
     font-size: 3rem;
     font-weight: bold;
+    border: 5px solid rgba(255,255,255,0.3);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    backdrop-filter: blur(10px);
+  }
+
+  .profile-hero-logo {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    object-fit: contain;
+    padding: 0.75rem;
+    background: rgba(255,255,255,0.18);
     border: 5px solid rgba(255,255,255,0.3);
     box-shadow: 0 8px 24px rgba(0,0,0,0.2);
     backdrop-filter: blur(10px);
@@ -180,6 +192,7 @@
   <div class="profile-hero" id="groupHero">
     <div class="row align-items-center">
       <div class="col-auto">
+        <img class="profile-hero-logo d-none" id="groupLogoImage" alt="Group logo">
         <div class="profile-hero-placeholder" id="groupInitial">
           G
         </div>
@@ -270,6 +283,11 @@
                     <div class="color-option" data-color="#0099bc" style="background: linear-gradient(135deg, #0099bc 0%, #006d85 100%);"></div>
                   </div>
                   <input type="hidden" id="selectedColor" value="#0078d4">
+                </div>
+                <div class="mb-3">
+                  <label for="groupLogoFile" class="form-label">Group Logo</label>
+                  <input type="file" class="form-control" id="groupLogoFile" accept=".png,.jpg,.jpeg,image/png,image/jpeg">
+                  <div class="form-text">PNG or JPEG. The uploaded logo is stored as PNG and used in the hero card.</div>
                 </div>
                 <button type="submit" class="btn btn-primary btn-sm">
                   <i class="bi bi-save me-1"></i>Save Changes

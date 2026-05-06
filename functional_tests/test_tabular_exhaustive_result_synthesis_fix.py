@@ -2,13 +2,16 @@
 # test_tabular_exhaustive_result_synthesis_fix.py
 """
 Functional test for tabular exhaustive-result synthesis retry.
-Version: 0.241.007
-Implemented in: 0.241.006
+Version: 0.241.125
+Implemented in: 0.241.125
 
 This test ensures exhaustive tabular requests retry when successful analytical
 tool calls already returned the full matching result set or only a partial row
 or distinct-value slice, but the synthesis response still behaves as though
-only schema samples are available.
+only schema samples are available. It also verifies that structured one-object-
+per-row JSON prompts are treated as exhaustive requests so partial row slices
+are expanded before export, including CSV/table export prompts that preserve
+one output row per source row.
 """
 
 import ast
@@ -178,6 +181,131 @@ def test_exhaustive_tabular_retry_detects_partial_result_slice():
         return False
 
 
+def test_structured_row_json_prompt_triggers_exhaustive_follow_up():
+    """Verify one-object-per-row JSON prompts trigger exhaustive-result recovery."""
+    print('🔍 Testing structured row JSON prompt exhaustive follow-up...')
+
+    try:
+        helpers, _ = load_helpers()
+        wants_exhaustive_results = helpers['question_requests_tabular_exhaustive_results']
+        get_tabular_result_coverage_summary = helpers['get_tabular_result_coverage_summary']
+        build_execution_gap_messages = helpers['build_tabular_success_execution_gap_messages']
+
+        user_question = (
+            'Return one JSON array containing one object per comment row across all files. '
+            'Each object must contain exactly these fields: comment_id, classification, themes, '
+            'attachment_priority_review, response_treatment, campaign_candidate, campaign_signals, '
+            'substantive_score, confidence, reason. Return only valid JSON in a code block.'
+        )
+        invocations = [
+            SimpleNamespace(
+                function_name='query_tabular_data',
+                parameters={
+                    'filename': 'comments.xlsx',
+                    'max_rows': '56',
+                    'query_expression': '`comment_id` == `comment_id`',
+                },
+                result=json.dumps({
+                    'filename': 'comments.xlsx',
+                    'selected_sheet': 'Comments',
+                    'total_matches': 1500,
+                    'returned_rows': 56,
+                    'data': [
+                        {
+                            'comment_id': '1001',
+                            'body_text': 'Please see attached.',
+                        }
+                    ],
+                }),
+                error_message=None,
+            )
+        ]
+
+        coverage_summary = get_tabular_result_coverage_summary(invocations)
+        execution_gap_messages = build_execution_gap_messages(
+            user_question,
+            'Prepared a structured JSON export from the available rows.',
+            invocations,
+        )
+
+        assert wants_exhaustive_results(user_question), user_question
+        assert coverage_summary['has_full_result_coverage'] is False, coverage_summary
+        assert coverage_summary['has_partial_result_coverage'] is True, coverage_summary
+        assert any('higher max_rows or max_values' in message for message in execution_gap_messages), execution_gap_messages
+
+        print('✅ Structured row JSON prompt exhaustive follow-up passed')
+        return True
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_structured_row_csv_prompt_triggers_exhaustive_follow_up():
+    """Verify one-row-per-comment CSV prompts trigger exhaustive-result recovery."""
+    print('🔍 Testing structured row CSV prompt exhaustive follow-up...')
+
+    try:
+        helpers, _ = load_helpers()
+        wants_exhaustive_results = helpers['question_requests_tabular_exhaustive_results']
+        get_tabular_result_coverage_summary = helpers['get_tabular_result_coverage_summary']
+        build_execution_gap_messages = helpers['build_tabular_success_execution_gap_messages']
+
+        user_question = (
+            'Create a CSV file with one row per comment row across all files. '
+            'Each row must contain comment_id, classification, themes, '
+            'attachment_priority_review, response_treatment, campaign_candidate, '
+            'campaign_signals, substantive_score_total, confidence, reason. '
+            'Save the csv to this chat.'
+        )
+        invocations = [
+            SimpleNamespace(
+                function_name='query_tabular_data',
+                parameters={
+                    'filename': 'comments.xlsx',
+                    'max_rows': '56',
+                    'query_expression': '`comment_id` == `comment_id`',
+                },
+                result=json.dumps({
+                    'filename': 'comments.xlsx',
+                    'selected_sheet': 'Comments',
+                    'total_matches': 1500,
+                    'returned_rows': 56,
+                    'data': [
+                        {
+                            'comment_id': '1001',
+                            'body_text': 'Please see attached.',
+                        }
+                    ],
+                }),
+                error_message=None,
+            )
+        ]
+
+        coverage_summary = get_tabular_result_coverage_summary(invocations)
+        execution_gap_messages = build_execution_gap_messages(
+            user_question,
+            'Prepared a CSV export from the available rows.',
+            invocations,
+        )
+
+        assert wants_exhaustive_results(user_question), user_question
+        assert coverage_summary['has_full_result_coverage'] is False, coverage_summary
+        assert coverage_summary['has_partial_result_coverage'] is True, coverage_summary
+        assert any('higher max_rows or max_values' in message for message in execution_gap_messages), execution_gap_messages
+
+        print('✅ Structured row CSV prompt exhaustive follow-up passed')
+        return True
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_result_coverage_summary_marks_partial_distinct_value_slices():
     """Verify distinct-value counts below the available total mark partial coverage."""
     print('🔍 Testing tabular result coverage summary for partial distinct-value slices...')
@@ -225,6 +353,8 @@ if __name__ == '__main__':
     tests = [
         test_exhaustive_tabular_retry_detects_full_result_access_gap,
         test_exhaustive_tabular_retry_detects_partial_result_slice,
+        test_structured_row_json_prompt_triggers_exhaustive_follow_up,
+        test_structured_row_csv_prompt_triggers_exhaustive_follow_up,
         test_result_coverage_summary_marks_partial_distinct_value_slices,
     ]
     results = []

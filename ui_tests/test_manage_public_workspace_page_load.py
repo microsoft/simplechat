@@ -1,14 +1,15 @@
 # test_manage_public_workspace_page_load.py
 """
 UI test for manage public workspace page load.
-Version: 0.241.114
-Implemented in: 0.241.114
+Version: 0.241.125
+Implemented in: 0.241.125
 
 This test ensures the manage public workspace page loads without JavaScript
-parse errors and that pending request actions remain bound after the page
-initializes.
+parse errors, keeps the hero branding UI interactive, and preserves the pending
+request actions after initialization.
 """
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,9 @@ from playwright.sync_api import expect
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
 SKIP_RESPONSE_CODES = {401, 403, 404}
+PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+JqkAAAAASUVORK5CYII="
+)
 
 
 def _fulfill_json(route, payload, status=200):
@@ -80,10 +84,16 @@ def test_manage_public_workspace_loads_without_script_parse_errors(playwright):
                     },
                     "status": "active",
                     "heroColor": "#225577",
+                    "hasLogo": True,
+                    "logoVersion": 7,
                     "userRole": "Owner",
                     "isMember": True,
                 },
             )
+            return
+
+        if path == "/api/public_workspaces/public-1/logo":
+            route.fulfill(status=200, content_type="image/png", body=PNG_BYTES)
             return
 
         if path == "/api/public_workspaces/public-1/members":
@@ -140,6 +150,18 @@ def test_manage_public_workspace_loads_without_script_parse_errors(playwright):
             "Expected /public_workspaces/public-1 to load successfully, "
             f"got HTTP {response.status}."
         )
+
+        expect(page.locator("#workspaceLogoImage")).to_be_visible()
+        expect(page.locator("#workspaceInitial")).to_be_hidden()
+        expect(page.locator("#selectedColor")).to_have_value("#225577")
+
+        page.locator('.color-option[data-color="#107c10"]').click()
+        expect(page.locator("#selectedColor")).to_have_value("#107c10")
+
+        hero_color = page.locator("#workspaceHero").evaluate(
+            "el => el.style.getPropertyValue('--profile-hero-color').trim()"
+        )
+        assert hero_color == "#107c10", f"Expected updated hero color picker value, saw {hero_color!r}."
 
         expect(page.locator("#membersTable tbody")).to_contain_text("Member User")
         expect(page.locator("#pendingRequestsTable tbody")).to_contain_text("Requester User")

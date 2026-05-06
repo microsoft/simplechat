@@ -9,6 +9,14 @@ from functions_simplechat_operations import (
     add_group_member_for_current_user,
     create_group_for_current_user,
 )
+from functions_workspace_branding import (
+    DEFAULT_WORKSPACE_HERO_COLOR,
+    decode_workspace_logo_base64,
+    get_workspace_logo_metadata,
+    is_allowed_workspace_logo_file,
+    normalize_workspace_hero_color,
+    prepare_workspace_logo_image_for_storage,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_groups(app):
@@ -113,10 +121,21 @@ def register_route_backend_groups(app):
             mapped_results = []
             for g in paginated_groups:
                 role = get_user_role_in_group(g, user_id)
+                logo_metadata = get_workspace_logo_metadata(g)
+                owner = g.get("owner", {}) or {}
                 mapped_results.append({
                     "id": g["id"],
                     "name": g.get("name", "Untitled Group"), # Provide default name
                     "description": g.get("description", ""),
+                    "owner": {
+                        "displayName": owner.get("displayName", ""),
+                        "email": owner.get("email", ""),
+                    },
+                    "heroColor": normalize_workspace_hero_color(
+                        g.get("heroColor"),
+                        DEFAULT_WORKSPACE_HERO_COLOR,
+                    ),
+                    **logo_metadata,
                     "userRole": role,
                     "isActive": (g["id"] == db_active_group_id),
                     "status": g.get("status", "active")  # Include group status
@@ -180,7 +199,15 @@ def register_route_backend_groups(app):
         if not get_user_role_in_group(group_doc, user_id):
             return jsonify({"error": "You are not a member of this group"}), 403
 
-        return jsonify(group_doc), 200
+        response_doc = dict(group_doc)
+        response_doc["heroColor"] = normalize_workspace_hero_color(
+            group_doc.get("heroColor"),
+            DEFAULT_WORKSPACE_HERO_COLOR,
+        )
+        response_doc.update(get_workspace_logo_metadata(group_doc))
+        response_doc.pop("logoBase64", None)
+
+        return jsonify(response_doc), 200
 
     @app.route("/api/groups/<group_id>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())
@@ -233,9 +260,14 @@ def register_route_backend_groups(app):
         data = request.get_json()
         name = data.get("name", group_doc.get("name"))
         description = data.get("description", group_doc.get("description"))
+        hero_color = normalize_workspace_hero_color(
+            data.get("heroColor"),
+            group_doc.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
+        )
 
         group_doc["name"] = name
         group_doc["description"] = description
+        group_doc["heroColor"] = hero_color
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
         try:
             cosmos_groups_container.upsert_item(group_doc)
@@ -243,6 +275,84 @@ def register_route_backend_groups(app):
             return jsonify({"error": str(ex)}), 400
 
         return jsonify({"message": "Group updated", "id": group_id}), 200
+
+    @app.route("/api/groups/<group_id>/logo", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_get_group_logo(group_id):
+        user_info = get_current_user_info()
+        user_id = user_info["userId"]
+
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            return jsonify({"error": "Group not found"}), 404
+
+        if not get_user_role_in_group(group_doc, user_id):
+            return jsonify({"error": "You are not a member of this group"}), 403
+
+        logo_base64 = str(group_doc.get("logoBase64") or "").strip()
+        if not logo_base64:
+            return jsonify({"error": "Group logo not found"}), 404
+
+        try:
+            logo_bytes = decode_workspace_logo_base64(logo_base64)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Stored group logo is invalid"}), 500
+
+        return send_file(
+            BytesIO(logo_bytes),
+            mimetype="image/png",
+            max_age=3600,
+            download_name="group-logo.png",
+        )
+
+    @app.route("/api/groups/<group_id>/logo", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_upload_group_logo(group_id):
+        user_info = get_current_user_info()
+        user_id = user_info["userId"]
+
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            return jsonify({"error": "Group not found"}), 404
+
+        if group_doc["owner"]["id"] != user_id:
+            return jsonify({"error": "Only the owner can update the group logo"}), 403
+
+        logo_file = request.files.get("logo_file")
+        if not logo_file or not logo_file.filename:
+            return jsonify({"error": "No logo file provided"}), 400
+
+        if not is_allowed_workspace_logo_file(logo_file.filename):
+            return jsonify({"error": "Unsupported image type. Allowed: png, jpg, jpeg"}), 400
+
+        try:
+            processed_logo = prepare_workspace_logo_image_for_storage(
+                logo_file.read(),
+                logo_file.filename,
+            )
+        except (ValueError, OSError) as ex:
+            return jsonify({"error": str(ex)}), 400
+
+        current_logo_version = get_workspace_logo_metadata(group_doc)["logoVersion"]
+        group_doc["logoBase64"] = processed_logo["base64_str"]
+        group_doc["logoVersion"] = current_logo_version + 1
+        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+
+        try:
+            cosmos_groups_container.upsert_item(group_doc)
+        except exceptions.CosmosHttpResponseError as ex:
+            return jsonify({"error": str(ex)}), 400
+
+        return jsonify({
+            "message": "Group logo updated",
+            "logoVersion": group_doc["logoVersion"],
+        }), 200
 
     @app.route("/api/groups/setActive", methods=["PATCH"])
     @swagger_route(security=get_auth_security())

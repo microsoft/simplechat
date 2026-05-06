@@ -382,6 +382,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Other
         'max_file_size_mb': 150,
+        'max_generated_chat_artifact_size_mb': 500,
         'tabular_preview_max_blob_size_mb': 200,
         'conversation_history_limit': 10,
         'enable_idle_timeout': False,

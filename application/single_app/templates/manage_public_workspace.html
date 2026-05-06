@@ -49,6 +49,18 @@
     backdrop-filter: blur(10px);
   }
 
+  .profile-hero-logo {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    object-fit: contain;
+    padding: 0.75rem;
+    background: rgba(255,255,255,0.18);
+    border: 5px solid rgba(255,255,255,0.3);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    backdrop-filter: blur(10px);
+  }
+
   .stat-card {
     background: var(--bs-body-bg);
     border-radius: 12px;
@@ -168,6 +180,7 @@
   <div class="profile-hero" id="workspaceHero">
     <div class="row align-items-center">
       <div class="col-auto">
+        <img class="profile-hero-logo d-none" id="workspaceLogoImage" alt="Workspace logo">
         <div class="profile-hero-placeholder" id="workspaceInitial">
           W
         </div>
@@ -257,6 +270,11 @@
                     <div class="color-option" data-color="#0099bc" style="background: linear-gradient(135deg, #0099bc 0%, #006d85 100%);"></div>
                   </div>
                   <input type="hidden" id="selectedColor" value="#0078d4">
+                </div>
+                <div class="mb-3">
+                  <label for="workspaceLogoFile" class="form-label">Workspace Logo</label>
+                  <input type="file" class="form-control" id="workspaceLogoFile" accept=".png,.jpg,.jpeg,image/png,image/jpeg">
+                  <div class="form-text">PNG or JPEG. The uploaded logo is stored as PNG and used in the hero card.</div>
                 </div>
                 <button type="submit" class="btn btn-primary btn-sm">
                   <i class="bi bi-save me-1"></i>Save Changes

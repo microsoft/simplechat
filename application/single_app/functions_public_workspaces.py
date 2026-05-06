@@ -6,6 +6,12 @@ from functions_authentication import *
 from functions_group import *
 from typing import Iterable
 
+from functions_workspace_branding import (
+    DEFAULT_WORKSPACE_HERO_COLOR,
+    get_workspace_logo_metadata,
+    normalize_workspace_hero_color,
+)
+
 def create_public_workspace(name: str, description: str) -> dict:
     """
     Creates a new public workspace. The creator becomes the Owner by default.
@@ -21,6 +27,9 @@ def create_public_workspace(name: str, description: str) -> dict:
         "id": new_id,
         "name": name,
         "description": description,
+        "heroColor": DEFAULT_WORKSPACE_HERO_COLOR,
+        "logoBase64": "",
+        "logoVersion": 1,
         "owner": {
             "userId": user_info["userId"],
             "email": user_info["email"],
@@ -129,15 +138,18 @@ def get_user_role_in_public_workspace(ws_doc: dict, user_id: str) -> str | None:
 def build_public_workspace_public_summary(ws_doc: dict) -> dict:
     """Return the non-sensitive workspace fields safe for any authenticated caller."""
     owner = ws_doc.get("owner", {}) or {}
+    logo_metadata = get_workspace_logo_metadata(ws_doc)
     return {
         "id": ws_doc.get("id", ""),
         "name": ws_doc.get("name", ""),
         "description": ws_doc.get("description", ""),
         "owner": {
             "displayName": owner.get("displayName", ""),
+            "email": owner.get("email", ""),
         },
         "status": ws_doc.get("status", "active"),
-        "heroColor": ws_doc.get("heroColor", "#0078d4"),
+        "heroColor": normalize_workspace_hero_color(ws_doc.get("heroColor")),
+        **logo_metadata,
         "userRole": None,
         "isMember": False,
     }
@@ -147,6 +159,7 @@ def build_public_workspace_member_payload(ws_doc: dict, user_id: str) -> dict:
     """Return the workspace fields required by member-facing workspace pages."""
     role = get_user_role_in_public_workspace(ws_doc, user_id)
     owner = ws_doc.get("owner", {}) or {}
+    logo_metadata = get_workspace_logo_metadata(ws_doc)
     payload = {
         "id": ws_doc.get("id", ""),
         "name": ws_doc.get("name", ""),
@@ -156,7 +169,8 @@ def build_public_workspace_member_payload(ws_doc: dict, user_id: str) -> dict:
             "email": owner.get("email", ""),
         },
         "status": ws_doc.get("status", "active"),
-        "heroColor": ws_doc.get("heroColor", "#0078d4"),
+        "heroColor": normalize_workspace_hero_color(ws_doc.get("heroColor")),
+        **logo_metadata,
         "userRole": role,
         "isMember": bool(role),
     }

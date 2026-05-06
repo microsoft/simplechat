@@ -42,6 +42,7 @@ let publicDocsTagsFilter = '';
 let publicBulkSelectedTags = new Set();
 let publicDocSelectedTags = new Set();
 let publicEditingTag = null;
+window.currentPublicStatus = window.currentPublicStatus || 'active';
 
 // Modals
 const publicPromptModal = new bootstrap.Modal(document.getElementById('publicPromptModal'));
@@ -435,6 +436,7 @@ async function onChangeActivePublic(){
 
 function updatePublicRoleDisplay(){
   const display = document.getElementById('user-public-role-display');
+  const activeWorkspace = userPublics.find(workspace => workspace.id === activePublicId) || null;
   if (activePublicId) {
     const roleEl = document.getElementById('user-public-role');
     const nameRoleEl = document.getElementById('active-public-name-role');
@@ -448,9 +450,90 @@ function updatePublicRoleDisplay(){
     if (settingsTabNav) {
       settingsTabNav.classList.toggle('d-none', !canManageSettings);
     }
+    updateActivePublicHero(activeWorkspace);
+    updateManagePublicWorkspaceLink(activeWorkspace);
   } else {
     if (display) display.style.display = 'none';
+    updateActivePublicHero(null);
+    updateManagePublicWorkspaceLink(null);
   }
+}
+
+function updateActivePublicHero(activeWorkspace) {
+  const heroCard = document.getElementById('active-public-hero');
+  const heroName = document.getElementById('active-public-hero-name');
+  const heroOwner = document.getElementById('active-public-hero-owner');
+  const heroDescription = document.getElementById('active-public-hero-description');
+  const heroInitial = document.getElementById('active-public-hero-initial');
+  const heroLogo = document.getElementById('active-public-hero-logo');
+
+  if (!heroCard || !heroName || !heroOwner || !heroDescription || !heroInitial || !heroLogo) {
+    return;
+  }
+
+  if (!activeWorkspace) {
+    heroCard.classList.add('d-none');
+    heroLogo.src = '';
+    heroLogo.classList.add('d-none');
+    heroInitial.classList.remove('d-none');
+    return;
+  }
+
+  const heroColor = activeWorkspace.heroColor || '#0078d4';
+  heroCard.style.setProperty('--workspace-hero-color', heroColor);
+  heroCard.style.setProperty('--workspace-hero-color-dark', adjustWorkspaceHeroColor(heroColor, -30));
+  heroName.textContent = activeWorkspace.name || 'Unnamed Workspace';
+  heroOwner.textContent = activeWorkspace.owner?.displayName || 'Unknown';
+  heroDescription.textContent = activeWorkspace.description || 'No description provided';
+  heroInitial.textContent = (activeWorkspace.name || 'P').charAt(0).toUpperCase();
+  heroCard.classList.remove('d-none');
+
+  if (activeWorkspace.hasLogo) {
+    heroLogo.onerror = function () {
+      heroLogo.src = '';
+      heroLogo.classList.add('d-none');
+      heroInitial.classList.remove('d-none');
+    };
+    heroLogo.src = `/api/public_workspaces/${activeWorkspace.id}/logo?v=${encodeURIComponent(activeWorkspace.logoVersion || 1)}`;
+    heroLogo.classList.remove('d-none');
+    heroInitial.classList.add('d-none');
+    return;
+  }
+
+  heroLogo.src = '';
+  heroLogo.classList.add('d-none');
+  heroInitial.classList.remove('d-none');
+}
+
+function updateManagePublicWorkspaceLink(activeWorkspace) {
+  const manageButton = document.getElementById('manage-active-public-btn');
+  if (!manageButton) {
+    return;
+  }
+
+  if (!activeWorkspace?.id) {
+    manageButton.classList.add('d-none');
+    manageButton.removeAttribute('href');
+    return;
+  }
+
+  manageButton.href = `/public_workspaces/${encodeURIComponent(activeWorkspace.id)}`;
+  manageButton.classList.remove('d-none');
+}
+
+function adjustWorkspaceHeroColor(color, percent) {
+  const numericColor = parseInt(String(color).replace('#', ''), 16);
+  const amount = Math.round(2.55 * percent);
+  const red = (numericColor >> 16) + amount;
+  const green = ((numericColor >> 8) & 0x00FF) + amount;
+  const blue = (numericColor & 0x0000FF) + amount;
+
+  return `#${(
+    0x1000000 +
+    (red < 255 ? (red < 1 ? 0 : red) : 255) * 0x10000 +
+    (green < 255 ? (green < 1 ? 0 : green) : 255) * 0x100 +
+    (blue < 255 ? (blue < 1 ? 0 : blue) : 255)
+  ).toString(16).slice(1)}`;
 }
 
 // Update workspace status alert based on status - uses shared utility
@@ -465,6 +548,7 @@ function updateWorkspaceStatusAlert() {
 
 // Update UI elements based on workspace status
 function updateWorkspaceUIBasedOnStatus(status) {
+  window.currentPublicStatus = status || 'active';
   const isLocked = status === 'locked';
   const uploadDisabled = status === 'upload_disabled' || isLocked;
   const isInactive = status === 'inactive';
@@ -497,6 +581,149 @@ function updateWorkspaceUIBasedOnStatus(status) {
       }
     });
   }
+}
+
+function isPendingGeneratedArtifactDocument(doc) {
+  return String((doc && doc.generated_artifact_promotion_status) || '').trim().toLowerCase() === 'pending_approval';
+}
+
+function showPublicWorkspaceMessage(message, variant = 'info') {
+  if (typeof window.showToast === 'function') {
+    window.showToast(message, variant);
+    return;
+  }
+
+  showPublicDocumentDeleteFeedback(message, variant);
+}
+
+function buildPublicGeneratedArtifactApproveButton(documentId, fileName) {
+  const approveButton = document.createElement('button');
+  approveButton.type = 'button';
+  approveButton.className = 'btn btn-sm btn-outline-success me-1';
+  approveButton.setAttribute(
+    'aria-label',
+    `Approve generated artifact ${String(fileName || 'document').trim() || 'document'}`
+  );
+
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-check2-circle me-1';
+  icon.setAttribute('aria-hidden', 'true');
+  approveButton.appendChild(icon);
+  approveButton.appendChild(document.createTextNode('Approve'));
+
+  approveButton.addEventListener('click', () => {
+    window.approvePublicGeneratedArtifactDocument(documentId, approveButton);
+  });
+
+  return approveButton;
+}
+
+function buildPublicGeneratedArtifactDenyButton(documentId, fileName) {
+  const denyButton = document.createElement('button');
+  denyButton.type = 'button';
+  denyButton.className = 'btn btn-sm btn-outline-danger me-1';
+  denyButton.setAttribute(
+    'aria-label',
+    `Deny generated artifact ${String(fileName || 'document').trim() || 'document'}`
+  );
+
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-x-circle me-1';
+  icon.setAttribute('aria-hidden', 'true');
+  denyButton.appendChild(icon);
+  denyButton.appendChild(document.createTextNode('Deny'));
+
+  denyButton.addEventListener('click', () => {
+    window.denyPublicGeneratedArtifactDocument(documentId, denyButton);
+  });
+
+  return denyButton;
+}
+
+function buildPublicGeneratedArtifactCancelButton(documentId, fileName) {
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'btn btn-sm btn-outline-secondary me-1';
+  cancelButton.setAttribute(
+    'aria-label',
+    `Cancel generated artifact ${String(fileName || 'document').trim() || 'document'}`
+  );
+
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-x-lg me-1';
+  icon.setAttribute('aria-hidden', 'true');
+  cancelButton.appendChild(icon);
+  cancelButton.appendChild(document.createTextNode('Cancel'));
+
+  cancelButton.addEventListener('click', () => {
+    window.cancelPublicGeneratedArtifactDocument(documentId, cancelButton);
+  });
+
+  return cancelButton;
+}
+
+function getPublicGeneratedArtifactRequesterId(doc) {
+  return String((doc && (doc.generated_artifact_requested_by_user_id || doc.user_id)) || '').trim();
+}
+
+function getCurrentWorkspaceUserId() {
+  return String(window.current_user_id || window.currentUser?.id || window.currentUser?.user_id || '').trim();
+}
+
+function getPublicGeneratedArtifactActionButtons(doc) {
+  if (!isPendingGeneratedArtifactDocument(doc)) {
+    return [];
+  }
+
+  const actionButtons = [];
+  const documentId = String((doc && doc.id) || '').trim();
+  if (!documentId) {
+    return actionButtons;
+  }
+
+  const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
+  const requesterId = getPublicGeneratedArtifactRequesterId(doc);
+  const currentUserId = getCurrentWorkspaceUserId();
+  const isRequester = !!currentUserId && requesterId === currentUserId;
+  const fileName = doc.file_name || 'document';
+
+  if (canManage && window.currentPublicStatus === 'active') {
+    actionButtons.push(buildPublicGeneratedArtifactApproveButton(documentId, fileName));
+  }
+
+  if (canManage && !isRequester) {
+    actionButtons.push(buildPublicGeneratedArtifactDenyButton(documentId, fileName));
+  }
+
+  if (isRequester) {
+    actionButtons.push(buildPublicGeneratedArtifactCancelButton(documentId, fileName));
+  }
+
+  return actionButtons;
+}
+
+function prependPublicGeneratedArtifactActionButtons(actionsCell, doc) {
+  if (!(actionsCell instanceof HTMLElement)) {
+    return;
+  }
+
+  const actionButtons = getPublicGeneratedArtifactActionButtons(doc);
+  if (!actionButtons.length) {
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  actionButtons.forEach((button) => fragment.appendChild(button));
+  actionsCell.prepend(fragment);
+}
+
+function wirePublicFolderGeneratedArtifactApproveButtons(docs) {
+  const rows = document.querySelectorAll('#public-folder-docs-table tbody tr');
+  docs.forEach((doc, index) => {
+    const row = rows[index];
+    const actionsCell = row && row.children ? row.children[2] : null;
+    prependPublicGeneratedArtifactActionButtons(actionsCell, doc);
+  });
 }
 
 function loadActivePublicData(){
@@ -547,6 +774,7 @@ async function fetchPublicDocs(){
 
 function renderPublicDocumentRow(doc) {
   const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
+  const currentWorkspaceStatus = window.currentPublicStatus || 'active';
 
   // Create main document row
   const tr = document.createElement('tr');
@@ -557,6 +785,7 @@ function renderPublicDocumentRow(doc) {
   const docStatus = doc.status || "";
   const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
   const hasError = docStatus.toLowerCase().includes("error") || docStatus.toLowerCase().includes("failed");
+  const isPendingGeneratedArtifact = isPendingGeneratedArtifactDocument(doc);
 
   let firstTdHtml = "";
   if (isComplete && !hasError) {
@@ -629,6 +858,9 @@ function renderPublicDocumentRow(doc) {
     <td class="align-middle" title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
     <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
     <td class="align-middle">${chatButton}${actionsDropdown}</td>`;
+
+  const actionsCell = tr.querySelector('td:last-child');
+  prependPublicGeneratedArtifactActionButtons(actionsCell, doc);
 
   // Create details row
   const detailsRow = document.createElement('tr');
@@ -991,6 +1223,111 @@ window.deletePublicDocument = async function(id, event) {
       deleteTrigger.classList.remove('disabled');
       deleteTrigger.removeAttribute('aria-disabled');
       deleteTrigger.innerHTML = originalDeleteTriggerHtml;
+    }
+  }
+};
+
+window.approvePublicGeneratedArtifactDocument = async function(id, triggerButton = null) {
+  const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
+  if (!canManage) {
+    showPublicWorkspaceMessage('You do not have permission to approve generated artifacts in this workspace.', 'danger');
+    return;
+  }
+
+  const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+  if (triggerButton) {
+    triggerButton.disabled = true;
+    triggerButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+  }
+
+  try {
+    const response = await fetch(`/api/public_documents/${encodeURIComponent(id)}/approve-generated-artifact`, {
+      method: 'POST',
+    });
+    const responseData = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(responseData.error || `Server responded with status ${response.status}`);
+    }
+
+    showPublicWorkspaceMessage(responseData.message || 'Generated artifact approved.', 'success');
+    if (publicCurrentFolder) {
+      renderPublicFolderContents(publicCurrentFolder);
+      return;
+    }
+    fetchPublicDocs();
+  } catch (error) {
+    showPublicWorkspaceMessage(error.message || 'Failed to approve the generated artifact.', 'danger');
+    if (triggerButton && document.body.contains(triggerButton)) {
+      triggerButton.disabled = false;
+      triggerButton.innerHTML = originalButtonHtml;
+    }
+  }
+};
+
+window.denyPublicGeneratedArtifactDocument = async function(id, triggerButton = null) {
+  const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
+  if (!canManage) {
+    showPublicWorkspaceMessage('You do not have permission to deny generated artifacts in this workspace.', 'danger');
+    return;
+  }
+
+  const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+  if (triggerButton) {
+    triggerButton.disabled = true;
+    triggerButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+  }
+
+  try {
+    const response = await fetch(`/api/public_documents/${encodeURIComponent(id)}/deny-generated-artifact`, {
+      method: 'POST',
+    });
+    const responseData = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(responseData.error || `Server responded with status ${response.status}`);
+    }
+
+    showPublicWorkspaceMessage(responseData.message || 'Generated artifact denied.', 'success');
+    if (publicCurrentFolder) {
+      renderPublicFolderContents(publicCurrentFolder);
+      return;
+    }
+    fetchPublicDocs();
+  } catch (error) {
+    showPublicWorkspaceMessage(error.message || 'Failed to deny the generated artifact.', 'danger');
+    if (triggerButton && document.body.contains(triggerButton)) {
+      triggerButton.disabled = false;
+      triggerButton.innerHTML = originalButtonHtml;
+    }
+  }
+};
+
+window.cancelPublicGeneratedArtifactDocument = async function(id, triggerButton = null) {
+  const originalButtonHtml = triggerButton ? triggerButton.innerHTML : null;
+  if (triggerButton) {
+    triggerButton.disabled = true;
+    triggerButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+  }
+
+  try {
+    const response = await fetch(`/api/public_documents/${encodeURIComponent(id)}/cancel-generated-artifact`, {
+      method: 'POST',
+    });
+    const responseData = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(responseData.error || `Server responded with status ${response.status}`);
+    }
+
+    showPublicWorkspaceMessage(responseData.message || 'Generated artifact request canceled.', 'success');
+    if (publicCurrentFolder) {
+      renderPublicFolderContents(publicCurrentFolder);
+      return;
+    }
+    fetchPublicDocs();
+  } catch (error) {
+    showPublicWorkspaceMessage(error.message || 'Failed to cancel the generated artifact request.', 'danger');
+    if (triggerButton && document.body.contains(triggerButton)) {
+      triggerButton.disabled = false;
+      triggerButton.innerHTML = originalButtonHtml;
     }
   }
 };
@@ -1494,16 +1831,30 @@ function buildPublicFolderDocumentsTable(docs) {
     }
     return 'bi-arrow-down-up text-muted';
   }
-  let html = '<table class="table table-striped table-sm"><thead><tr>';
+  let html = '<table class="table table-striped table-sm" id="public-folder-docs-table"><thead><tr>';
   html += `<th class="folder-sortable-header" data-sort-field="file_name" style="cursor:pointer;user-select:none;">File Name <i class="bi ${getSortIcon('file_name')} small"></i></th>`;
   html += `<th class="folder-sortable-header" data-sort-field="title" style="cursor:pointer;user-select:none;">Title <i class="bi ${getSortIcon('title')} small"></i></th>`;
   html += '<th>Actions</th></tr></thead><tbody>';
   docs.forEach(doc => {
-    const chatBtn = `<button class="btn btn-sm btn-primary" onclick="searchPublicDocumentInChat('${doc.id}')" title="Chat"><i class="bi bi-chat-dots-fill me-1"></i>Chat</button>`;
+    const pctString = String((doc.percentage_complete ?? doc.percentage) || '0');
+    const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
+    const docStatus = doc.status || '';
+    const isComplete = pct >= 100 || docStatus.toLowerCase().includes('complete') || docStatus.toLowerCase().includes('error');
+    const hasError = docStatus.toLowerCase().includes('error') || docStatus.toLowerCase().includes('failed');
+    let actionsHtml = '';
+
+    if (isComplete && !hasError) {
+      actionsHtml = `<button class="btn btn-sm btn-primary" onclick="searchPublicDocumentInChat('${doc.id}')" title="Chat"><i class="bi bi-chat-dots-fill me-1"></i>Chat</button>`;
+    } else if (hasError) {
+      actionsHtml = `<span class="text-danger small">${escapeHtml(docStatus || 'Processing error')}</span>`;
+    } else {
+      actionsHtml = `<span class="text-muted small">${escapeHtml(docStatus || 'Pending approval')}</span>`;
+    }
+
     html += `<tr>
       <td title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
       <td title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
-      <td>${chatBtn}</td>
+      <td>${actionsHtml}</td>
     </tr>`;
   });
   html += '</tbody></table>';
@@ -1626,6 +1977,7 @@ async function renderPublicFolderContents(tagName) {
 
     container.innerHTML = html;
     wirePublicBackButton(container);
+  wirePublicFolderGeneratedArtifactApproveButtons(docs);
 
     const si = document.getElementById('public-folder-search-input');
     const sb = document.getElementById('public-folder-search-btn');

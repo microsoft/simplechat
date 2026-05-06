@@ -14,6 +14,7 @@ from config import cosmos_approvals_container, cosmos_groups_container
 from functions_appinsights import log_event
 from functions_notifications import create_notification, delete_notifications_by_metadata
 from functions_group import find_group_by_id
+from functions_settings import get_settings
 from functions_debug import debug_print
 
 # Approval request statuses
@@ -30,12 +31,39 @@ TYPE_TRANSFER_OWNERSHIP = "transfer_ownership"
 TYPE_DELETE_DOCUMENTS = "delete_documents"
 TYPE_DELETE_GROUP = "delete_group"
 TYPE_DELETE_USER_DOCUMENTS = "delete_user_documents"
+TYPE_WARN_USER = "warn_user"
+TYPE_SUSPEND_USER = "suspend_user"
+TYPE_BLOCK_USER = "block_user"
+
+USER_TARGETED_APPROVAL_TYPES = {
+    TYPE_DELETE_USER_DOCUMENTS,
+    TYPE_WARN_USER,
+    TYPE_SUSPEND_USER,
+    TYPE_BLOCK_USER,
+}
+
+SAFETY_USER_APPROVAL_TYPES = {
+    TYPE_WARN_USER,
+    TYPE_SUSPEND_USER,
+    TYPE_BLOCK_USER,
+}
 
 # TTL settings
 TTL_AUTO_DENY_DAYS = 3
 TTL_AUTO_DENY_SECONDS = TTL_AUTO_DENY_DAYS * 24 * 60 * 60  # 3 days in seconds
 
 PENDING_APPROVAL_ADMIN_NOTIFICATION_TYPES = ['approval_request_pending']
+
+
+def get_approval_roles_for_request_type(request_type: str) -> List[str]:
+    """Return role assignments eligible to review the supplied approval type."""
+    if request_type in SAFETY_USER_APPROVAL_TYPES:
+        settings = get_settings()
+        if settings.get('require_member_of_control_center_admin', False):
+            return ['ControlCenterAdmin']
+        return ['Admin']
+
+    return ['Admin', 'ControlCenterAdmin']
 
 
 def create_approval_request(
@@ -67,9 +95,9 @@ def create_approval_request(
         # Initialize group variable for notifications (may be None for non-group operations)
         group = None
         
-        if request_type == TYPE_DELETE_USER_DOCUMENTS:
+        if request_type in USER_TARGETED_APPROVAL_TYPES:
             # For user document deletions, group_id is actually the user_id (partition key)
-            group_name = metadata.get('user_name', 'Unknown User')
+            group_name = metadata.get('user_name') or metadata.get('user_email') or metadata.get('user_id') or 'Unknown User'
             group_owner = {}
         elif metadata and metadata.get('entity_type') == 'workspace':
             # For public workspace operations
@@ -154,7 +182,10 @@ def create_approval_request(
         debug_print(f"Created approval request: {approval_request}")
         
         # Create notifications for eligible approvers
-        _create_approval_notifications(approval_request, group if request_type != TYPE_DELETE_USER_DOCUMENTS else None)
+        _create_approval_notifications(
+            approval_request,
+            group if request_type not in USER_TARGETED_APPROVAL_TYPES else None,
+        )
         _create_requester_pending_notification(approval_request)
         
         return approval_request
@@ -667,14 +698,30 @@ def _can_user_view(
     if approval.get('request_type') == TYPE_DELETE_USER_DOCUMENTS:
         target_user_id = approval.get('metadata', {}).get('user_id')
         is_personal_workspace_owner = target_user_id == user_id
+
+    is_affected_user = False
+    if approval.get('request_type') in SAFETY_USER_APPROVAL_TYPES:
+        target_user_id = approval.get('metadata', {}).get('user_id')
+        is_affected_user = target_user_id == user_id
     
     # Check if user has admin roles
     has_control_center_admin = 'ControlCenterAdmin' in user_roles
     has_admin = 'Admin' in user_roles or 'admin' in user_roles
+    has_request_role = any(
+        role in user_roles for role in get_approval_roles_for_request_type(approval.get('request_type'))
+    )
     
     # User can view if they meet any of these criteria
-    return (is_requester or is_approver or is_group_owner or 
-            is_personal_workspace_owner or has_control_center_admin or has_admin)
+    return (
+        is_requester
+        or is_approver
+        or is_group_owner
+        or is_personal_workspace_owner
+        or is_affected_user
+        or has_request_role
+        or has_control_center_admin
+        or has_admin
+    )
 
 
 def _can_user_approve(
@@ -710,6 +757,18 @@ def _can_user_approve(
         target_user_id = approval.get('metadata', {}).get('user_id')
         is_personal_workspace_owner = target_user_id == user_id
     
+    if approval.get('request_type') in SAFETY_USER_APPROVAL_TYPES:
+        has_request_role = any(
+            role in user_roles for role in get_approval_roles_for_request_type(approval.get('request_type'))
+        )
+        if not has_request_role:
+            return False
+
+        if approval.get('requester_id') == user_id:
+            return True
+
+        return True
+
     # Check if user has admin roles (check both capitalized and lowercase)
     has_control_center_admin = 'ControlCenterAdmin' in user_roles
     has_admin = 'Admin' in user_roles or 'admin' in user_roles
@@ -754,11 +813,11 @@ def _create_approval_notifications(
         
         # Build assignment criteria based on request type
         assignment = {
-            'roles': ['Admin', 'ControlCenterAdmin']  # Always include admin roles
+            'roles': get_approval_roles_for_request_type(approval['request_type'])
         }
         
         # Add ownership-based targeting
-        if approval['request_type'] == TYPE_DELETE_USER_DOCUMENTS:
+        if approval['request_type'] in USER_TARGETED_APPROVAL_TYPES:
             # For user document deletion: notify the user whose documents are being deleted
             user_id = approval.get('metadata', {}).get('user_id')
             if user_id:
@@ -931,6 +990,9 @@ def _format_request_type(request_type: str) -> str:
         TYPE_TRANSFER_OWNERSHIP: "Transfer Ownership",
         TYPE_DELETE_DOCUMENTS: "Delete All Documents",
         TYPE_DELETE_GROUP: "Delete Group",
-        TYPE_DELETE_USER_DOCUMENTS: "Delete All User Documents"
+        TYPE_DELETE_USER_DOCUMENTS: "Delete All User Documents",
+        TYPE_WARN_USER: "Warn User",
+        TYPE_SUSPEND_USER: "Suspend User",
+        TYPE_BLOCK_USER: "Block User",
     }
     return type_labels.get(request_type, request_type)

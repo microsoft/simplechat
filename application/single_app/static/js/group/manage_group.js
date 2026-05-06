@@ -4,6 +4,8 @@ import { showToast } from "../chat/chat-toast.js";
 let currentUserRole = null;
 
 $(document).ready(function () {
+  initializeColorPicker();
+
   loadGroupInfo(function () {
     loadMembers();
   });
@@ -285,6 +287,7 @@ function loadGroupInfo(doneCallback) {
   $.get(`/api/groups/${groupId}`, function (group) {
     const ownerName = group.owner?.displayName || "N/A";
     const ownerEmail = group.owner?.email || "N/A";
+    const heroColor = group.heroColor || '#0078d4';
 
     // Update hero section
     const initial = group.name ? group.name.charAt(0).toUpperCase() : 'G';
@@ -293,6 +296,8 @@ function loadGroupInfo(doneCallback) {
     $('#groupOwnerName').text(ownerName);
     $('#groupOwnerEmail').text(ownerEmail);
     $('#groupHeroDescription').text(group.description || 'No description provided');
+    setSelectedGroupHeroColor(heroColor);
+    updateGroupHeroMedia(group);
 
     // Update group status alert if not active
     updateGroupStatusAlert(group.status || 'active');
@@ -317,16 +322,19 @@ function loadGroupInfo(doneCallback) {
       $("#editGroupContainer").show();
       $("#editGroupName").val(group.name);
       $("#editGroupDescription").val(group.description);
+      $("#groupLogoFile").val('');
       $("#ownerActionsContainer").show();
       
       // Disable editing for locked/inactive groups
       if (isGroupLocked) {
         $("#editGroupName").prop('readonly', true);
         $("#editGroupDescription").prop('readonly', true);
+        $("#groupLogoFile").prop('disabled', true);
         $("#editGroupForm button[type='submit']").hide();
       } else {
         $("#editGroupName").prop('readonly', false);
         $("#editGroupDescription").prop('readonly', false);
+        $("#groupLogoFile").prop('disabled', false);
         $("#editGroupForm button[type='submit']").show();
       }
     } else {
@@ -384,25 +392,133 @@ function leaveGroup() {
   });
 }
 
-function updateGroupInfo() {
+async function updateGroupInfo() {
   const data = {
     name: $("#editGroupName").val(),
     description: $("#editGroupDescription").val(),
+    heroColor: $("#selectedColor").val() || '#0078d4',
   };
-  $.ajax({
-    url: `/api/groups/${groupId}`,
-    method: "PATCH",
-    contentType: "application/json",
-    data: JSON.stringify(data),
-    success: function () {
-      alert("Group updated successfully!");
-      loadGroupInfo();
-    },
-    error: function (err) {
-      console.error(err);
-      alert("Failed to update group info.");
-    },
+
+  try {
+    const updateResponse = await fetch(`/api/groups/${groupId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const updatePayload = await updateResponse.json().catch(() => ({}));
+    if (!updateResponse.ok) {
+      throw new Error(updatePayload.error || 'Failed to update group info.');
+    }
+
+    const logoInput = document.getElementById('groupLogoFile');
+    const logoFile = logoInput?.files?.[0] || null;
+
+    if (logoFile) {
+      try {
+        await uploadGroupLogo(logoFile);
+        alert('Group updated successfully and logo uploaded.');
+      } catch (error) {
+        console.error(error);
+        loadGroupInfo();
+        alert(`Group details saved, but logo upload failed: ${error.message}`);
+        return;
+      }
+    } else {
+      alert('Group updated successfully!');
+    }
+
+    loadGroupInfo();
+  } catch (error) {
+    console.error(error);
+    alert(error.message || 'Failed to update group info.');
+  }
+}
+
+async function uploadGroupLogo(file) {
+  const formData = new FormData();
+  formData.append('logo_file', file);
+
+  const response = await fetch(`/api/groups/${groupId}/logo`, {
+    method: 'POST',
+    body: formData,
   });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to upload group logo.');
+  }
+
+  const logoInput = document.getElementById('groupLogoFile');
+  if (logoInput) {
+    logoInput.value = '';
+  }
+
+  return payload;
+}
+
+function updateGroupHeroMedia(group) {
+  const logoImage = document.getElementById('groupLogoImage');
+  const initialBadge = document.getElementById('groupInitial');
+  if (!logoImage || !initialBadge) {
+    return;
+  }
+
+  const hasLogo = Boolean(group?.hasLogo);
+  if (!hasLogo) {
+    logoImage.src = '';
+    logoImage.classList.add('d-none');
+    initialBadge.classList.remove('d-none');
+    return;
+  }
+
+  logoImage.onerror = function () {
+    logoImage.src = '';
+    logoImage.classList.add('d-none');
+    initialBadge.classList.remove('d-none');
+  };
+  logoImage.src = `/api/groups/${groupId}/logo?v=${encodeURIComponent(group.logoVersion || 1)}`;
+  logoImage.classList.remove('d-none');
+  initialBadge.classList.add('d-none');
+}
+
+function setSelectedGroupHeroColor(color) {
+  const normalizedColor = color || '#0078d4';
+  $('#selectedColor').val(normalizedColor);
+  $('.color-option').removeClass('selected');
+  $(`.color-option[data-color="${normalizedColor}"]`).addClass('selected');
+  updateGroupHeroColor(normalizedColor);
+}
+
+function updateGroupHeroColor(color) {
+  const heroElement = document.getElementById('groupHero');
+  if (!heroElement) {
+    return;
+  }
+
+  const normalizedColor = color || '#0078d4';
+  heroElement.style.setProperty('--hero-color', normalizedColor);
+  heroElement.style.setProperty('--hero-color-dark', adjustColorBrightness(normalizedColor, -30));
+}
+
+function initializeColorPicker() {
+  $('.color-option').on('click', function () {
+    const color = $(this).data('color');
+    setSelectedGroupHeroColor(color);
+  });
+}
+
+function adjustColorBrightness(color, percent) {
+  const numericColor = parseInt(String(color).replace('#', ''), 16);
+  const amount = Math.round(2.55 * percent);
+  const red = (numericColor >> 16) + amount;
+  const green = ((numericColor >> 8) & 0x00FF) + amount;
+  const blue = (numericColor & 0x0000FF) + amount;
+
+  return `#${(
+    0x1000000 +
+    (red < 255 ? (red < 1 ? 0 : red) : 255) * 0x10000 +
+    (green < 255 ? (green < 1 ? 0 : green) : 255) * 0x100 +
+    (blue < 255 ? (blue < 1 ? 0 : blue) : 255)
+  ).toString(16).slice(1)}`;
 }
 
 function loadMembers(searchTerm, roleFilter) {

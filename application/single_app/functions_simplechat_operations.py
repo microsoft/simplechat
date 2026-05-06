@@ -441,10 +441,30 @@ def upload_generated_chat_artifact_for_current_user(
     file_content: Any,
 ) -> Dict[str, Any]:
     """Upload generated JSON/CSV-style content into the current user's current chat."""
+    return upload_generated_analysis_artifact_for_current_user(
+        conversation_id=conversation_id,
+        file_name=file_name,
+        file_content=file_content,
+        capability="tabular",
+    )
+
+
+def upload_generated_analysis_artifact_for_current_user(
+    conversation_id: str,
+    file_name: str,
+    file_content: Any,
+    capability: str = "analysis",
+    output_format: str = "",
+    summary: str = "",
+) -> Dict[str, Any]:
+    """Upload generated analysis content into the current user's current chat."""
     current_user_info = _require_current_user_info()
     current_user_id = current_user_info["userId"]
     normalized_conversation_id = str(conversation_id or "").strip()
     normalized_file_name = _normalize_generated_document_file_name(file_name)
+    normalized_capability = str(capability or "analysis").strip().lower() or "analysis"
+    normalized_output_format = str(output_format or "").strip().lower() or os.path.splitext(normalized_file_name)[1].lower().lstrip(".")
+    normalized_summary = str(summary or "").strip()
 
     if isinstance(file_content, bytes):
         file_content_bytes = file_content
@@ -458,11 +478,29 @@ def upload_generated_chat_artifact_for_current_user(
     if not allowed_file(normalized_file_name):
         raise ValueError("Generated file type is not supported")
 
+    settings = get_settings()
+    max_artifact_size_mb = settings.get("max_generated_chat_artifact_size_mb", 500)
+    try:
+        max_artifact_size_mb = max(1, int(max_artifact_size_mb))
+    except (TypeError, ValueError):
+        max_artifact_size_mb = 500
+
+    max_artifact_size_bytes = max_artifact_size_mb * 1024 * 1024
+    if len(file_content_bytes) > max_artifact_size_bytes:
+        raise ValueError(
+            f"Generated artifact exceeds the {max_artifact_size_mb} MB size limit"
+        )
+
     return _upload_generated_chat_artifact_for_current_user(
         current_user_id=current_user_id,
         conversation_id=normalized_conversation_id,
         normalized_file_name=normalized_file_name,
         file_content_bytes=file_content_bytes,
+        artifact_metadata={
+            "capability": normalized_capability,
+            "output_format": normalized_output_format,
+            "summary": normalized_summary,
+        },
     )
 
 
@@ -515,6 +553,25 @@ def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) ->
             )
 
     return deleted_count
+
+
+def download_blob_content(blob_container: str, blob_path: str) -> bytes:
+    """Download a blob into memory for internal workspace promotion flows."""
+    normalized_blob_container = str(blob_container or "").strip()
+    normalized_blob_path = str(blob_path or "").strip()
+
+    if not normalized_blob_container or not normalized_blob_path:
+        raise ValueError("blob_container and blob_path are required")
+
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        raise RuntimeError("Blob storage client not available")
+
+    blob_client = blob_service_client.get_blob_client(
+        container=normalized_blob_container,
+        blob=normalized_blob_path,
+    )
+    return blob_client.download_blob().readall()
 
 
 def create_group_for_current_user(name: str, description: str = "") -> Dict[str, Any]:
@@ -1102,6 +1159,7 @@ def _queue_document_upload_background_task(
     temp_file_path: str,
     original_filename: str,
     group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
 ) -> None:
     task_kwargs = {
         "document_id": document_id,
@@ -1111,6 +1169,8 @@ def _queue_document_upload_background_task(
     }
     if group_id:
         task_kwargs["group_id"] = group_id
+    if public_workspace_id:
+        task_kwargs["public_workspace_id"] = public_workspace_id
 
     if not has_app_context():
         raise RuntimeError("SimpleChat document uploads require an active app context")
@@ -1129,6 +1189,64 @@ def _queue_document_upload_background_task(
         return
 
     process_document_upload_background(**task_kwargs)
+
+
+def queue_generated_document_processing(
+    document_id: str,
+    owner_user_id: str,
+    normalized_file_name: str,
+    file_content_bytes: Any,
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
+    process_inline: bool = False,
+) -> None:
+    """Queue processing for an existing generated document shell."""
+    normalized_document_id = str(document_id or "").strip()
+    normalized_owner_user_id = str(owner_user_id or "").strip()
+    normalized_name = str(normalized_file_name or "").strip()
+
+    if not normalized_document_id:
+        raise ValueError("document_id is required")
+    if not normalized_owner_user_id:
+        raise ValueError("owner_user_id is required")
+    if not normalized_name:
+        raise ValueError("normalized_file_name is required")
+
+    if isinstance(file_content_bytes, bytes):
+        normalized_file_content_bytes = file_content_bytes
+    else:
+        normalized_file_content_bytes = str(file_content_bytes or "").encode("utf-8")
+
+    if not normalized_file_content_bytes.strip():
+        raise ValueError("file_content_bytes is required")
+
+    file_extension = os.path.splitext(normalized_name)[1].lower() or ".json"
+    temp_file_path = _write_temp_generated_file(normalized_file_content_bytes, file_extension)
+
+    try:
+        if process_inline:
+            process_document_upload_background(
+                document_id=normalized_document_id,
+                user_id=normalized_owner_user_id,
+                temp_file_path=temp_file_path,
+                original_filename=normalized_name,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            return
+
+        _queue_document_upload_background_task(
+            document_id=normalized_document_id,
+            user_id=normalized_owner_user_id,
+            temp_file_path=temp_file_path,
+            original_filename=normalized_name,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+    except Exception:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise
 
 
 def _upload_generated_document_for_current_user(
@@ -1237,6 +1355,7 @@ def _upload_generated_chat_artifact_for_current_user(
     conversation_id: str,
     normalized_file_name: str,
     file_content_bytes: bytes,
+    artifact_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     try:
         conversation_item = cosmos_conversations_container.read_item(
@@ -1276,6 +1395,10 @@ def _upload_generated_chat_artifact_for_current_user(
     current_thread_id = str(uuid.uuid4())
     previous_thread_id = _get_latest_personal_thread_id(conversation_id)
     file_extension = os.path.splitext(normalized_file_name)[1].lower().lstrip(".")
+    artifact_metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
+    artifact_capability = str(artifact_metadata.get("capability") or "analysis").strip().lower() or "analysis"
+    artifact_output_format = str(artifact_metadata.get("output_format") or file_extension).strip().lower() or file_extension
+    artifact_summary = str(artifact_metadata.get("summary") or "").strip()
 
     message_doc = {
         "id": artifact_message_id,
@@ -1291,6 +1414,9 @@ def _upload_generated_chat_artifact_for_current_user(
         "metadata": {
             "is_generated_chat_artifact": True,
             "generated_artifact_storage_scope": "chat",
+            "generated_artifact_capability": artifact_capability,
+            "generated_artifact_output_format": artifact_output_format,
+            "generated_artifact_summary": artifact_summary,
             "thread_info": {
                 "thread_id": current_thread_id,
                 "previous_thread_id": previous_thread_id,
@@ -1309,6 +1435,8 @@ def _upload_generated_chat_artifact_for_current_user(
             "file_name": normalized_file_name,
             "blob_path": blob_path,
             "storage_scope": "chat",
+            "capability": artifact_capability,
+            "output_format": artifact_output_format,
         },
         debug_only=True,
     )
@@ -1319,6 +1447,8 @@ def _upload_generated_chat_artifact_for_current_user(
             "file_name": normalized_file_name,
             "blob_container": storage_account_personal_chat_container_name,
             "blob_path": blob_path,
+            "capability": artifact_capability,
+            "output_format": artifact_output_format,
         },
         "conversation_id": conversation_id,
     }

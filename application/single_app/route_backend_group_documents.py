@@ -1,15 +1,44 @@
 # route_backend_group_documents.py:
 
+from datetime import datetime, timezone
+
 from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_group import *
 from functions_documents import *
+from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_simplechat_operations import download_blob_content, queue_generated_document_processing
 from utils_cache import invalidate_group_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+
+
+PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES = [
+    'approval_request_pending',
+    'approval_request_pending_submitter',
+]
+
+
+def _cleanup_group_generated_artifact_notifications(document_id, group_id):
+    delete_notifications_by_metadata(
+        metadata_filters={
+            'document_id': document_id,
+            'group_id': group_id,
+            'request_type': 'generated_artifact_promotion',
+        },
+        notification_types=PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES,
+    )
+
+
+def _get_generated_artifact_actor_name(user_info, fallback_user_id):
+    return (
+        str((user_info or {}).get('displayName') or '').strip()
+        or str((user_info or {}).get('email') or '').strip()
+        or fallback_user_id
+    )
 
 def register_route_backend_group_documents(app):
     """
@@ -815,6 +844,262 @@ def register_route_backend_group_documents(app):
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
         except Exception as e:
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
+
+    @app.route('/api/group_documents/<document_id>/approve-generated-artifact', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_approve_group_generated_artifact(document_id):
+        """Approve a generated chat artifact promotion into the active group workspace."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager"),
+            )
+            group_doc = find_group_by_id(group_id=active_group_id)
+            if not group_doc:
+                return jsonify({'error': 'Active group not found'}), 404
+
+            allowed, reason = check_group_status_allows_operation(group_doc, 'upload')
+            if not allowed:
+                return jsonify({'error': reason}), 403
+
+            document_item = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=active_group_id,
+            )
+            if not document_item:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+
+            promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
+            if promotion_status != 'pending_approval':
+                return jsonify({'error': 'Document is not awaiting generated artifact approval'}), 400
+
+            owner_user_id = str(document_item.get('user_id') or '').strip()
+            source_blob_container = str(document_item.get('generated_artifact_source_blob_container') or '').strip()
+            source_blob_path = str(document_item.get('generated_artifact_source_blob_path') or '').strip()
+            if not owner_user_id or not source_blob_container or not source_blob_path:
+                return jsonify({'error': 'Generated artifact source is incomplete'}), 400
+
+            artifact_bytes = download_blob_content(source_blob_container, source_blob_path)
+            approver_info = get_current_user_info() or {}
+            approver_name = (
+                str(approver_info.get('displayName') or '').strip()
+                or str(approver_info.get('email') or '').strip()
+                or user_id
+            )
+
+            try:
+                update_document(
+                    document_id=document_id,
+                    user_id=owner_user_id,
+                    group_id=active_group_id,
+                    status='Queued for processing',
+                    percentage_complete=0,
+                    generated_artifact_promotion_status='approved',
+                    generated_artifact_approved_at=datetime.now(timezone.utc).isoformat(),
+                    generated_artifact_approved_by_user_id=user_id,
+                    generated_artifact_approved_by_display_name=approver_name,
+                )
+                queue_generated_document_processing(
+                    document_id=document_id,
+                    owner_user_id=owner_user_id,
+                    normalized_file_name=str(document_item.get('file_name') or 'generated-artifact.json').strip() or 'generated-artifact.json',
+                    file_content_bytes=artifact_bytes,
+                    group_id=active_group_id,
+                )
+            except Exception as exc:
+                update_document(
+                    document_id=document_id,
+                    user_id=owner_user_id,
+                    group_id=active_group_id,
+                    status=f'Approval failed: {str(exc)}',
+                    generated_artifact_promotion_status='approval_failed',
+                )
+                raise
+
+            _cleanup_group_generated_artifact_notifications(document_id, active_group_id)
+            invalidate_group_search_cache(active_group_id)
+
+            group_name = str(group_doc.get('name') or 'this group').strip() or 'this group'
+            create_notification(
+                user_id=owner_user_id,
+                notification_type='approval_request_approved',
+                title='Generated artifact approved',
+                message=f"{str(document_item.get('file_name') or 'Your generated artifact').strip()} was approved for {group_name} and is now processing.",
+                link_url='/group_workspaces',
+                link_context={
+                    'workspace_type': 'group',
+                    'group_id': active_group_id,
+                    'document_id': document_id,
+                },
+                metadata={
+                    'document_id': document_id,
+                    'group_id': active_group_id,
+                    'request_type': 'generated_artifact_promotion',
+                },
+            )
+
+            return jsonify({
+                'message': 'Generated artifact approved and queued for processing',
+                'document_id': document_id,
+            }), 200
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as e:
+            return jsonify({'error': f'Error approving generated artifact: {str(e)}'}), 500
+
+    @app.route('/api/group_documents/<document_id>/deny-generated-artifact', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_deny_group_generated_artifact(document_id):
+        """Deny a pending generated chat artifact promotion in the active group workspace."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager"),
+            )
+            assert_group_role(
+                user_id,
+                active_group_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager"),
+            )
+            group_doc = find_group_by_id(group_id=active_group_id)
+            if not group_doc:
+                return jsonify({'error': 'Active group not found'}), 404
+
+            document_item = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=active_group_id,
+            )
+            if not document_item:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+
+            promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
+            if promotion_status != 'pending_approval':
+                return jsonify({'error': 'Document is not awaiting generated artifact approval'}), 400
+
+            requester_user_id = (
+                str(document_item.get('generated_artifact_requested_by_user_id') or '').strip()
+                or str(document_item.get('user_id') or '').strip()
+            )
+            document_name = str(document_item.get('file_name') or 'This generated artifact').strip() or 'This generated artifact'
+            group_name = str(group_doc.get('name') or 'this group').strip() or 'this group'
+            denier_name = _get_generated_artifact_actor_name(get_current_user_info(), user_id)
+
+            delete_document_revision(
+                user_id=user_id,
+                document_id=document_id,
+                delete_mode='all_versions',
+                group_id=active_group_id,
+            )
+            _cleanup_group_generated_artifact_notifications(document_id, active_group_id)
+            invalidate_group_search_cache(active_group_id)
+
+            if requester_user_id:
+                create_notification(
+                    user_id=requester_user_id,
+                    notification_type='approval_request_denied',
+                    title='Generated artifact denied',
+                    message=f"{document_name} was denied for {group_name} by {denier_name}.",
+                    link_url='/group_workspaces',
+                    link_context={
+                        'workspace_type': 'group',
+                        'group_id': active_group_id,
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'group_id': active_group_id,
+                        'request_type': 'generated_artifact_promotion',
+                    },
+                )
+
+            return jsonify({'message': 'Generated artifact request denied and removed from the group workspace.'}), 200
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as e:
+            return jsonify({'error': f'Error denying generated artifact: {str(e)}'}), 500
+
+    @app.route('/api/group_documents/<document_id>/cancel-generated-artifact', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_cancel_group_generated_artifact(document_id):
+        """Cancel a pending generated chat artifact promotion requested by the current user."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+            assert_group_role(
+                user_id,
+                active_group_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+
+            document_item = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=active_group_id,
+            )
+            if not document_item:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+
+            promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
+            if promotion_status != 'pending_approval':
+                return jsonify({'error': 'Document is not awaiting generated artifact approval'}), 400
+
+            requester_user_id = (
+                str(document_item.get('generated_artifact_requested_by_user_id') or '').strip()
+                or str(document_item.get('user_id') or '').strip()
+            )
+            if requester_user_id != user_id:
+                return jsonify({'error': 'Only the requester can cancel this generated artifact request'}), 403
+
+            delete_document_revision(
+                user_id=user_id,
+                document_id=document_id,
+                delete_mode='all_versions',
+                group_id=active_group_id,
+            )
+            _cleanup_group_generated_artifact_notifications(document_id, active_group_id)
+            invalidate_group_search_cache(active_group_id)
+
+            return jsonify({'message': 'Generated artifact request canceled.'}), 200
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as e:
+            return jsonify({'error': f'Error canceling generated artifact: {str(e)}'}), 500
 
     @app.route('/api/group_documents/<document_id>/share-with-group', methods=['POST'])
     @swagger_route(security=get_auth_security())

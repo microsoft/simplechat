@@ -229,6 +229,7 @@ def _resolve_chat_upload_context(document_id, conversation_id=None):
         return None
 
     role_name = str(message_item.get("role") or "").strip().lower()
+    metadata = message_item.get("metadata", {}) or {}
     is_uploaded_image = role_name == "image" and bool((message_item.get("metadata") or {}).get("is_user_upload"))
     if role_name not in {"file", "image"} or (role_name == "image" and not is_uploaded_image):
         return None
@@ -244,6 +245,9 @@ def _resolve_chat_upload_context(document_id, conversation_id=None):
         "title": message_title,
         "conversation_id": normalized_conversation_id,
         "source_type": "chat_upload",
+        "source_subtype": "generated_chat_artifact" if metadata.get("is_generated_chat_artifact") else "chat_upload",
+        "artifact_capability": str(metadata.get("generated_artifact_capability") or "").strip().lower() or None,
+        "artifact_output_format": str(metadata.get("generated_artifact_output_format") or "").strip().lower() or None,
         "comparison_text": comparison_text,
     }
     return {
