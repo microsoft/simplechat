@@ -1,266 +1,290 @@
-<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">
-  <div class="container-fluid">
-    <!-- Brand/Logo -->
-    {% if app_settings.show_logo %}
-      <a class="navbar-brand d-flex align-items-center" href="{{ url_for('index') }}">
-        {% if app_settings.custom_logo_base64 or app_settings.custom_logo_dark_base64 %}
-          <!-- Light mode logo -->
-          {% if app_settings.custom_logo_base64 %}
-            <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" 
-                 alt="Logo" height="32" class="me-2 d-light-mode-only" />
-          {% else %}
-            <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" 
-                 alt="Logo" height="32" class="me-2 d-light-mode-only" />
-          {% endif %}
-          <!-- Dark mode logo -->
-          {% if app_settings.custom_logo_dark_base64 %}
-            <img src="{{ url_for('static', filename='images/custom_logo_dark.png') }}?v={{ app_settings.logo_dark_version | default(1) }}" 
-                 alt="Logo" height="32" class="me-2 d-dark-mode-only" />
-          {% elif app_settings.custom_logo_base64 %}
-            <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" 
-                 alt="Logo" height="32" class="me-2 d-dark-mode-only" />
-          {% else %}
-            <img src="{{ url_for('static', filename='images/logo-darkmode.png') }}" 
-                 alt="Logo" height="32" class="me-2 d-dark-mode-only" />
-          {% endif %}
-        {% else %}
-          <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" alt="Logo" height="32" class="me-2 d-light-mode-only" />
-          <img src="{{ url_for('static', filename='images/logo-darkmode.png') }}" alt="Logo" height="32" class="me-2 d-dark-mode-only" />
-        {% endif %}
-        {% if not app_settings.hide_app_title %}
-          <span class="fw-bold">{{ app_settings.app_title }}</span>
-        {% endif %}
-      </a>
-    {% elif not app_settings.hide_app_title %}
-      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">{{ app_settings.app_title }}</a>
-    {% else %}
-      <!-- Fallback when both logo and title are hidden -->
-      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">Home</a>
-    {% endif %}
+{% set is_chat_page = request.endpoint == 'chats' %}
+<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top top-nav-bar{% if is_chat_page %} top-nav-bar-chat{% endif %}">
+    <div class="container-fluid top-nav-shell{% if is_chat_page %} top-nav-shell-chat{% endif %}">
+        <div class="top-nav-brand">
+            {% if app_settings.show_logo %}
+                <a class="navbar-brand d-flex align-items-center top-nav-brand-link" href="{{ url_for('index') }}">
+                    {% if app_settings.custom_logo_base64 or app_settings.custom_logo_dark_base64 %}
+                        {% if app_settings.custom_logo_base64 %}
+                            <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="32" class="me-2 d-light-mode-only" />
+                        {% else %}
+                            <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" alt="Logo" height="32" class="me-2 d-light-mode-only" />
+                        {% endif %}
+                        {% if app_settings.custom_logo_dark_base64 %}
+                            <img src="{{ url_for('static', filename='images/custom_logo_dark.png') }}?v={{ app_settings.logo_dark_version | default(1) }}" alt="Logo" height="32" class="me-2 d-dark-mode-only" />
+                        {% elif app_settings.custom_logo_base64 %}
+                            <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="32" class="me-2 d-dark-mode-only" />
+                        {% else %}
+                            <img src="{{ url_for('static', filename='images/logo-darkmode.png') }}" alt="Logo" height="32" class="me-2 d-dark-mode-only" />
+                        {% endif %}
+                    {% else %}
+                        <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" alt="Logo" height="32" class="me-2 d-light-mode-only" />
+                        <img src="{{ url_for('static', filename='images/logo-darkmode.png') }}" alt="Logo" height="32" class="me-2 d-dark-mode-only" />
+                    {% endif %}
+                    {% if not app_settings.hide_app_title %}
+                        <span class="fw-bold top-nav-brand-title">{{ app_settings.app_title }}</span>
+                    {% endif %}
+                </a>
+            {% elif not app_settings.hide_app_title %}
+                <a class="navbar-brand fw-bold top-nav-brand-link" href="{{ url_for('index') }}">{{ app_settings.app_title }}</a>
+            {% else %}
+                <a class="navbar-brand fw-bold top-nav-brand-link" href="{{ url_for('index') }}">Home</a>
+            {% endif %}
+        </div>
 
-    <!-- Left side nav -->
-    <ul class="navbar-nav me-auto">
-      {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
-        {% if app_settings.enable_user_workspace %}
-        <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('workspace') }}">Personal</a>
-        </li>
-        {% endif %}
-        {% if app_settings.enable_group_workspaces %}
-        <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('group_workspaces') }}">Groups</a>
-        </li>
-        {% endif %}
-        {% if app_settings.enable_public_workspaces %}
-        <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('public_directory') }}">Public</a>
-        </li>
-        {% endif %}
-        <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
-        </li>
+        <div class="navbar-nav me-auto d-none d-lg-flex top-nav-primary-nav{% if is_chat_page %} top-nav-chat-nav{% endif %}">
+            {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+                {% if app_settings.enable_user_workspace %}
+                    <div class="nav-item">
+                        <a class="nav-link" href="{{ url_for('workspace') }}">Personal</a>
+                    </div>
+                {% endif %}
+                {% if app_settings.enable_group_workspaces %}
+                    <div class="nav-item">
+                        <a class="nav-link" href="{{ url_for('group_workspaces') }}">Groups</a>
+                    </div>
+                {% endif %}
+                {% if app_settings.enable_public_workspaces %}
+                    <div class="nav-item">
+                        <a class="nav-link" href="{{ url_for('public_directory') }}">Public</a>
+                    </div>
+                {% endif %}
+                <div class="nav-item">
+                    <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
+                </div>
 
-        {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
-        {% if support_menu_role_allowed and app_settings.enable_support_menu %}
-          {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
-          {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
-          {% if show_support_latest_features or show_support_send_feedback %}
-            <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" id="supportMenuDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                {{ app_settings.support_menu_name or 'Support' }}
-              </a>
-              <ul class="dropdown-menu" aria-labelledby="supportMenuDropdown">
-                {% if show_support_latest_features %}
-                <li>
-                  <a class="dropdown-item" href="{{ url_for('support_latest_features') }}">
-                    Latest Features
-                  </a>
-                </li>
+                {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
+                {% if support_menu_role_allowed and app_settings.enable_support_menu %}
+                    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+                    {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
+                    {% if show_support_latest_features or show_support_send_feedback %}
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="supportMenuDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                {{ app_settings.support_menu_name or 'Support' }}
+                            </a>
+                            <div class="dropdown-menu" aria-labelledby="supportMenuDropdown">
+                                {% if show_support_latest_features %}
+                                    <a class="dropdown-item" href="{{ url_for('support_latest_features') }}">
+                                        Latest Features
+                                    </a>
+                                {% endif %}
+                                {% if show_support_send_feedback %}
+                                    <a class="dropdown-item" href="{{ url_for('support_send_feedback') }}">
+                                        Send Feedback
+                                    </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endif %}
                 {% endif %}
-                {% if show_support_send_feedback %}
-                <li>
-                  <a class="dropdown-item" href="{{ url_for('support_send_feedback') }}">
-                    Send Feedback
-                  </a>
-                </li>
+
+                {% if app_settings.enable_external_links and app_settings.external_links %}
+                    {% set should_force_menu = app_settings.external_links_force_menu %}
+                    {% set link_count = app_settings.external_links|length %}
+                    {% if should_force_menu or link_count >= 3 %}
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="externalLinksDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                {{ app_settings.external_links_menu_name or 'External Links' }}
+                            </a>
+                            <div class="dropdown-menu" aria-labelledby="externalLinksDropdown">
+                                {% for link in app_settings.external_links %}
+                                    <a class="dropdown-item" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                                        {{ link.label }}
+                                    </a>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% else %}
+                        {% for link in app_settings.external_links %}
+                            <div class="nav-item">
+                                <a class="nav-link" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                                    {{ link.label }}
+                                </a>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
                 {% endif %}
-              </ul>
-            </li>
-          {% endif %}
-        {% endif %}
-        
-        <!-- External Links -->
-        {% if app_settings.enable_external_links and app_settings.external_links %}
-          {% set should_force_menu = app_settings.external_links_force_menu %}
-          {% set link_count = app_settings.external_links|length %}
-          {% if should_force_menu or link_count >= 3 %}
-            <!-- Display as dropdown menu -->
-            <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" id="externalLinksDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                {{ app_settings.external_links_menu_name or 'External Links' }}
-              </a>
-              <ul class="dropdown-menu" aria-labelledby="externalLinksDropdown">
-                {% for link in app_settings.external_links %}
-                <li>
-                  <a class="dropdown-item" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
-                    {{ link.label }}
-                  </a>
-                </li>
-                {% endfor %}
-              </ul>
-            </li>
-          {% else %}
-            <!-- Display as individual nav items for 1-2 links -->
-            {% for link in app_settings.external_links %}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
-                {{ link.label }}
-              </a>
-            </li>
-            {% endfor %}
-          {% endif %}
-        {% endif %}
-      {% endif %}
-    </ul>
-    <!-- Right side nav -->
-    <ul class="navbar-nav">
-      {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
-        <!-- My Account Dropdown -->
-        <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle p-0" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem;">
-            {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
-            <div id="top-nav-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px; position: relative;">
-              {% if profile_image %}
-                <!-- Render profile image directly from server data -->
-                <img src="{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
-              {% else %}
-                <!-- Fallback to initials with class for JS targeting -->
-                <span class="text-white fw-bold nav-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
-              {% endif %}
-              <!-- Notification badge - positioned at bottom-right corner -->
-              <span id="notification-badge" class="position-absolute badge rounded-circle bg-danger align-items-center justify-content-center" style="display: none; font-size: 0.6rem; font-weight: 700; bottom: -2px; right: -2px; width: 18px; height: 18px; padding: 0; line-height: 1; border: 2px solid white;"></span>
-            </div>
-            <div class="d-flex flex-column justify-content-center" style="line-height: 1;">
-              <span class="fw-semibold" style="font-size: 1rem;">{{ session['user'].get('name', 'User') }}</span>
-              <span class="text-muted" style="font-size: 0.75rem;">
-                {% if 'Admin' in session['user']['roles'] %}
-                  Admin account
+            {% endif %}
+        </div>
+
+        <div class="top-nav-actions">
+            {% if is_chat_page %}
+            <button class="btn btn-outline-secondary d-lg-none top-nav-mobile-toggle" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebar-nav" aria-label="Open chat navigation">
+                <i class="bi bi-list"></i>
+            </button>
+            {% else %}
+            <button class="btn btn-outline-secondary d-lg-none top-nav-mobile-toggle" type="button" data-bs-toggle="offcanvas" data-bs-target="#topNavMobileMenu" aria-controls="topNavMobileMenu" aria-label="Open navigation">
+                <i class="bi bi-list"></i>
+            </button>
+            {% endif %}
+
+            <div class="navbar-nav top-nav-user-nav">
+                {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle p-0 top-nav-user-trigger" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
+                            <div id="top-nav-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center top-nav-profile-avatar">
+                                {% if profile_image %}
+                                    <img src="{{ profile_image }}" alt="Profile" class="rounded-circle top-nav-profile-image" />
+                                {% else %}
+                                    <span class="text-white fw-bold nav-initials top-nav-initials">{{ session['user'].get('name', '')[:2] }}</span>
+                                {% endif %}
+                                <span id="notification-badge" class="position-absolute badge rounded-circle bg-danger align-items-center justify-content-center top-nav-notification-badge"></span>
+                            </div>
+                            <div class="top-nav-user-meta d-none d-lg-flex">
+                                <span class="fw-semibold top-nav-user-name">{{ session['user'].get('name', 'User') }}</span>
+                                <span class="text-muted top-nav-user-role">
+                                    {% if 'Admin' in session['user']['roles'] %}
+                                        Admin account
+                                    {% else %}
+                                        Personal Account
+                                    {% endif %}
+                                </span>
+                            </div>
+                        </a>
+                        <div class="dropdown-menu dropdown-menu-end top-nav-user-menu" aria-labelledby="userDropdown">
+                            <a class="dropdown-item" href="{{ url_for('profile') }}">
+                                <i class="bi bi-person-circle me-2"></i>
+                                {{ session['user'].get('name') }}
+                            </a>
+                            <a class="dropdown-item dark-mode-toggle" id="topNavDarkModeToggle" role="button" href="#">
+                                <span id="topNavSwitchToDarkText">
+                                    <i class="bi bi-moon-fill me-2"></i>Dark Mode
+                                </span>
+                                <span id="topNavSwitchToLightText" class="d-none">
+                                    <i class="bi bi-sun-fill me-2"></i>Light Mode
+                                </span>
+                            </a>
+                            <a class="dropdown-item nav-layout-toggle" href="#">
+                                <span id="switchToLeftNavText">
+                                    <i class="bi bi-layout-sidebar me-2"></i>Left Nav
+                                </span>
+                                <span id="switchToTopNavText" class="d-none">
+                                    <i class="bi bi-window-dock me-2"></i>Top Nav
+                                </span>
+                            </a>
+                            <hr class="dropdown-divider" />
+                            <a class="dropdown-item" href="{{ url_for('notifications') }}">
+                                <i class="bi bi-bell me-2"></i>Notifications
+                                <span id="notification-count-badge" class="badge bg-danger ms-2">0</span>
+                            </a>
+                            <a class="dropdown-item" href="{{ url_for('approvals') }}">
+                                <i class="bi bi-check-circle me-2"></i>Approval Requests
+                            </a>
+                            <hr class="dropdown-divider" />
+                            {% if app_settings.enable_group_workspaces %}
+                                <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
+                            {% endif %}
+                            {% if app_settings.enable_public_workspaces %}
+                                <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
+                            {% endif %}
+                            {% if app_settings.enable_user_feedback %}
+                                <a class="dropdown-item" href="{{ url_for('my_feedback') }}">My Feedback</a>
+                            {% endif %}
+                            {% if app_settings.enable_content_safety %}
+                                <a class="dropdown-item" href="{{ url_for('my_safety_violations') }}">My Safety Violations</a>
+                            {% endif %}
+                            {% if 'Admin' in session['user']['roles'] %}
+                                <hr class="dropdown-divider" />
+                                <div class="dropdown-header top-nav-menu-section">Admin</div>
+                                <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
+                            {% endif %}
+                            {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles']) %}
+                                <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
+                            {% endif %}
+                            {% if app_settings.enable_content_safety %}
+                                {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
+                                    <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
+                                {% endif %}
+                            {% endif %}
+                            {% if app_settings.enable_user_feedback %}
+                                {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or (not app_settings.require_member_of_feedback_admin and 'Admin' in session['user']['roles']) %}
+                                    <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
+                                {% endif %}
+                            {% endif %}
+                            <hr class="dropdown-divider" />
+                            <a class="dropdown-item" href="{{ url_for('logout') }}">
+                                <i class="bi bi-box-arrow-right me-2"></i>Logout
+                            </a>
+                        </div>
+                    </div>
                 {% else %}
-                  Personal Account
+                    <div class="nav-item d-none d-lg-block">
+                        <a class="nav-link" href="{{ url_for('login') }}">Login</a>
+                    </div>
                 {% endif %}
-              </span>
             </div>
-          </a>
-          <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
-            <li>
-              <a class="dropdown-item" href="{{ url_for('profile') }}">
-                <i class="bi bi-person-circle me-2"></i>
-                {{ session['user'].get('name') }}
-              </a>
-            </li>
-            <li>
-              <a class="dropdown-item dark-mode-toggle" id="topNavDarkModeToggle" role="button" href="#">
-                <span id="topNavSwitchToDarkText">
-                  <i class="bi bi-moon-fill me-2"></i>Dark Mode
-                </span>
-                <span id="topNavSwitchToLightText" class="d-none">
-                  <i class="bi bi-sun-fill me-2"></i>Light Mode
-                </span>
-              </a>
-            </li>
-            <li>
-              <a class="dropdown-item nav-layout-toggle" href="#">
-                <span id="switchToLeftNavText" class="">
-                  <i class="bi bi-layout-sidebar me-2"></i>Left Nav
-                </span>
-                <span id="switchToTopNavText" class="d-none">
-                  <i class="bi bi-window-dock me-2"></i>Top Nav
-                </span>
-              </a>
-            </li>
-            <li><hr class="dropdown-divider"></li>
-            <!-- Notifications -->
-            <li>
-              <a class="dropdown-item" href="{{ url_for('notifications') }}">
-                <i class="bi bi-bell me-2"></i>Notifications
-                <span id="notification-count-badge" class="badge bg-danger ms-2" style="display: none;">0</span>
-              </a>
-            </li>
-            <li>
-              <a class="dropdown-item" href="{{ url_for('approvals') }}">
-                <i class="bi bi-check-circle me-2"></i>Approval Requests
-              </a>
-            </li>
-            <li><hr class="dropdown-divider"></li>
-            {% if app_settings.enable_group_workspaces %}
-            <li>
-              <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
-            </li>
-            {% endif %}
-            {% if app_settings.enable_public_workspaces %}
-            <li>
-              <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
-            </li>
-            {% endif %}
-            {% if app_settings.enable_user_feedback %}
-            <li>
-              <a class="dropdown-item" href="{{ url_for('my_feedback') }}">My Feedback</a>
-            </li>
-            {% endif %}
-            {% if app_settings.enable_content_safety %}
-            <li>
-              <a class="dropdown-item" href="{{ url_for('my_safety_violations') }}">My Safety Violations</a>
-            </li>
-            {% endif %}
-            {% if 'Admin' in session['user']['roles'] %}
-            <li><hr class="dropdown-divider"></li>
-            <div class="px-3 pt-2 pb-1 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
-              Admin
-            </div>
-            <li>
-              <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
-            </li>
-            {% endif %}
-            {# Control Center - access based on role requirements #}
-            {# When require_member_of_control_center_admin ENABLED: only ControlCenterAdmin role grants access #}
-            {# When DISABLED (default): only regular Admin role grants access #}
-            {# DashboardReader role grants dashboard-only access when that setting is enabled #}
-            {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles']) %}
-            <li>
-              <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
-            </li>
-            {% endif %}
-            {# Safety Violations - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
-            {% if app_settings.enable_content_safety %}
-              {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
-              <li>
-                <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
-              </li>
-              {% endif %}
-            {% endif %}
-            {# Feedback Review - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
-            {% if app_settings.enable_user_feedback %}
-              {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or (not app_settings.require_member_of_feedback_admin and 'Admin' in session['user']['roles']) %}
-              <li>
-                <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
-              </li>
-              {% endif %}
-            {% endif %}
-            <li><hr class="dropdown-divider"></li>
-            <li>
-              <a class="dropdown-item" href="{{ url_for('logout') }}">
-                <i class="bi bi-box-arrow-right me-2"></i> Logout
-              </a>
-            </li>
-          </ul>
-        </li>
-      {% else %}
-        <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('login') }}">
-            Login
-          </a>
-        </li>
-      {% endif %}
-    </ul>
-  </div>
+        </div>
+    </div>
 </nav>
+{% if not is_chat_page %}
+<div class="offcanvas offcanvas-start top-nav-mobile-drawer" tabindex="-1" id="topNavMobileMenu" aria-labelledby="topNavMobileMenuLabel" data-navigation-drawer="top-nav">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title" id="topNavMobileMenuLabel">Navigation</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+        {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+            <div class="top-nav-mobile-section-label">Workspace</div>
+            <div class="list-group list-group-flush top-nav-mobile-list">
+                {% if app_settings.enable_user_workspace %}
+                    <a class="list-group-item list-group-item-action" href="{{ url_for('workspace') }}">
+                        <i class="bi bi-person-workspace me-2"></i>Personal
+                    </a>
+                {% endif %}
+                {% if app_settings.enable_group_workspaces %}
+                    <a class="list-group-item list-group-item-action" href="{{ url_for('group_workspaces') }}">
+                        <i class="bi bi-people me-2"></i>Groups
+                    </a>
+                {% endif %}
+                {% if app_settings.enable_public_workspaces %}
+                    <a class="list-group-item list-group-item-action" href="{{ url_for('public_directory') }}">
+                        <i class="bi bi-globe-americas me-2"></i>Public
+                    </a>
+                {% endif %}
+                <a class="list-group-item list-group-item-action" href="{{ url_for('chats') }}">
+                    <i class="bi bi-chat-dots me-2"></i>Chat
+                </a>
+            </div>
+
+            {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
+            {% if support_menu_role_allowed and app_settings.enable_support_menu %}
+                {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+                {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
+                {% if show_support_latest_features or show_support_send_feedback %}
+                    <div class="top-nav-mobile-section-label">{{ app_settings.support_menu_name or 'Support' }}</div>
+                    <div class="list-group list-group-flush top-nav-mobile-list">
+                        {% if show_support_latest_features %}
+                            <a class="list-group-item list-group-item-action" href="{{ url_for('support_latest_features') }}">
+                                <i class="bi bi-stars me-2"></i>Latest Features
+                            </a>
+                        {% endif %}
+                        {% if show_support_send_feedback %}
+                            <a class="list-group-item list-group-item-action" href="{{ url_for('support_send_feedback') }}">
+                                <i class="bi bi-chat-left-text me-2"></i>Send Feedback
+                            </a>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            {% endif %}
+
+            {% if app_settings.enable_external_links and app_settings.external_links %}
+                <div class="top-nav-mobile-section-label">{{ app_settings.external_links_menu_name or 'External Links' }}</div>
+                <div class="list-group list-group-flush top-nav-mobile-list">
+                    {% for link in app_settings.external_links %}
+                        <a class="list-group-item list-group-item-action" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                            <i class="bi bi-box-arrow-up-right me-2"></i>{{ link.label }}
+                        </a>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% else %}
+            <div class="list-group list-group-flush top-nav-mobile-list">
+                <a class="list-group-item list-group-item-action" href="{{ url_for('login') }}">
+                    <i class="bi bi-box-arrow-in-right me-2"></i>Login
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}

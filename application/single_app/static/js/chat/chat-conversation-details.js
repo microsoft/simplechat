@@ -42,13 +42,14 @@ export async function showConversationDetails(conversationId) {
     }
     
     const metadata = await response.json();
+    const safeConversationTitle = escapeHtml(metadata.title || 'Conversation Details');
     
     // Update modal title with conversation title, pin icon, and hidden icon
     const pinIcon = metadata.is_pinned ? '<i class="bi bi-pin-angle me-2" title="Pinned"></i>' : '';
     const hiddenIcon = metadata.is_hidden ? '<i class="bi bi-eye-slash me-2 text-muted" title="Hidden"></i>' : '';
     modalTitle.innerHTML = `
       ${pinIcon}${hiddenIcon}<i class="bi bi-info-circle me-2"></i>
-      ${metadata.title || 'Conversation Details'}
+      ${safeConversationTitle}
     `;
     
     // Render the metadata
@@ -62,7 +63,7 @@ export async function showConversationDetails(conversationId) {
           <i class="bi bi-exclamation-triangle-fill me-2"></i>
           <strong>Error loading conversation details</strong>
         </div>
-        <p class="text-muted mt-2">${error.message}</p>
+        <p class="text-muted mt-2">${escapeHtml(error.message || 'Unknown error')}</p>
       </div>
     `;
   }
@@ -76,6 +77,7 @@ export async function showConversationDetails(conversationId) {
  */
 function renderConversationMetadata(metadata, conversationId) {
   const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal', is_pinned = false, is_hidden = false, scope_locked, locked_contexts = [], summary = null } = metadata;
+  const safeConversationId = escapeHtml(conversationId);
   
   // Organize tags by category
   const tagsByCategory = {
@@ -102,7 +104,7 @@ function renderConversationMetadata(metadata, conversationId) {
         <div class="card">
           <div class="card-header bg-primary bg-opacity-75 text-white d-flex justify-content-between align-items-center">
             <h6 class="mb-0"><i class="bi bi-blockquote-left me-2"></i>Summary</h6>
-            ${summary ? `<small class="opacity-75">Generated ${formatDate(summary.generated_at)}${summary.model_deployment ? ` · ${summary.model_deployment}` : ''}</small>` : ''}
+            ${summary ? `<small class="opacity-75">Generated ${formatDate(summary.generated_at)}${summary.model_deployment ? ` · ${escapeHtml(summary.model_deployment)}` : ''}</small>` : ''}
           </div>
           <div class="card-body" id="summary-card-body">
             ${renderSummaryContent(summary, conversationId)}
@@ -118,7 +120,7 @@ function renderConversationMetadata(metadata, conversationId) {
           <div class="card-body">
             <div class="row g-2">
               <div class="col-sm-6">
-                <strong>Conversation ID:</strong> <code class="text-muted">${conversationId}</code>
+                <strong>Conversation ID:</strong> <code class="text-muted">${safeConversationId}</code>
               </div>
               <div class="col-sm-6">
                 <strong>Last Updated:</strong> ${formatDate(last_updated)}
@@ -256,17 +258,20 @@ function renderContextSection(context) {
   if (primary) {
     const displayName = primary.name || primary.id;
     const isGroupChat = primary.scope === 'group';
+    const safeDisplayName = escapeHtml(displayName);
+    const safePrimaryScope = escapeHtml(primary.scope);
+    const safePrimaryId = escapeHtml(primary.id);
     
     html += `
       <div class="mb-3">
         <strong class="text-primary">Primary Context:</strong>
         <div class="ms-3 mt-1">
           <div class="d-flex align-items-center mb-2">
-            <span class="badge bg-primary me-2">${primary.scope}</span>
+            <span class="badge bg-primary me-2">${safePrimaryScope}</span>
             ${isGroupChat ? '<span class="badge bg-secondary me-2">single-user</span>' : ''}
-            <span class="fw-bold">${displayName}</span>
+            <span class="fw-bold">${safeDisplayName}</span>
           </div>
-          ${primary.name ? `<div class="small text-muted">ID: ${primary.id}</div>` : ''}
+          ${primary.name ? `<div class="small text-muted">ID: ${safePrimaryId}</div>` : ''}
         </div>
       </div>
     `;
@@ -281,11 +286,14 @@ function renderContextSection(context) {
     
     secondary.forEach(ctx => {
       const displayName = ctx.name || ctx.id;
+      const safeDisplayName = escapeHtml(displayName);
+      const safeScope = escapeHtml(ctx.scope);
+      const safeContextId = escapeHtml(ctx.id);
       html += `
         <div class="mb-2">
-          <span class="badge bg-secondary me-2">${ctx.scope}</span>
-          <span class="fw-bold">${displayName}</span>
-          ${ctx.name ? `<div class="small text-muted">ID: ${ctx.id}</div>` : ''}
+          <span class="badge bg-secondary me-2">${safeScope}</span>
+          <span class="fw-bold">${safeDisplayName}</span>
+          ${ctx.name ? `<div class="small text-muted">ID: ${safeContextId}</div>` : ''}
         </div>
       `;
     });
@@ -305,15 +313,19 @@ function renderParticipantsSection(participants) {
   participants.forEach(participant => {
     const initials = (participant.name || 'U').slice(0, 2).toUpperCase();
     const avatarId = `participant-avatar-${participant.user_id}`;
+    const safeAvatarId = escapeHtml(avatarId);
+    const safeInitials = escapeHtml(initials);
+    const safeParticipantName = escapeHtml(participant.name || 'Unknown User');
+    const safeParticipantEmail = escapeHtml(participant.email || '');
     
     html += `
       <div class="d-flex align-items-center mb-2">
-        <div id="${avatarId}" class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-3" style="width: 32px; height: 32px; font-size: 0.9rem;">
-          ${initials}
+        <div id="${safeAvatarId}" class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-3" style="width: 32px; height: 32px; font-size: 0.9rem;">
+          ${safeInitials}
         </div>
         <div>
-          <div class="fw-semibold">${participant.name || 'Unknown User'}</div>
-          <small class="text-muted">${participant.email || ''}</small>
+          <div class="fw-semibold">${safeParticipantName}</div>
+          <small class="text-muted">${safeParticipantEmail}</small>
         </div>
       </div>
     `;
@@ -337,7 +349,7 @@ async function loadParticipantProfileImage(userId) {
   if (!avatarElement) return;
   
   try {
-    const response = await fetch(`/api/user/profile-image/${userId}`);
+    const response = await fetch(`/api/user/profile-image/${encodeURIComponent(userId)}`);
     if (!response.ok) throw new Error('Failed to load user profile image');
     
     const userData = await response.json();
@@ -380,7 +392,7 @@ function renderModelsAndAgentsSection(models, agents) {
   if (models.length > 0) {
     html += '<div class="mb-3"><strong>Models:</strong><div class="mt-1">';
     models.forEach(model => {
-      html += `<span class="badge bg-warning text-dark me-1 mb-1">${model.value}</span>`;
+      html += `<span class="badge bg-warning text-dark me-1 mb-1">${escapeHtml(model.value)}</span>`;
     });
     html += '</div></div>';
   }
@@ -388,7 +400,7 @@ function renderModelsAndAgentsSection(models, agents) {
   if (agents.length > 0) {
     html += '<div><strong>Agents:</strong><div class="mt-1">';
     agents.forEach(agent => {
-      html += `<span class="badge bg-info me-1 mb-1">${agent.value}</span>`;
+      html += `<span class="badge bg-info me-1 mb-1">${escapeHtml(agent.value)}</span>`;
     });
     html += '</div></div>';
   }
@@ -407,6 +419,11 @@ function renderDocumentsSection(documents) {
     const chunkCount = doc.chunk_ids ? doc.chunk_ids.length : 0;
     const documentTitle = doc.title || doc.document_id;
     const scopeName = doc.scope?.name || doc.scope?.id || 'Unknown';
+    const safeClassification = escapeHtml(doc.classification || 'None');
+    const safeDocumentId = escapeHtml(doc.document_id || 'Unknown Document');
+    const safeDocumentTitle = escapeHtml(documentTitle);
+    const safeScopeName = escapeHtml(scopeName);
+    const safeScopeType = escapeHtml(doc.scope?.type || 'Unknown');
     
     // Format document classification with custom colors
     const allCategories = window.classification_categories || [];
@@ -415,15 +432,15 @@ function renderDocumentsSection(documents) {
     
     if (category) {
       const textClass = isColorLight(category.color) ? 'text-dark' : 'text-white';
-      classificationHtml = `<span class="badge ${textClass}" style="background-color: ${category.color}">${doc.classification}</span>`;
+      classificationHtml = `<span class="badge ${textClass}" style="background-color: ${category.color}">${safeClassification}</span>`;
     } else {
-      classificationHtml = `<span class="badge bg-warning text-dark" title="Definition for '${doc.classification}' not found">${doc.classification}</span>`;
+      classificationHtml = `<span class="badge bg-warning text-dark" title="Definition for '${safeClassification}' not found">${safeClassification}</span>`;
     }
     
     html += `
       <div class="mb-3 p-2 border rounded">
         <div class="d-flex justify-content-between align-items-start mb-2">
-          <div class="fw-semibold text-truncate me-2" title="${documentTitle}">${documentTitle}</div>
+          <div class="fw-semibold text-truncate me-2" title="${safeDocumentTitle}">${safeDocumentTitle}</div>
           ${classificationHtml}
         </div>
         <div class="small text-muted mb-1">
@@ -433,12 +450,12 @@ function renderDocumentsSection(documents) {
         </div>
         <div class="small text-muted mb-1">
           <i class="bi bi-${getScopeIcon(doc.scope?.type)} me-1"></i>
-          ${doc.scope?.type} scope: <strong>${scopeName}</strong>
+          ${safeScopeType} scope: <strong>${safeScopeName}</strong>
         </div>
         ${doc.title && doc.title !== doc.document_id ? `
         <div class="small text-muted">
           <i class="bi bi-hash me-1"></i>
-          ID: <code>${doc.document_id}</code>
+          ID: <code>${safeDocumentId}</code>
         </div>
         ` : ''}
       </div>
@@ -455,7 +472,7 @@ function renderSemanticTagsSection(semanticTags) {
   let html = '<div class="d-flex flex-wrap gap-1">';
   
   semanticTags.forEach(tag => {
-    html += `<span class="badge bg-dark">${tag.value}</span>`;
+    html += `<span class="badge bg-dark">${escapeHtml(tag.value)}</span>`;
   });
   
   html += '</div>';
@@ -469,14 +486,26 @@ function renderWebSourcesSection(webSources) {
   let html = '';
   
   webSources.forEach(source => {
-    html += `
-      <div class="mb-2">
-        <a href="${source.value}" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
-          <i class="bi bi-link-45deg me-2"></i>${source.value}
-          <i class="bi bi-box-arrow-up-right ms-1 small"></i>
-        </a>
-      </div>
-    `;
+    const sourceValue = typeof source.value === 'string' ? source.value : '';
+    const safeSourceText = escapeHtml(sourceValue);
+    const safeSourceUrl = sanitizeHttpUrl(sourceValue);
+
+    if (safeSourceUrl) {
+      html += `
+        <div class="mb-2">
+          <a href="${escapeHtml(safeSourceUrl)}" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+            <i class="bi bi-link-45deg me-2"></i>${safeSourceText}
+            <i class="bi bi-box-arrow-up-right ms-1 small"></i>
+          </a>
+        </div>
+      `;
+    } else {
+      html += `
+        <div class="mb-2 text-muted">
+          <i class="bi bi-link-45deg me-2"></i>${safeSourceText || 'Invalid link'}
+        </div>
+      `;
+    }
   });
   
   return html;
@@ -510,7 +539,7 @@ function formatScopeLockStatus(scopeLocked, lockedContexts) {
       return ctx.scope;
     });
     return '<span class="badge bg-success"><i class="bi bi-lock-fill me-1"></i>Locked</span>' +
-      (names.length > 0 ? '<br><small class="text-muted">' + names.join(', ') + '</small>' : '');
+      (names.length > 0 ? '<br><small class="text-muted">' + names.map(name => escapeHtml(name)).join(', ') + '</small>' : '');
   }
   // false — unlocked
   return '<span class="badge bg-warning text-dark"><i class="bi bi-unlock me-1"></i>Unlocked</span>';
@@ -525,14 +554,15 @@ function formatClassifications(classifications) {
   
   return classifications.map(label => {
     const category = allCategories.find(cat => cat.label === label);
+    const safeLabel = escapeHtml(label);
     
     if (category) {
       // Found category definition, apply custom color
       const textClass = isColorLight(category.color) ? 'text-dark' : 'text-white';
-      return `<span class="badge ${textClass}" style="background-color: ${category.color}">${label}</span>`;
+      return `<span class="badge ${textClass}" style="background-color: ${category.color}">${safeLabel}</span>`;
     } else {
       // Label exists but no definition found (maybe deleted in admin)
-      return `<span class="badge bg-warning text-dark" title="Definition for '${label}' not found">${label}</span>`;
+      return `<span class="badge bg-warning text-dark" title="Definition for '${safeLabel}' not found">${safeLabel}</span>`;
     }
   }).join(' ');
 }
@@ -587,12 +617,14 @@ function extractPageNumbers(chunkIds) {
  * @returns {string} HTML string
  */
 function renderSummaryContent(summary, conversationId) {
+  const safeConversationId = escapeHtml(conversationId);
+
   if (summary && summary.content) {
     return `
       <p class="mb-2">${escapeHtml(summary.content)}</p>
       <div class="d-flex justify-content-end">
         <button class="btn btn-sm btn-outline-secondary" id="regenerate-summary-btn"
-                data-conversation-id="${conversationId}">
+                data-conversation-id="${safeConversationId}">
           <i class="bi bi-arrow-clockwise me-1"></i>Regenerate
         </button>
       </div>
@@ -608,11 +640,28 @@ function renderSummaryContent(summary, conversationId) {
         ${modelOptions}
       </select>
       <button class="btn btn-sm btn-primary" id="generate-summary-btn"
-              data-conversation-id="${conversationId}">
+              data-conversation-id="${safeConversationId}">
         <i class="bi bi-blockquote-left me-1"></i>Generate Summary
       </button>
     </div>
   `;
+}
+
+function sanitizeHttpUrl(value) {
+  if (!value || typeof value !== 'string') {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch (error) {
+    return '';
+  }
+
+  return '';
 }
 
 /**
@@ -700,11 +749,11 @@ async function handleGenerateSummary(conversationId, modelDeployment) {
  * @returns {string} Escaped string
  */
 function escapeHtml(str) {
-  if (!str) {
+  if (str === null || typeof str === 'undefined') {
     return '';
   }
   const div = document.createElement('div');
-  div.textContent = str;
+  div.textContent = String(str);
   return div.innerHTML;
 }
 

@@ -28,6 +28,7 @@ from functions_group_actions import (
     validate_group_action_payload,
 )
 from functions_keyvault import (
+    resolve_secret_reference_for_context,
     SecretReturnType,
     redact_plugin_secret_values,
     retrieve_secret_from_key_vault_by_full_name,
@@ -230,17 +231,35 @@ def _redact_plugin_for_logging(plugin):
     return redact_plugin_secret_values(plugin)
 
 
-def _resolve_secret_value_for_sql_test(value, field_name):
+def _resolve_plugin_secret_context(plugin_manifest, fallback_scope_value, fallback_scope="user"):
+    """Infer the expected Key Vault scope for SQL test-connection secret resolution."""
+    if not isinstance(plugin_manifest, dict):
+        return fallback_scope_value, fallback_scope
+
+    plugin_scope = str(plugin_manifest.get("scope") or "").strip().lower()
+    if plugin_scope == "group" or plugin_manifest.get("is_group"):
+        return plugin_manifest.get("group_id"), "group"
+    if plugin_scope == "global" or plugin_manifest.get("is_global"):
+        return plugin_manifest.get("id") or fallback_scope_value, "global"
+    if plugin_scope == "user" or plugin_manifest.get("user_id"):
+        return plugin_manifest.get("user_id") or fallback_scope_value, "user"
+    return fallback_scope_value, fallback_scope
+
+
+def _resolve_secret_value_for_sql_test(value, field_name, scope_value, scope):
     """Resolve a Key Vault reference for SQL test-connection flows."""
     if not isinstance(value, str) or not value:
         return value
     if not validate_secret_name_dynamic(value):
         return value
 
-    resolved_value = retrieve_secret_from_key_vault_by_full_name(value)
-    if validate_secret_name_dynamic(resolved_value):
-        raise ValueError(f"Unable to resolve stored Key Vault secret for SQL field '{field_name}'.")
-    return resolved_value
+    return resolve_secret_reference_for_context(
+        value,
+        scope_value=scope_value,
+        scope=scope,
+        allowed_sources={"action-addset"},
+        context_label=f"SQL field '{field_name}'",
+    )
 
 
 def _load_existing_plugin_for_sql_test(plugin_context, user_id):
@@ -1093,9 +1112,21 @@ def test_sql_connection():
         field_list = ', '.join(unresolved_fields)
         return jsonify({'success': False, 'error': f"Stored SQL secret could not be resolved for testing. Re-enter the {field_list}."}), 400
 
+    plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+
     try:
-        connection_string = _resolve_secret_value_for_sql_test(connection_string, 'connection_string')
-        password = _resolve_secret_value_for_sql_test(password, 'password')
+        connection_string = _resolve_secret_value_for_sql_test(
+            connection_string,
+            'connection_string',
+            scope_value=plugin_scope_value,
+            scope=plugin_scope,
+        )
+        password = _resolve_secret_value_for_sql_test(
+            password,
+            'password',
+            scope_value=plugin_scope_value,
+            scope=plugin_scope,
+        )
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
 

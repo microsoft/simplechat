@@ -1,8 +1,9 @@
 # test_default_model_selection_fallback.py
+# test_default_model_selection_fallback.py
 #!/usr/bin/env python3
 """
 Functional test for default model selection fallback.
-Version: 0.240.073
+Version: 0.241.007
 Implemented in: 0.240.071
 
 This test ensures default model selection is surfaced in admin settings
@@ -32,15 +33,11 @@ def test_default_model_selection_wiring():
     loader_path = os.path.join(
         repo_root, "application", "single_app", "semantic_kernel_loader.py"
     )
-    config_path = os.path.join(
-        repo_root, "application", "single_app", "config.py"
-    )
 
     admin_template = read_file_text(admin_template_path)
     admin_route = read_file_text(admin_route_path)
     chat_route = read_file_text(chat_path)
     loader_content = read_file_text(loader_path)
-    config_content = read_file_text(config_path)
 
     assert "default_model_selection_json" in admin_template, (
         "Expected default model selection input in admin settings template."
@@ -62,9 +59,6 @@ def test_default_model_selection_wiring():
     )
     assert 'Using saved admin default multi-endpoint model for agent' in loader_content, (
         "Expected the shared agent loader to use the saved admin default model when agent bindings are missing or stale."
-    )
-    assert 'VERSION = "0.240.073"' in config_content, (
-        "Expected config.py version 0.240.073 after the loader fallback and migration UI updates."
     )
 
     print("✅ Default model selection wiring verified.")

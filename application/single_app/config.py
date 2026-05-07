@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.006"
+VERSION = "0.241.007"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -106,15 +106,16 @@ SECURITY_HEADERS = {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Content-Security-Policy': (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
         #"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
-        "style-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         #"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "img-src 'self' data: https: blob:; "
         "font-src 'self'; "
         #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
+        "frame-src 'self' blob:; "
         "object-src 'none'; "
         "frame-ancestors 'self'; "
         "base-uri 'self';"
@@ -150,6 +151,7 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     
     Args:
         enable_video: Whether video file support is enabled
+        enable_audio: Whether audio file support is enabled
     Returns:
         set: Allowed file extensions
     """
@@ -308,6 +310,18 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
+cosmos_personal_workflows_container_name = "personal_workflows"
+cosmos_personal_workflows_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_workflows_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_personal_workflow_runs_container_name = "personal_workflow_runs"
+cosmos_personal_workflow_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_workflow_runs_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
 cosmos_group_conversations_container_name = "group_conversations"
 cosmos_group_conversations_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_conversations_container_name,
@@ -318,6 +332,24 @@ cosmos_group_messages_container_name = "group_messages"
 cosmos_group_messages_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_messages_container_name,
     partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_collaboration_conversations_container_name = "collaboration_conversations"
+cosmos_collaboration_conversations_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_conversations_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_collaboration_messages_container_name = "collaboration_messages"
+cosmos_collaboration_messages_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_messages_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_collaboration_user_state_container_name = "collaboration_user_state"
+cosmos_collaboration_user_state_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_user_state_container_name,
+    partition_key=PartitionKey(path="/user_id")
 )
 
 cosmos_settings_container_name = "settings"

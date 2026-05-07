@@ -1,13 +1,13 @@
 # test_chat_toolbar_layout.py
 #!/usr/bin/env python3
 """
-Functional test for chat toolbar layout separation.
-Version: 0.239.170
-Implemented in: 0.239.170
+Functional test for compact chat toolbar layout.
+Version: 0.241.019
+Implemented in: 0.241.019
 
-This test ensures the chat selectors and toggle buttons remain separate sibling
-groups, stay aligned on wide layouts, and switch to clean full-width toolbar
-rows before overlap occurs on narrower layouts.
+This test ensures the chats toolbar keeps a mobile quick-action rail, exposes a
+primary model selector, and routes secondary selectors and toggles through a
+collapsible tools panel without changing the existing selector IDs.
 """
 
 import os
@@ -24,36 +24,43 @@ def _read_text(relative_path):
         return handle.read()
 
 
-def test_chat_toolbar_groups_are_responsive_without_overlap():
-    """Verify the toolbar layout has both desktop and medium-width guardrails."""
-    print("🔍 Testing chat toolbar group alignment...")
+def test_chat_toolbar_mobile_tools_panel_is_wired():
+    """Verify the compact toolbar markup, CSS, and mobile coordination script exist."""
+    print("🔍 Testing compact chat toolbar wiring...")
 
     try:
         template_text = _read_text("application/single_app/templates/chats.html")
         css_text = _read_text("application/single_app/static/css/chats.css")
+        js_text = _read_text("application/single_app/static/js/chat/chat-mobile-toolbar.js")
 
-        structure_pattern = re.compile(
-            r'<div class="chat-toolbar-controls">.*?<div class="chat-toolbar-selectors">.*?</div>\s*<div class="chat-toolbar-toggles">',
-            re.DOTALL,
-        )
+        required_template_snippets = [
+            'class="chat-toolbar-primary-row"',
+            'class="chat-toolbar-actions chat-toolbar-action-rail"',
+            'id="chat-mobile-tools-toggle"',
+            'id="chat-mobile-tools-panel" class="collapse d-lg-flex chat-toolbar-secondary-panel"',
+            'class="chat-toolbar-primary-selector"',
+            'id="model-select-container" class="chat-toolbar-selector"',
+            'id="prompt-selection-container" class="chat-toolbar-selector"',
+            'id="agent-select-container" class="chat-toolbar-selector"',
+        ]
 
-        if not structure_pattern.search(template_text):
-            print("❌ Chat toolbar selectors and toggles are not separate sibling groups")
+        missing_template = [snippet for snippet in required_template_snippets if snippet not in template_text]
+        if missing_template:
+            print(f"❌ Missing compact toolbar template snippets: {', '.join(missing_template)}")
             return False
 
         required_css_snippets = [
             ".chat-toolbar {",
-            "flex-wrap: nowrap;",
-            "align-items: flex-end;",
-            ".chat-toolbar-controls {",
-            "flex-wrap: nowrap;",
-            "align-items: flex-end;",
-            ".chat-toolbar-toggles {",
-            ".chat-toolbar-selectors {",
-            "@media (max-width: 1200px) {",
-            "flex: 1 1 100%;",
-            "justify-content: flex-start;",
-            "@media (max-width: 768px) {",
+            ".chat-toolbar-primary-row {",
+            ".chat-toolbar-action-rail {",
+            ".chat-toolbar-primary-selector {",
+            ".chat-toolbar-secondary-panel {",
+            ".chat-mobile-tools-toggle {",
+            "overflow-x: auto;",
+            "scrollbar-width: none;",
+            "@media (max-width: 991.98px) {",
+            ".chat-toolbar-action-rail .search-btn-text,",
+            "#search-documents-container .flex-shrink-0,",
         ]
 
         missing_css = [snippet for snippet in required_css_snippets if snippet not in css_text]
@@ -61,7 +68,21 @@ def test_chat_toolbar_groups_are_responsive_without_overlap():
             print(f"❌ Missing toolbar layout CSS snippets: {', '.join(missing_css)}")
             return False
 
-        print("✅ Chat toolbar selectors and toggles remain aligned without medium-width overlap")
+        required_js_snippets = [
+            "function initializeChatMobileToolbar()",
+            "const mobileToolsToggle = document.getElementById('chat-mobile-tools-toggle');",
+            "const mobileToolsPanel = document.getElementById('chat-mobile-tools-panel');",
+            "new MutationObserver(syncMobileToolsPanel)",
+            "bootstrap.Collapse.getOrCreateInstance(panelElement, { toggle: false })",
+            "window.requestAnimationFrame(syncMobileToolsPanel);",
+        ]
+
+        missing_js = [snippet for snippet in required_js_snippets if snippet not in js_text]
+        if missing_js:
+            print(f"❌ Missing mobile toolbar coordination snippets: {', '.join(missing_js)}")
+            return False
+
+        print("✅ Compact chat toolbar wiring passed")
         return True
     except Exception as exc:
         print(f"❌ Test failed: {exc}")
@@ -71,6 +92,6 @@ def test_chat_toolbar_groups_are_responsive_without_overlap():
 
 
 if __name__ == "__main__":
-    success = test_chat_toolbar_groups_are_responsive_without_overlap()
+    success = test_chat_toolbar_mobile_tools_panel_is_wired()
     print(f"\n📊 Results: {1 if success else 0}/1 tests passed")
     sys.exit(0 if success else 1)

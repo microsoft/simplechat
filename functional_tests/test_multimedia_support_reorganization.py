@@ -2,7 +2,7 @@
 # test_multimedia_support_reorganization.py
 """
 Functional test for multimedia support reorganization and shared speech guidance.
-Version: 0.241.010
+Version: 0.241.016
 Implemented in: 0.241.010
 
 This test ensures that:
@@ -250,11 +250,11 @@ def test_version_update():
         with open(config_path, 'r', encoding='utf-8') as file_handle:
             content = file_handle.read()
 
-        if 'VERSION = "0.241.010"' not in content:
-            print("❌ Version not updated to 0.241.010")
+        if 'VERSION = "0.241.016"' not in content:
+            print("❌ Version not updated to 0.241.016")
             return False
 
-        print("✅ Version successfully updated to 0.241.010")
+        print("✅ Version successfully updated to 0.241.016")
         return True
 
     except Exception as exc:

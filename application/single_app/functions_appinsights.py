@@ -75,18 +75,60 @@ def is_debug_enabled() -> bool:
     return bool(settings.get('enable_debug_logging', False))
 
 
+def _get_appinsights_debug_logger() -> Optional[logging.Logger]:
+    """Return a logger that can emit DEBUG traces without widening parent logger levels."""
+    base_logger = get_appinsights_logger()
+    if not base_logger:
+        return None
+
+    base_name = base_logger.name or 'root'
+    debug_logger_name = 'appinsights.debug' if base_name == 'root' else f"{base_name}.debug"
+    debug_logger = logging.getLogger(debug_logger_name)
+    debug_logger.setLevel(logging.DEBUG)
+    return debug_logger
+
+
+def _emit_appinsights_debug_trace(
+    message: str,
+    category: str,
+    details: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Send a tagged debug trace to App Insights when Azure Monitor logging is configured."""
+    if not _azure_monitor_configured:
+        return
+
+    debug_logger = _get_appinsights_debug_logger()
+    if not debug_logger:
+        return
+
+    trace_properties = dict(details or {})
+    trace_properties.setdefault('debug_tag', '[debug]')
+    trace_properties.setdefault('debug_category', category)
+    trace_message = f"[debug] [{category}] {message}"
+
+    try:
+        # Use a child logger so DEBUG traces can flow to App Insights even when the
+        # parent logger stays at INFO to avoid broad third-party debug noise.
+        if trace_properties:
+            debug_logger.debug(trace_message, extra=trace_properties, stacklevel=3)
+        else:
+            debug_logger.debug(trace_message, stacklevel=3)
+    except Exception:
+        pass
+
+
 def debug_print(message: Any, *args: Any, category: str = "INFO", **kwargs: Any) -> None:
-    """Emit a debug-only console message using the unified logging implementation."""
+    """Emit debug-only console output and forward a tagged App Insights trace when available."""
     flush = kwargs.pop('flush', False)
     details = kwargs or None
-    log_event(
-        message,
-        extra=details,
-        debug_only=True,
-        category=category,
-        flush=flush,
-        message_args=args,
-    )
+    formatted_message = _format_message(message, args)
+    settings = _load_logging_settings()
+
+    _emit_debug_message(settings, formatted_message, category, flush, details)
+    if not settings.get('enable_debug_logging', False):
+        return
+
+    _emit_appinsights_debug_trace(formatted_message, category, details)
 
 
 def get_appinsights_logger():

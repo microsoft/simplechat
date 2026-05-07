@@ -72,6 +72,22 @@ def _collect_child_message_documents(conversation_id, root_message_ids):
 
     return child_docs
 
+
+def _authorize_personal_conversation_read(user_id, conversation_id):
+    """Load a personal conversation and ensure the caller owns it."""
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError(f"Conversation {conversation_id} not found") from exc
+
+    if conversation_item.get('user_id') != user_id:
+        raise PermissionError('Forbidden')
+
+    return conversation_item
+
 def register_route_backend_conversations(app):
 
     @app.route('/api/get_messages', methods=['GET'])
@@ -86,10 +102,7 @@ def register_route_backend_conversations(app):
         if not conversation_id:
             return jsonify({'error': 'No conversation_id provided'}), 400
         try:
-            conversation_item = cosmos_conversations_container.read_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
+            _authorize_personal_conversation_read(user_id, conversation_id)
             # Query all messages in cosmos_messages_container
             # We'll filter for active_thread in Python since Cosmos DB boolean queries can be tricky
             message_query = f"""
@@ -209,7 +222,9 @@ def register_route_backend_conversations(app):
                         message['vision_analysis'] = vision_analysis
             
             return jsonify({'messages': messages})
-        except CosmosResourceNotFoundError:
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except LookupError:
             return jsonify({'messages': []})
         except Exception as e:
             print(f"ERROR: Failed to get messages: {str(e)}")
@@ -240,6 +255,8 @@ def register_route_backend_conversations(app):
             conversation_id = '_'.join(parts[:-3])
             
             debug_print(f"Serving image {image_id} from conversation {conversation_id}")
+
+            _authorize_personal_conversation_read(user_id, conversation_id)
             
             # Query for the main image document and chunks
             message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
@@ -334,6 +351,11 @@ def register_route_backend_conversations(app):
                 )
             else:
                 return jsonify({'error': 'Invalid image format'}), 400
+
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except LookupError:
+            return jsonify({'error': 'Image not found'}), 404
                 
         except Exception as e:
             print(f"ERROR: Failed to serve image {image_id}: {str(e)}")
@@ -456,18 +478,21 @@ def register_route_backend_conversations(app):
         """
         Delete a conversation. If archiving is enabled, copy it to archived_conversations first.
         """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
         settings = get_settings()
         archiving_enabled = settings.get('enable_conversation_archiving', False)
 
         try:
-            conversation_item = cosmos_conversations_container.read_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
-        except CosmosResourceNotFoundError:
+            conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+        except LookupError:
             return jsonify({
                 "error": f"Conversation {conversation_id} not found."
             }), 404
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
         except Exception as e:
             return jsonify({
                 "error": str(e)

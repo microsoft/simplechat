@@ -5,6 +5,7 @@
   <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css" />
    LOCAL VERSION BELOW -->
    <link rel="stylesheet" href="/static/css/simplemde.min.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/workspace-responsive.css') }}" />
 
   <style>
     /* Keep fixed layout for document and prompt tables only. */
@@ -437,8 +438,13 @@
 {% endblock %}
 
 {% block content %}
-  <div class="container">
-    <h2>Personal Workspace</h2>
+  <div class="container workspace-page">
+    <div class="workspace-page-header">
+      <div>
+        <h2 class="workspace-page-title">Personal Workspace</h2>
+        <p class="workspace-page-subtitle">Manage documents, prompts, agents, actions, and model endpoints from one place.</p>
+      </div>
+    </div>
 
     <!-- Migration Banner (Hidden by default) -->
     <div id="migration-banner" class="alert alert-info alert-dismissible fade show" role="alert" style="display: none;">
@@ -460,6 +466,27 @@
           <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
         </div>
         <small class="text-muted mt-1" id="migration-status-text">Preparing migration...</small>
+      </div>
+    </div>
+
+    <div class="workspace-section-switcher mb-3{% if nav_layout == 'left' %} workspace-section-switcher--persistent{% endif %}" data-workspace-switcher data-tab-list="#workspaceTab">
+      <div class="w-100">
+        <label class="form-label" for="workspace-section-select">Section</label>
+        <select class="form-select" id="workspace-section-select" data-workspace-section-select aria-label="Select workspace section">
+          <option value="documents-tab-btn">Your Documents</option>
+          <option value="prompts-tab-btn">Your Prompts</option>
+          {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+            {% if settings.allow_user_agents %}
+              <option value="agents-tab-btn">Your Agents</option>
+              {% if settings.allow_user_plugins %}
+                <option value="plugins-tab-btn">Your Actions</option>
+              {% endif %}
+            {% endif %}
+          {% endif %}
+          {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+            <option value="endpoints-tab-btn">Your Endpoints</option>
+          {% endif %}
+        </select>
       </div>
     </div>
 
@@ -658,10 +685,14 @@
               <label class="btn btn-outline-secondary" for="docs-view-list">
                 <i class="bi bi-list-ul"></i> List
               </label>
+              <input type="radio" class="btn-check" name="docs-view-mode" id="docs-view-cards" autocomplete="off">
+              <label class="btn btn-outline-secondary" for="docs-view-cards">
+                <i class="bi bi-grid"></i> Cards
+              </label>
               
               <input type="radio" class="btn-check" name="docs-view-mode" id="docs-view-grid" autocomplete="off">
               <label class="btn btn-outline-secondary" for="docs-view-grid">
-                <i class="bi bi-grid-3x3-gap"></i> Grid
+                <i class="bi bi-folder2-open"></i> Folders
               </label>
             </div>
             <div class="d-flex align-items-center gap-2">
@@ -726,8 +757,15 @@
             </table>
           </div>
 
-          <!-- Documents Grid View (Tag Folders) -->
-          <div id="documents-grid-view" style="display: none;">
+          <div id="documents-card-view" class="row g-3 d-none">
+            <div class="col-12 text-center text-muted py-5">
+              <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+              Loading documents...
+            </div>
+          </div>
+
+          <!-- Documents Folders View -->
+          <div id="documents-grid-view" class="d-none">
             <div id="tag-folders-container" class="row g-2">
               <!-- Populated by JavaScript -->
               <div class="col-12 text-center text-muted py-5">
@@ -738,7 +776,7 @@
           </div>
 
           <!-- List View Controls (pagination & page size) -->
-          <div id="list-controls-bar" class="align-items-center gap-3 mb-3 mt-3" style="display: flex;">
+          <div id="list-controls-bar" class="d-flex align-items-center gap-3 mb-3 mt-3">
             <div>
               <label for="docs-page-size-select" class="visually-hidden">Items per page:</label>
               <select id="docs-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
@@ -754,7 +792,7 @@
           </div>
 
           <!-- Grid View Controls (sort, page size, pagination) -->
-          <div id="grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3" style="display: none;">
+          <div id="grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3 d-none">
             <div class="d-flex align-items-center gap-2">
               <small class="text-muted">Sort:</small>
               <button class="btn btn-sm btn-outline-secondary grid-sort-btn" data-sort="name">
@@ -1754,6 +1792,7 @@
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-prompts.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
   <script src="{{ url_for('static', filename='js/workspace_sidebar_nav.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/workspace_section_switcher.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-tutorial.js') }}"></script>

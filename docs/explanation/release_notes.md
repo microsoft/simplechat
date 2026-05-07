@@ -4,6 +4,159 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.007)**
+
+## New Feature
+* **Improved Mobile UI Support**
+
+## Bug Fixes
+
+*   **Uploaded File Preview Body XSS Hardening**
+    *   Fixed the uploaded-file preview modal so stored file bodies no longer reach the preview pane through raw HTML sinks.
+    *   Plain-text previews now render as inert preformatted text, CSV-backed previews are built with DOM text nodes, and legacy HTML-backed table payloads now fall back to inert text instead of live markup.
+    *   Added focused functional and UI regression coverage plus versioned fix documentation for the hardened preview path.
+    *   (Ref: `chat-input-actions.js`, `test_uploaded_file_preview_xss_fix.py`, `test_uploaded_file_preview_escaping.py`, `UPLOADED_FILE_PREVIEW_XSS_FIX.md`)
+
+*   **Public Workspace Tag Color XSS Hardening**
+    *   Fixed the public workspace tag surfaces so stored tag colors no longer reach folder-grid actions, tag badges, tag management rows, or selected-tag chips through inline handler or style interpolation.
+    *   Shared tag helper paths now normalize and validate tag colors on create and update across personal, group, and public routes, and previously stored invalid colors fall back to safe deterministic values on read.
+    *   Added focused functional and UI regression coverage plus versioned fix documentation for the hardened public tag rendering path.
+    *   (Ref: `functions_documents.py`, `route_backend_documents.py`, `route_backend_group_documents.py`, `route_backend_public_documents.py`, `public_workspace.js`, `test_public_workspace_tag_color_xss_fix.py`, `test_public_workspace_tag_color_rendering.py`, `PUBLIC_WORKSPACE_TAG_COLOR_XSS_FIX.md`)
+
+*   **Agent Template Gallery Actions Escaping**
+    *   Fixed the agent template gallery so stored `actions_to_load` values no longer reach the recommended-actions row through a raw HTML sink.
+    *   Agent template helper paths now normalize `actions_to_load` consistently on read, create, and update flows, and invalid write payload shapes are rejected before they can persist.
+    *   Added focused functional and UI regression coverage plus versioned fix documentation for the hardened gallery path.
+    *   (Ref: `agent_templates_gallery.js`, `functions_agent_templates.py`, `test_agent_template_gallery_actions_to_load_xss_fix.py`, `test_agent_template_gallery_actions_escaping.py`, `AGENT_TEMPLATE_GALLERY_ACTIONS_TO_LOAD_XSS_FIX.md`)
+
+*   **Stored XSS Share, Activity, and Masking Hardening**
+    *   Fixed the remaining stored-XSS share-modal flows so attacker-controlled user names, group names, descriptions, emails, and toast content no longer render through inline handlers or raw HTML sinks.
+    *   Hardened the group activity timeline and raw-activity modal so stored activity metadata and serialized activity JSON now render as inert text instead of executable markup.
+    *   Rebuilt masked-range rendering with DOM APIs and bound masking display names to the authenticated server-side user instead of trusting browser-supplied identity fields.
+    *   Added focused functional and UI regression coverage plus versioned fix documentation for the hardened sharing, activity, and masking paths.
+    *   (Ref: `chat-toast.js`, `workspace-documents-sharing.js`, `group-documents-sharing.js`, `manage_group.js`, `chat-messages.js`, `route_backend_chats.py`, `test_stored_xss_share_activity_and_masking_fix.py`, `test_document_share_modal_escaping.py`, `STORED_XSS_SHARE_ACTIVITY_AND_MASKING_FIX.md`)
+
+*   **Chat Scope Picker and Conversation Details XSS Hardening**
+    *   Fixed the chat scope-lock picker so stored group and public workspace names no longer reach the locked-workspaces modal through raw HTML interpolation.
+    *   Hardened the conversation-details modal so attacker-controlled titles, context names, participant labels, document labels, semantic tags, classifications, and scope-lock names render as inert text, and invalid web-source values no longer produce active `javascript:` links.
+    *   Added focused functional and UI regression coverage plus versioned fix documentation for the affected chat modal surfaces.
+    *   (Ref: `chat-documents.js`, `chat-conversation-details.js`, `test_stored_xss_chat_scope_and_conversation_details_fix.py`, `test_chat_scope_lock_and_conversation_details_escaping.py`, `CHAT_SCOPE_LOCK_AND_CONVERSATION_DETAILS_XSS_FIX.md`)
+
+*   **Chat Citation and Uploaded File Modal Filename XSS Hardening**
+    *   Fixed the first-render chat citation modal so attacker-controlled document filenames returned from citation APIs no longer reach the modal header as raw HTML on the first open.
+    *   The uploaded-file preview modal now uses the same safe title-population path, closing the adjacent filename sink before it can regress into the same stored-XSS family.
+    *   Added focused functional and UI regression coverage plus versioned fix documentation for both modal title flows.
+    *   (Ref: `chat-citations.js`, `chat-input-actions.js`, `test_stored_xss_chat_modal_filename_fix.py`, `test_chat_modal_filename_escaping.py`, `CITATION_AND_FILE_MODAL_FILENAME_XSS_FIX.md`)
+
+*   **Stored XSS Agent and Member Rendering Hardening**
+    *   Fixed the stored-XSS sink in chat message rendering so agent display names no longer reach the sender header, image header, or metadata drawer as raw HTML.
+    *   Public and group workspace member-management views now escape untrusted member display names and emails before rendering member rows, pending requests, ownership-transfer options, bulk-remove summaries, user-search results, and CSV validation previews, and the public member search no longer embeds untrusted values inside an inline `onclick` handler.
+    *   `/api/userSearch` now escapes Microsoft Graph OData filter literals before composing the `$filter` expression, so apostrophes in search input cannot break the backend Graph query.
+    *   Added focused functional and UI regression coverage plus versioned fix documentation for the hardened chat, workspace member-management, and Graph filter paths.
+    *   (Ref: `chat-messages.js`, `manage_public_workspace.js`, `manage_group.js`, `route_backend_users.py`, `test_stored_xss_chat_workspace_rendering_fix.py`, `test_public_workspace_member_rendering_escaping.py`, `test_group_workspace_member_rendering_escaping.py`, `STORED_XSS_AGENT_AND_MEMBER_RENDERING_FIX.md`)
+
+*   **Chat Selected Document Metadata Authorization Fix**
+    *   Fixed chat selected-document metadata resolution so `/api/chat`, `/api/chat/stream`, and the selected tabular document helper no longer trust caller-supplied document ids after authentication.
+    *   Personal selected documents now resolve only for the owner or a legitimately shared user, group selected documents now honor authorized owner and shared-group access, and public selected documents now resolve only inside the caller's visible public workspaces.
+    *   Added focused regression coverage for the shared selected-document resolver and updated the existing all-scope tabular regression so the hardened lookup path stays covered.
+    *   (Ref: `route_backend_chats.py`, `test_chat_selected_document_metadata_authorization.py`, `test_tabular_all_scope_group_source_context.py`, `CHAT_SELECTED_DOCUMENT_METADATA_AUTHORIZATION_FIX.md`)
+
+*   **Control Center Public Workspace Members XSS Fix**
+    *   Fixed a stored XSS in the Control Center public workspace members modal where stored member `displayName` and `email` values were rendered into an admin-facing HTML sink.
+    *   The members modal now builds the member row with DOM text nodes instead of injecting those fields through `innerHTML`, so malicious stored markup renders as inert text while the existing role badge styling remains unchanged.
+    *   Added focused regression coverage for the affected modal and documented the hardened sink under the current version line.
+    *   (Ref: `workspace-manager.js`, `test_control_center_public_workspace_members_escaping.py`, `test_stored_xss_admin_rendering_fix.py`, `CONTROL_CENTER_PUBLIC_WORKSPACE_MEMBERS_XSS_FIX.md`)
+
+*   **Plugin Log Recent Feed Admin Authorization Follow-Up**
+    *   Fixed the adjacent plugin logging route so `/api/plugins/invocations/recent` now enforces the `Admin` role instead of exposing the cross-user recent invocation feed to any authenticated user.
+    *   Unauthenticated requests still return `401 Unauthorized`, non-admin users now receive `403 Forbidden`, and the admin response payload remains unchanged for legitimate troubleshooting flows.
+    *   Extended the focused plugin logging regression coverage so both admin-only plugin logging endpoints are exercised under unauthenticated, non-admin, and admin conditions.
+    *   (Ref: `route_plugin_logging.py`, `test_plugin_logging_clear_logs_authorization.py`, `PLUGIN_LOG_RECENT_INVOCATIONS_ADMIN_FIX.md`)
+
+*   **Public Workspace Details Projection Hardening**
+    *   Fixed `GET /api/public_workspaces/<workspace_id>` so authenticated non-members no longer receive the full public workspace Cosmos document.
+    *   The route now returns a minimal public summary for non-members and a member-aware payload with explicit `userRole` and `isMember` fields for authorized workspace members, which preserves the manage-page UX without exposing manager lists, pending requests, or other member-only metadata.
+    *   Added focused functional and UI regression coverage to lock down the new payload contract and verify the public directory and non-member workspace page continue to behave correctly.
+    *   (Ref: `route_backend_public_workspaces.py`, `functions_public_workspaces.py`, `manage_public_workspace.js`, `public_directory.js`, `test_security_authorization_hardening.py`, `test_public_workspace_projection_non_member_ui.py`, `PUBLIC_WORKSPACE_DETAILS_DISCLOSURE_FIX.md`)
+
+*   **Approval Route Authorization Guard Consolidation**
+    *   Hardened the approval detail, approve, and deny endpoints so both the admin and non-admin route variants now resolve requests through one shared authorization helper before returning approval data or executing destructive approval actions.
+    *   This reduces the chance of future drift between approval handlers while preserving the existing `403 Forbidden` behavior for callers who are not allowed to view or approve a request.
+    *   Added focused regression coverage to ensure the approval routes continue using the shared authorization path.
+    *   (Ref: `route_backend_control_center.py`, `functions_approvals.py`, `test_security_authorization_hardening.py`)
+
+*   **Feedback Submission Ownership Enforcement**
+    *   Fixed the user feedback submission route so caller-supplied `conversationId` and `messageId` values must resolve inside the authenticated user's own conversation before any feedback row is created.
+    *   Foreign conversation ids now return `403 Forbidden`, missing assistant targets now return `404 Not Found`, and invalid submissions no longer persist copied prompt or AI response content into the caller's feedback history.
+    *   Added focused regression coverage for owner success, foreign-conversation rejection before message lookup, and missing-target rejection without feedback persistence.
+    *   (Ref: `route_backend_feedback.py`, `test_feedback_submission_authorization.py`, `FEEDBACK_AND_PLUGIN_LOG_ACCESS_CONTROL_FIX.md`)
+
+*   **Plugin Log Clear Admin Authorization**
+    *   Fixed the destructive plugin log clear endpoint so only administrators can wipe the shared in-memory plugin invocation history.
+    *   Unauthenticated requests still return `401 Unauthorized`, non-admin authenticated users now receive `403 Forbidden`, and admin behavior remains unchanged for legitimate maintenance flows.
+    *   Added focused regression coverage for unauthenticated, non-admin, and admin clear-log requests against the shared logger state.
+    *   (Ref: `route_plugin_logging.py`, `test_plugin_logging_clear_logs_authorization.py`, `FEEDBACK_AND_PLUGIN_LOG_ACCESS_CONTROL_FIX.md`)
+
+*   **Authorization State Confusion Settings Hardening**
+    *   Completed the remaining settings-boundary hardening so active public workspace selection now validates server-side before it is persisted, instead of accepting arbitrary caller-supplied workspace ids through generic settings updates.
+    *   Public workspace selection routes now share the same validated helper path, and public prompt operations now resolve the active workspace through a canonical authorization check instead of trusting raw stored settings values.
+    *   The generic user-settings update route also now drops unsupported settings keys and returns a client error when a payload contains no valid settings keys, reducing the chance that authorization-sensitive state can bypass dedicated validators in future changes.
+    *   (Ref: `functions_public_workspaces.py`, `route_backend_users.py`, `route_backend_public_workspaces.py`, `route_frontend_public_workspaces.py`, `route_backend_public_prompts.py`, `AUTHORIZATION_STATE_CONFUSION_SETTINGS_FIX.md`)
+
+*   **Key Vault Plugin Secret Scope Enforcement**
+    *   Fixed a plugin Key Vault authorization gap where well-formed full secret names could be stored or replayed across user, group, or global scopes and later resolved with the application's Key Vault identity.
+    *   Plugin secret save, runtime resolution, SQL connection-test resolution, and delete cleanup now verify that stored secret references match the expected scope and source before any Key Vault operation is attempted.
+    *   Added focused regression coverage and versioned fix documentation for the hardened plugin secret boundary.
+    *   (Ref: `functions_keyvault.py`, `semantic_kernel_loader.py`, `route_backend_plugins.py`, `test_keyvault_plugin_secret_scope_enforcement.py`, `KEY_VAULT_PLUGIN_SECRET_SCOPE_ENFORCEMENT_FIX.md`)
+
+*   **Log Analytics Query History User Scope Enforcement**
+    *   Fixed the Log Analytics plugin so query history now binds to the authenticated user on the server instead of accepting an LLM-controlled `user_id` parameter.
+    *   Shared user-settings reads and writes now deny cross-user request access by default unless a reviewed privileged path explicitly opts into a cross-user bypass, and the Control Center admin flows have been updated to use that bypass intentionally.
+    *   Added focused regression coverage and versioned fix documentation for the plugin surface change and the shared user-settings authorization boundary.
+    *   (Ref: `log_analytics_plugin.py`, `functions_settings.py`, `route_backend_control_center.py`, `test_log_analytics_plugin_user_scope_enforcement.py`, `LOG_ANALYTICS_PLUGIN_USER_SCOPE_ENFORCEMENT_FIX.md`)
+
+*   **Personal Conversation Authorization**
+    *   Closed personal-conversation authorization gaps so conversation deletion, chat file-content retrieval, and frontend conversation rendering verify ownership before returning or destroying data.
+    *   The chat message loader also now handles `403 Forbidden` and `404 Not Found` conversation-message responses explicitly, so the browser shows a controlled error state instead of assuming every message load succeeds.
+    *   Added focused functional and UI regression coverage plus a separate follow-up fix document under the current release line.
+    *   (Ref: `route_backend_conversations.py`, `route_backend_documents.py`, `route_frontend_conversations.py`, `chat-messages.js`, `test_personal_conversation_followup_authorization.py`, `test_chat_messages_authorization_error.py`, `PERSONAL_CONVERSATION_AUTHORIZATION_FOLLOW_UP_FIX.md`)
+
+*   **Personal Conversation Read Authorization Hardening**
+    *   Fixed authenticated personal conversation read paths so message history and inline image retrieval now verify conversation ownership before returning content.
+    *   Requests that use leaked or foreign conversation identifiers now return `403 Forbidden` instead of disclosing another user's transcript or image content, while the existing missing-resource response contracts remain unchanged.
+    *   Added focused regression coverage and versioned fix documentation for the hardened conversation read boundary.
+    *   (Ref: `route_backend_conversations.py`, `test_conversations_read_ownership_authorization.py`, `PERSONAL_CONVERSATION_READ_AUTHORIZATION_FIX.md`)
+
+*   **Broken Access Control IDOR Hardening**
+    *   Closed the authenticated authorization gaps by enforcing personal conversation ownership in chat, binding tabular blob access to the current authorized request context, and binding fact-memory operations to that same canonical scope.
+    *   Request group and public workspace scope is now canonicalized before downstream processing so forged or stale scope identifiers do not survive into plugin execution or grounded-history fallback reuse.
+    *   Added focused regression coverage and versioned fix documentation for the hardened chat and plugin authorization boundary.
+    *   (Ref: `route_backend_chats.py`, `tabular_processing_plugin.py`, `fact_memory_plugin.py`, `test_security_authorization_hardening.py`, `BROKEN_ACCESS_CONTROL_IDOR_HARDENING_FIX.md`)
+
+*   **Stored XSS Admin Rendering Hardening**
+    *   Closed the admin-side stored-XSS findings by escaping stored member and agent metadata before Control Center and Admin Settings HTML row rendering.
+    *   Control Center toast rendering now escapes message content by default and requires an explicit opt-in for the small number of admin success messages that intentionally include formatted HTML.
+    *   Added focused functional and UI regression coverage plus versioned fix documentation for the hardened admin rendering sinks.
+    *   (Ref: `control_center.html`, `control-center.js`, `admin_agents.js`, `test_stored_xss_admin_rendering_fix.py`, `test_control_center_group_members_escaping.py`, `STORED_XSS_ADMIN_RENDERING_FIX.md`)
+
+*   **Web Search Data Egress Hardening**
+    *   Fixed the Bing-grounding web-search path so external web search now sends only the user's current message instead of a query derived from prior conversation context.
+    *   Updated the admin consent copy and user notice text to match the implemented behavior and warn that sensitive content pasted into the current message may still be sent when web search is used.
+    *   Reduced outbound web-search invocation metadata and added focused functional and UI regression coverage for the boundary and disclosure text changes.
+    *   (Ref: `route_backend_chats.py`, `functions_settings.py`, `route_frontend_admin_settings.py`, `admin_settings.html`, `chats.html`, `test_web_search_current_message_only.py`, `test_web_search_notice_copy.py`)
+
+*   **Authorization Boundary Hardening Across Search, Groups, Approvals, and History Fallback**
+    *   Hardened several authenticated workflows that previously trusted caller-supplied identifiers or stale stored scope values, so active group selection, group-scoped prompt access, approval actions, and history-grounded follow-up reuse now revalidate the current user's authorization before proceeding.
+    *   Azure AI Search filter construction now escapes OData literals for document, user, group, shared, and public workspace identifiers, and the Control Center public workspace view now renders untrusted workspace metadata as inert text instead of raw HTML.
+    *   Added focused functional and UI regression coverage for the authorization and escaping paths, plus versioned fix documentation for the full hardening pass.
+    *   (Ref: `functions_search.py`, `functions_group.py`, `route_backend_users.py`, `route_backend_group_prompts.py`, `route_backend_control_center.py`, `route_backend_chats.py`, `control-center.js`, `test_security_authorization_hardening.py`, `test_control_center_public_workspace_escaping.py`)
+
+*   **Global Agent Scope Gate Fallback**
+    *   Fixed per-user Semantic Kernel chats so selecting a global agent no longer silently falls back to the standard GPT model when personal agents are disabled for the tenant.
+    *   The per-user loader now treats global, personal, and group agent scopes separately, allowing valid global-agent selections to continue through agent invocation while keeping personal and group scope toggles enforced as configured.
+    *   Added regression coverage for the shared scope gate used by the per-user loader.
+    *   (Ref: `semantic_kernel_loader.py`, `functions_agent_scope.py`, `test_global_agent_scope_gate.py`, global agent request routing)
+
 ### **(v0.241.006)**
 
 #### Bug Fixes
