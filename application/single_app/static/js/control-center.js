@@ -23,6 +23,14 @@ function parseDateKey(dateStr) {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+const ACTIVITY_LOGS_LAYOUT_PRESET_STORAGE_KEY = 'simplechat_activityLogsLayoutPreset';
+const ACTIVITY_LOGS_LAYOUT_PRESETS = ['balanced', 'details-focus', 'compact'];
+const ACTIVITY_LOGS_LAYOUT_HINTS = {
+    balanced: 'Balanced view keeps the five log columns readable. Switch to Details Focus or click a row for the full raw log.',
+    'details-focus': 'Details Focus widens the Details column for longer entries. Click a row for the full raw log.',
+    compact: 'Compact view prioritizes faster scanning. Click a row for the full raw log when details are truncated.'
+};
+
 // Group Table Sorter - similar to user table but for groups
 class GroupTableSorter {
     constructor(tableId) {
@@ -178,12 +186,17 @@ class ControlCenter {
         this.activityLogsPerPage = 50;
         this.activityLogsSearch = '';
         this.activityTypeFilter = 'all';
+        this.activityLogsLayoutPreset = 'balanced';
+        this.currentActivityLogUserMap = {};
+        this.currentRawLogJson = '';
         
         this.init();
     }
     
     init() {
         this.bindEvents();
+        this.loadActivityLogsLayoutPreset();
+        this.applyActivityLogsLayoutPreset(this.activityLogsLayoutPreset);
         
         // Check if user has admin role (passed from backend)
         const hasAdminRole = window.hasControlCenterAdmin === true;
@@ -219,17 +232,8 @@ class ControlCenter {
             setTimeout(() => this.loadPublicWorkspaces(), 100);
         });
         
-        document.getElementById('activity-logs-tab')?.addEventListener('click', () => {
-            console.log('Activity Logs tab clicked!');
-            setTimeout(() => {
-                console.log('Calling loadActivityLogs...');
-                this.loadActivityLogs();
-            }, 100);
-        });
-        
-        // Also use shown.bs.tab as backup
         document.getElementById('activity-logs-tab')?.addEventListener('shown.bs.tab', () => {
-            console.log('Activity Logs tab shown event fired');
+            this.loadActivityLogs();
         });
         
         // Search and filter controls
@@ -361,6 +365,9 @@ class ControlCenter {
             () => this.exportActivityLogsToCSV());
         document.getElementById('refreshActivityLogsBtn')?.addEventListener('click', 
             () => this.loadActivityLogs());
+        document.querySelectorAll('input[name="activityLogsLayoutPreset"]').forEach((presetInput) => {
+            presetInput.addEventListener('change', (event) => this.handleActivityLogsLayoutPresetChange(event));
+        });
     }
     
     debounce(func, wait) {
@@ -496,7 +503,7 @@ class ControlCenter {
     renderUserAvatar(user) {
         if (user.profile_image) {
             return `
-                <img src="${user.profile_image}" alt="${this.escapeHtml(user.display_name || user.email)}" 
+                <img src="${this.escapeHtml(user.profile_image)}" alt="${this.escapeHtml(user.display_name || user.email)}" 
                      class="rounded-circle me-2" style="width: 32px; height: 32px; object-fit: cover;">
             `;
         } else {
@@ -1293,13 +1300,17 @@ class ControlCenter {
         this.showToast(message, 'danger');
     }
     
-    showToast(message, type = 'info') {
+    showToast(message, type = 'info', allowHtml = false) {
+        const safeMessage = allowHtml
+            ? String(message ?? '')
+            : this.escapeHtml(String(message ?? ''));
+
         // Create toast HTML
         const toastHtml = `
             <div class="toast align-items-center text-bg-${type} border-0" role="alert" aria-live="assertive" aria-atomic="true">
                 <div class="d-flex">
                     <div class="toast-body">
-                        ${message}
+                        ${safeMessage}
                     </div>
                     <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
                 </div>
@@ -2414,16 +2425,82 @@ class ControlCenter {
     }
     
     // Activity Logs Methods
-    async loadActivityLogs() {
-        console.log('=== loadActivityLogs CALLED ===');
-        console.log('this:', this);
-        console.log('State:', {
-            activityLogsPage: this.activityLogsPage,
-            activityLogsPerPage: this.activityLogsPerPage,
-            activityLogsSearch: this.activityLogsSearch,
-            activityTypeFilter: this.activityTypeFilter
+    getDefaultActivityLogsLayoutPreset() {
+        return 'balanced';
+    }
+
+    isValidActivityLogsLayoutPreset(preset) {
+        return ACTIVITY_LOGS_LAYOUT_PRESETS.includes(preset);
+    }
+
+    loadActivityLogsLayoutPreset() {
+        let storedPreset = null;
+
+        try {
+            storedPreset = window.localStorage.getItem(ACTIVITY_LOGS_LAYOUT_PRESET_STORAGE_KEY);
+        } catch (error) {
+            console.warn('Unable to load Activity Logs layout preset:', error);
+        }
+
+        if (this.isValidActivityLogsLayoutPreset(storedPreset)) {
+            this.activityLogsLayoutPreset = storedPreset;
+            return;
+        }
+
+        this.activityLogsLayoutPreset = this.getDefaultActivityLogsLayoutPreset();
+    }
+
+    saveActivityLogsLayoutPreset() {
+        try {
+            window.localStorage.setItem(ACTIVITY_LOGS_LAYOUT_PRESET_STORAGE_KEY, this.activityLogsLayoutPreset);
+        } catch (error) {
+            console.warn('Unable to save Activity Logs layout preset:', error);
+        }
+    }
+
+    syncActivityLogsLayoutPresetControls() {
+        document.querySelectorAll('input[name="activityLogsLayoutPreset"]').forEach((presetInput) => {
+            presetInput.checked = presetInput.value === this.activityLogsLayoutPreset;
         });
-        
+    }
+
+    updateActivityLogsLayoutHint() {
+        const hintElement = document.getElementById('activityLogsLayoutHint');
+        if (!hintElement) {
+            return;
+        }
+
+        hintElement.textContent = ACTIVITY_LOGS_LAYOUT_HINTS[this.activityLogsLayoutPreset]
+            || ACTIVITY_LOGS_LAYOUT_HINTS[this.getDefaultActivityLogsLayoutPreset()];
+    }
+
+    applyActivityLogsLayoutPreset(preset) {
+        const resolvedPreset = this.isValidActivityLogsLayoutPreset(preset)
+            ? preset
+            : this.getDefaultActivityLogsLayoutPreset();
+
+        this.activityLogsLayoutPreset = resolvedPreset;
+
+        const activityLogsTable = document.getElementById('activityLogsTable');
+        if (activityLogsTable) {
+            activityLogsTable.setAttribute('data-layout-preset', resolvedPreset);
+        }
+
+        this.syncActivityLogsLayoutPresetControls();
+        this.updateActivityLogsLayoutHint();
+    }
+
+    handleActivityLogsLayoutPresetChange(event) {
+        const preset = event.target?.value;
+        if (!this.isValidActivityLogsLayoutPreset(preset)) {
+            return;
+        }
+
+        this.applyActivityLogsLayoutPreset(preset);
+        this.saveActivityLogsLayoutPreset();
+    }
+
+    async loadActivityLogs() {
         try {
             const params = new URLSearchParams({
                 page: this.activityLogsPage,
@@ -2432,31 +2509,31 @@ class ControlCenter {
                 activity_type_filter: this.activityTypeFilter
             });
 
-            const url = `/api/admin/control-center/activity-logs?${params}`;
-            console.log('Fetching from:', url);
-            
-            const response = await fetch(url);
-            console.log('Response received:', response.status);
+            const response = await fetch(`/api/admin/control-center/activity-logs?${params}`);
+            let data = null;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                data = null;
+            }
             
             if (!response.ok) {
-                throw new Error('Failed to load activity logs');
+                throw new Error(data?.error || 'Failed to load activity logs');
             }
-
-            const data = await response.json();
-            console.log('Activity logs loaded:', data);
             
             this.renderActivityLogs(data.logs, data.user_map);
             this.renderActivityLogsPagination(data.pagination);
             
         } catch (error) {
             console.error('Error loading activity logs:', error);
-            this.showActivityLogsError('Failed to load activity logs. Please try again.');
+            this.showActivityLogsError(error.message || 'Failed to load activity logs. Please try again.');
         }
     }
 
-    renderActivityLogs(logs, userMap) {
+    renderActivityLogs(logs, userMap = {}) {
         // Store logs for modal access
         this.currentActivityLogs = logs;
+        this.currentActivityLogUserMap = userMap;
         
         const tbody = document.getElementById('activityLogsTableBody');
         if (!tbody) return;
@@ -2472,7 +2549,7 @@ class ControlCenter {
             return;
         }
 
-        tbody.innerHTML = logs.map(log => {
+        tbody.innerHTML = logs.map((log, logIndex) => {
             // Handle user identification - some activities may not have user_id (system activities)
             let userName = 'System';
             if (log.user_id) {
@@ -2486,22 +2563,33 @@ class ControlCenter {
                 userName = log.added_by_email;
             }
             
-            const timestamp = new Date(log.timestamp).toLocaleString();
+            const timestamp = this.formatActivityLogTimestamp(log.timestamp);
             const activityType = this.formatActivityType(log.activity_type);
             const details = this.formatActivityDetails(log);
             const workspaceType = log.workspace_type || 'N/A';
-
-            const logIndex = logs.indexOf(log);
             return `
-                <tr style="cursor: pointer;" onclick="window.controlCenter.showRawLogModal(${logIndex})" title="Click to view raw log data">
-                    <td>${timestamp}</td>
-                    <td><span class="badge bg-primary">${activityType}</span></td>
-                    <td>${this.escapeHtml(userName)}</td>
-                    <td>${details}</td>
-                    <td>${this.capitalizeFirst(workspaceType)}</td>
+                <tr class="activity-log-row" onclick="window.controlCenter.showRawLogModal(${logIndex})" title="Click to view raw log data">
+                    <td><span class="activity-log-cell-text">${this.escapeHtml(timestamp)}</span></td>
+                    <td><span class="activity-log-badge-wrap"><span class="badge bg-primary">${this.escapeHtml(activityType)}</span></span></td>
+                    <td><span class="activity-log-cell-text">${this.escapeHtml(userName)}</span></td>
+                    <td><div class="activity-log-details">${details}</div></td>
+                    <td><span class="activity-log-cell-text">${this.escapeHtml(this.capitalizeFirst(workspaceType))}</span></td>
                 </tr>
             `;
         }).join('');
+    }
+
+    formatActivityLogTimestamp(timestamp) {
+        if (!timestamp) {
+            return 'N/A';
+        }
+
+        const parsedTimestamp = new Date(timestamp);
+        if (Number.isNaN(parsedTimestamp.getTime())) {
+            return String(timestamp);
+        }
+
+        return parsedTimestamp.toLocaleString();
     }
 
     formatActivityType(activityType) {
@@ -2517,10 +2605,22 @@ class ControlCenter {
             'group_status_change': 'Group Status Change',
             'group_member_deleted': 'Group Member Deleted',
             'add_member_directly': 'Add Member Directly',
+            'admin_add_member_csv': 'Add Member CSV',
             'admin_take_ownership_approved': 'Admin Take Ownership (Approved)',
             'delete_group_approved': 'Delete Group (Approved)',
-            'delete_all_documents_approved': 'Delete All Documents (Approved)'
+            'delete_all_documents_approved': 'Delete All Documents (Approved)',
+            'public_workspace_status_change': 'Public Workspace Status Change',
+            'admin_take_workspace_ownership_approved': 'Take Workspace Ownership (Approved)',
+            'transfer_workspace_ownership_approved': 'Transfer Workspace Ownership (Approved)',
+            'transfer_ownership_approved': 'Transfer Ownership (Approved)',
+            'add_workspace_member_directly': 'Add Workspace Member',
+            'admin_add_workspace_member_csv': 'Add Workspace Member CSV',
+            'delete_workspace_documents_approved': 'Delete Workspace Documents (Approved)',
+            'delete_workspace_approved': 'Delete Workspace (Approved)'
         };
+        if (!activityType) {
+            return 'Unknown';
+        }
         return typeMap[activityType] || activityType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     }
 
@@ -2665,7 +2765,7 @@ class ControlCenter {
                 return `Workspace: ${this.escapeHtml(deletedWorkspace)}<br>Requested by: ${this.escapeHtml(wsDelRequester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsDelApprover)}</small>`;
                 
             default:
-                return 'N/A';
+                return this.escapeHtml(log.description || 'N/A');
         }
     }
 
@@ -2674,9 +2774,13 @@ class ControlCenter {
         const paginationNav = document.getElementById('activityLogsPagination');
         
         if (paginationInfo) {
-            const start = (pagination.page - 1) * pagination.per_page + 1;
-            const end = Math.min(pagination.page * pagination.per_page, pagination.total_items);
-            paginationInfo.textContent = `Showing ${start}-${end} of ${pagination.total_items} logs`;
+            if (!pagination.total_items) {
+                paginationInfo.textContent = 'Showing 0-0 of 0 logs';
+            } else {
+                const start = (pagination.page - 1) * pagination.per_page + 1;
+                const end = Math.min(pagination.page * pagination.per_page, pagination.total_items);
+                paginationInfo.textContent = `Showing ${start}-${end} of ${pagination.total_items} logs`;
+            }
         }
         
         if (paginationNav) {
@@ -2739,6 +2843,9 @@ class ControlCenter {
     }
 
     goToActivityLogsPage(page) {
+        if (page < 1) {
+            return;
+        }
         this.activityLogsPage = page;
         this.loadActivityLogs();
     }
@@ -2764,65 +2871,56 @@ class ControlCenter {
     }
 
     async exportActivityLogsToCSV() {
+        const exportButton = document.getElementById('exportActivityLogsBtn');
+        const originalButtonMarkup = exportButton ? exportButton.innerHTML : '';
+
+        if (exportButton) {
+            exportButton.disabled = true;
+            exportButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Exporting';
+        }
+
         try {
-            // Get current filtered data
             const params = new URLSearchParams({
-                page: 1,
-                per_page: 10000, // Get all for export
                 search: this.activityLogsSearch,
                 activity_type_filter: this.activityTypeFilter
             });
 
-            const response = await fetch(`/api/admin/control-center/activity-logs?${params}`);
+            const response = await fetch(`/api/admin/control-center/activity-logs/export?${params}`);
             
             if (!response.ok) {
-                throw new Error('Failed to load activity logs for export');
+                let errorMessage = 'Failed to export activity logs';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.error || errorMessage;
+                } catch (parseError) {
+                    // Ignore JSON parse failures and use the default message.
+                }
+                throw new Error(errorMessage);
             }
 
-            const data = await response.json();
-            
-            // Convert to CSV
-            const headers = ['Timestamp', 'Activity Type', 'User ID', 'User Email', 'User Name', 'Details', 'Workspace Type'];
-            const csvRows = [headers.join(',')];
-            
-            data.logs.forEach(log => {
-                const user = data.user_map[log.user_id] || {};
-                const timestamp = new Date(log.timestamp).toISOString();
-                const activityType = log.activity_type;
-                const userId = log.user_id;
-                const userEmail = user.email || '';
-                const userName = user.display_name || '';
-                const details = this.getActivityDetailsForCSV(log);
-                const workspaceType = log.workspace_type || '';
-                
-                const row = [
-                    timestamp,
-                    activityType,
-                    userId,
-                    userEmail,
-                    userName,
-                    details,
-                    workspaceType
-                ].map(field => `"${String(field).replace(/"/g, '""')}"`);
-                
-                csvRows.push(row.join(','));
-            });
-            
-            // Download CSV
-            const csvContent = csvRows.join('\n');
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const blob = await response.blob();
             const link = document.createElement('a');
             const url = URL.createObjectURL(blob);
+            const disposition = response.headers.get('Content-Disposition') || '';
+            const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+            const filename = filenameMatch ? filenameMatch[1] : `activity_logs_${new Date().toISOString().split('T')[0]}.csv`;
+
             link.setAttribute('href', url);
-            link.setAttribute('download', `activity_logs_${new Date().toISOString().split('T')[0]}.csv`);
+            link.setAttribute('download', filename);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
             
         } catch (error) {
             console.error('Error exporting activity logs:', error);
-            showToast('Failed to export activity logs. Please try again.', 'danger');
+            showToast(error.message || 'Failed to export activity logs. Please try again.', 'danger');
+        } finally {
+            if (exportButton) {
+                exportButton.disabled = false;
+                exportButton.innerHTML = originalButtonMarkup;
+            }
         }
     }
 
@@ -2831,22 +2929,22 @@ class ControlCenter {
         
         switch (activityType) {
             case 'user_login':
-                return `Login method: ${log.login_method || log.details?.login_method || 'N/A'}`;
+                return `Login method: ${this.escapeHtml(log.login_method || log.details?.login_method || 'N/A')}`;
                 
             case 'conversation_creation':
-                return `Title: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                return `Title: ${this.escapeHtml(log.conversation?.title || 'Untitled')}, ID: ${this.escapeHtml(log.conversation?.conversation_id || 'N/A')}`;
                 
             case 'document_creation':
-                return `File: ${log.document?.file_name || 'Unknown'}, Type: ${log.document?.file_type || ''}`;
+                return `File: ${this.escapeHtml(log.document?.file_name || 'Unknown')}, Type: ${this.escapeHtml(log.document?.file_type || '')}`;
                 
             case 'token_usage':
-                return `Type: ${log.token_type || 'unknown'}, Tokens: ${log.usage?.total_tokens || 0}, Model: ${log.usage?.model || 'N/A'}`;
+                return `Type: ${this.escapeHtml(log.token_type || 'unknown')}, Tokens: ${log.usage?.total_tokens || 0}, Model: ${this.escapeHtml(log.usage?.model || 'N/A')}`;
                 
             case 'conversation_deletion':
-                return `Deleted: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                return `Deleted: ${this.escapeHtml(log.conversation?.title || 'Untitled')}, ID: ${this.escapeHtml(log.conversation?.conversation_id || 'N/A')}`;
                 
             case 'conversation_archival':
-                return `Archived: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                return `Archived: ${this.escapeHtml(log.conversation?.title || 'Untitled')}, ID: ${this.escapeHtml(log.conversation?.conversation_id || 'N/A')}`;
                 
             default:
                 return 'N/A';
@@ -2855,6 +2953,9 @@ class ControlCenter {
 
     showActivityLogsError(message) {
         const tbody = document.getElementById('activityLogsTableBody');
+        const paginationInfo = document.getElementById('activityLogsPaginationInfo');
+        const paginationNav = document.getElementById('activityLogsPagination');
+
         if (tbody) {
             tbody.innerHTML = `
                 <tr>
@@ -2866,11 +2967,474 @@ class ControlCenter {
                 </tr>
             `;
         }
+
+        if (paginationInfo) {
+            paginationInfo.textContent = message;
+        }
+
+        if (paginationNav) {
+            paginationNav.innerHTML = '';
+        }
     }
 
     capitalizeFirst(str) {
         if (!str) return '';
         return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+
+    isActivityLogValuePresent(value) {
+        return value !== undefined && value !== null && value !== '';
+    }
+
+    formatActivityLogNumber(value) {
+        const parsedValue = Number(value);
+        if (!Number.isFinite(parsedValue)) {
+            return String(value);
+        }
+
+        return parsedValue.toLocaleString();
+    }
+
+    getActivityLogBadgeClass(activityType) {
+        const badgeClassMap = {
+            token_usage: 'bg-success',
+            document_creation: 'bg-primary',
+            document_deletion: 'bg-danger',
+            document_metadata_update: 'bg-warning text-dark',
+            conversation_creation: 'bg-info text-dark',
+            conversation_deletion: 'bg-secondary',
+            conversation_archival: 'bg-dark',
+            user_login: 'bg-primary',
+            group_status_change: 'bg-warning text-dark',
+            public_workspace_status_change: 'bg-warning text-dark'
+        };
+
+        return badgeClassMap[activityType] || 'bg-primary';
+    }
+
+    renderActivityLogBooleanBadge(value, trueLabel = 'Yes', falseLabel = 'No') {
+        const badgeClass = value ? 'bg-success' : 'bg-secondary';
+        const label = value ? trueLabel : falseLabel;
+        return `<span class="badge ${badgeClass}">${this.escapeHtml(label)}</span>`;
+    }
+
+    renderActivityLogFieldValue(field) {
+        if (field.html !== undefined) {
+            return field.html;
+        }
+
+        const fieldValue = field.formatter
+            ? field.formatter(field.value)
+            : String(field.value);
+        const escapedValue = this.escapeHtml(fieldValue);
+
+        if (field.code) {
+            return `<code>${escapedValue}</code>`;
+        }
+
+        if (field.badgeClass) {
+            return `<span class="badge ${field.badgeClass}">${escapedValue}</span>`;
+        }
+
+        return escapedValue;
+    }
+
+    renderActivityLogMetricGrid(fields) {
+        const visibleFields = fields.filter((field) => field && this.isActivityLogValuePresent(field.value ?? field.html));
+
+        if (!visibleFields.length) {
+            return '<div class="text-muted">No additional details captured for this activity.</div>';
+        }
+
+        return `
+            <div class="row g-3">
+                ${visibleFields.map((field) => `
+                    <div class="${field.columnClass || 'col-sm-6'}">
+                        <div class="activity-log-detail-label">${this.escapeHtml(field.label)}</div>
+                        <div class="activity-log-detail-value">${this.renderActivityLogFieldValue(field)}</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    renderActivityLogSection(columnClass, title, icon, headerClass, bodyHtml, headerSuffix = '') {
+        if (!bodyHtml) {
+            return '';
+        }
+
+        return `
+            <div class="${columnClass}">
+                <div class="card h-100">
+                    <div class="card-header ${headerClass} d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0"><i class="bi ${icon} me-2"></i>${this.escapeHtml(title)}</h6>
+                        ${headerSuffix}
+                    </div>
+                    <div class="card-body">
+                        ${bodyHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    resolveActivityLogActor(log) {
+        const actorUserId = log.user_id || log.admin_user_id || log.added_by_user_id || '';
+        const resolvedUser = actorUserId ? (this.currentActivityLogUserMap?.[actorUserId] || {}) : {};
+        const actorEmail = resolvedUser.email || log.admin_email || log.requester_email || log.added_by_email || log.member_email || '';
+        const actorDisplayName = resolvedUser.display_name || actorEmail || actorUserId || 'System';
+
+        return {
+            userId: actorUserId,
+            displayName: actorDisplayName,
+            email: actorEmail
+        };
+    }
+
+    renderActivityLogOverviewContent(log) {
+        const actor = this.resolveActivityLogActor(log);
+
+        return this.renderActivityLogMetricGrid([
+            {
+                label: 'Timestamp',
+                value: this.formatActivityLogTimestamp(log.timestamp),
+                columnClass: 'col-md-4'
+            },
+            {
+                label: 'Activity',
+                value: this.formatActivityType(log.activity_type),
+                badgeClass: this.getActivityLogBadgeClass(log.activity_type),
+                columnClass: 'col-md-4'
+            },
+            {
+                label: 'Workspace',
+                value: this.capitalizeFirst(log.workspace_type || 'N/A'),
+                badgeClass: 'bg-secondary',
+                columnClass: 'col-md-4'
+            },
+            {
+                label: 'Actor',
+                value: actor.displayName,
+                columnClass: 'col-md-4'
+            },
+            {
+                label: 'Actor Email',
+                value: actor.email,
+                columnClass: 'col-md-4'
+            },
+            {
+                label: 'Log ID',
+                value: log.id || 'N/A',
+                code: true,
+                columnClass: 'col-md-4'
+            },
+            {
+                label: 'Actor ID',
+                value: actor.userId,
+                code: true,
+                columnClass: 'col-12'
+            }
+        ]);
+    }
+
+    renderActivityLogSummaryContent(log) {
+        const usage = log.usage || {};
+        const updatedFields = Object.keys(log.updated_fields || {});
+        const summaryFields = [];
+
+        switch (log.activity_type) {
+            case 'token_usage':
+                summaryFields.push(
+                    {
+                        label: 'Token Type',
+                        value: log.token_type || 'unknown',
+                        badgeClass: 'bg-success',
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Total Tokens',
+                        value: usage.total_tokens,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Model',
+                        value: usage.model || 'N/A',
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Prompt Tokens',
+                        value: usage.prompt_tokens,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'Completion Tokens',
+                        value: usage.completion_tokens,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        columnClass: 'col-md-6'
+                    }
+                );
+                break;
+            case 'document_creation':
+            case 'document_deletion':
+                summaryFields.push(
+                    {
+                        label: 'File Name',
+                        value: log.document?.file_name || 'Unknown',
+                        columnClass: 'col-12'
+                    },
+                    {
+                        label: 'File Type',
+                        value: log.document?.file_type,
+                        badgeClass: 'bg-secondary',
+                        columnClass: 'col-md-4'
+                    }
+                );
+                break;
+            case 'document_metadata_update':
+                summaryFields.push(
+                    {
+                        label: 'File Name',
+                        value: log.document?.file_name || 'Unknown',
+                        columnClass: 'col-12'
+                    },
+                    {
+                        label: 'Updated Fields',
+                        value: updatedFields.join(', '),
+                        columnClass: 'col-12'
+                    }
+                );
+                break;
+            case 'conversation_creation':
+            case 'conversation_deletion':
+            case 'conversation_archival':
+                summaryFields.push({
+                    label: 'Conversation Title',
+                    value: log.conversation?.title || 'Untitled',
+                    columnClass: 'col-12'
+                });
+                break;
+            case 'user_login':
+                summaryFields.push({
+                    label: 'Login Method',
+                    value: log.login_method || log.details?.login_method || 'N/A',
+                    columnClass: 'col-12'
+                });
+                break;
+            case 'group_status_change':
+            case 'public_workspace_status_change':
+                summaryFields.push(
+                    {
+                        label: 'Target',
+                        value: log.group?.group_name || log.public_workspace?.workspace_name || log.workspace_context?.public_workspace_name || log.group_name || log.workspace_name || log.public_workspace_name || 'Unknown',
+                        columnClass: 'col-12'
+                    },
+                    {
+                        label: 'Previous Status',
+                        value: log.status_change?.old_status,
+                        badgeClass: 'bg-secondary',
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'New Status',
+                        value: log.status_change?.new_status,
+                        badgeClass: 'bg-success',
+                        columnClass: 'col-md-6'
+                    }
+                );
+                break;
+            default:
+                break;
+        }
+
+        if (summaryFields.length) {
+            return this.renderActivityLogMetricGrid(summaryFields);
+        }
+
+        return `<div class="activity-log-summary-text">${this.formatActivityDetails(log)}</div>`;
+    }
+
+    renderActivityLogContextContent(log) {
+        const workspaceContext = log.workspace_context || {};
+        const relatedFields = [
+            {
+                label: 'Group ID',
+                value: workspaceContext.group_id,
+                code: true,
+                columnClass: 'col-12'
+            },
+            {
+                label: 'Public Workspace ID',
+                value: workspaceContext.public_workspace_id,
+                code: true,
+                columnClass: 'col-12'
+            },
+            {
+                label: 'Group',
+                value: log.group?.group_name || log.group_name,
+                columnClass: 'col-12'
+            },
+            {
+                label: 'Workspace Name',
+                value: log.public_workspace?.workspace_name || workspaceContext.public_workspace_name || log.workspace_name || log.public_workspace_name,
+                columnClass: 'col-12'
+            },
+            {
+                label: 'Conversation ID',
+                value: log.chat_details?.conversation_id || log.conversation?.conversation_id,
+                code: true,
+                columnClass: 'col-12'
+            },
+            {
+                label: 'Message ID',
+                value: log.chat_details?.message_id,
+                code: true,
+                columnClass: 'col-12'
+            },
+            {
+                label: 'Document ID',
+                value: log.document?.document_id || log.embedding_details?.document_id,
+                code: true,
+                columnClass: 'col-12'
+            },
+            {
+                label: 'Embedded File',
+                value: log.embedding_details?.file_name,
+                columnClass: 'col-12'
+            }
+        ];
+
+        const visibleFields = relatedFields.filter((field) => field && this.isActivityLogValuePresent(field.value));
+        if (!visibleFields.length) {
+            return '';
+        }
+
+        return this.renderActivityLogMetricGrid(visibleFields);
+    }
+
+    renderActivityLogAdditionalContextContent(log) {
+        const additionalContext = log.additional_context || {};
+        const updatedFields = Object.keys(log.updated_fields || {});
+        const metadataFields = [
+            {
+                label: 'Agent Name',
+                value: additionalContext.agent_name,
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Augmented',
+                html: typeof additionalContext.augmented === 'boolean'
+                    ? this.renderActivityLogBooleanBadge(additionalContext.augmented, 'Enabled', 'Disabled')
+                    : undefined,
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Reasoning Effort',
+                value: additionalContext.reasoning_effort,
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Requester',
+                value: log.requester_email,
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Approver',
+                value: log.approver_email,
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Old Owner',
+                value: log.old_owner_email,
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'New Owner',
+                value: log.new_owner_email,
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Member',
+                value: log.member_name || log.member_email || log.removed_member?.name || log.removed_member?.email,
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Member Role',
+                value: log.member_role ? this.capitalizeFirst(String(log.member_role).replace(/_/g, ' ')) : '',
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Documents Deleted',
+                value: log.documents_deleted,
+                formatter: (value) => this.formatActivityLogNumber(value),
+                columnClass: 'col-md-6'
+            },
+            {
+                label: 'Updated Fields',
+                value: updatedFields.join(', '),
+                columnClass: 'col-12'
+            }
+        ].filter((field) => field && this.isActivityLogValuePresent(field.value ?? field.html));
+
+        const sections = [];
+        if (metadataFields.length) {
+            sections.push(this.renderActivityLogMetricGrid(metadataFields));
+        }
+
+        if (this.isActivityLogValuePresent(log.description)) {
+            sections.push(`
+                <div class="${metadataFields.length ? 'mt-3' : ''}">
+                    <div class="activity-log-detail-label">Description</div>
+                    <div class="activity-log-detail-value activity-log-summary-text">${this.escapeHtml(log.description)}</div>
+                </div>
+            `);
+        }
+
+        return sections.join('');
+    }
+
+    renderActivityLogRawJsonAccordion(prettyJson) {
+        return `
+            <div class="col-12">
+                <div class="accordion" id="rawLogModalAccordion">
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="rawLogJsonHeading">
+                            <button class="accordion-button collapsed" id="rawLogJsonToggle" type="button" data-bs-toggle="collapse" data-bs-target="#rawLogJsonCollapse" aria-expanded="false" aria-controls="rawLogJsonCollapse">
+                                <i class="bi bi-braces me-2"></i>Raw JSON
+                            </button>
+                        </h2>
+                        <div id="rawLogJsonCollapse" class="accordion-collapse collapse" aria-labelledby="rawLogJsonHeading" data-bs-parent="#rawLogModalAccordion">
+                            <div class="accordion-body activity-log-raw-json">
+                                <div class="d-flex justify-content-end mb-3">
+                                    <button type="button" class="btn btn-sm btn-outline-primary" id="copyRawLogJsonBtn" onclick="window.controlCenter.copyRawLogToClipboard()">
+                                        <i class="bi bi-clipboard me-1"></i>Copy JSON
+                                    </button>
+                                </div>
+                                <pre id="rawLogModalJson">${this.escapeHtml(prettyJson)}</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderActivityLogModal(log, prettyJson) {
+        const overviewContent = this.renderActivityLogOverviewContent(log);
+        const summaryContent = this.renderActivityLogSummaryContent(log);
+        const contextContent = this.renderActivityLogContextContent(log);
+        const additionalContextContent = this.renderActivityLogAdditionalContextContent(log);
+        const activityBadge = `<span class="badge bg-light text-dark">${this.escapeHtml(this.formatActivityType(log.activity_type))}</span>`;
+        const sections = [
+            this.renderActivityLogSection('col-12', 'Overview', 'bi-journal-text', 'bg-primary text-white', overviewContent, activityBadge),
+            this.renderActivityLogSection('col-lg-6', 'Activity Summary', 'bi-card-checklist', 'bg-success text-white', summaryContent),
+            this.renderActivityLogSection('col-lg-6', 'Context & Related IDs', 'bi-diagram-3', 'bg-info text-white', contextContent),
+            this.renderActivityLogSection('col-12', 'Additional Context', 'bi-sliders2', 'bg-warning text-dark', additionalContextContent),
+            this.renderActivityLogRawJsonAccordion(prettyJson)
+        ].filter(Boolean);
+
+        return `<div class="row g-3">${sections.join('')}</div>`;
     }
 
     showRawLogModal(logIndex) {
@@ -2888,28 +3452,26 @@ class ControlCenter {
             return;
         }
 
-        // Set title
         const activityType = this.formatActivityType(log.activity_type);
-        const timestamp = new Date(log.timestamp).toLocaleString();
-        modalTitle.textContent = `${activityType} - ${timestamp}`;
+        const timestamp = this.formatActivityLogTimestamp(log.timestamp);
+        modalTitle.innerHTML = `<i class="bi bi-journal-text me-2"></i>${this.escapeHtml(activityType)}<span class="text-muted fs-6 ms-2">${this.escapeHtml(timestamp)}</span>`;
 
-        // Display JSON with pretty formatting
-        modalBody.innerHTML = `<pre class="mb-0" style="max-height: 500px; overflow-y: auto;">${this.escapeHtml(JSON.stringify(log, null, 2))}</pre>`;
+        this.currentRawLogJson = JSON.stringify(log, null, 2);
+        modalBody.innerHTML = this.renderActivityLogModal(log, this.currentRawLogJson);
 
-        // Show modal
         const modal = new bootstrap.Modal(document.getElementById('rawLogModal'));
         modal.show();
     }
 
     copyRawLogToClipboard() {
-        const rawLogText = document.getElementById('rawLogModalBody')?.textContent;
+        const rawLogText = this.currentRawLogJson || document.getElementById('rawLogModalJson')?.textContent;
         if (!rawLogText) {
             showToast('No log data to copy', 'warning');
             return;
         }
 
         navigator.clipboard.writeText(rawLogText).then(() => {
-            this.showToast('Log data copied to clipboard', 'success');
+            this.showToast('Log JSON copied to clipboard', 'success');
         }).catch(err => {
             console.error('Failed to copy:', err);
             showToast('Failed to copy to clipboard', 'danger');
@@ -3473,13 +4035,13 @@ class ControlCenter {
                     <input type="checkbox" class="form-check-input public-workspace-checkbox" value="${workspace.id}">
                 </td>
                 <td>
-                    <div class="fw-semibold">${workspace.name || 'Unnamed Workspace'}</div>
-                    <div class="text-muted small">${workspace.description || 'No description'}</div>
-                    <div class="text-muted small">ID: ${workspace.id}</div>
+                    <div class="fw-semibold">${this.escapeHtml(workspace.name || 'Unnamed Workspace')}</div>
+                    <div class="text-muted small">${this.escapeHtml(workspace.description || 'No description')}</div>
+                    <div class="text-muted small">ID: ${this.escapeHtml(workspace.id)}</div>
                 </td>
                 <td>
-                    <div>${ownerName}</div>
-                    <div class="text-muted small">${ownerEmail}</div>
+                    <div>${this.escapeHtml(ownerName)}</div>
+                    <div class="text-muted small">${this.escapeHtml(ownerEmail)}</div>
                 </td>
                 <td>
                     <div class="small"><strong>${memberCount}</strong> member${memberCount !== 1 ? 's' : ''}</div>

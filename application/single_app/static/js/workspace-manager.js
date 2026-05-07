@@ -785,14 +785,24 @@ window.WorkspaceManager = {
                 // Show email in the name cell (like groups)
                 const displayName = member.displayName || 'Unknown';
                 const email = member.email || 'No email';
-                
-                row.innerHTML = `
-                    <td>
-                        <div>${displayName}</div>
-                        <div class="text-muted small">${email}</div>
-                    </td>
-                    <td><span class="badge ${roleInfo.class}">${roleInfo.text}</span></td>
-                `;
+
+                const nameCell = document.createElement('td');
+                const displayNameElement = document.createElement('div');
+                const emailElement = document.createElement('div');
+                emailElement.className = 'text-muted small';
+                displayNameElement.textContent = displayName;
+                emailElement.textContent = email;
+                nameCell.appendChild(displayNameElement);
+                nameCell.appendChild(emailElement);
+
+                const roleCell = document.createElement('td');
+                const roleBadge = document.createElement('span');
+                roleBadge.className = `badge ${roleInfo.class}`;
+                roleBadge.textContent = roleInfo.text;
+                roleCell.appendChild(roleBadge);
+
+                row.appendChild(nameCell);
+                row.appendChild(roleCell);
                 tbody.appendChild(row);
             });
             

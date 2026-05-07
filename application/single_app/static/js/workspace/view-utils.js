@@ -93,34 +93,69 @@ export function createViewToggleHtml(prefix) {
  * @param {string} storageKey - localStorage key for persistence
  * @param {function} onSwitch - Callback receiving 'list' or 'grid'
  */
-export function setupViewToggle(prefix, storageKey, onSwitch) {
+export function setupViewToggle(prefix, storageKey, onSwitch, options = {}) {
     const listRadio = document.getElementById(`${prefix}-view-list`);
     const gridRadio = document.getElementById(`${prefix}-view-grid`);
     if (!listRadio || !gridRadio) return;
 
+    const mobileQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia(options.mobileQuery || '(max-width: 991.98px)')
+        : null;
+
+    function getPreferredMode() {
+        const saved = localStorage.getItem(storageKey);
+        if (options.mobileDefault && mobileQuery && mobileQuery.matches) {
+            return options.mobileDefault;
+        }
+
+        return saved === 'grid' ? 'grid' : 'list';
+    }
+
+    function applyMode(mode, persistPreference) {
+        const resolvedMode = mode === 'grid' ? 'grid' : 'list';
+        listRadio.checked = resolvedMode === 'list';
+        gridRadio.checked = resolvedMode === 'grid';
+
+        if (persistPreference) {
+            localStorage.setItem(storageKey, resolvedMode);
+        }
+
+        onSwitch(resolvedMode);
+    }
+
+    if (listRadio.dataset.viewToggleBound === 'true' && gridRadio.dataset.viewToggleBound === 'true') {
+        applyMode(getPreferredMode(), false);
+        return;
+    }
+
+    listRadio.dataset.viewToggleBound = 'true';
+    gridRadio.dataset.viewToggleBound = 'true';
+
     listRadio.addEventListener("change", () => {
         if (listRadio.checked) {
-            localStorage.setItem(storageKey, "list");
-            onSwitch("list");
+            applyMode('list', true);
         }
     });
 
     gridRadio.addEventListener("change", () => {
         if (gridRadio.checked) {
-            localStorage.setItem(storageKey, "grid");
-            onSwitch("grid");
+            applyMode('grid', true);
         }
     });
 
-    // Restore saved preference
-    const saved = localStorage.getItem(storageKey);
-    if (saved === "grid") {
-        gridRadio.checked = true;
-        listRadio.checked = false;
-        onSwitch("grid");
-    } else {
-        onSwitch("list");
+    const syncPreferredMode = () => {
+        applyMode(getPreferredMode(), false);
+    };
+
+    if (mobileQuery) {
+        if (typeof mobileQuery.addEventListener === 'function') {
+            mobileQuery.addEventListener('change', syncPreferredMode);
+        } else if (typeof mobileQuery.addListener === 'function') {
+            mobileQuery.addListener(syncPreferredMode);
+        }
     }
+
+    syncPreferredMode();
 }
 
 /**

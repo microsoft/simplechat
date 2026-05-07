@@ -52,3 +52,4 @@ nul
 /artifacts/tmp
 scripts/agent.json
 scripts/me.json
+.github/instructions/python-venv-path.instructions.md

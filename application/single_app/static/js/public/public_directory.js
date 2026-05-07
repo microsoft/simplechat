@@ -342,7 +342,7 @@ function updateCuratedListStatus() {
     // Load workspace details
     $.get(`/api/public_workspaces/${workspaceId}`)
       .done(function(workspace) {
-        const ownerName = workspace.owner?.displayName || workspace.owner?.email || 'Unknown';
+        const ownerName = workspace.owner?.displayName || 'Unknown';
         $(`#owner-${workspaceId}`).text(ownerName);
       })
       .fail(function() {

@@ -11,6 +11,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   rel="stylesheet"
   href="/static/css/simplemde.min.css"
   />
+ <link rel="stylesheet" href="{{ url_for('static', filename='css/workspace-responsive.css') }}" />
 
 <style>
   /* Copy relevant styles from workspace.html for consistency */
@@ -215,12 +216,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
   .tag-badge.text-dark { color: #212529 !important; }
 </style>
 {% endblock %} {% block content %}
-<div class="container">
-  <h2>Group Workspace</h2>
+<div class="container workspace-page">
+  <div class="workspace-page-header">
+    <div>
+      <h2 class="workspace-page-title">Group Workspace</h2>
+      <p class="workspace-page-subtitle">Review shared documents, prompts, agents, actions, and endpoints for the active group.</p>
+    </div>
+  </div>
   <!-- Removed redundant active-group-name heading -->
 
   <!-- Group Selector and Role Display -->
-  <div class="row mb-3">
+  <div class="row mb-3 workspace-toolbar-row">
     <div class="col-sm-6">
       <!-- Custom searchable dropdown -->
       <div class="dropdown" id="group-dropdown">
@@ -243,7 +249,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <select class="d-none" id="group-select" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true"></select>
       </div>
     </div>
-    <div class="col-sm-6">
+    <div class="col-sm-6 workspace-toolbar-actions">
       <!-- Adjusted column size -->
       <button class="btn btn-primary" id="btn-change-group">
         Change Active Group
@@ -260,6 +266,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
   <!-- Group Status Alert (shown for locked, upload_disabled, inactive) -->
   <div class="alert d-none" id="group-status-alert">
     <!-- Content populated by JavaScript -->
+  </div>
+
+  <div class="workspace-section-switcher mb-3{% if nav_layout == 'left' %} workspace-section-switcher--persistent{% endif %}" data-workspace-switcher data-tab-list="#groupWorkspaceTab">
+    <div class="w-100">
+      <label class="form-label" for="group-workspace-section-select">Section</label>
+      <select class="form-select" id="group-workspace-section-select" data-workspace-section-select aria-label="Select group workspace section">
+        <option value="documents-tab-btn">Group Documents</option>
+        <option value="prompts-tab-btn">Group Prompts</option>
+        {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+          {% if settings.allow_group_agents %}
+            <option value="group-agents-tab-btn">Group Agents</option>
+            {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+              <option value="group-plugins-tab-btn">Group Actions</option>
+            {% endif %}
+          {% endif %}
+          {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+            <option value="group-endpoints-tab-btn">Group Endpoints</option>
+          {% endif %}
+        {% endif %}
+      </select>
+    </div>
   </div>
 
   <!-- Nav Tabs - Hide when left nav is enabled -->
@@ -508,9 +535,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <label class="btn btn-outline-secondary" for="group-docs-view-list">
               <i class="bi bi-list-ul"></i> List
             </label>
+            <input type="radio" class="btn-check" name="group-docs-view-mode" id="group-docs-view-cards" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="group-docs-view-cards">
+              <i class="bi bi-grid"></i> Cards
+            </label>
             <input type="radio" class="btn-check" name="group-docs-view-mode" id="group-docs-view-grid" autocomplete="off">
             <label class="btn btn-outline-secondary" for="group-docs-view-grid">
-              <i class="bi bi-grid-3x3-gap"></i> Grid
+              <i class="bi bi-folder2-open"></i> Folders
             </label>
           </div>
           <div class="d-flex align-items-center gap-2">
@@ -582,35 +613,33 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </tbody>
         </table>
 
-        <!-- Documents Pagination & Page Size -->
-        <div class="d-flex align-items-center gap-3 mb-3 mt-3">
+        </div>
+        <!-- End Documents List View -->
+
+        <div id="group-documents-card-view" class="row g-3 d-none">
+          <div class="col-12 text-center text-muted py-5">
+            <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+            Loading group documents...
+          </div>
+        </div>
+
+        <div id="group-list-controls-bar" class="d-flex align-items-center gap-3 mb-3 mt-3">
           <div>
-            <label for="group-docs-page-size-select" class="visually-hidden"
-              >Items per page:</label
-            >
-            <select
-              id="group-docs-page-size-select"
-              class="form-select form-select-sm d-inline-block"
-              style="width: auto"
-            >
+            <label for="group-docs-page-size-select" class="visually-hidden">Items per page:</label>
+            <select id="group-docs-page-size-select" class="form-select form-select-sm d-inline-block" style="width: auto">
               <option value="10" selected>10</option>
               <option value="20">20</option>
               <option value="50">50</option>
             </select>
             <span class="ms-1 small text-muted">items per page</span>
           </div>
-          <div
-            id="group-docs-pagination-container"
-            class="d-flex gap-1 ms-auto"
-          >
+          <div id="group-docs-pagination-container" class="d-flex gap-1 ms-auto">
             <!-- Populated by JavaScript -->
           </div>
         </div>
-        </div>
-        <!-- End Documents List View -->
 
-        <!-- Documents Grid View (Tag Folders) -->
-        <div id="group-documents-grid-view" style="display: none;">
+        <!-- Documents Folders View -->
+        <div id="group-documents-grid-view" class="d-none">
           <div id="group-tag-folders-container" class="row g-2">
             <div class="col-12 text-center text-muted py-5">
               <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
@@ -620,7 +649,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
 
         <!-- Grid View Controls (sort, page size, pagination) -->
-        <div id="group-grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3" style="display: none;">
+        <div id="group-grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3 d-none">
           <div class="d-flex align-items-center gap-2">
             <small class="text-muted">Sort:</small>
             <button class="btn btn-sm btn-outline-secondary group-grid-sort-btn" data-sort="name">
@@ -1493,6 +1522,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <!-- Include group document sharing JS -->
 <script src="/static/js/workspace/group-documents-sharing.js"></script>
 <script src="/static/js/workspace_sidebar_nav.js"></script>
+<script src="{{ url_for('static', filename='js/workspace_section_switcher.js') }}"></script>
 
 <script>
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
@@ -1684,6 +1714,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let groupCurrentFolderType = null;
   let groupFolderCurrentPage = 1;
   let groupFolderPageSize = 10;
+  let groupLastFetchedDocs = [];
+  let groupLastFetchedDocsError = null;
+  let groupHasFetchedDocuments = false;
   let groupGridSortBy = 'count';
   let groupGridSortOrder = 'desc';
   let groupFolderSortBy = '_ts';
@@ -1928,6 +1961,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   const groupDocumentsTableBody = document.querySelector(
     "#group-documents-table tbody"
   );
+  const groupDocumentsCardView = document.getElementById("group-documents-card-view");
   const groupDocsPaginationContainer = document.getElementById(
     "group-docs-pagination-container"
   );
@@ -2209,6 +2243,349 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return luminance > 0.5;
   }
 
+  function truncateGroupDocumentText(text, maxLength = 150) {
+    if (!text) {
+      return "";
+    }
+
+    return text.length > maxLength ? `${text.slice(0, maxLength).trimEnd()}…` : text;
+  }
+
+  function getGroupDocumentProcessingState(doc) {
+    const pctString = String(doc?.percentage_complete ?? "");
+    const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
+    const docStatus = doc?.status || "";
+    const normalizedStatus = docStatus.toLowerCase();
+    const hasError = normalizedStatus.includes("error");
+    const isComplete = pct >= 100 || normalizedStatus.includes("complete") || hasError;
+    return { pct, docStatus, hasError, isComplete };
+  }
+
+  function getGroupDocumentIcon(fileName = "") {
+    const extension = (fileName.split('.').pop() || '').toLowerCase();
+    const iconMap = {
+      pdf: 'bi-filetype-pdf',
+      doc: 'bi-file-earmark-word',
+      docx: 'bi-file-earmark-word',
+      ppt: 'bi-file-earmark-slides',
+      pptx: 'bi-file-earmark-slides',
+      xls: 'bi-file-earmark-spreadsheet',
+      xlsx: 'bi-file-earmark-spreadsheet',
+      xlsm: 'bi-file-earmark-spreadsheet',
+      csv: 'bi-filetype-csv',
+      png: 'bi-file-earmark-image',
+      jpg: 'bi-file-earmark-image',
+      jpeg: 'bi-file-earmark-image',
+      gif: 'bi-file-earmark-image',
+      txt: 'bi-file-earmark-text',
+      md: 'bi-file-earmark-richtext',
+      html: 'bi-filetype-html',
+      json: 'bi-filetype-json',
+      xml: 'bi-filetype-xml'
+    };
+
+    return iconMap[extension] || 'bi-file-earmark-text';
+  }
+
+  function getGroupClassificationBadge(doc) {
+    if (!(window.enable_document_classification === true || window.enable_document_classification === "true")) {
+      return '';
+    }
+
+    const currentLabel = doc.document_classification || null;
+    const categories = window.classification_categories || [];
+    const category = categories.find(cat => cat.label === currentLabel);
+
+    if (category) {
+      const bgColor = category.color || '#6c757d';
+      const textColorClass = isGroupColorLight(bgColor) ? 'text-dark' : '';
+      return `<span class="classification-badge ${textColorClass}" style="background-color: ${escapeGroupHtml(bgColor)};">${escapeGroupHtml(category.label)}</span>`;
+    }
+
+    if (currentLabel) {
+      return `<span class="badge bg-warning text-dark">${escapeGroupHtml(currentLabel)}</span>`;
+    }
+
+    return '<span class="badge bg-secondary">None</span>';
+  }
+
+  function getGroupDocumentMetaPills(doc) {
+    const pills = [];
+    const authors = Array.isArray(doc.authors)
+      ? doc.authors.filter(Boolean)
+      : (doc.authors ? [doc.authors] : []);
+
+    if (doc.version) {
+      pills.push(`<span class="document-meta-pill"><i class="bi bi-layers"></i>v${escapeGroupHtml(String(doc.version))}</span>`);
+    }
+    if (doc.number_of_pages) {
+      pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeGroupHtml(String(doc.number_of_pages))} pages</span>`);
+    }
+    if (authors.length) {
+      const authorLabel = authors.length > 2
+        ? `${authors.slice(0, 2).join(', ')} +${authors.length - 2}`
+        : authors.join(', ');
+      pills.push(`<span class="document-meta-pill"><i class="bi bi-people"></i>${escapeGroupHtml(authorLabel)}</span>`);
+    }
+    if (doc.publication_date) {
+      pills.push(`<span class="document-meta-pill"><i class="bi bi-calendar-event"></i>${escapeGroupHtml(String(doc.publication_date))}</span>`);
+    }
+
+    return pills.join('');
+  }
+
+  function getGroupDocumentSummaryText(doc) {
+    const abstractText = truncateGroupDocumentText((doc.abstract || '').trim(), 165);
+    if (abstractText) {
+      return abstractText;
+    }
+
+    const keywords = Array.isArray(doc.keywords)
+      ? doc.keywords.filter(Boolean).join(', ')
+      : (doc.keywords || '');
+
+    if (keywords) {
+      return `Keywords: ${truncateGroupDocumentText(keywords, 165)}`;
+    }
+
+    return 'Use chat, metadata tools, and group actions directly from this document card.';
+  }
+
+  function renderGroupDocumentsEmptyState(filtersActive) {
+    const message = filtersActive
+      ? 'No group documents found matching the current filters.'
+      : 'No documents found in this group.';
+    const resetHtml = filtersActive
+      ? '<br /><button class="btn btn-link btn-sm p-0 group-docs-reset-filter-msg-btn" type="button">Clear filters</button> to see all documents.'
+      : '';
+
+    groupDocumentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-muted">${message}${resetHtml}</td></tr>`;
+    if (groupDocumentsCardView) {
+      groupDocumentsCardView.innerHTML = `
+        <div class="col-12 text-center text-muted py-5">
+          <i class="bi bi-folder2-open display-6 mb-2 d-block"></i>
+          <p class="mb-2">${message}</p>
+          ${filtersActive ? '<button class="btn btn-link btn-sm p-0 group-docs-reset-filter-msg-btn" type="button">Clear filters</button>' : ''}
+        </div>`;
+    }
+
+    document.querySelectorAll('.group-docs-reset-filter-msg-btn').forEach(button => {
+      if (button.dataset.bound === 'true') {
+        return;
+      }
+
+      button.dataset.bound = 'true';
+      button.addEventListener('click', () => onGroupDocsClearFilters());
+    });
+  }
+
+  function renderGroupDocumentsErrorState(message) {
+    groupDocumentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${message}</td></tr>`;
+    if (groupDocumentsCardView) {
+      groupDocumentsCardView.innerHTML = `
+        <div class="col-12 text-center text-danger py-5">
+          <i class="bi bi-exclamation-triangle display-6 mb-2 d-block"></i>
+          <p class="mb-0">${message}</p>
+        </div>`;
+    }
+  }
+
+  function createGroupDocumentCard(doc, userRole) {
+    const docId = doc.id;
+    const { pct, docStatus, hasError, isComplete } = getGroupDocumentProcessingState(doc);
+    const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRole);
+    const groupStatus = window.currentGroupStatus || 'active';
+    const canModify = groupStatus === 'active';
+    const canChat = groupStatus !== 'inactive';
+    const canShare = canManage && (groupStatus === 'active' || groupStatus === 'upload_disabled');
+    const canDelete = canManage && (groupStatus === 'active' || groupStatus === 'upload_disabled');
+    const displayTitle = doc.title && doc.title !== doc.file_name ? doc.title : (doc.file_name || 'Untitled');
+    const subtitle = doc.title && doc.title !== doc.file_name ? (doc.file_name || '') : '';
+    const selected = groupSelectedDocuments.has(docId);
+    const checkboxClass = groupSelectionMode ? '' : ' d-none';
+
+    let statusBadge = '<span class="badge bg-success">Ready</span>';
+    if (hasError) {
+      statusBadge = '<span class="badge bg-danger">Error</span>';
+    } else if (!isComplete) {
+      statusBadge = `<span class="badge bg-info text-dark">Processing ${pct.toFixed(0)}%</span>`;
+    } else if (!canChat) {
+      statusBadge = '<span class="badge bg-secondary">Read Only</span>';
+    }
+
+    let primaryButtonsHtml = '';
+    if (isComplete && !hasError && canChat) {
+      primaryButtonsHtml += `
+        <button class="btn btn-sm btn-primary me-1" onclick="searchGroupDocumentInChat('${docId}')">
+          <i class="bi bi-chat-dots me-1"></i>Chat
+        </button>`;
+    }
+    if (isComplete && !hasError && canManage && canModify) {
+      primaryButtonsHtml += `
+        <button class="btn btn-sm btn-outline-secondary me-1" onclick="onEditGroupDocument('${docId}')">
+          <i class="bi bi-pencil me-1"></i>Edit
+        </button>`;
+    }
+
+    let dropdownItems = '';
+    if (isComplete && !hasError) {
+      dropdownItems += `
+        <li><a class="dropdown-item select-btn" href="#" onclick="toggleGroupSelectionMode(); return false;">
+          <i class="bi bi-check-square me-2"></i>Select
+        </a></li>`;
+
+      if (canManage && canModify && (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true")) {
+        dropdownItems += `
+          <li><a class="dropdown-item" href="#" onclick="onExtractGroupMetadata('${docId}', event); return false;">
+            <i class="bi bi-magic me-2"></i>Extract Metadata
+          </a></li>`;
+      }
+
+      if (canShare) {
+        const shareCount = Array.isArray(doc.shared_group_ids) ? doc.shared_group_ids.length : 0;
+        dropdownItems += `
+          <li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeGroupHtml(doc.file_name || '')}'); return false;">
+            <i class="bi bi-share-fill me-2"></i>Share
+            <span class="badge bg-secondary ms-1">${shareCount}</span>
+          </a></li>`;
+      }
+
+      if (canDelete) {
+        dropdownItems += `
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;">
+            <i class="bi bi-trash-fill me-2"></i>Delete
+          </a></li>`;
+      }
+    } else if (canManage) {
+      dropdownItems += `
+        <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;">
+          <i class="bi bi-trash-fill me-2"></i>Delete
+        </a></li>`;
+    }
+
+    const dropdownHtml = dropdownItems
+      ? `
+        <div class="dropdown action-dropdown d-inline-block ms-auto">
+          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-three-dots-vertical"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">${dropdownItems}</ul>
+        </div>`
+      : '';
+
+    const progressHtml = hasError
+      ? `<div class="alert alert-danger py-2 px-3 small mb-0"><i class="bi bi-exclamation-triangle-fill me-1"></i>${escapeGroupHtml(docStatus || 'Processing error')}</div>`
+      : (!isComplete
+        ? `<div class="document-item-card__progress"><div class="progress" style="height: 10px;"><div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: ${pct}%" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"></div></div><span class="document-item-card__progress-label">${escapeGroupHtml(docStatus)} (${pct.toFixed(0)}%)</span></div>`
+        : '');
+
+    const column = document.createElement('div');
+    column.className = 'col-12 col-md-6 col-xl-4';
+    column.innerHTML = `
+      <div class="card item-card document-item-card h-100${selected ? ' is-selected' : ''}" data-document-id="${docId}">
+        <div class="card-body d-flex flex-column">
+          <div class="document-item-card__header">
+            <div class="document-item-card__check">
+              <input type="checkbox" class="form-check-input document-checkbox${checkboxClass}" data-document-id="${docId}" ${selected ? 'checked' : ''} />
+            </div>
+            <div class="item-card-icon"><i class="bi ${getGroupDocumentIcon(doc.file_name || '')}" style="font-size: 1.75rem;"></i></div>
+            <div class="document-item-card__title-wrap">
+              <div class="document-item-card__eyebrow">Group document</div>
+              <h6 class="card-title mb-1" title="${escapeGroupHtml(displayTitle)}">${escapeGroupHtml(truncateGroupDocumentText(displayTitle, 60))}</h6>
+              ${subtitle ? `<div class="document-item-card__subtitle" title="${escapeGroupHtml(subtitle)}">${escapeGroupHtml(subtitle)}</div>` : ''}
+            </div>
+            <div class="document-item-card__status">${statusBadge}</div>
+          </div>
+          <div class="document-item-card__summary">${escapeGroupHtml(getGroupDocumentSummaryText(doc))}</div>
+          <div class="document-item-card__meta">${getGroupDocumentMetaPills(doc)}</div>
+          <div class="document-item-card__badges">
+            ${getGroupClassificationBadge(doc)}
+            <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
+          </div>
+          <div class="document-item-card__tags">${renderGroupTagBadges(doc.tags || [], 4)}</div>
+          ${progressHtml}
+          <div class="item-card-buttons mt-auto d-flex flex-wrap gap-1">
+            ${primaryButtonsHtml}
+            ${dropdownHtml}
+          </div>
+        </div>
+      </div>`;
+
+    return column;
+  }
+
+  function renderGroupDocumentCards(docs) {
+    if (!groupDocumentsCardView) {
+      return;
+    }
+
+    groupDocumentsCardView.innerHTML = '';
+    docs.forEach(doc => {
+      groupDocumentsCardView.appendChild(createGroupDocumentCard(doc, userRoleInActiveGroup));
+    });
+  }
+
+  function syncGroupSelectionModeUI() {
+    const table = document.getElementById('group-documents-table');
+    const bulkActionsBar = document.getElementById('groupBulkActionsBar');
+
+    table?.classList.toggle('selection-mode', groupSelectionMode);
+    groupDocumentsCardView?.classList.toggle('selection-mode', groupSelectionMode);
+
+    document.querySelectorAll('.document-checkbox').forEach(checkbox => {
+      checkbox.classList.toggle('d-none', !groupSelectionMode);
+      checkbox.checked = groupSelectionMode && groupSelectedDocuments.has(checkbox.getAttribute('data-document-id'));
+    });
+
+    document.querySelectorAll('.expand-collapse-container').forEach(container => {
+      container.classList.toggle('d-none', groupSelectionMode);
+      container.classList.toggle('d-inline-block', !groupSelectionMode);
+    });
+
+    document.querySelectorAll('.document-item-card').forEach(card => {
+      const documentId = card.getAttribute('data-document-id');
+      card.classList.toggle('is-selected', groupSelectedDocuments.has(documentId));
+    });
+
+    if (!groupSelectionMode && bulkActionsBar) {
+      bulkActionsBar.style.display = 'none';
+    }
+
+    updateGroupBulkActionButtons();
+  }
+
+  function renderCurrentGroupDocuments() {
+    const filtersActive = groupDocsSearchTerm || groupDocsClassificationFilter || groupDocsAuthorFilter || groupDocsKeywordsFilter || groupDocsAbstractFilter || groupDocsTagsFilter;
+
+    if (!groupHasFetchedDocuments && !groupLastFetchedDocsError) {
+      return;
+    }
+
+    if (groupLastFetchedDocsError) {
+      renderGroupDocumentsErrorState(groupLastFetchedDocsError);
+      return;
+    }
+
+    groupDocumentsTableBody.innerHTML = '';
+    if (groupDocumentsCardView) {
+      groupDocumentsCardView.innerHTML = '';
+    }
+
+    if (!groupLastFetchedDocs.length) {
+      renderGroupDocumentsEmptyState(filtersActive);
+      return;
+    }
+
+    if (groupCurrentView === 'cards') {
+      renderGroupDocumentCards(groupLastFetchedDocs);
+    } else {
+      groupLastFetchedDocs.forEach(doc => renderGroupDocumentRow(doc, userRoleInActiveGroup));
+    }
+
+    syncGroupSelectionModeUI();
+  }
+
   // --- Group Document Selection Functions ---
   function updateGroupSelectedDocuments(documentId, isSelected) {
     if (isSelected) {
@@ -2216,6 +2593,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
     } else {
       groupSelectedDocuments.delete(documentId);
     }
+    document.querySelectorAll(`.document-checkbox[data-document-id="${documentId}"]`).forEach(checkbox => {
+      checkbox.checked = isSelected;
+    });
+    document.querySelectorAll(`.document-item-card[data-document-id="${documentId}"]`).forEach(card => {
+      card.classList.toggle('is-selected', isSelected);
+    });
     updateGroupBulkActionButtons();
   }
 
@@ -2255,47 +2638,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function toggleGroupSelectionMode() {
-    const table = document.getElementById("group-documents-table");
-    const checkboxes = document.querySelectorAll('.document-checkbox');
-    const expandContainers = document.querySelectorAll('.expand-collapse-container');
-    const bulkActionsBar = document.getElementById("groupBulkActionsBar");
-    
     groupSelectionMode = !groupSelectionMode;
-    
-    if (groupSelectionMode) {
-      // Enter selection mode
-      table.classList.add("selection-mode");
-      
-      // Show checkboxes and hide expand buttons
-      checkboxes.forEach(checkbox => {
-        checkbox.style.display = 'inline-block';
-      });
-      
-      expandContainers.forEach(container => {
-        container.style.display = 'none';
-      });
-    } else {
-      // Exit selection mode
-      table.classList.remove("selection-mode");
-      
-      // Hide checkboxes and show expand buttons
-      checkboxes.forEach(checkbox => {
-        checkbox.style.display = 'none';
-        checkbox.checked = false;
-      });
-      
-      expandContainers.forEach(container => {
-        container.style.display = 'inline-block';
-      });
-      
-      // Hide bulk actions bar
-      if (bulkActionsBar) {
-        bulkActionsBar.style.display = 'none';
-      }
-      
-      // Clear selected documents
+
+    if (!groupSelectionMode) {
       groupSelectedDocuments.clear();
     }
+
+    syncGroupSelectionModeUI();
   }
 
   // Clear group selection
@@ -2305,7 +2654,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       checkbox.checked = false;
     });
     groupSelectedDocuments.clear();
-    updateGroupBulkActionButtons();
+    syncGroupSelectionModeUI();
   }
 
   function deleteGroupSelectedDocuments() {
@@ -3076,6 +3425,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
           Loading group documents...
         </td>
       </tr>`;
+    if (groupDocumentsCardView) {
+      groupDocumentsCardView.innerHTML = `
+        <div class="col-12 text-center text-muted py-5">
+          <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+          Loading group documents...
+        </div>`;
+    }
     if (groupDocsPaginationContainer) groupDocsPaginationContainer.innerHTML = "";
 
     const params = new URLSearchParams({
@@ -3124,33 +3480,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
           );
           placeholder?.querySelector("#group-legacy-update-alert")?.remove();
         }
-        groupDocumentsTableBody.innerHTML = ""; // Clear loading/existing rows
-        if (!data.documents || data.documents.length === 0) {
-          const filtersActive =
-            groupDocsSearchTerm ||
-            groupDocsClassificationFilter ||
-            groupDocsAuthorFilter ||
-            groupDocsKeywordsFilter ||
-            groupDocsAbstractFilter ||
-            groupDocsTagsFilter;
-          groupDocumentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-muted">
-                    ${
-                      filtersActive
-                        ? "No group documents found matching filters."
-                        : "No documents found in this group."
-                    }
-                    ${
-                      filtersActive
-                        ? '<br><button class="btn btn-link btn-sm p-0" onclick="onGroupDocsClearFilters()">Clear filters</button>.'
-                        : ""
-                    }
-                 </td></tr>`;
-        } else {
-          // IMPORTANT: Pass userRoleInActiveGroup to render function for permission checks
-          data.documents.forEach((doc) =>
-            renderGroupDocumentRow(doc, userRoleInActiveGroup)
-          );
-        }
+        groupLastFetchedDocs = data.documents || [];
+        groupLastFetchedDocsError = null;
+        groupHasFetchedDocuments = true;
+        renderCurrentGroupDocuments();
         renderGroupDocsPaginationControls(
           data.page,
           data.page_size,
@@ -3159,9 +3492,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .catch((error) => {
         console.error("Error fetching group documents:", error);
-        groupDocumentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">Error loading group documents: ${escapeHtml(
+        groupLastFetchedDocs = [];
+        groupLastFetchedDocsError = `Error loading group documents: ${escapeHtml(
           error.error || error.message || "Unknown error"
-        )}</td></tr>`;
+        )}`;
+        groupHasFetchedDocuments = true;
+        renderGroupDocumentsErrorState(groupLastFetchedDocsError);
         renderGroupDocsPaginationControls(1, groupDocsPageSize, 0);
       });
   }
@@ -3188,7 +3524,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // First column with checkbox and expand/collapse
     let firstColumnHtml = `
         <td class="align-middle">
-            <input type="checkbox" class="document-checkbox" data-document-id="${docId}" style="display: none;">
+            <input type="checkbox" class="form-check-input document-checkbox${groupSelectionMode ? '' : ' d-none'}" data-document-id="${docId}" ${groupSelectedDocuments.has(docId) ? 'checked' : ''}>
             <span class="expand-collapse-container">
             ${isComplete && !hasError ?
                 `<button class="btn btn-link p-0" onclick="toggleGroupDetails('${docId}')" title="Show/Hide Details">
@@ -3324,9 +3660,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Complete row HTML
     docRow.innerHTML = `
         ${firstColumnHtml}
-        <td class="align-middle" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
-        <td class="align-middle" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
-        <td class="align-middle">
+      <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
+      <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
+      <td class="align-middle document-actions-cell">
             ${chatButton}
             ${actionsDropdown}
         </td>
@@ -3338,6 +3674,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (isComplete && !hasError) {
       const detailsRow = document.createElement("tr");
       detailsRow.id = `group-details-row-${docId}`; // Distinct prefix
+      detailsRow.classList.add("document-details-row");
       detailsRow.style.display = "none";
 
       let classificationDisplayHTML = "";
@@ -3425,6 +3762,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (!isComplete || hasError) {
       const statusRow = document.createElement("tr");
       statusRow.id = `group-status-row-${docId}`; // Distinct prefix
+      statusRow.classList.add("document-status-row");
       if (hasError) {
         statusRow.innerHTML = `<td colspan="4"><div class="alert alert-danger alert-sm py-1 px-2 mb-0 small"><i class="bi bi-exclamation-triangle-fill me-1"></i> Error: ${escapeHtml(
           docStatus
@@ -4460,23 +4798,43 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   function setupGroupViewSwitcher() {
     const listRadio = document.getElementById('group-docs-view-list');
+    const cardsRadio = document.getElementById('group-docs-view-cards');
     const gridRadio = document.getElementById('group-docs-view-grid');
     if (listRadio) listRadio.addEventListener('change', () => { if (listRadio.checked) switchGroupView('list'); });
+    if (cardsRadio) cardsRadio.addEventListener('change', () => { if (cardsRadio.checked) switchGroupView('cards'); });
     if (gridRadio) gridRadio.addEventListener('change', () => { if (gridRadio.checked) switchGroupView('grid'); });
   }
 
   function switchGroupView(view) {
-    groupCurrentView = view;
+    groupCurrentView = view === 'grid' || view === 'cards' ? view : 'list';
     localStorage.setItem('groupWorkspaceViewPreference', view);
     const listView = document.getElementById('group-documents-list-view');
+    const cardView = document.getElementById('group-documents-card-view');
     const gridView = document.getElementById('group-documents-grid-view');
     const viewInfo = document.getElementById('group-docs-view-info');
+    const listControls = document.getElementById('group-list-controls-bar');
     const gridControls = document.getElementById('group-grid-controls-bar');
     const filterBtn = document.getElementById('group-docs-filters-toggle-btn');
     const filterCollapse = document.getElementById('group-docs-filters-collapse');
     const bulkBar = document.getElementById('groupBulkActionsBar');
 
-    if (view === 'list') {
+    const showElement = (element, displayClass = '') => {
+      if (!element) return;
+      element.classList.remove('d-none');
+      if (displayClass) {
+        element.classList.add(displayClass);
+      }
+    };
+
+    const hideElement = (element, displayClass = '') => {
+      if (!element) return;
+      element.classList.add('d-none');
+      if (displayClass) {
+        element.classList.remove(displayClass);
+      }
+    };
+
+    if (groupCurrentView === 'list' || groupCurrentView === 'cards') {
       groupCurrentFolder = null;
       groupCurrentFolderType = null;
       groupFolderCurrentPage = 1;
@@ -4485,22 +4843,39 @@ app_settings.app_title }} {% endblock %} {% block head %}
       groupFolderSearchTerm = '';
       const tagContainer = document.getElementById('group-tag-folders-container');
       if (tagContainer) tagContainer.className = 'row g-2';
-      if (listView) listView.style.display = 'block';
-      if (gridView) gridView.style.display = 'none';
-      if (gridControls) gridControls.style.display = 'none';
-      if (filterBtn) filterBtn.style.display = '';
-      if (viewInfo) viewInfo.textContent = '';
-      fetchGroupDocuments();
+
+      if (groupCurrentView === 'list') {
+        showElement(listView);
+        hideElement(cardView);
+        if (viewInfo) viewInfo.textContent = '';
+      } else {
+        hideElement(listView);
+        showElement(cardView);
+        if (viewInfo) viewInfo.textContent = 'Cards surface status, metadata, and quick actions.';
+      }
+
+      hideElement(gridView);
+      showElement(listControls, 'd-flex');
+      hideElement(gridControls, 'd-flex');
+      if (filterBtn) filterBtn.classList.remove('d-none');
+      renderCurrentGroupDocuments();
     } else {
-      if (listView) listView.style.display = 'none';
-      if (gridView) gridView.style.display = 'block';
-      if (gridControls) gridControls.style.display = 'flex';
-      if (filterBtn) filterBtn.style.display = 'none';
+      hideElement(listView);
+      hideElement(cardView);
+      showElement(gridView);
+      hideElement(listControls, 'd-flex');
+      showElement(gridControls, 'd-flex');
+      if (filterBtn) filterBtn.classList.add('d-none');
       if (filterCollapse) {
         const bsCollapse = bootstrap.Collapse.getInstance(filterCollapse);
         if (bsCollapse) bsCollapse.hide();
       }
-      if (bulkBar) bulkBar.style.display = 'none';
+      if (viewInfo) viewInfo.textContent = 'Browse documents by tag and classification folders.';
+      if (groupSelectionMode) {
+        toggleGroupSelectionMode();
+      } else if (bulkBar) {
+        bulkBar.style.display = 'none';
+      }
       renderGroupGridView();
     }
   }
@@ -5044,10 +5419,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     // Load saved view preference
     const savedView = localStorage.getItem('groupWorkspaceViewPreference');
-    if (savedView === 'grid') {
+    const defaultView = savedView === 'grid' || savedView === 'cards'
+      ? savedView
+      : (window.matchMedia && window.matchMedia('(max-width: 991.98px)').matches ? 'cards' : 'list');
+    if (defaultView === 'cards') {
+      const cardsRadio = document.getElementById('group-docs-view-cards');
+      if (cardsRadio) cardsRadio.checked = true;
+    } else if (defaultView === 'grid') {
       const gridRadio = document.getElementById('group-docs-view-grid');
-      if (gridRadio) { gridRadio.checked = true; switchGroupView('grid'); }
+      if (gridRadio) gridRadio.checked = true;
     }
+    switchGroupView(defaultView);
 
     // Wire sortable headers in list view
     document.querySelectorAll('#group-documents-table .sortable-header').forEach(th => {

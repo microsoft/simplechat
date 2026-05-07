@@ -489,7 +489,7 @@ function initialize() {
   setupViewToggle('groupAgents', 'groupAgentsViewPreference', (mode) => {
     currentViewMode = mode;
     switchViewContainers(mode, agentsListView, agentsGridView);
-  });
+  }, { mobileDefault: 'grid' });
 
   if (document.getElementById("group-agents-tab-btn")?.classList.contains("active")) {
     fetchGroupAgents();

@@ -1,4 +1,6 @@
 // chat-conversation-info-button.js
+// chat-conversation-info-button.js
+
 /**
  * Module for handling the conversation info button in the title bar
  */
@@ -36,7 +38,8 @@ export function toggleConversationInfoButton(hasActiveConversation) {
   const infoButton = document.getElementById('conversation-info-btn');
   
   if (infoButton) {
-    infoButton.style.display = hasActiveConversation ? 'inline-block' : 'none';
+    infoButton.classList.toggle('d-none', !hasActiveConversation);
+    infoButton.setAttribute('aria-hidden', String(!hasActiveConversation));
   }
 }
 

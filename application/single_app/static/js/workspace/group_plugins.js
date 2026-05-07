@@ -276,7 +276,7 @@ async function fetchGroupPlugins() {
         document.getElementById('group-plugins-list-view'),
         document.getElementById('group-plugins-grid-view')
       );
-    });
+    }, { mobileDefault: 'grid' });
   } catch (error) {
     console.error("Error loading group actions:", error);
     renderError(error.message || "Unable to load group actions.");

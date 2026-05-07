@@ -163,10 +163,17 @@ def register_route_backend_groups(app):
         GET /api/groups/<group_id>
         Returns the full group details for that group.
         """        
+        user_info = get_current_user_info()
+        user_id = user_info["userId"]
+
         group_doc = find_group_by_id(group_id)
         
         if not group_doc:
             return jsonify({"error": "Group not found"}), 404
+
+        if not get_user_role_in_group(group_doc, user_id):
+            return jsonify({"error": "You are not a member of this group"}), 403
+
         return jsonify(group_doc), 200
 
     @app.route("/api/groups/<group_id>", methods=["DELETE"])

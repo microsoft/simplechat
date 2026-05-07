@@ -48,15 +48,15 @@
   <style>
     /* Add this: if banner is present, increase padding-top */
     #classification-banner + nav.navbar.fixed-top {
-      top: 40px; /* Height of the banner */
+      top: var(--classification-banner-height, 40px);
     }
     #classification-banner {
-      height: 40px;
-      line-height: 40px;
+      height: var(--classification-banner-height, 40px);
+      line-height: var(--classification-banner-height, 40px);
     }
     /* Adjust body padding if banner is present */
     body.has-classification-banner {
-      padding-top: 96px; /* 56px navbar + 40px banner */
+      padding-top: calc(var(--top-nav-height, 56px) + var(--classification-banner-height, 40px));
     }
 
     .main-content {
@@ -64,8 +64,17 @@
     }
     /* Sidebar padding for main content when sidebar is enabled */
     .sidebar-padding {
-      padding-left: var(--sidebar-width, 260px);
       padding-top: 0 !important;
+    }
+
+    body:not(.sidebar-nav-enabled) .sidebar-padding {
+      padding-left: var(--sidebar-width, 260px);
+    }
+
+    @media (max-width: 991.98px) {
+      body:not(.sidebar-nav-enabled) .sidebar-padding {
+        padding-left: 0;
+      }
     }
 
     .modal-body {
@@ -180,7 +189,7 @@
     .editor-toolbar a.fa-question-circle:before { content: "?"; }
 
     .chat-container {
-      max-height: calc(100vh - 56px);
+      max-height: calc(100vh - var(--top-nav-height, 66px));
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -254,7 +263,10 @@
   {% block head %}{% endblock %}
 </head>
 
-<body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}">
+{% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
+{% set is_sidebar_layout = nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %}
+{% set is_chat_page = request.endpoint == 'chats' %}
+<body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}{% if is_chat_page %} chat-shell-page{% endif %}{% if is_chat_page and not is_sidebar_layout %} chat-top-nav-shell{% endif %}">
   {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
     <div id="classification-banner"
          style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: {{ app_settings.classification_banner_text_color or '#ffffff' }}; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: 40px; font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
@@ -263,13 +275,12 @@
   {% endif %}
   <!-- Navigation Bar -->
   {% set left_sidebar_enabled = false %}
-  {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
-  {% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %}
+  {% if is_sidebar_layout %}
     {% include "_sidebar_nav.html" %}
     {% set left_sidebar_enabled = true %}
   {% else %}
     {% include "_top_nav.html" %}
-    {% if request.endpoint == 'chats' %}
+    {% if is_chat_page %}
       {% include "_sidebar_short_nav.html" %}
       {% set left_sidebar_enabled = true %}
     {% endif %}

@@ -3,16 +3,19 @@
 
 from flask import jsonify, request, Response
 from datetime import datetime, timedelta
+import logging
 import os
 import tempfile
 import requests
 import mimetypes
 import io
 import pandas
+import fitz
 
 from functions_authentication import login_required, user_required, get_current_user_id
+from functions_appinsights import log_event
 from functions_settings import get_settings, enabled_required
-from functions_documents import get_document_metadata
+from functions_documents import get_document_metadata, get_document_blob_storage_info
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
@@ -61,6 +64,28 @@ def _serialize_tabular_preview_table(df_preview):
         for row in df_preview.itertuples(index=False, name=None)
     ]
     return columns, rows
+
+
+def _log_enhanced_citations_debug(message, **details):
+    """Write debug-gated enhanced citations diagnostics."""
+    log_event(
+        f"[EnhancedCitations] {message}",
+        extra=details or None,
+        debug_only=True,
+        category="EnhancedCitations",
+    )
+
+
+def _log_enhanced_citations_error(message, error, **details):
+    """Write structured error diagnostics for enhanced citations failures."""
+    error_details = dict(details)
+    error_details["error"] = str(error)
+    log_event(
+        f"[EnhancedCitations] {message}",
+        extra=error_details,
+        level=logging.ERROR,
+        exceptionTraceback=True,
+    )
 
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
@@ -234,7 +259,13 @@ def register_enhanced_citations_routes(app):
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
 
-        debug_print(f"Enhanced citations PDF request - doc_id: {doc_id}, page: {page_number}, show_all: {show_all}")
+        _log_enhanced_citations_debug(
+            "PDF request received",
+            doc_id=doc_id,
+            page=page_number,
+            show_all=show_all,
+            download=download,
+        )
 
         user_id = get_current_user_id()
         if not user_id:
@@ -263,6 +294,14 @@ def register_enhanced_citations_routes(app):
             return serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all)
 
         except Exception as e:
+            _log_enhanced_citations_error(
+                "PDF request failed",
+                e,
+                doc_id=doc_id,
+                page=page_number,
+                show_all=show_all,
+                download=download,
+            )
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/enhanced_citations/tabular", methods=["GET"])
@@ -607,35 +646,60 @@ def get_blob_name(raw_doc, workspace_type):
     """
     _, blob_name = get_document_blob_storage_info(raw_doc)
     if blob_name:
+        _log_enhanced_citations_debug(
+            "Using stored blob path for citation content",
+            doc_id=raw_doc.get('id'),
+            workspace_type=workspace_type,
+            blob_name=blob_name,
+        )
         return blob_name
 
     if workspace_type == 'public':
-        return f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
+        fallback_blob_name = f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
     elif workspace_type == 'group':
-        return f"{raw_doc['group_id']}/{raw_doc['file_name']}"
+        fallback_blob_name = f"{raw_doc['group_id']}/{raw_doc['file_name']}"
     else:
-        return f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+        fallback_blob_name = f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+
+    _log_enhanced_citations_debug(
+        "Using legacy blob path fallback for citation content",
+        doc_id=raw_doc.get('id'),
+        workspace_type=workspace_type,
+        blob_name=fallback_blob_name,
+    )
+    return fallback_blob_name
 
 def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=False):
     """
     Server-side rendering: Serve enhanced citation file content directly
     Based on the logic from the existing view_pdf function but serves content directly
     """
-    settings = get_settings()
-    
     # Get blob storage client
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
         raise Exception("Blob storage client not available")
-    
-    # Determine workspace type and container
-    workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-    container_client = blob_service_client.get_container_client(container_name)
-    
-    # Build blob name based on workspace type
-    blob_name = get_blob_name(raw_doc, workspace_type)
-    
+
+    doc_id = raw_doc.get('id')
+    file_name = raw_doc.get('file_name')
+    workspace_type = None
+    container_name = None
+    blob_name = None
+
     try:
+        workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
+        blob_name = get_blob_name(raw_doc, workspace_type)
+        container_client = blob_service_client.get_container_client(container_name)
+
+        _log_enhanced_citations_debug(
+            "Downloading citation content from blob storage",
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            force_download=force_download,
+        )
+
         # Download blob content directly
         blob_client = container_client.get_blob_client(blob_name)
         blob_data = blob_client.download_blob()
@@ -659,6 +723,18 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
                     content_type = 'audio/mpeg'
                 else:
                     content_type = 'application/octet-stream'
+
+        _log_enhanced_citations_debug(
+            "Citation content downloaded successfully",
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            content_type=content_type,
+            content_length=len(content),
+            force_download=force_download,
+        )
         
         # Set content disposition based on force_download parameter
         disposition = 'attachment' if force_download else 'inline'
@@ -678,8 +754,17 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
         return response
         
     except Exception as e:
-        print(f"Error serving enhanced citation content: {e}")
-        raise Exception(f"Failed to load content: {str(e)}")
+        _log_enhanced_citations_error(
+            "Failed to serve citation content",
+            e,
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            force_download=force_download,
+        )
+        raise Exception(f"Failed to load content: {str(e)}") from e
 
 def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
     """
@@ -691,25 +776,40 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
         page_number: Current page number
         show_all: If True, show all pages instead of just ±1 pages around current
     """
-    debug_print(f"serve_enhanced_citation_pdf_content called with show_all: {show_all}")
-    
-    import io
-    import uuid
-    import tempfile
-    import fitz  # PyMuPDF
+    _log_enhanced_citations_debug(
+        "Preparing PDF citation content",
+        doc_id=raw_doc.get('id'),
+        file_name=raw_doc.get('file_name'),
+        page=page_number,
+        show_all=show_all,
+    )
     
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
         raise Exception("Blob storage client not available")
-    
-    # Determine workspace type and container
-    workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-    container_client = blob_service_client.get_container_client(container_name)
-    
-    # Build blob name based on workspace type
-    blob_name = get_blob_name(raw_doc, workspace_type)
-    
+
+    doc_id = raw_doc.get('id')
+    file_name = raw_doc.get('file_name')
+    workspace_type = None
+    container_name = None
+    blob_name = None
+
     try:
+        workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
+        blob_name = get_blob_name(raw_doc, workspace_type)
+        container_client = blob_service_client.get_container_client(container_name)
+
+        _log_enhanced_citations_debug(
+            "Downloading PDF citation blob",
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            page=page_number,
+            show_all=show_all,
+        )
+
         # Download blob content directly
         blob_client = container_client.get_blob_client(blob_name)
         blob_data = blob_client.download_blob()
@@ -727,6 +827,13 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
             current_idx = page_number - 1  # zero-based
 
             if current_idx < 0 or current_idx >= total_pages:
+                _log_enhanced_citations_debug(
+                    "Requested PDF page was out of range",
+                    doc_id=doc_id,
+                    file_name=file_name,
+                    page=page_number,
+                    total_pages=total_pages,
+                )
                 pdf_document.close()
                 os.remove(temp_pdf_path)
                 return jsonify({"error": "Requested page out of range"}), 400
@@ -778,6 +885,19 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
             extracted_pdf.close()
             pdf_document.close()
 
+            _log_enhanced_citations_debug(
+                "Built PDF citation sub-document",
+                doc_id=doc_id,
+                file_name=file_name,
+                page=page_number,
+                show_all=show_all,
+                total_pages=total_pages,
+                start_idx=start_idx,
+                end_idx=end_idx,
+                viewer_page=new_page_number,
+                content_length=len(extracted_content),
+            )
+
             # Return the extracted PDF
             headers = {
                 'Content-Length': str(len(extracted_content)),
@@ -789,7 +909,12 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
             
             # When show_all is True, allow iframe embedding
             if show_all:
-                debug_print(f"Setting CSP headers for iframe embedding (show_all={show_all})")
+                _log_enhanced_citations_debug(
+                    "Setting CSP headers for iframe embedding",
+                    doc_id=doc_id,
+                    file_name=file_name,
+                    show_all=show_all,
+                )
                 headers['Content-Security-Policy'] = (
                     "default-src 'self'; "
                     "frame-ancestors 'self'; "  # Allow embedding in same origin
@@ -797,7 +922,12 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
                 )
                 headers['X-Frame-Options'] = 'SAMEORIGIN'  # Allow same-origin framing
             else:
-                debug_print(f"NOT setting CSP headers for iframe embedding (show_all={show_all})")
+                _log_enhanced_citations_debug(
+                    "Skipping iframe embedding headers for sub-document response",
+                    doc_id=doc_id,
+                    file_name=file_name,
+                    show_all=show_all,
+                )
             
             response = Response(
                 extracted_content,
@@ -812,5 +942,15 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
                 os.remove(temp_pdf_path)
         
     except Exception as e:
-        print(f"Error serving PDF citation content: {e}")
-        raise Exception(f"Failed to load PDF content: {str(e)}")
+        _log_enhanced_citations_error(
+            "Failed to serve PDF citation content",
+            e,
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            page=page_number,
+            show_all=show_all,
+        )
+        raise Exception(f"Failed to load PDF content: {str(e)}") from e

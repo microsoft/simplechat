@@ -10,6 +10,22 @@ from functions_message_artifacts import (
 )
 from swagger_wrapper import swagger_route, get_auth_security
 
+
+def _authorize_frontend_personal_conversation_access(user_id, conversation_id):
+    """Load a personal conversation and ensure the caller owns it."""
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError(f"Conversation {conversation_id} not found") from exc
+
+    if conversation_item.get('user_id') != user_id:
+        raise PermissionError('Forbidden')
+
+    return conversation_item
+
 def register_route_frontend_conversations(app):
     @app.route('/conversations')
     @swagger_route(security=get_auth_security())
@@ -41,12 +57,11 @@ def register_route_frontend_conversations(app):
         if not user_id:
             return redirect(url_for('login'))
         try:
-            conversation_item = cosmos_conversations_container.read_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
-        except Exception:
+            _authorize_frontend_personal_conversation_access(user_id, conversation_id)
+        except LookupError:
             return "Conversation not found", 404
+        except PermissionError:
+            return "Forbidden", 403
 
         message_query = f"""
             SELECT * FROM c
@@ -70,9 +85,11 @@ def register_route_frontend_conversations(app):
             return jsonify({'error': 'User not authenticated'}), 401
         
         try:
-            _ = cosmos_conversations_container.read_item(conversation_id, conversation_id)
-        except CosmosResourceNotFoundError:
+            _authorize_frontend_personal_conversation_access(user_id, conversation_id)
+        except LookupError:
             return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
         
         msg_query = f"""
             SELECT * FROM c

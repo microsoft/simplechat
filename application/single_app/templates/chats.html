@@ -9,10 +9,7 @@
     <link rel="stylesheet" href="/static/css/chat-speech-input.css">
     {% endif %}
     <style>
-        /* Initial layout styles to prevent shifting when top nav is active */
-        {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
-        {% if nav_layout != 'sidebar' and not (not nav_layout and app_settings.enable_left_nav_default) %}
-        /* Top navigation layout - hide left pane and expand right pane (same as sidebar layout) */
+        /* Initial layout styles to prevent chat shell shifting on load */
         #left-pane {
             display: none !important;
         }
@@ -30,26 +27,6 @@
             width: 100% !important;
             max-width: 1000px !important;
         }
-        {% else %}
-        /* Sidebar navigation layout - hide left pane and expand right pane */
-        #left-pane {
-            display: none !important;
-        }
-        
-        #right-pane {
-            width: 100% !important;
-            height: 100% !important;
-            display: flex !important;
-            flex-direction: column !important;
-            align-items: center !important;
-        }
-        
-        /* Center and limit width of right pane content when using sidebar */
-        #right-pane > div {
-            width: 100% !important;
-            max-width: 1000px !important;
-        }
-        {% endif %}
         
         /* Styles for conversation checkboxes */
         .conversation-item {
@@ -261,16 +238,21 @@
         </div>
 
         <div class="d-flex flex-column h-100 chat-container">
-            <div class="p-3 border-bottom align-items-center justify-content-between flex-shrink-0">
-                <div class="d-flex flex-column">
-                    <div class="d-flex align-items-center">
-                        <h5 id="current-conversation-title" class="mb-0 flex-grow-1">
-                        </h5>
-                        <button id="conversation-info-btn" class="btn btn-link p-0 ms-2" style="color: #6c757d; display: none;" data-bs-toggle="tooltip" data-bs-placement="top" title="View conversation details">
-                            <i class="bi bi-info-circle"></i>
+            <div class="p-3 border-bottom flex-shrink-0 chat-shell-header">
+                <div class="d-flex flex-column w-100 chat-shell-header-content">
+                    <div class="d-flex align-items-center chat-shell-title-row">
+                        <button type="button" id="chat-sidebar-inline-toggle" class="btn btn-outline-secondary btn-sm d-none d-lg-inline-flex align-items-center justify-content-center me-2" data-sidebar-toggle="toggle" aria-expanded="true" aria-label="Toggle chat navigation" title="Toggle chat navigation">
+                            <i class="bi bi-layout-sidebar"></i>
                         </button>
+                        <h5 id="current-conversation-title" class="mb-0 flex-grow-1 text-truncate">
+                        </h5>
+                        <div class="chat-shell-title-actions ms-2">
+                            <button id="conversation-info-btn" class="btn btn-outline-secondary btn-sm chat-shell-icon-button d-none" data-bs-toggle="tooltip" data-bs-placement="top" title="View conversation details" aria-label="View conversation details">
+                                <i class="bi bi-info-circle"></i>
+                            </button>
+                        </div>
                     </div>
-                    <div class="d-flex align-items-center mt-1 gap-2">
+                    <div class="d-flex align-items-center mt-1 gap-2 chat-shell-status-row">
                         <span id="header-scope-lock-btn"
                               class="text-warning"
                               style="display: none; cursor: pointer; font-size: 0.9rem;"
@@ -279,7 +261,7 @@
                               data-bs-target="#scopeLockModal">
                             <i class="bi bi-lock-fill"></i>
                         </span>
-                        <div id="current-conversation-classifications">
+                        <div id="current-conversation-classifications" class="chat-shell-classifications">
                         </div>
                     </div>
                 </div>
@@ -291,16 +273,18 @@
 
             <div class="p-3 border-top flex-shrink-0">
                 
-                      <div class="chat-toolbar mb-2">
-                    <!-- Left side buttons -->
-                          <div class="chat-toolbar-actions">
+                                <div class="chat-toolbar mb-2">
+                    <div class="chat-toolbar-primary-row">
+                        <div id="chat-toolbar-desktop-tools-slot" class="chat-toolbar-desktop-tools-slot">
+                            <div id="chat-toolbar-tools-surface" class="chat-toolbar-secondary-panel chat-toolbar-tools-surface">
+                                <div class="chat-toolbar-actions chat-toolbar-action-rail">
                         {% if settings.enable_image_generation %}
                         <button
                             id="image-generate-btn"
                             class="btn btn-outline-secondary btn-sm search-btn"
                             data-bs-toggle="tooltip" data-bs-placement="top" title="Generate images with AI"
                         >
-                            <i class="bi bi-image"></i> <span class="search-btn-text d-none d-md-inline">Image</span>
+                            <i class="bi bi-image"></i> <span class="search-btn-text">Image</span>
                         </button>
                         {% endif %}
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
@@ -309,12 +293,12 @@
                             class="btn btn-outline-secondary btn-sm search-btn"
                             data-bs-toggle="tooltip" data-bs-placement="top" title="Search workspaces"
                         >
-                            <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text d-none d-md-inline">Workspaces</span>
+                            <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text">Workspaces</span>
                         </button>
                         {% endif %}
                         <input type="file" id="file-input" accept=".txt,.pdf,.doc,.docm,.docx,.xlsx,.xlsm,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv,.xml,.yaml,.yml,.log" style="display: none"/>
                         <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, xlsx, pptx, html, images, md, json, csv, xml, yaml, yml, log)">
-                            <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>
+                            <i class="bi bi-paperclip"></i> <span class="file-btn-text">File</span>
                             <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
                                 <i class="bi bi-x-circle-fill text-danger"></i>
                             </span>
@@ -326,146 +310,114 @@
                             class="btn btn-outline-secondary btn-sm search-btn"
                             data-bs-toggle="tooltip" data-bs-placement="top" title="Search the web using Bing"
                         >
-                            <i class="bi bi-globe"></i> <span class="search-btn-text d-none d-md-inline">Web</span>
+                            <i class="bi bi-globe"></i> <span class="search-btn-text">Web</span>
                         </button>
                         {% endif %}
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                         <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
-                            <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
+                            <i class="bi bi-lightbulb"></i> <span class="search-btn-text">Prompts</span>
                         </button>
                         {% endif %}
                         {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
                         <button id="enable-agents-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Enable Agents">
-                            <i class="bi bi-robot"></i> <span class="search-btn-text d-none d-md-inline">Agents</span>
+                            <i class="bi bi-robot"></i> <span class="search-btn-text">Agents</span>
                         </button>
                         {% endif %}
-                    </div>
-                    
-                    <!-- Right side selectors -->
-                    <div class="chat-toolbar-controls">
-                        <!-- Prompt Selector -->
-                        <div class="chat-toolbar-selectors">
-                        {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
-                        <div id="prompt-selection-container" class="chat-toolbar-selector" style="display: none;">
-                            <label for="prompt-select" class="visually-hidden">Prompt</label>
-                            <div class="dropdown chat-searchable-select" id="prompt-dropdown">
-                                <button class="form-select chat-searchable-select-button"
-                                        type="button"
-                                        id="prompt-dropdown-button"
-                                        data-bs-toggle="dropdown"
-                                        data-bs-auto-close="outside"
-                                        aria-expanded="false">
-                                    <span class="chat-searchable-select-text text-truncate">Select a Prompt...</span>
-                                </button>
-                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="prompt-dropdown-menu">
-                                    <div class="chat-searchable-select-search mb-2">
-                                        <input type="text"
-                                               class="form-control form-control-sm"
-                                               placeholder="Search prompts..."
-                                               id="prompt-search-input">
-                                    </div>
-                                    <div class="dropdown-items-container chat-searchable-select-items" id="prompt-dropdown-items"></div>
                                 </div>
-                            </div>
-                            <select class="form-select d-none" id="prompt-select"></select>
-                        </div>
-                        {% endif %}
 
+                                <div class="chat-toolbar-toggles">
 
-                        <!-- Agent selector -->
-                        <div id="agent-select-container" class="chat-toolbar-selector" style="display: none;">
-                            <label for="agent-select" class="visually-hidden">Agent</label>
-                            <div class="dropdown chat-searchable-select" id="agent-dropdown">
-                                <button class="form-select chat-searchable-select-button"
-                                        type="button"
-                                        id="agent-dropdown-button"
-                                        data-bs-toggle="dropdown"
-                                        data-bs-auto-close="outside"
-                                        aria-expanded="false">
-                                    <span class="chat-searchable-select-text text-truncate">Select an Agent</span>
-                                </button>
-                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="agent-dropdown-menu">
-                                    <div class="chat-searchable-select-search mb-2">
-                                        <input type="text"
-                                               class="form-control form-control-sm"
-                                               placeholder="Search agents..."
-                                               id="agent-search-input">
-                                    </div>
-                                    <div class="dropdown-items-container chat-searchable-select-items" id="agent-dropdown-items"></div>
-                                </div>
-                            </div>
-                            <select id="agent-select" class="form-select d-none">
-                                <!-- Agents will be populated dynamically by JS -->
-                            </select>
-                        </div>
-                        
-                        
-                        <!-- Model selector - right aligned -->
-                        <div id="model-select-container" class="chat-toolbar-selector">
-                            <label for="model-select" class="visually-hidden">Model</label>
-                            <div class="dropdown chat-searchable-select" id="model-dropdown">
-                                <button class="form-select chat-searchable-select-button"
-                                        type="button"
-                                        id="model-dropdown-button"
-                                        data-bs-toggle="dropdown"
-                                        data-bs-auto-close="outside"
-                                        aria-expanded="false">
-                                    <span class="chat-searchable-select-text text-truncate">
-                                    {% if enable_multi_model_endpoints and initial_chat_model_selection %}
-                                        {{ initial_chat_model_selection.display_name }}
-                                    {% elif settings.enable_gpt_apim %}
-                                        {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                        {% set apim_list = raw.split(',') %}
-                                        {% set first_dep = apim_list[0].strip() if apim_list and apim_list[0].strip() else 'Select a Model' %}
-                                        {{ first_dep }}
-                                    {% elif settings.gpt_model.selected %}
-                                        {{ settings.gpt_model.selected[0].modelName }}
-                                    {% else %}
-                                        Select a Model
-                                    {% endif %}
-                                    </span>
-                                </button>
-                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="model-dropdown-menu">
-                                    <div class="chat-searchable-select-search mb-2">
-                                        <input type="text"
-                                               class="form-control form-control-sm"
-                                               placeholder="Search models..."
-                                               id="model-search-input">
-                                    </div>
-                                    <div class="dropdown-items-container chat-searchable-select-items" id="model-dropdown-items"></div>
-                                </div>
-                            </div>
-                            <select id="model-select" class="form-select d-none">
-                            {% if enable_multi_model_endpoints and initial_chat_model_selection %}
-                                <option
-                                    value="{{ initial_chat_model_selection.option_value }}"
-                                    selected
-                                    data-selection-key="{{ initial_chat_model_selection.selection_key }}"
-                                    data-model-id="{{ initial_chat_model_selection.model_id }}"
-                                    data-display-name="{{ initial_chat_model_selection.display_name }}"
-                                    data-deployment-name="{{ initial_chat_model_selection.deployment_name }}"
-                                    data-endpoint-id="{{ initial_chat_model_selection.endpoint_id }}"
-                                    data-provider="{{ initial_chat_model_selection.provider }}"
-                                    data-scope-type="{{ initial_chat_model_selection.scope_type }}"
-                                    data-scope-id="{{ initial_chat_model_selection.scope_id }}"
-                                    data-scope-name="{{ initial_chat_model_selection.scope_name }}"
-                                    data-search-text="{{ initial_chat_model_selection.search_text }}"
+                                <!-- Reasoning effort toggle button -->
+                                <button 
+                                    id="reasoning-toggle-btn" 
+                                    class="btn btn-outline-secondary btn-sm rounded-circle" 
+                                    data-bs-toggle="tooltip" 
+                                    data-bs-placement="top" 
+                                    data-bs-title="Configure reasoning effort"
+                                    aria-label="Configure reasoning effort"
+                                    style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
                                 >
-                                    {{ initial_chat_model_selection.display_name }}
-                                </option>
-                            {% elif settings.enable_gpt_apim %}
-                                {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
-                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                {% set apim_list = raw.split(',') %}
-                                {% for dep in apim_list %}
-                                {% set d = dep.strip() %}
-                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                    {{ d }}
-                                </option>
-                                {% endfor %}
-                            {% else %}
-                                {% if settings.enable_gpt_apim %}
-                                    {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
+                                    <i class="bi bi-reception-2"></i>
+                                </button>
+
+                                <!-- TTS Autoplay toggle button -->
+                                {% if app_settings.enable_text_to_speech %}
+                                <button 
+                                    id="tts-autoplay-toggle-btn" 
+                                    class="btn btn-outline-secondary btn-sm rounded-circle" 
+                                    data-bs-toggle="tooltip" 
+                                    data-bs-placement="top" 
+                                    data-bs-title="Toggle AI voice response"
+                                    title="Auto voice response disabled - click to enable"
+                                    aria-label="Toggle AI voice response"
+                                    style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                                >
+                                    <i class="bi bi-volume-mute"></i>
+                                </button>
+                                {% endif %}
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="chat-toolbar-controls">
+                        <div id="chat-toolbar-desktop-primary-slot" class="chat-toolbar-primary-selector">
+                            <div id="chat-toolbar-primary-surface" class="chat-toolbar-primary-surface">
+                            <!-- Model selector - right aligned -->
+                            <div id="model-select-container" class="chat-toolbar-selector">
+                                <label for="model-select" class="visually-hidden">Model</label>
+                                <div class="dropdown chat-searchable-select" id="model-dropdown">
+                                    <button class="form-select chat-searchable-select-button"
+                                            type="button"
+                                            id="model-dropdown-button"
+                                            data-bs-toggle="dropdown"
+                                            data-bs-auto-close="outside"
+                                            aria-expanded="false">
+                                        <span class="chat-searchable-select-text text-truncate">
+                                        {% if enable_multi_model_endpoints and initial_chat_model_selection %}
+                                            {{ initial_chat_model_selection.display_name }}
+                                        {% elif settings.enable_gpt_apim %}
+                                            {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                            {% set apim_list = raw.split(',') %}
+                                            {% set first_dep = apim_list[0].strip() if apim_list and apim_list[0].strip() else 'Select a Model' %}
+                                            {{ first_dep }}
+                                        {% elif settings.gpt_model.selected %}
+                                            {{ settings.gpt_model.selected[0].modelName }}
+                                        {% else %}
+                                            Select a Model
+                                        {% endif %}
+                                        </span>
+                                    </button>
+                                    <div class="dropdown-menu p-2 chat-searchable-select-menu" id="model-dropdown-menu">
+                                        <div class="chat-searchable-select-search mb-2">
+                                            <input type="text"
+                                                   class="form-control form-control-sm"
+                                                   placeholder="Search models..."
+                                                   id="model-search-input">
+                                        </div>
+                                        <div class="dropdown-items-container chat-searchable-select-items" id="model-dropdown-items"></div>
+                                    </div>
+                                </div>
+                                <select id="model-select" class="form-select d-none">
+                                {% if enable_multi_model_endpoints and initial_chat_model_selection %}
+                                    <option
+                                        value="{{ initial_chat_model_selection.option_value }}"
+                                        selected
+                                        data-selection-key="{{ initial_chat_model_selection.selection_key }}"
+                                        data-model-id="{{ initial_chat_model_selection.model_id }}"
+                                        data-display-name="{{ initial_chat_model_selection.display_name }}"
+                                        data-deployment-name="{{ initial_chat_model_selection.deployment_name }}"
+                                        data-endpoint-id="{{ initial_chat_model_selection.endpoint_id }}"
+                                        data-provider="{{ initial_chat_model_selection.provider }}"
+                                        data-scope-type="{{ initial_chat_model_selection.scope_type }}"
+                                        data-scope-id="{{ initial_chat_model_selection.scope_id }}"
+                                        data-scope-name="{{ initial_chat_model_selection.scope_name }}"
+                                        data-search-text="{{ initial_chat_model_selection.search_text }}"
+                                    >
+                                        {{ initial_chat_model_selection.display_name }}
+                                    </option>
+                                {% elif settings.enable_gpt_apim %}
                                     {% set raw = settings.azure_apim_gpt_deployment or "" %}
                                     {% set apim_list = raw.split(',') %}
                                     {% for dep in apim_list %}
@@ -475,61 +427,122 @@
                                     </option>
                                     {% endfor %}
                                 {% else %}
-                                    {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
-                                    {% for model in settings.gpt_model.selected %}
-                                    <option
-                                        value="{{ model.deploymentName }}"
-                                        {% if loop.first %}selected{% endif %}
-                                    >
-                                        {{ model.modelName }}
-                                    </option>
-                                    {% endfor %}
+                                    {% if settings.enable_gpt_apim %}
+                                        {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                        {% set apim_list = raw.split(',') %}
+                                        {% for dep in apim_list %}
+                                        {% set d = dep.strip() %}
+                                        <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
+                                            {{ d }}
+                                        </option>
+                                        {% endfor %}
+                                    {% else %}
+                                        {% for model in settings.gpt_model.selected %}
+                                        <option
+                                            value="{{ model.deploymentName }}"
+                                            {% if loop.first %}selected{% endif %}
+                                        >
+                                            {{ model.modelName }}
+                                        </option>
+                                        {% endfor %}
+                                    {% endif %}
                                 {% endif %}
+                                </select>
+                            </div>
+
+                            <div id="agent-select-container" class="chat-toolbar-selector" style="display: none;">
+                                <label for="agent-select" class="visually-hidden">Agent</label>
+                                <div class="dropdown chat-searchable-select" id="agent-dropdown">
+                                    <button class="form-select chat-searchable-select-button"
+                                            type="button"
+                                            id="agent-dropdown-button"
+                                            data-bs-toggle="dropdown"
+                                            data-bs-auto-close="outside"
+                                            aria-expanded="false">
+                                        <span class="chat-searchable-select-text text-truncate">Select an Agent</span>
+                                    </button>
+                                    <div class="dropdown-menu p-2 chat-searchable-select-menu" id="agent-dropdown-menu">
+                                        <div class="chat-searchable-select-search mb-2">
+                                            <input type="text"
+                                                   class="form-control form-control-sm"
+                                                   placeholder="Search agents..."
+                                                   id="agent-search-input">
+                                        </div>
+                                        <div class="dropdown-items-container chat-searchable-select-items" id="agent-dropdown-items"></div>
+                                    </div>
+                                </div>
+                                <select id="agent-select" class="form-select d-none">
+                                    <!-- Agents will be populated dynamically by JS -->
+                                </select>
+                            </div>
+                            </div>
+                        </div>
+
+                        <div id="chat-toolbar-desktop-selectors-slot" class="chat-toolbar-selectors-slot">
+                            <div id="chat-toolbar-selectors-surface" class="chat-toolbar-selectors">
+                            {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
+                            <div id="prompt-selection-container" class="chat-toolbar-selector" style="display: none;">
+                                <label for="prompt-select" class="visually-hidden">Prompt</label>
+                                <div class="dropdown chat-searchable-select" id="prompt-dropdown">
+                                    <button class="form-select chat-searchable-select-button"
+                                            type="button"
+                                            id="prompt-dropdown-button"
+                                            data-bs-toggle="dropdown"
+                                            data-bs-auto-close="outside"
+                                            aria-expanded="false">
+                                        <span class="chat-searchable-select-text text-truncate">Select a Prompt...</span>
+                                    </button>
+                                    <div class="dropdown-menu p-2 chat-searchable-select-menu" id="prompt-dropdown-menu">
+                                        <div class="chat-searchable-select-search mb-2">
+                                            <input type="text"
+                                                   class="form-control form-control-sm"
+                                                   placeholder="Search prompts..."
+                                                   id="prompt-search-input">
+                                        </div>
+                                        <div class="dropdown-items-container chat-searchable-select-items" id="prompt-dropdown-items"></div>
+                                    </div>
+                                </div>
+                                <select class="form-select d-none" id="prompt-select"></select>
+                            </div>
                             {% endif %}
-                            </select>
+
+                            </div>
                         </div>
 
-                        </div>
-
-                        <div class="chat-toolbar-toggles">
-
-                        <!-- Reasoning effort toggle button -->
-                        <button 
-                            id="reasoning-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            data-bs-title="Configure reasoning effort"
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-reception-2"></i>
+                        <button type="button" id="chat-mobile-tools-toggle" class="btn btn-outline-secondary btn-sm d-lg-none chat-mobile-tools-toggle" data-bs-toggle="offcanvas" data-bs-target="#chat-mobile-tools-panel" aria-expanded="false" aria-controls="chat-mobile-tools-panel">
+                            <i class="bi bi-sliders2 me-1"></i>
+                            <span>Tools</span>
                         </button>
+                    </div>
+                </div>
 
-                        <!-- TTS Autoplay toggle button -->
-                        {% if app_settings.enable_text_to_speech %}
-                        <button 
-                            id="tts-autoplay-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            data-bs-title="Toggle AI voice response"
-                            title="Auto voice response disabled - click to enable"
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-volume-mute"></i>
-                        </button>
-                        {% endif %}
-
+                <div id="chat-mobile-tools-panel" class="chat-toolbar-mobile-panel offcanvas-lg offcanvas-bottom" tabindex="-1" aria-labelledby="chatMobileToolsLabel">
+                    <div class="offcanvas-header chat-toolbar-tools-header">
+                        <div>
+                            <h5 class="offcanvas-title" id="chatMobileToolsLabel">Chat Tools</h5>
+                            <p class="mb-0 text-muted small">Quick actions and voice controls</p>
                         </div>
+                        <button type="button" class="btn-close" id="chat-mobile-tools-close" aria-label="Close"></button>
+                    </div>
+                    <div class="offcanvas-body">
+                        <div id="chat-toolbar-mobile-tools-slot" class="chat-toolbar-mobile-tools-slot"></div>
+                        <div id="chat-toolbar-mobile-primary-slot" class="chat-toolbar-mobile-primary-slot"></div>
+                        <div id="chat-toolbar-mobile-selectors-slot" class="chat-toolbar-mobile-selectors-slot"></div>
                     </div>
                 </div>
 
                 
                 {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                <div id="search-documents-container" class="card p-2 mb-2" style="display: none; border-radius: 0.5rem;">
-                    
-                     <div class="d-flex flex-wrap align-items-end gap-2">
-                         <div class="flex-shrink-0" style="min-width: 120px; max-width: 250px;">
+                <div id="search-documents-container" class="chat-search-panel card p-0 mb-2 offcanvas-lg offcanvas-end" tabindex="-1" aria-labelledby="searchDocumentsDrawerLabel" style="display: none; border-radius: 0.5rem;">
+                    <div class="offcanvas-header chat-search-panel-mobile-header">
+                        <div>
+                            <h5 class="offcanvas-title" id="searchDocumentsDrawerLabel">Grounded Search</h5>
+                            <p class="mb-0 text-muted small">Choose scope, tags, and documents.</p>
+                        </div>
+                    </div>
+                    <div class="offcanvas-body p-2">
+                     <div class="chat-search-panel-grid">
+                         <div class="flex-shrink-0 chat-search-panel-field chat-search-panel-field-narrow" style="min-width: 120px; max-width: 250px;">
                              <label class="form-label mb-1 small text-muted d-flex align-items-center gap-1">
                                 Scope
                                 <span id="scope-lock-indicator"
@@ -565,16 +578,21 @@
                              <!-- Hidden select kept for backwards compat -->
                              <select class="d-none" id="doc-scope-select" multiple></select>
                          </div>
-                         <div class="flex-shrink-0" style="min-width: 150px; max-width: 250px;">
+                         <div class="flex-shrink-0 chat-search-panel-field chat-search-panel-field-narrow" style="min-width: 150px; max-width: 250px;">
                              <label class="form-label mb-1 small text-muted">Tags</label>
-                             <div class="dropdown" id="tags-dropdown" style="display: none;">
+                             <div class="dropdown" id="tags-dropdown">
                                 <button class="form-select form-select-sm d-flex justify-content-between align-items-center"
                                         type="button"
                                         id="tags-dropdown-button"
                                         data-bs-toggle="dropdown"
                                         data-bs-auto-close="outside"
+                                        aria-disabled="true"
+                                        disabled
                                         aria-expanded="false">
-                                    <span class="selected-tags-text text-truncate">All Tags</span>
+                                    <span class="chat-search-dropdown-button-content">
+                                        <span class="spinner-border spinner-border-sm text-secondary chat-search-dropdown-loading-spinner" id="tags-dropdown-loading-spinner" role="status" aria-hidden="true"></span>
+                                        <span class="selected-tags-text text-truncate">Loading tags...</span>
+                                    </span>
                                 </button>
                                 <div class="dropdown-menu p-2" id="tags-dropdown-menu" style="width: 250px; max-height: 300px; overflow-y: auto;">
                                     <div class="chat-dropdown-search mb-2">
@@ -592,7 +610,7 @@
                              <select class="d-none" id="chat-tags-filter" multiple style="display: none;">
                              </select>
                          </div>
-                             <div class="flex-grow-1" style="min-width: 250px;">
+                             <div class="flex-grow-1 chat-search-panel-field chat-search-panel-field-wide" style="min-width: 250px;">
                              <label for="document-select" class="form-label mb-1 small text-muted">Document</label>
                              <div class="dropdown" id="document-dropdown">
                                 <button class="form-select form-select-sm d-flex justify-content-between align-items-center" 
@@ -617,6 +635,10 @@
                          </div>
 
                      </div>
+                    </div>
+                    <div class="chat-search-panel-mobile-footer d-lg-none">
+                        <button type="button" class="btn-close" id="search-documents-mobile-close" aria-label="Close grounded search"></button>
+                    </div>
                 </div>
                 {% endif %}
 
@@ -625,7 +647,7 @@
                 <div id="web-search-notice-container" class="mb-2" style="display: none;">
                     <div class="d-flex align-items-center px-3 py-2 rounded-top border border-bottom-0" style="background-color: var(--bs-tertiary-bg); border-color: var(--bs-border-color) !important;">
                         <i class="bi bi-info-circle text-primary me-2"></i>
-                        <span class="small" id="web-search-notice-text">{{ settings.web_search_user_notice_text or 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.' }}</span>
+                        <span class="small" id="web-search-notice-text">{{ settings.web_search_user_notice_text or 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.' }}</span>
                         <button type="button" class="btn-close btn-close-sm ms-auto" id="web-search-notice-dismiss" aria-label="Dismiss" style="font-size: 0.65rem;"></button>
                     </div>
                 </div>
@@ -1109,7 +1131,14 @@
     </div>
 </div>
 
-<div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
+<div
+    class="toast-container position-fixed end-0 p-3"
+    id="chat-toast-container"
+    data-toast-container="preferred"
+    data-toast-anchor="chat-tutorial-launch"
+    data-toast-gap="12"
+    data-toast-default-top="16px"
+></div>
 
 <!-- Scope Lock/Unlock Modal (dual-mode: content set dynamically by JS) -->
 <div class="modal fade" id="scopeLockModal" tabindex="-1" aria-labelledby="scopeLockModalLabel" aria-hidden="true">
@@ -1211,5 +1240,6 @@
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/agents_common.js') }}"></script>
 {% endif %}
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-mobile-toolbar.js') }}"></script>
 
 {% endblock %}

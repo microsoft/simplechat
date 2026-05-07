@@ -1,15 +1,17 @@
 # test_unified_logging_entrypoint.py
 """
-Functional test for unified logging entry point.
-Version: 0.239.189
-Implemented in: 0.239.189
+Functional test for unified logging entry point and debug trace forwarding.
+Version: 0.241.020
+Implemented in: 0.241.020
 
-This test ensures that debug-only logging can be routed through log_event
-while the legacy functions_debug compatibility shim continues to work.
+This test ensures that debug-only logging can be routed through log_event,
+that debug_print can forward tagged traces to Application Insights, and that
+the legacy functions_debug compatibility shim continues to work.
 """
 
 import importlib
 import io
+import logging
 import os
 import sys
 import types
@@ -25,6 +27,15 @@ APP_DIR = os.path.join(
 
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
+
+
+class _CaptureHandler(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.DEBUG)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
 
 
 def _install_logging_stubs(debug_enabled):
@@ -144,6 +155,82 @@ def test_functions_debug_compatibility_shim():
         _restore_modules(saved_modules)
 
 
+def test_debug_print_forwards_tagged_appinsights_trace():
+    """Verify debug_print preserves console output and forwards a tagged debug trace."""
+    print("🔍 Testing debug_print App Insights trace forwarding...")
+    saved_modules = _install_logging_stubs(debug_enabled=True)
+
+    try:
+        functions_appinsights = importlib.import_module('functions_appinsights')
+        parent_logger = logging.getLogger('azure_monitor')
+        capture_handler = _CaptureHandler()
+        original_level = parent_logger.level
+
+        parent_logger.setLevel(logging.INFO)
+        parent_logger.addHandler(capture_handler)
+
+        functions_appinsights._azure_monitor_configured = True
+        functions_appinsights._appinsights_logger = parent_logger
+
+        captured_output = io.StringIO()
+        with redirect_stdout(captured_output):
+            functions_appinsights.debug_print(
+                'Forward %s',
+                'trace',
+                category='TRACE',
+                operation='debug-forward',
+            )
+
+        output = captured_output.getvalue()
+        if '[DEBUG] [TRACE]: Forward trace (operation=debug-forward)' not in output:
+            print(f"❌ Unexpected debug_print console output: {output!r}")
+            return False
+
+        if '[DEBUG][Log]' in output:
+            print(f"❌ App Insights forwarding should not duplicate structured console logs: {output!r}")
+            return False
+
+        if len(capture_handler.records) != 1:
+            print(f"❌ Expected exactly one forwarded trace, saw {len(capture_handler.records)}")
+            return False
+
+        record = capture_handler.records[0]
+        if record.levelno != logging.DEBUG:
+            print(f"❌ Expected DEBUG trace level, got {record.levelno}")
+            return False
+
+        if record.getMessage() != '[debug] [TRACE] Forward trace':
+            print(f"❌ Unexpected forwarded trace message: {record.getMessage()!r}")
+            return False
+
+        if getattr(record, 'debug_tag', None) != '[debug]':
+            print(f"❌ Missing debug tag on forwarded trace: {record.__dict__}")
+            return False
+
+        if getattr(record, 'debug_category', None) != 'TRACE':
+            print(f"❌ Missing debug category on forwarded trace: {record.__dict__}")
+            return False
+
+        if getattr(record, 'operation', None) != 'debug-forward':
+            print(f"❌ Missing forwarded custom dimensions: {record.__dict__}")
+            return False
+
+        print('✅ debug_print App Insights trace forwarding verified')
+        return True
+    except Exception as exc:
+        print(f"❌ debug_print App Insights trace forwarding failed: {exc}")
+        import traceback
+        traceback.print_exc()
+        return False
+    finally:
+        parent_logger = logging.getLogger('azure_monitor')
+        for handler in list(parent_logger.handlers):
+            if isinstance(handler, _CaptureHandler):
+                parent_logger.removeHandler(handler)
+        parent_logger.setLevel(logging.NOTSET)
+        _restore_modules(saved_modules)
+
+
 def test_debug_disabled_suppresses_debug_only_output():
     """Verify debug-only logging stays silent when debug logging is disabled."""
     print("🔍 Testing debug-only suppression when disabled...")
@@ -178,6 +265,7 @@ if __name__ == '__main__':
     tests = [
         test_log_event_debug_only_path,
         test_functions_debug_compatibility_shim,
+        test_debug_print_forwards_tagged_appinsights_trace,
         test_debug_disabled_suppresses_debug_only_output,
     ]
 

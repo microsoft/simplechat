@@ -5,12 +5,108 @@ for analytics and monitoring purposes.
 """
 
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from config import cosmos_activity_logs_container
+
+
+def coerce_activity_log_user_id(user_id: Any) -> str:
+    """Extract a stable string user id from a scalar or session-style identity payload."""
+    if user_id is None:
+        return ''
+
+    if isinstance(user_id, str):
+        return user_id.strip()
+
+    if isinstance(user_id, dict):
+        for key in ('oid', 'sub', 'id', 'user_id'):
+            candidate = user_id.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return ''
+
+    return str(user_id).strip()
+
+
+USER_LOGIN_ACTIVITY_SESSION_KEY = 'last_user_login_activity_epoch'
+USER_LOGIN_ACTIVITY_MIN_INTERVAL_SECONDS = 15 * 60
+
+
+def _parse_session_epoch(session_state: Optional[dict], session_key: str) -> Optional[int]:
+    """Safely parse an epoch value stored in session state."""
+    if session_state is None:
+        return None
+
+    raw_epoch = session_state.get(session_key)
+    if raw_epoch is None:
+        return None
+
+    try:
+        return int(float(raw_epoch))
+    except (TypeError, ValueError):
+        return None
+
+
+def record_user_login_session_activity(
+    session_state: Optional[dict],
+    now_epoch: Optional[int] = None
+) -> Optional[int]:
+    """Persist the last time login activity was recorded for the current session."""
+    if session_state is None:
+        return None
+
+    resolved_epoch = int(now_epoch if now_epoch is not None else time.time())
+    session_state[USER_LOGIN_ACTIVITY_SESSION_KEY] = resolved_epoch
+
+    if hasattr(session_state, 'modified'):
+        session_state.modified = True
+
+    return resolved_epoch
+
+
+def maybe_log_authenticated_request_login(
+    user_id: str,
+    session_state: Optional[dict],
+    request_path: str,
+    request_method: str = 'GET',
+    now_epoch: Optional[int] = None,
+    login_method: str = 'authenticated_request',
+    min_interval_seconds: int = USER_LOGIN_ACTIVITY_MIN_INTERVAL_SECONDS
+) -> bool:
+    """
+    Log a throttled login-style activity for authenticated browser requests.
+
+    This captures passive SSO/session-based access that never re-enters the
+    explicit OAuth callback, while preventing per-request log spam.
+    """
+    if not user_id or session_state is None:
+        return False
+
+    normalized_method = (request_method or '').upper()
+    if normalized_method != 'GET':
+        return False
+
+    resolved_epoch = int(now_epoch if now_epoch is not None else time.time())
+    last_logged_epoch = _parse_session_epoch(session_state, USER_LOGIN_ACTIVITY_SESSION_KEY)
+    if last_logged_epoch is not None and (resolved_epoch - last_logged_epoch) < min_interval_seconds:
+        return False
+
+    log_user_login(
+        user_id,
+        login_method,
+        activity_details={
+            'auth_signal': 'authenticated_request',
+            'request_path': request_path,
+            'request_method': normalized_method,
+            'is_interactive_login': False
+        }
+    )
+    record_user_login_session_activity(session_state, resolved_epoch)
+    return True
 
 
 def _get_email_domain(email: str) -> str:
@@ -1113,7 +1209,8 @@ def log_conversation_archival(
 
 def log_user_login(
     user_id: str,
-    login_method: str = 'azure_ad'
+    login_method: str = 'azure_ad',
+    activity_details: Optional[Dict[str, Any]] = None
 ) -> None:
     """
     Log user login activity to the activity_logs container.
@@ -1125,7 +1222,16 @@ def log_user_login(
     
     try:
         # Create login activity record
-        import uuid
+        login_details = {
+            'login_method': login_method,
+            'success': True
+        }
+        if activity_details:
+            login_details.update({
+                key: value for key, value in activity_details.items()
+                if value is not None
+            })
+
         login_activity = {
             'id': str(uuid.uuid4()),
             'user_id': user_id,
@@ -1133,11 +1239,12 @@ def log_user_login(
             'login_method': login_method,
             'timestamp': datetime.utcnow().isoformat(),
             'created_at': datetime.utcnow().isoformat(),
-            'details': {
-                'login_method': login_method,
-                'success': True
-            }
+            'details': login_details
         }
+
+        for key, value in login_details.items():
+            if key not in {'login_method', 'success'}:
+                login_activity[key] = value
         
         # Save to activity_logs container
         cosmos_activity_logs_container.create_item(body=login_activity)
@@ -1148,7 +1255,7 @@ def log_user_login(
             extra=login_activity,
             level=logging.INFO
         )
-        debug_print(f"✅ User login activity logged for user {user_id}")
+        debug_print(f"✅ User login activity logged for user {user_id} via {login_method}")
         
     except Exception as e:
         # Log error but don't break the login flow
@@ -1636,14 +1743,15 @@ def log_general_admin_action(
     """
 
     try:
+        normalized_admin_user_id = coerce_activity_log_user_id(admin_user_id)
         activity_record = {
             'id': str(uuid.uuid4()),
-            'user_id': admin_user_id,
+            'user_id': normalized_admin_user_id,
             'activity_type': 'admin_action',
             'timestamp': datetime.utcnow().isoformat(),
             'created_at': datetime.utcnow().isoformat(),
             'admin': {
-                'user_id': admin_user_id,
+                'user_id': normalized_admin_user_id,
                 'email': admin_email
             },
             'action': action,
@@ -1670,7 +1778,7 @@ def log_general_admin_action(
         log_event(
             message=f"Error logging admin action: {str(e)}",
             extra={
-                'admin_user_id': admin_user_id,
+                'admin_user_id': normalized_admin_user_id,
                 'admin_email': admin_email,
                 'action': action,
                 'error': str(e)

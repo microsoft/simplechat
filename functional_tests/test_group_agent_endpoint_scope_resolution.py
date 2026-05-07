@@ -1,7 +1,9 @@
 # test_group_agent_endpoint_scope_resolution.py
+# test_group_agent_endpoint_scope_resolution.py
+#!/usr/bin/env python3
 """
 Functional test for group agent endpoint scope resolution.
-Version: 0.239.193
+Version: 0.241.007
 Implemented in: 0.239.192
 
 This test ensures group agents resolve model endpoints from conversation or
@@ -9,7 +11,6 @@ persisted group scope instead of the mutable active group, while honoring the
 group-specific custom endpoint feature flags.
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -18,8 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 LOADER_FILE = ROOT / "application" / "single_app" / "semantic_kernel_loader.py"
 GROUP_AGENTS_FILE = ROOT / "application" / "single_app" / "functions_group_agents.py"
 ROUTE_AGENTS_FILE = ROOT / "application" / "single_app" / "route_backend_agents.py"
-CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
-FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "GROUP_AGENT_ENDPOINT_SCOPE_RESOLUTION_FIX.md"
+FIX_DOC_FILE = (
+    ROOT
+    / "docs"
+    / "explanation"
+    / "fixes"
+    / "v0.241.001"
+    / "GROUP_AGENT_ENDPOINT_SCOPE_RESOLUTION_FIX.md"
+)
 
 
 def read_text(file_path: Path) -> str:
@@ -32,7 +39,6 @@ def test_group_agent_endpoint_scope_resolution() -> None:
     loader_content = read_text(LOADER_FILE)
     group_agents_content = read_text(GROUP_AGENTS_FILE)
     route_agents_content = read_text(ROUTE_AGENTS_FILE)
-    config_content = read_text(CONFIG_FILE)
     fix_doc_content = read_text(FIX_DOC_FILE)
 
     assert "def resolve_agent_config(agent, settings, group_scope_id=None):" in loader_content, (
@@ -78,9 +84,6 @@ def test_group_agent_endpoint_scope_resolution() -> None:
         "Selected group agent payloads should preserve group_id for later resolution."
     )
 
-    assert 'VERSION = "0.239.193"' in config_content, (
-        "config.py should be updated to the implementation version."
-    )
     assert "Fixed/Implemented in version: **0.239.192**" in fix_doc_content, (
         "Fix documentation should record the implementation version."
     )

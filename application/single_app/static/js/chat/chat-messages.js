@@ -471,7 +471,17 @@ export function loadMessages(conversationId) {
   clearSearchHighlight();
   
   return fetch(`/conversation/${conversationId}/messages`)
-    .then((response) => response.json())
+    .then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const error = new Error(data.error || "Error loading messages.");
+        error.status = response.status;
+        throw error;
+      }
+
+      return data;
+    })
     .then((data) => {
       const chatbox = document.getElementById("chatbox");
       if (!chatbox) return;
@@ -538,7 +548,21 @@ export function loadMessages(conversationId) {
     })
     .catch((error) => {
       console.error("Error loading messages:", error);
-      if (chatbox) chatbox.innerHTML = `<div class="text-center p-3 text-danger">Error loading messages.</div>`;
+      const chatbox = document.getElementById("chatbox");
+      let errorMessage = "Error loading messages.";
+
+      if (error?.status === 403) {
+        errorMessage = "You do not have access to this conversation.";
+      } else if (error?.status === 404) {
+        errorMessage = "Conversation not found.";
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+
+      showToast(errorMessage, "danger");
+      if (chatbox) {
+        chatbox.innerHTML = `<div class="text-center p-3 text-danger">${escapeHtml(errorMessage)}</div>`;
+      }
     })
     .finally(() => {
       // Check if there's a search highlight to apply
@@ -608,7 +632,7 @@ export function appendMessage(
     
     // Use agent display name if available, otherwise show AI with model
     if (agentDisplayName) {
-      senderLabel = agentDisplayName;
+      senderLabel = escapeHtml(agentDisplayName);
     } else if (modelName) {
       senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
     } else {
@@ -1054,7 +1078,7 @@ export function appendMessage(
       
       // Use agent display name if available, otherwise show AI with model
       if (agentDisplayName) {
-        senderLabel = agentDisplayName;
+        senderLabel = escapeHtml(agentDisplayName);
       } else if (modelName) {
         senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
       } else {
@@ -1070,7 +1094,7 @@ export function appendMessage(
       if (isUserUpload) {
         senderLabel = "Uploaded Image";
       } else if (agentDisplayName) {
-        senderLabel = agentDisplayName;
+        senderLabel = escapeHtml(agentDisplayName);
       } else if (modelName) {
         senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
       } else {
@@ -2564,7 +2588,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
         // Model and Agent info (for all types)
         if (metadata.model_deployment_name) html += `<div class="mb-1"><span class="text-muted">Model:</span> <code class="ms-2">${metadata.model_deployment_name}</code></div>`;
         if (metadata.agent_name) html += `<div class="mb-1"><span class="text-muted">Agent:</span> <code class="ms-2">${metadata.agent_name}</code></div>`;
-        if (metadata.agent_display_name) html += `<div class="mb-1"><span class="text-muted">Agent Display Name:</span> <span class="ms-2">${metadata.agent_display_name}</span></div>`;
+        if (metadata.agent_display_name) html += `<div class="mb-1"><span class="text-muted">Agent Display Name:</span> <span class="ms-2">${escapeHtml(metadata.agent_display_name)}</span></div>`;
         
         // Assistant-specific info
         if (metadata.role === 'assistant') {
@@ -2792,34 +2816,40 @@ function applyMaskedState(messageDiv, metadata) {
   // Apply masked ranges if they exist
   if (metadata.masked_ranges && metadata.masked_ranges.length > 0) {
     const content = messageText.textContent;
-    let htmlContent = '';
     let lastIndex = 0;
+    const fragment = document.createDocumentFragment();
     
     // Sort masked ranges by start position
     const sortedRanges = [...metadata.masked_ranges].sort((a, b) => a.start - b.start);
     
-    // Build HTML with masked spans
+    // Build DOM with masked spans
     sortedRanges.forEach(range => {
       // Add text before masked range
       if (range.start > lastIndex) {
-        htmlContent += escapeHtml(content.substring(lastIndex, range.start));
+        fragment.appendChild(document.createTextNode(content.substring(lastIndex, range.start)));
       }
       
       // Add masked span
-      const maskedText = escapeHtml(content.substring(range.start, range.end));
       const timestamp = new Date(range.timestamp).toLocaleDateString();
-      htmlContent += `<span class="masked-content" data-mask-id="${range.id}" data-user-id="${range.user_id}" data-display-name="${range.display_name}" title="Masked by ${range.display_name} on ${timestamp}">${maskedText}</span>`;
+      const maskedSpan = document.createElement('span');
+      maskedSpan.className = 'masked-content';
+      maskedSpan.setAttribute('data-mask-id', String(range.id ?? ''));
+      maskedSpan.setAttribute('data-user-id', String(range.user_id ?? ''));
+      maskedSpan.setAttribute('data-display-name', String(range.display_name ?? ''));
+      maskedSpan.title = `Masked by ${String(range.display_name ?? 'Unknown User')} on ${timestamp}`;
+      maskedSpan.textContent = content.substring(range.start, range.end);
+      fragment.appendChild(maskedSpan);
       
       lastIndex = range.end;
     });
     
     // Add remaining text after last masked range
     if (lastIndex < content.length) {
-      htmlContent += escapeHtml(content.substring(lastIndex));
+      fragment.appendChild(document.createTextNode(content.substring(lastIndex)));
     }
     
     // Update message text with masked content
-    messageText.innerHTML = htmlContent;
+    messageText.replaceChildren(fragment);
   }
 }
 

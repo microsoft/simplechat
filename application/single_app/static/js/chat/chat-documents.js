@@ -7,6 +7,7 @@ export const docScopeSelect = document.getElementById("doc-scope-select");
 const searchDocumentsBtn = document.getElementById("search-documents-btn");
 const docSelectEl = document.getElementById("document-select"); // Hidden select element
 const searchDocumentsContainer = document.getElementById("search-documents-container"); // Container for scope/doc/class
+const searchDocumentsMobileClose = document.getElementById("search-documents-mobile-close");
 
 // Custom dropdown elements
 const docDropdown = document.getElementById("document-dropdown");
@@ -22,6 +23,8 @@ const tagsDropdownButton = document.getElementById("tags-dropdown-button");
 const tagsDropdownMenu = document.getElementById("tags-dropdown-menu");
 const tagsDropdownItems = document.getElementById("tags-dropdown-items");
 const tagsSearchInput = document.getElementById("tags-search-input");
+const tagsDropdownLoadingSpinner = document.getElementById("tags-dropdown-loading-spinner");
+const tagsDropdownText = tagsDropdownButton ? tagsDropdownButton.querySelector('.selected-tags-text') : null;
 
 // Scope dropdown elements
 const scopeDropdown = document.getElementById("scope-dropdown");
@@ -55,6 +58,8 @@ const publicWorkspaceIdToName = {};
 let selectedPersonal = true;
 let selectedGroupIds = (window.userGroups || []).map(g => g.id);
 let selectedPublicWorkspaceIds = (window.userVisiblePublicWorkspaces || []).map(ws => ws.id);
+let hasResolvedTagsState = false;
+let tagsDropdownState = 'loading';
 
 const documentSearchController = initializeFilterableDropdownSearch({
   dropdownEl: docDropdown,
@@ -81,6 +86,273 @@ const tagsSearchController = initializeFilterableDropdownSearch({
   itemsContainerEl: tagsDropdownItems,
   emptyMessage: 'No matching tags found',
   isAlwaysVisibleItem: item => item.getAttribute('data-search-role') === 'action',
+});
+
+const SEARCH_DOCUMENTS_MOBILE_MEDIA_QUERY = '(max-width: 991.98px)';
+
+function isSearchDocumentsMobileDrawerViewport() {
+  return typeof window !== 'undefined' && window.matchMedia(SEARCH_DOCUMENTS_MOBILE_MEDIA_QUERY).matches;
+}
+
+function setSearchDocumentsButtonActiveState(isActive) {
+  if (!searchDocumentsBtn) {
+    return;
+  }
+
+  searchDocumentsBtn.classList.toggle('active', isActive);
+  searchDocumentsBtn.setAttribute('aria-expanded', String(isActive));
+}
+
+function setTagsDropdownButtonState({ state, message, enabled }) {
+  tagsDropdownState = state;
+  hasResolvedTagsState = state !== 'loading';
+
+  if (tagsDropdownButton) {
+    tagsDropdownButton.disabled = !enabled;
+    tagsDropdownButton.setAttribute('aria-disabled', String(!enabled));
+    tagsDropdownButton.classList.toggle('is-loading', state === 'loading');
+    tagsDropdownButton.classList.toggle('is-empty', state === 'empty');
+
+    if (!enabled && typeof bootstrap !== 'undefined' && bootstrap.Dropdown) {
+      bootstrap.Dropdown.getInstance(tagsDropdownButton)?.hide();
+    }
+  }
+
+  if (tagsDropdownLoadingSpinner) {
+    tagsDropdownLoadingSpinner.classList.toggle('d-none', state !== 'loading');
+  }
+
+  if (tagsDropdownText && typeof message === 'string') {
+    tagsDropdownText.textContent = message;
+  }
+}
+
+function setTagsDropdownLoadingState(message = 'Loading tags...') {
+  tagsSearchController?.resetFilter();
+  setTagsDropdownButtonState({
+    state: 'loading',
+    message,
+    enabled: false,
+  });
+}
+
+function setTagsDropdownReadyState() {
+  setTagsDropdownButtonState({
+    state: 'ready',
+    message: 'All Tags',
+    enabled: true,
+  });
+  syncTagsDropdownButtonText();
+}
+
+function setTagsDropdownEmptyState(message = 'No tags available for this scope') {
+  tagsSearchController?.resetFilter();
+  setTagsDropdownButtonState({
+    state: 'empty',
+    message,
+    enabled: false,
+  });
+}
+
+function getSearchDocumentsOffcanvasInstance() {
+  if (!searchDocumentsContainer || !isSearchDocumentsMobileDrawerViewport()) {
+    return null;
+  }
+
+  if (typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) {
+    return null;
+  }
+
+  return bootstrap.Offcanvas.getOrCreateInstance(searchDocumentsContainer, { toggle: false });
+}
+
+function closeSearchDocumentsDropdowns() {
+  if (typeof bootstrap === 'undefined' || !bootstrap.Dropdown) {
+    return;
+  }
+
+  [scopeDropdownButton, tagsDropdownButton, docDropdownButton].forEach((buttonEl) => {
+    if (!buttonEl) {
+      return;
+    }
+
+    bootstrap.Dropdown.getInstance(buttonEl)?.hide();
+  });
+}
+
+function refreshDocumentsAndTags({ source = null, showLoading = true } = {}) {
+  if (showLoading) {
+    setTagsDropdownLoadingState();
+  }
+
+  return loadAllDocs()
+    .then(() => loadTagsForScope())
+    .then(() => {
+      if (source) {
+        dispatchScopeChanged(source);
+      }
+    });
+}
+
+function getSearchDocumentsDropdownConfig() {
+  return {
+    boundary: 'viewport',
+    reference: 'toggle',
+    autoClose: 'outside',
+    popperConfig: {
+      strategy: 'fixed',
+      modifiers: [
+        {
+          name: 'preventOverflow',
+          options: {
+            boundary: 'viewport',
+            padding: 10,
+          },
+        },
+      ],
+    },
+  };
+}
+
+function sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl) {
+  if (!buttonEl || !menuEl) {
+    return;
+  }
+
+  const fieldContainer = buttonEl.closest('.chat-search-panel-field');
+  const containerWidth = fieldContainer ? fieldContainer.offsetWidth : buttonEl.offsetWidth || 280;
+
+  menuEl.style.width = `${containerWidth}px`;
+  menuEl.style.maxWidth = `${containerWidth}px`;
+  menuEl.style.zIndex = '1060';
+
+  const menuRect = menuEl.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
+  const maxPossibleHeight = Math.max(180, viewportHeight - menuRect.top - 10);
+
+  menuEl.style.maxHeight = `${maxPossibleHeight}px`;
+
+  if (!itemsContainerEl) {
+    return;
+  }
+
+  const searchContainer = menuEl.querySelector('.chat-dropdown-search, .document-search-container');
+  const searchHeight = searchContainer ? searchContainer.offsetHeight : 40;
+  itemsContainerEl.style.maxHeight = `${Math.max(120, maxPossibleHeight - searchHeight - 16)}px`;
+  itemsContainerEl.style.overflowY = 'auto';
+}
+
+function resetSearchFilterDropdownStyles(menuEl, itemsContainerEl) {
+  if (menuEl) {
+    menuEl.style.maxHeight = '';
+    menuEl.style.maxWidth = '';
+    menuEl.style.width = '';
+    menuEl.style.zIndex = '';
+  }
+
+  if (itemsContainerEl) {
+    itemsContainerEl.style.maxHeight = '';
+    itemsContainerEl.style.overflowY = '';
+  }
+}
+
+function initializeSearchFilterDropdown({
+  dropdownEl,
+  buttonEl,
+  menuEl,
+  itemsContainerEl,
+  searchInputEl,
+  searchController,
+  onShown,
+}) {
+  if (!dropdownEl || !buttonEl || !menuEl) {
+    return;
+  }
+
+  new bootstrap.Dropdown(buttonEl, getSearchDocumentsDropdownConfig());
+
+  dropdownEl.addEventListener('show.bs.dropdown', function() {
+    if (searchInputEl) {
+      searchInputEl.value = '';
+    }
+
+    searchController?.applyFilter('');
+  });
+
+  dropdownEl.addEventListener('shown.bs.dropdown', function() {
+    sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl);
+    onShown?.();
+
+    if (searchInputEl) {
+      setTimeout(() => searchInputEl.focus(), 50);
+    }
+  });
+
+  dropdownEl.addEventListener('hidden.bs.dropdown', function() {
+    searchController?.resetFilter();
+    resetSearchFilterDropdownStyles(menuEl, itemsContainerEl);
+  });
+}
+
+export async function showSearchDocumentsPanel() {
+  if (!searchDocumentsContainer) {
+    return false;
+  }
+
+  setSearchDocumentsButtonActiveState(true);
+  searchDocumentsContainer.style.display = 'block';
+
+  const offcanvasInstance = getSearchDocumentsOffcanvasInstance();
+  if (!offcanvasInstance || searchDocumentsContainer.classList.contains('show')) {
+    return true;
+  }
+
+  await new Promise((resolve) => {
+    searchDocumentsContainer.addEventListener('shown.bs.offcanvas', () => resolve(), { once: true });
+    offcanvasInstance.show();
+  });
+
+  return true;
+}
+
+export function hideSearchDocumentsPanel() {
+  if (!searchDocumentsContainer) {
+    return false;
+  }
+
+  closeSearchDocumentsDropdowns();
+
+  const offcanvasInstance = getSearchDocumentsOffcanvasInstance();
+  if (offcanvasInstance && searchDocumentsContainer.classList.contains('show')) {
+    offcanvasInstance.hide();
+    return true;
+  }
+
+  setSearchDocumentsButtonActiveState(false);
+  searchDocumentsContainer.style.display = 'none';
+  return true;
+}
+
+if (searchDocumentsContainer) {
+  searchDocumentsContainer.addEventListener('shown.bs.offcanvas', () => {
+    setSearchDocumentsButtonActiveState(true);
+  });
+
+  searchDocumentsContainer.addEventListener('hidden.bs.offcanvas', () => {
+    closeSearchDocumentsDropdowns();
+
+    if (isSearchDocumentsMobileDrawerViewport()) {
+      searchDocumentsContainer.style.display = 'none';
+    }
+
+    setSearchDocumentsButtonActiveState(false);
+  });
+}
+
+searchDocumentsMobileClose?.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  hideSearchDocumentsPanel();
 });
 
 /* ---------------------------------------------------------------------------
@@ -161,7 +433,7 @@ export async function toggleScopeLock(conversationId, newState) {
   updateHeaderLockIcon();
 
   // Reload docs for the new scope
-  loadAllDocs().then(() => { loadTagsForScope(); });
+  refreshDocumentsAndTags();
 }
 
 /**
@@ -180,7 +452,7 @@ export function restoreScopeLockState(lockState, contexts) {
 
     rebuildScopeDropdownWithLock();
     // Reload docs for the locked scope
-    loadAllDocs().then(() => { loadTagsForScope(); });
+    refreshDocumentsAndTags();
   } else {
     // Not locked (null or false) — rebuild dropdown normally
     buildScopeDropdown();
@@ -218,7 +490,7 @@ export function resetScopeLock(options = {}) {
   updateHeaderLockIcon();
 
   // Reload documents for the full "All" scope
-  loadAllDocs().then(() => { loadTagsForScope(); });
+  refreshDocumentsAndTags();
 }
 
 /* ---------------------------------------------------------------------------
@@ -573,11 +845,7 @@ function dispatchScopeChanged(source = 'workspace') {
 }
 
 function runScopeRefreshPipeline(source = 'workspace') {
-  return loadAllDocs()
-    .then(() => loadTagsForScope())
-    .then(() => {
-      dispatchScopeChanged(source);
-    });
+  return refreshDocumentsAndTags({ source });
 }
 
 export function setEffectiveScopes(nextScopes = {}, options = {}) {
@@ -1155,8 +1423,6 @@ export async function loadTagsForScope() {
     const hasItems = allTags.length > 0 || classificationItems.length > 0;
 
     if (hasItems) {
-      showTagsDropdown();
-
       // Populate hidden select with tags and classifications
       allTags.forEach(tag => {
         const option = document.createElement('option');
@@ -1263,24 +1529,23 @@ export async function loadTagsForScope() {
 
         tagsSearchController?.applyFilter(tagsSearchInput ? tagsSearchInput.value : '');
       }
+
+      showTagsDropdown();
     } else {
       hideTagsDropdown();
     }
   } catch (error) {
     console.error('Error loading tags:', error);
-    hideTagsDropdown();
+    hideTagsDropdown('Unable to load tags');
   }
 }
 
 function showTagsDropdown() {
-  if (tagsDropdown) tagsDropdown.style.display = 'block';
+  setTagsDropdownReadyState();
 }
 
-function hideTagsDropdown() {
-  if (tagsDropdown) tagsDropdown.style.display = 'none';
-  if (tagsSearchController) {
-    tagsSearchController.resetFilter();
-  }
+function hideTagsDropdown(message = 'No tags available for this scope') {
+  setTagsDropdownEmptyState(message);
 }
 
 function resetTagSelectionState() {
@@ -1305,7 +1570,7 @@ function resetTagSelectionState() {
    Sync Tags Dropdown Button Text with Selection State
 --------------------------------------------------------------------------- */
 function syncTagsDropdownButtonText() {
-  if (!tagsDropdownButton || !tagsDropdownItems) return;
+  if (!tagsDropdownButton || !tagsDropdownItems || tagsDropdownState !== 'ready') return;
 
   const checkedItems = tagsDropdownItems.querySelectorAll('.tag-checkbox:checked');
   const count = checkedItems.length;
@@ -1329,8 +1594,7 @@ export async function ensureSearchDocumentsVisible() {
     return false;
   }
 
-  searchDocumentsBtn.classList.add('active');
-  searchDocumentsContainer.style.display = 'block';
+  await showSearchDocumentsPanel();
 
   if (scopeLocked === true) {
     rebuildScopeDropdownWithLock();
@@ -1338,8 +1602,7 @@ export async function ensureSearchDocumentsVisible() {
     buildScopeDropdown();
   }
 
-  await loadAllDocs();
-  await loadTagsForScope();
+  await refreshDocumentsAndTags({ showLoading: !hasResolvedTagsState });
 
   try {
     const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
@@ -1383,11 +1646,10 @@ export function openTagsDropdown() {
     return false;
   }
 
-  if (tagsDropdown.style.display === 'none' && (!tagsDropdownItems || !tagsDropdownItems.children.length)) {
+  if (tagsDropdownState !== 'ready' || !tagsDropdownItems || !tagsDropdownItems.children.length) {
     return false;
   }
 
-  showTagsDropdown();
   return openDropdown(tagsDropdownButton);
 }
 
@@ -1396,8 +1658,6 @@ export function openTagsDropdown() {
 --------------------------------------------------------------------------- */
 export function getSelectedTags() {
   if (!chatTagsFilter) return [];
-  // Check if the tags dropdown is visible (the hidden select is always display:none via d-none class)
-  if (tagsDropdown && tagsDropdown.style.display === 'none') return [];
   return Array.from(chatTagsFilter.selectedOptions).map(opt => opt.value);
 }
 
@@ -1604,14 +1864,12 @@ if (tagsDropdownItems) {
 
 if (searchDocumentsBtn) {
   searchDocumentsBtn.addEventListener("click", function () {
-    this.classList.toggle("active");
-
     if (!searchDocumentsContainer) return;
 
     if (this.classList.contains("active")) {
-      ensureSearchDocumentsVisible();
+      hideSearchDocumentsPanel();
     } else {
-      searchDocumentsContainer.style.display = "none";
+      ensureSearchDocumentsVisible();
     }
   });
 }
@@ -1716,8 +1974,13 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       const scopeDropdownEl = document.getElementById('scope-dropdown');
       if (scopeDropdownEl) {
-        new bootstrap.Dropdown(scopeDropdownButton, {
-          autoClose: 'outside'
+        initializeSearchFilterDropdown({
+          dropdownEl: scopeDropdownEl,
+          buttonEl: scopeDropdownButton,
+          menuEl: scopeDropdownMenu,
+          itemsContainerEl: scopeDropdownItems,
+          searchInputEl: scopeSearchInput,
+          searchController: scopeSearchController,
         });
       }
     } catch (err) {
@@ -1725,58 +1988,33 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  if (tagsDropdown && tagsDropdownButton) {
+    try {
+      initializeSearchFilterDropdown({
+        dropdownEl: tagsDropdown,
+        buttonEl: tagsDropdownButton,
+        menuEl: tagsDropdownMenu,
+        itemsContainerEl: tagsDropdownItems,
+        searchInputEl: tagsSearchInput,
+        searchController: tagsSearchController,
+      });
+    } catch (err) {
+      console.error("Error initializing tags dropdown:", err);
+    }
+  }
+
   // If search documents button exists, it needs to be clicked to show controls
   if (searchDocumentsBtn && docDropdownButton) {
     try {
       if (docDropdown) {
-        // Initialize Bootstrap dropdown with the right configuration
-        new bootstrap.Dropdown(docDropdownButton, {
-          boundary: 'viewport',
-          reference: 'toggle',
-          autoClose: 'outside',
-          popperConfig: {
-            strategy: 'fixed',
-            modifiers: [
-              {
-                name: 'preventOverflow',
-                options: {
-                  boundary: 'viewport',
-                  padding: 10
-                }
-              }
-            ]
-          }
-        });
-
-        // Clear search when opening
-        docDropdown.addEventListener('show.bs.dropdown', function() {
-          if (docSearchInput) {
-            docSearchInput.value = '';
-          }
-          documentSearchController?.applyFilter('');
-        });
-
-        // Adjust sizing and focus search when shown
-        docDropdown.addEventListener('shown.bs.dropdown', function() {
-          initializeDocumentDropdown();
-          if (docSearchInput) {
-            setTimeout(() => docSearchInput.focus(), 50);
-          }
-        });
-
-        // Clean up inline styles and reset state when hidden
-        docDropdown.addEventListener('hidden.bs.dropdown', function() {
-          documentSearchController?.resetFilter();
-          // Clear inline styles set by initializeDocumentDropdown so they
-          // don't interfere with Bootstrap's positioning on next open
-          if (docDropdownMenu) {
-            docDropdownMenu.style.maxHeight = '';
-            docDropdownMenu.style.maxWidth = '';
-            docDropdownMenu.style.width = '';
-          }
-          if (docDropdownItems) {
-            docDropdownItems.style.maxHeight = '';
-          }
+        initializeSearchFilterDropdown({
+          dropdownEl: docDropdown,
+          buttonEl: docDropdownButton,
+          menuEl: docDropdownMenu,
+          itemsContainerEl: docDropdownItems,
+          searchInputEl: docSearchInput,
+          searchController: documentSearchController,
+          onShown: initializeDocumentDropdown,
         });
       }
     } catch (err) {
@@ -1838,16 +2076,43 @@ document.addEventListener('DOMContentLoaded', function() {
           icon = 'bi-globe';
         }
         if (name) {
-          workspaceItems.push(`<li class="list-group-item"><i class="bi ${icon} me-2"></i>${name}</li>`);
+          workspaceItems.push({ icon, name });
         }
       }
 
       if (listEl) {
+        listEl.textContent = '';
         if (workspaceItems.length > 0) {
           const listLabel = scopeLocked === true ? 'Currently locked to:' : 'Will lock to:';
-          listEl.innerHTML = `<p class="small text-muted mb-2">${listLabel}</p><ul class="list-group list-group-flush">${workspaceItems.join('')}</ul>`;
+          const listLabelEl = document.createElement('p');
+          listLabelEl.className = 'small text-muted mb-2';
+          listLabelEl.textContent = listLabel;
+
+          const listGroupEl = document.createElement('ul');
+          listGroupEl.className = 'list-group list-group-flush';
+
+          workspaceItems.forEach(({ icon, name }) => {
+            const listItemEl = document.createElement('li');
+            listItemEl.className = 'list-group-item';
+
+            const iconEl = document.createElement('i');
+            iconEl.className = `bi ${icon} me-2`;
+
+            const nameEl = document.createElement('span');
+            nameEl.textContent = name;
+
+            listItemEl.appendChild(iconEl);
+            listItemEl.appendChild(nameEl);
+            listGroupEl.appendChild(listItemEl);
+          });
+
+          listEl.appendChild(listLabelEl);
+          listEl.appendChild(listGroupEl);
         } else {
-          listEl.innerHTML = '<p class="text-muted">No specific workspaces recorded.</p>';
+          const emptyStateEl = document.createElement('p');
+          emptyStateEl.className = 'text-muted';
+          emptyStateEl.textContent = 'No specific workspaces recorded.';
+          listEl.appendChild(emptyStateEl);
         }
       }
 

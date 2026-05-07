@@ -60,6 +60,109 @@ class SecretReturnType(Enum):
     NAME = "name"
 
 
+def _normalize_allowed_sources(allowed_sources):
+    """Normalize one or many allowed sources into a comparable set."""
+    if allowed_sources is None:
+        return None
+    if isinstance(allowed_sources, str):
+        return {allowed_sources}
+    return {
+        str(source).strip()
+        for source in allowed_sources
+        if str(source).strip()
+    }
+
+
+def parse_secret_name_dynamic(secret_name):
+    """Return parsed Key Vault secret reference parts when the name is valid."""
+    scopes_pattern = '|'.join(re.escape(scope) for scope in supported_scopes)
+    sources_pattern = '|'.join(re.escape(source) for source in supported_sources)
+    pattern = (
+        rf"^(?P<scope_value>.+?)--(?P<source>{sources_pattern})--"
+        rf"(?P<scope>{scopes_pattern})--(?P<secret_name>.+)$"
+    )
+    match = re.match(pattern, secret_name)
+    if not match:
+        return None
+    if len(secret_name) > 127:
+        return None
+    return match.groupdict()
+
+
+def secret_reference_matches_context(secret_name, scope_value=None, scope=None, allowed_sources=None):
+    """Return True when a secret reference belongs to the expected scope and source."""
+    parsed = parse_secret_name_dynamic(secret_name)
+    if not parsed:
+        return False
+
+    normalized_sources = _normalize_allowed_sources(allowed_sources)
+    expected_scope_value = None
+    if scope_value is not None:
+        expected_scope_value = clean_name_for_keyvault(str(scope_value))
+
+    if expected_scope_value is not None and parsed["scope_value"] != expected_scope_value:
+        return False
+    if scope is not None and parsed["scope"] != scope:
+        return False
+    if normalized_sources is not None and parsed["source"] not in normalized_sources:
+        return False
+    return True
+
+
+def _log_secret_reference_context_mismatch(secret_name, context_label, scope_value=None, scope=None, allowed_sources=None):
+    """Emit a warning when a stored secret reference does not match its expected context."""
+    parsed = parse_secret_name_dynamic(secret_name) or {}
+    expected_scope_value = None
+    if scope_value is not None:
+        expected_scope_value = clean_name_for_keyvault(str(scope_value))
+
+    log_event(
+        f"[KeyVault] Rejected mismatched secret reference for {context_label}.",
+        extra={
+            "context_label": context_label,
+            "expected_scope_value": expected_scope_value,
+            "expected_scope": scope,
+            "allowed_sources": sorted(_normalize_allowed_sources(allowed_sources) or []),
+            "provided_scope_value": parsed.get("scope_value"),
+            "provided_scope": parsed.get("scope"),
+            "provided_source": parsed.get("source"),
+        },
+        level=logging.WARNING,
+    )
+
+
+def resolve_secret_reference_for_context(
+    secret_name,
+    scope_value=None,
+    scope=None,
+    allowed_sources=None,
+    context_label="secret reference",
+):
+    """Resolve a Key Vault reference only when it matches the expected context."""
+    if not validate_secret_name_dynamic(secret_name):
+        return secret_name
+
+    if not secret_reference_matches_context(
+        secret_name,
+        scope_value=scope_value,
+        scope=scope,
+        allowed_sources=allowed_sources,
+    ):
+        _log_secret_reference_context_mismatch(
+            secret_name,
+            context_label,
+            scope_value=scope_value,
+            scope=scope,
+            allowed_sources=allowed_sources,
+        )
+        raise ValueError(f"Stored Key Vault reference for {context_label} does not match the expected scope.")
+
+    resolved_value = retrieve_secret_from_key_vault_by_full_name(secret_name)
+    if validate_secret_name_dynamic(resolved_value):
+        raise ValueError(f"Unable to resolve stored Key Vault secret for {context_label}.")
+    return resolved_value
+
+
 def _get_nested_dict_value(data, path):
     """Return a nested dictionary value, or None when the path is missing."""
     current = data
@@ -119,10 +222,28 @@ def _store_plugin_secret_reference(updated_plugin, existing_plugin, path, secret
     if not value:
         return
 
+    path_label = ".".join(path)
+
     existing_reference = _get_existing_secret_reference(existing_plugin, path)
 
     if value == ui_trigger_word:
         if existing_reference:
+            if not secret_reference_matches_context(
+                existing_reference,
+                scope_value=scope_value,
+                scope=scope,
+                allowed_sources={source},
+            ):
+                _log_secret_reference_context_mismatch(
+                    existing_reference,
+                    f"plugin field '{path_label}' existing reference",
+                    scope_value=scope_value,
+                    scope=scope,
+                    allowed_sources={source},
+                )
+                raise ValueError(
+                    f"Stored Key Vault reference for '{path_label}' no longer matches the expected scope. Re-enter the secret value."
+                )
             _set_nested_dict_value(updated_plugin, path, existing_reference)
             return
         _set_nested_dict_value(
@@ -133,6 +254,22 @@ def _store_plugin_secret_reference(updated_plugin, existing_plugin, path, secret
         return
 
     if validate_secret_name_dynamic(value):
+        if not secret_reference_matches_context(
+            value,
+            scope_value=scope_value,
+            scope=scope,
+            allowed_sources={source},
+        ):
+            _log_secret_reference_context_mismatch(
+                value,
+                f"plugin field '{path_label}'",
+                scope_value=scope_value,
+                scope=scope,
+                allowed_sources={source},
+            )
+            raise ValueError(
+                f"Stored Key Vault reference for '{path_label}' does not match the expected scope."
+            )
         _set_nested_dict_value(updated_plugin, path, value)
         return
 
@@ -377,18 +514,7 @@ def validate_secret_name_dynamic(secret_name):
     Returns:
         bool: True if valid, False otherwise.
     """
-    # Build regex pattern dynamically
-    scopes_pattern = '|'.join(re.escape(scope) for scope in supported_scopes)
-    sources_pattern = '|'.join(re.escape(source) for source in supported_sources)
-    # Wildcards for secret_name and scope_value
-    pattern = rf"^(.+)--({sources_pattern})--({scopes_pattern})--(.+)$"
-    match = re.match(pattern, secret_name)
-    if not match:
-        return False
-    # Optionally, check length
-    if len(secret_name) > 127:
-        return False
-    return True
+    return parse_secret_name_dynamic(secret_name) is not None
 
 def keyvault_agent_save_helper(agent_dict, scope_value, scope="global"):
     """
@@ -616,8 +742,20 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
             value = auth.get(auth_field)
             if value and validate_secret_name_dynamic(value):
                 try:
+                    is_expected_reference = secret_reference_matches_context(
+                        value,
+                        scope_value=scope_value,
+                        scope=scope,
+                        allowed_sources={"action"},
+                    )
                     if return_type == SecretReturnType.VALUE:
-                        new_auth[auth_field] = retrieve_secret_from_key_vault_by_full_name(value)
+                        new_auth[auth_field] = resolve_secret_reference_for_context(
+                            value,
+                            scope_value=scope_value,
+                            scope=scope,
+                            allowed_sources={"action"},
+                            context_label=f"action auth field '{auth_field}'",
+                        )
                     elif return_type == SecretReturnType.NAME:
                         new_auth[auth_field] = value
                     else:
@@ -635,8 +773,20 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
         for k, v in additional_fields.items():
             if (k.endswith('__Secret') or _is_sql_sensitive_additional_field(updated, k)) and v and validate_secret_name_dynamic(v):
                 try:
+                    is_expected_reference = secret_reference_matches_context(
+                        v,
+                        scope_value=scope_value,
+                        scope=scope,
+                        allowed_sources={"action-addset"},
+                    )
                     if return_type == SecretReturnType.VALUE:
-                        new_additional_fields[k] = retrieve_secret_from_key_vault_by_full_name(v)
+                        new_additional_fields[k] = resolve_secret_reference_for_context(
+                            v,
+                            scope_value=scope_value,
+                            scope=scope,
+                            allowed_sources={"action-addset"},
+                            context_label=f"action additional field '{k}'",
+                        )
                     elif return_type == SecretReturnType.NAME:
                         new_additional_fields[k] = v
                     else:
@@ -834,6 +984,20 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
         for auth_field in ('key', *SQL_PLUGIN_SENSITIVE_AUTH_FIELDS):
             secret_name = auth.get(auth_field)
             if secret_name and validate_secret_name_dynamic(secret_name):
+                if not secret_reference_matches_context(
+                    secret_name,
+                    scope_value=scope_value,
+                    scope=scope,
+                    allowed_sources={"action"},
+                ):
+                    _log_secret_reference_context_mismatch(
+                        secret_name,
+                        f"action auth field '{auth_field}' deletion",
+                        scope_value=scope_value,
+                        scope=scope,
+                        allowed_sources={"action"},
+                    )
+                    continue
                 try:
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
                     log_event(f"Deleting action auth secret '{auth_field}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
@@ -847,6 +1011,20 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     if isinstance(additional_fields, dict):
         for k, v in additional_fields.items():
             if (k.endswith('__Secret') or _is_sql_sensitive_additional_field(plugin_dict, k)) and v and validate_secret_name_dynamic(v):
+                if not secret_reference_matches_context(
+                    v,
+                    scope_value=scope_value,
+                    scope=scope,
+                    allowed_sources={"action-addset"},
+                ):
+                    _log_secret_reference_context_mismatch(
+                        v,
+                        f"action additional field '{k}' deletion",
+                        scope_value=scope_value,
+                        scope=scope,
+                        allowed_sources={"action-addset"},
+                    )
+                    continue
                 try:
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
                     log_event(f"Deleting action additionalField secret '{k}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)

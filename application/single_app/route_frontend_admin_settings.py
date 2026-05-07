@@ -154,6 +154,10 @@ def register_route_frontend_admin_settings(app):
         # --- Add default for swagger documentation ---
         if 'enable_swagger' not in settings:
             settings['enable_swagger'] = True  # Default enabled for development/testing
+        if 'enable_external_healthcheck' not in settings:
+            settings['enable_external_healthcheck'] = False
+        if 'enable_no_auth_external_healthcheck' not in settings:
+            settings['enable_no_auth_external_healthcheck'] = False
         if 'release_notifications_registered' not in settings:
             settings['release_notifications_registered'] = False
         if 'release_notifications_name' not in settings:
@@ -709,7 +713,7 @@ def register_route_frontend_admin_settings(app):
                     level=logging.INFO,
                 )
                 log_general_admin_action(
-                    admin_user_id=admin_user,
+                    admin_user_id=user_id,
                     admin_email=admin_email,
                     action='Enabled and migrated multi-model endpoints',
                     description=f'Migrated {len(migrated_models)} models to multi-endpoint configuration.'
@@ -1101,6 +1105,7 @@ def register_route_frontend_admin_settings(app):
                 'release_notifications_registered_at': form_data.get('release_notifications_registered_at', settings.get('release_notifications_registered_at', '')).strip(),
                 'release_notifications_updated_at': form_data.get('release_notifications_updated_at', settings.get('release_notifications_updated_at', '')).strip(),
                 'enable_external_healthcheck': form_data.get('enable_external_healthcheck') == 'on',
+                'enable_no_auth_external_healthcheck': form_data.get('enable_no_auth_external_healthcheck') == 'on',
                 'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
@@ -1261,7 +1266,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_web_search': enable_web_search,
                 'web_search_consent_accepted': web_search_consent_accepted,
                 'enable_web_search_user_notice': form_data.get('enable_web_search_user_notice') == 'on',
-                'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.').strip(),
+                'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.').strip(),
                 'web_search_agent': {
                     'agent_type': 'aifoundry',
                     'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
