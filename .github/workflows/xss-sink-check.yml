@@ -1,0 +1,70 @@
+name: XSS Sink Check
+
+on:
+  pull_request:
+    branches:
+      - Development
+    paths:
+      - 'application/**/*.js'
+      - 'application/**/*.html'
+      - 'application/**/*.py'
+      - 'scripts/check_xss_sinks.py'
+      - 'functional_tests/test_xss_guardrails_checker.py'
+      - '.github/workflows/xss-sink-check.yml'
+      - '.github/instructions/xss-prevention.instructions.md'
+
+jobs:
+  xss-sink-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Get changed XSS-related files
+        id: changed-files
+        uses: tj-actions/changed-files@v46.0.1
+        with:
+          files_yaml: |
+            xss_surface:
+              - 'application/**/*.js'
+              - 'application/**/*.html'
+              - 'application/**/*.py'
+            xss_guardrails:
+              - 'scripts/check_xss_sinks.py'
+              - 'functional_tests/test_xss_guardrails_checker.py'
+              - '.github/workflows/xss-sink-check.yml'
+              - '.github/instructions/xss-prevention.instructions.md'
+              - 'docs/explanation/features/v0.241.021/XSS_PR_GUARDRAILS.md'
+
+      - name: Run XSS sink validation
+        env:
+          CHANGED_XSS_FILES: ${{ steps.changed-files.outputs.xss_surface_all_changed_files }}
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ -z "$CHANGED_XSS_FILES" ]]; then
+            echo "No changed application files detected for XSS sink validation."
+            exit 0
+          fi
+
+          echo "Changed application files:"
+          printf '%s\n' "$CHANGED_XSS_FILES" | tr ' ' '\n'
+
+          python scripts/check_xss_sinks.py \
+            --base-sha "$GITHUB_BASE_SHA" \
+            --head-sha "$GITHUB_HEAD_SHA" \
+            $CHANGED_XSS_FILES
+
+      - name: Run XSS guardrail self-test (advisory)
+        if: steps.changed-files.outputs.xss_guardrails_any_changed == 'true'
+        continue-on-error: true
+        run: |
+          python functional_tests/test_xss_guardrails_checker.py

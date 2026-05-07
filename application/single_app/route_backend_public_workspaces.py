@@ -211,12 +211,20 @@ def register_route_backend_public_workspaces(app):
     def api_get_public_workspace(ws_id):
         """
         GET /api/public_workspaces/<ws_id>
-        Returns full workspace document.
+        Returns a role-aware workspace payload.
         """
+        info = get_current_user_info()
+        user_id = info["userId"]
+
         ws = find_public_workspace_by_id(ws_id)
         if not ws:
             return jsonify({"error": "Workspace not found"}), 404
-        return jsonify(ws), 200
+
+        role = get_user_role_in_public_workspace(ws, user_id)
+        if role:
+            return jsonify(build_public_workspace_member_payload(ws, user_id)), 200
+
+        return jsonify(build_public_workspace_public_summary(ws)), 200
 
     @app.route("/api/public_workspaces/<ws_id>", methods=["PATCH", "PUT"])
     @swagger_route(security=get_auth_security())
@@ -289,13 +297,11 @@ def register_route_backend_public_workspaces(app):
         info = get_current_user_info()
         user_id = info["userId"]
 
-        ws = find_public_workspace_by_id(ws_id)
-        if not ws:
+        try:
+            update_active_public_workspace_for_user(user_id, ws_id)
+        except LookupError:
             return jsonify({"error": "Workspace not found"}), 404
 
-        # Public workspaces are accessible to all authenticated users for chat.
-        # No membership check needed — any user can set a public workspace as active.
-        update_active_public_workspace_for_user(user_id, ws_id)
         return jsonify({"message": f"Active set to {ws_id}"}), 200
 
     @app.route("/api/public_workspaces/<ws_id>/requests", methods=["GET"])

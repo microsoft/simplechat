@@ -193,7 +193,6 @@ class LogAnalyticsPlugin(BasePlugin):
                 "description": "Run a KQL (Kusto Query Language) query against the Log Analytics workspace and return the results. Results are chunked for LLMs if needed. Accepts an optional timespan parameter (timedelta, tuple, or hours).",
                 "parameters": [
                     {"name": "query", "type": "string", "description": "The KQL query string to execute.", "required": True},
-                    {"name": "user_id", "type": "string", "description": "User ID for query history tracking (optional).", "required": False},
                     {"name": "timespan", "type": "any", "description": "Query timespan: timedelta, (start, end) tuple, or number of hours (optional).", "required": False}
                 ],
                 "returns": {"type": "list[object]", "description": "A list of result rows, each as a dictionary of column values."}
@@ -210,8 +209,7 @@ class LogAnalyticsPlugin(BasePlugin):
                 "name": "get_query_history",
                 "description": "Return the last N queries run by this plugin instance for the current user. Useful for re-running or editing previous queries.",
                 "parameters": [
-                    {"name": "limit", "type": "integer", "description": "Number of queries to return (default 20).", "required": False},
-                    {"name": "user_id", "type": "string", "description": "User ID for query history tracking (optional).", "required": False}
+                    {"name": "limit", "type": "integer", "description": "Number of queries to return (default 20).", "required": False}
                 ],
                 "returns": {"type": "list[string]", "description": "A list of previous KQL queries, most recent last."}
             },
@@ -228,6 +226,21 @@ class LogAnalyticsPlugin(BasePlugin):
 
     def get_functions(self) -> List[str]:
         return [m["name"] for m in self._metadata["methods"]]
+
+    def _get_authenticated_history_user_id(self) -> Optional[str]:
+        """Return the authenticated user id for query-history persistence."""
+        try:
+            from application.single_app.functions_authentication import get_current_user_id
+        except ImportError:
+            from functions_authentication import get_current_user_id
+
+        try:
+            user_id = str(get_current_user_id() or "").strip()
+        except Exception as exc:
+            logging.warning(f"[LA] Could not resolve authenticated user for query history: {exc}")
+            return None
+
+        return user_id or None
     
     @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Return a dictionary of all tables and their schemas (column names and types, including Properties virtual columns) in the connected Azure Log Analytics workspace. This combines list_tables and get_table_schema for efficient schema discovery.")
@@ -394,14 +407,13 @@ class LogAnalyticsPlugin(BasePlugin):
         return schema
 
     @plugin_function_logger("LogAnalyticsPlugin")
-    @kernel_function(description="Execute a KQL (Kusto Query Language) query against a specific table in the Log Analytics workspace and return the results as a list of rows (each as a dictionary of column values). Use this function after discovering available tables and their schemas to retrieve data. Accepts an optional timespan parameter to limit the query window as a timedelta, tuple of datetimes, or number of hours. Limitations on returns should be specified in the query (ex: take N). Always provide user_id to enable saving the query to Cosmos DB for user history tracking.")
+    @kernel_function(description="Execute a KQL (Kusto Query Language) query against a specific table in the Log Analytics workspace and return the results as a list of rows (each as a dictionary of column values). Use this function after discovering available tables and their schemas to retrieve data. Accepts an optional timespan parameter to limit the query window as a timedelta, tuple of datetimes, or number of hours. Limitations on returns should be specified in the query (ex: take N).")
     def run_query(
         self,
         query: str,
-        user_id: Optional[str] = None,
         timespan: Optional[Any] = None
     ) -> Any:
-        logging.debug(f"[LA] Running query: {query} with user_id={user_id}, timespan={timespan}")
+        logging.debug(f"[LA] Running query: {query} with timespan={timespan}")
         if not self._client:
             raise RuntimeError("Log Analytics client not initialized.")
         # Determine if this is a control command (starts with '.')
@@ -477,9 +489,9 @@ class LogAnalyticsPlugin(BasePlugin):
             logging.error(f"[LA] Error processing query results: {e}")
             return {"error": "Failed to process query results."}
         finally:
-            # Save to Cosmos query history if user_id is provided
-            if user_id:
-                self._save_query_history_to_cosmos(user_id, query)
+            history_user_id = self._get_authenticated_history_user_id()
+            if history_user_id:
+                self._save_query_history_to_cosmos(history_user_id, query)
 
     @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Summarize a result set for LLM consumption, including row count and column names.")
@@ -492,7 +504,8 @@ class LogAnalyticsPlugin(BasePlugin):
 
     @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Return the last N queries run by this plugin instance. They should be numbered for the user to allow easy selection.")
-    def get_query_history(self, limit: int = 20, user_id: Optional[str] = None) -> List[str]:
+    def get_query_history(self, limit: int = 20) -> List[str]:
+        user_id = self._get_authenticated_history_user_id()
         if not user_id:
             return []
         return self._get_query_history_from_cosmos(user_id, limit)

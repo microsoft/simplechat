@@ -277,7 +277,8 @@ def approve_request(
     approver_id: str,
     approver_email: str,
     approver_name: str,
-    comment: Optional[str] = None
+    comment: Optional[str] = None,
+    approval: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Approve an approval request.
@@ -295,10 +296,11 @@ def approve_request(
     """
     try:
         # Get the approval request
-        approval = cosmos_approvals_container.read_item(
-            item=approval_id,
-            partition_key=group_id
-        )
+        if approval is None:
+            approval = cosmos_approvals_container.read_item(
+                item=approval_id,
+                partition_key=group_id
+            )
         
         # Validate status
         if approval['status'] != STATUS_PENDING:
@@ -368,7 +370,8 @@ def deny_request(
     denier_email: str,
     denier_name: str,
     comment: str,
-    auto_denied: bool = False
+    auto_denied: bool = False,
+    approval: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Deny an approval request.
@@ -387,10 +390,11 @@ def deny_request(
     """
     try:
         # Get the approval request
-        approval = cosmos_approvals_container.read_item(
-            item=approval_id,
-            partition_key=group_id
-        )
+        if approval is None:
+            approval = cosmos_approvals_container.read_item(
+                item=approval_id,
+                partition_key=group_id
+            )
         
         # Validate status (allow denying pending requests)
         if approval['status'] not in [STATUS_PENDING]:
@@ -541,6 +545,29 @@ def get_approval_by_id(approval_id: str, group_id: str) -> Optional[Dict[str, An
         })
         debug_print(f"Approval not found: {approval_id}")
         return None
+
+
+def get_authorized_approval(
+    approval_id: str,
+    group_id: str,
+    user_id: str,
+    user_roles: List[str],
+    require_approval_rights: bool = False,
+) -> Dict[str, Any]:
+    """Return an approval only if the current user is allowed to view or approve it."""
+    approval = get_approval_by_id(approval_id, group_id)
+    if not approval:
+        raise LookupError("Approval not found")
+
+    is_authorized = (
+        _can_user_approve(approval, user_id, user_roles)
+        if require_approval_rights
+        else _can_user_view(approval, user_id, user_roles)
+    )
+    if not is_authorized:
+        raise PermissionError("You are not authorized to access this approval")
+
+    return approval
 
 
 def auto_deny_expired_approvals() -> int:

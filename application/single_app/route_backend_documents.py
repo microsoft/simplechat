@@ -135,7 +135,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'Missing conversation_id or id'}), 400
 
         try:
-            _ = cosmos_conversations_container.read_item(
+            conversation_item = cosmos_conversations_container.read_item(
                 item=conversation_id,
                 partition_key=conversation_id
             )
@@ -143,6 +143,9 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'Conversation not found'}), 404
         except Exception as e:
             return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
+
+        if conversation_item.get('user_id') != user_id:
+            return jsonify({'error': 'Forbidden'}), 403
         
         add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Conversation exists, retrieving file content")
         try:
@@ -919,12 +922,12 @@ def register_route_backend_documents(app):
         
         data = request.get_json()
         tag_name = data.get('tag_name')
-        color = data.get('color', '#0d6efd')  # Default blue color
+        color = data.get('color')
         
         if not tag_name:
             return jsonify({'error': 'tag_name is required'}), 400
         
-        from functions_documents import normalize_tag, validate_tags
+        from functions_documents import normalize_tag, validate_tag_color, validate_tags
         from functions_settings import get_user_settings, update_user_settings
         from datetime import datetime, timezone
         
@@ -935,6 +938,9 @@ def register_route_backend_documents(app):
                 return jsonify({'error': error_msg}), 400
             
             normalized_tag = normalized_tags[0]
+            is_valid_color, color_error, normalized_color = validate_tag_color(color, normalized_tag)
+            if not is_valid_color:
+                return jsonify({'error': color_error}), 400
             
             # Get existing tag definitions from settings
             user_settings = get_user_settings(user_id)
@@ -954,7 +960,7 @@ def register_route_backend_documents(app):
             
             # Add new tag to existing tags (don't replace)
             personal_tags[normalized_tag] = {
-                'color': color,
+                'color': normalized_color,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
@@ -973,7 +979,7 @@ def register_route_backend_documents(app):
                 'message': f'Tag "{normalized_tag}" created successfully',
                 'tag': {
                     'name': normalized_tag,
-                    'color': color
+                    'color': normalized_color
                 }
             }), 201
             
@@ -1157,7 +1163,7 @@ def register_route_backend_documents(app):
         debug_print(f"[UPDATE TAG] Request data - new_name: {new_name}, new_color: {new_color}")
         
         from functions_documents import (
-            normalize_tag, validate_tags, get_documents,
+            normalize_tag, validate_tag_color, validate_tags, get_documents,
             update_document, propagate_tags_to_chunks
         )
         from functions_settings import get_user_settings, update_user_settings
@@ -1267,6 +1273,10 @@ def register_route_backend_documents(app):
             # Handle color change only
             if new_color:
                 debug_print(f"[UPDATE TAG] Handling color change operation...")
+                is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
+                if not is_valid_color:
+                    return jsonify({'error': color_error}), 400
+
                 user_settings = get_user_settings(user_id)
                 settings_dict = user_settings.get('settings', {})
                 tag_defs = settings_dict.get('tag_definitions', {})
@@ -1276,13 +1286,13 @@ def register_route_backend_documents(app):
                 debug_print(f"[UPDATE TAG] Looking for tag: {normalized_old_tag}")
                 
                 if normalized_old_tag in personal_tags:
-                    debug_print(f"[UPDATE TAG] Found tag, updating color to: {new_color}")
-                    personal_tags[normalized_old_tag]['color'] = new_color
+                    debug_print(f"[UPDATE TAG] Found tag, updating color to: {normalized_color}")
+                    personal_tags[normalized_old_tag]['color'] = normalized_color
                 else:
-                    debug_print(f"[UPDATE TAG] Tag not found, creating new entry with color: {new_color}")
+                    debug_print(f"[UPDATE TAG] Tag not found, creating new entry with color: {normalized_color}")
                     from datetime import datetime, timezone
                     personal_tags[normalized_old_tag] = {
-                        'color': new_color,
+                        'color': normalized_color,
                         'created_at': datetime.now(timezone.utc).isoformat()
                     }
                 
@@ -1293,7 +1303,11 @@ def register_route_backend_documents(app):
                 
                 debug_print(f"[UPDATE TAG] Color change completed successfully")
                 return jsonify({
-                    'message': f'Tag color updated for "{normalized_old_tag}"'
+                    'message': f'Tag color updated for "{normalized_old_tag}"',
+                    'tag': {
+                        'name': normalized_old_tag,
+                        'color': normalized_color
+                    }
                 }), 200
             
             debug_print(f"[UPDATE TAG] No updates specified!")

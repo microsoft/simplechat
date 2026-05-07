@@ -5,6 +5,22 @@ from functions_authentication import *
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security   
 
+
+def _authorize_feedback_conversation(user_id, conversation_id):
+    """Load the target conversation and ensure the caller owns it."""
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError(f"Conversation {conversation_id} not found") from exc
+
+    if conversation_item.get("user_id") != user_id:
+        raise PermissionError("Forbidden")
+
+    return conversation_item
+
 def register_route_backend_feedback(app):
 
     @app.route("/feedback/submit", methods=["POST"])
@@ -18,7 +34,7 @@ def register_route_backend_feedback(app):
           POST /feedback/submit
           JSON body: { messageId, conversationId, feedbackType, reason }
         """
-        data = request.get_json()
+        data = request.get_json() or {}
         messageId = data.get("messageId")          # This is the ID of the specific AI message
         conversationId = data.get("conversationId") # This is the ID of the conversation
         feedbackType = data.get("feedbackType")
@@ -29,6 +45,16 @@ def register_route_backend_feedback(app):
 
         if not messageId or not conversationId or not feedbackType:
             return jsonify({"error": "Missing required fields"}), 400
+
+        if not user_id:
+            return jsonify({"error": "No user ID found in session"}), 403
+
+        try:
+            _authorize_feedback_conversation(user_id, conversationId)
+        except LookupError:
+            return jsonify({"error": "Conversation not found"}), 404
+        except PermissionError:
+            return jsonify({"error": "Forbidden", "message": "You do not have access to this conversation"}), 403
 
         ai_message_text = None
         user_prompt_text = None
@@ -51,10 +77,7 @@ def register_route_backend_feedback(app):
             # --- END CORRECTED PART ---
 
             if not message_items:
-                # No messages found for this conversation ID, which is unexpected if feedback is given
-                # You might want to log this or handle it differently
-                print(f"Warning: No messages found for conversationId {conversationId} during feedback submission.")
-                # Keep ai_message_text and user_prompt_text as None initially
+                return jsonify({"error": "Assistant message not found"}), 404
 
             all_messages = message_items # Assign the query results to all_messages
 
@@ -69,6 +92,9 @@ def register_route_backend_feedback(app):
                     ai_message_text = msg.get("content")
                     ai_msg_index = i
                     break
+
+            if ai_msg_index == -1:
+                return jsonify({"error": "Assistant message not found"}), 404
 
             # Find the user message immediately preceding the AI message
             if ai_msg_index > 0:
@@ -87,21 +113,12 @@ def register_route_backend_feedback(app):
                      if all_messages[i].get("role") == "user":
                           user_prompt_text = all_messages[i].get("content")
                           break
-
-
-        except exceptions.CosmosResourceNotFoundError:
-             # This specific exception might not be raised by query_items if the container exists but no items match.
-             # A query returning empty is more likely. Handle general exceptions.
-             print(f"Error querying messages for conversation {conversationId}: Resource not found (unexpected).")
-             # Decide how to handle - maybe proceed with default text?
         except Exception as e:
             print(f"Error querying messages for conversation {conversationId}: {e}")
-            # Log the error, maybe return a 500 or proceed with default text
-            # For now, let the default text logic below handle it.
-            pass # Allow execution to continue to the default text part
+            return jsonify({"error": "Failed to load feedback target"}), 500
 
         # Set default text if messages weren't found
-        if not ai_message_text:
+        if ai_message_text is None:
             ai_message_text = "[AI response text not found in cosmos_messages_container]"
 
         if not user_prompt_text:

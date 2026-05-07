@@ -8,6 +8,20 @@ from functions_public_workspaces import *
 from functions_prompts import *
 from swagger_wrapper import swagger_route, get_auth_security
 
+
+def _get_active_public_workspace_or_error(user_id):
+    try:
+        return require_active_public_workspace(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+        ), None
+    except ValueError:
+        return None, (jsonify({'error': 'No active public workspace selected'}), 400)
+    except LookupError:
+        return None, (jsonify({'error': 'Workspace not found'}), 404)
+    except PermissionError:
+        return None, (jsonify({'error': 'Access denied'}), 403)
+
 def register_route_backend_public_prompts(app):
     """
     Backend routes for public-workspace–scoped prompts management
@@ -20,15 +34,10 @@ def register_route_backend_public_prompts(app):
     @enabled_required('enable_public_workspaces')
     def api_list_public_prompts():
         user_id = get_current_user_id()
-        settings = get_user_settings(user_id)
-        active_ws = settings['settings'].get('activePublicWorkspaceOid')
-        if not active_ws:
-            return jsonify({'error': 'No active public workspace selected'}), 400
-        ws = find_public_workspace_by_id(active_ws)
-        if not ws:
-            return jsonify({'error': 'Workspace not found'}), 404
-        if not get_user_role_in_public_workspace(ws, user_id):
-            return jsonify({'error': 'Access denied'}), 403
+        active_workspace_context, error_response = _get_active_public_workspace_or_error(user_id)
+        if error_response:
+            return error_response
+        active_ws, _, _ = active_workspace_context
 
         try:
             items, total, page, page_size = list_prompts(
@@ -54,15 +63,10 @@ def register_route_backend_public_prompts(app):
     @enabled_required('enable_public_workspaces')
     def api_create_public_prompt():
         user_id = get_current_user_id()
-        settings = get_user_settings(user_id)
-        active_ws = settings['settings'].get('activePublicWorkspaceOid')
-        if not active_ws:
-            return jsonify({'error': 'No active public workspace selected'}), 400
-        ws = find_public_workspace_by_id(active_ws)
-        if not ws:
-            return jsonify({'error': 'Workspace not found'}), 404
-        if not get_user_role_in_public_workspace(ws, user_id):
-            return jsonify({'error': 'Access denied'}), 403
+        active_workspace_context, error_response = _get_active_public_workspace_or_error(user_id)
+        if error_response:
+            return error_response
+        active_ws, _, _ = active_workspace_context
 
         data = request.get_json() or {}
         name = data.get('name','').strip()
@@ -90,15 +94,10 @@ def register_route_backend_public_prompts(app):
     @enabled_required('enable_public_workspaces')
     def api_get_public_prompt(prompt_id):
         user_id = get_current_user_id()
-        settings = get_user_settings(user_id)
-        active_ws = settings['settings'].get('activePublicWorkspaceOid')
-        if not active_ws:
-            return jsonify({'error': 'No active public workspace selected'}), 400
-        ws = find_public_workspace_by_id(active_ws)
-        if not ws:
-            return jsonify({'error': 'Workspace not found'}), 404
-        if not get_user_role_in_public_workspace(ws, user_id):
-            return jsonify({'error': 'Access denied'}), 403
+        active_workspace_context, error_response = _get_active_public_workspace_or_error(user_id)
+        if error_response:
+            return error_response
+        active_ws, _, _ = active_workspace_context
 
         try:
             item = get_prompt_doc(
@@ -121,15 +120,10 @@ def register_route_backend_public_prompts(app):
     @enabled_required('enable_public_workspaces')
     def api_update_public_prompt(prompt_id):
         user_id = get_current_user_id()
-        settings = get_user_settings(user_id)
-        active_ws = settings['settings'].get('activePublicWorkspaceOid')
-        if not active_ws:
-            return jsonify({'error': 'No active public workspace selected'}), 400
-        ws = find_public_workspace_by_id(active_ws)
-        if not ws:
-            return jsonify({'error': 'Workspace not found'}), 404
-        if not get_user_role_in_public_workspace(ws, user_id):
-            return jsonify({'error': 'Access denied'}), 403
+        active_workspace_context, error_response = _get_active_public_workspace_or_error(user_id)
+        if error_response:
+            return error_response
+        active_ws, _, _ = active_workspace_context
 
         data = request.get_json() or {}
         updates = {}
@@ -166,15 +160,10 @@ def register_route_backend_public_prompts(app):
     @enabled_required('enable_public_workspaces')
     def api_delete_public_prompt(prompt_id):
         user_id = get_current_user_id()
-        settings = get_user_settings(user_id)
-        active_ws = settings['settings'].get('activePublicWorkspaceOid')
-        if not active_ws:
-            return jsonify({'error': 'No active public workspace selected'}), 400
-        ws = find_public_workspace_by_id(active_ws)
-        if not ws:
-            return jsonify({'error': 'Workspace not found'}), 404
-        if not get_user_role_in_public_workspace(ws, user_id):
-            return jsonify({'error': 'Access denied'}), 403
+        active_workspace_context, error_response = _get_active_public_workspace_or_error(user_id)
+        if error_response:
+            return error_response
+        active_ws, _, _ = active_workspace_context
 
         try:
             success = delete_prompt_doc(
