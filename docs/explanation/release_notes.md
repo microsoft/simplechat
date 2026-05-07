@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.137)**
+
+#### New Features
+
+*   **Tabular Related Document Evidence**
+    *   Added generic row-level related-document resolution for workspace tabular analysis, so when a CSV or workbook row explicitly references a supporting non-tabular file, the tabular path can pull excerpts from that document and use them alongside the computed row results.
+    *   Related document evidence now flows into both the outer tabular handoff and generated structured exports, which helps responses use supporting file context without treating those files as isolated search-only results.
+    *   Added focused regression coverage and versioned feature documentation for the related-document matching, evidence summary, and export prompt wiring.
+    *   (Ref: tabular related-document evidence, `route_backend_chats.py`, `functions_search_service.py`, `test_tabular_related_document_evidence.py`, `test_tabular_computed_results_prompt_priority.py`, `test_tabular_generated_output_exports.py`, `TABULAR_RELATED_DOCUMENT_EVIDENCE.md`)
+
 ### **(v0.241.127)**
 
 #### New Features

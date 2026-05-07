@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 import threading
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from config import *
-from flask import Response, copy_current_request_context, g, stream_with_context
+from flask import Response, copy_current_request_context, g, has_request_context, stream_with_context
 from functions_authentication import *
 from functions_search import *
 from functions_settings import *
@@ -111,6 +111,9 @@ TABULAR_GENERATED_OUTPUT_PREVIEW_ROWS = 3
 TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS = 25
 TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS = 18000
 TABULAR_STRUCTURED_EXPORT_MAX_RETRY_ATTEMPTS = 2
+TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW = 3
+TABULAR_RELATED_DOCUMENT_MAX_SUMMARY_ROWS = 8
+TABULAR_RELATED_DOCUMENT_MAX_EXCERPT_CHARS = 500
 
 
 def _normalize_generated_analysis_artifact_metadata(raw_artifact, default_capability='analysis'):
@@ -1408,7 +1411,653 @@ def build_search_augmentation_system_prompt(retrieved_content):
                         """
 
 
-def build_tabular_computed_results_system_message(source_label, tabular_analysis):
+def _normalize_tabular_related_document_text(value):
+    normalized_value = str(value or '').strip().lower()
+    if not normalized_value:
+        return ''
+
+    return re.sub(r'\s+', ' ', normalized_value).strip()
+
+
+def _normalize_tabular_related_document_basename(file_name):
+    normalized_file_name = str(file_name or '').strip()
+    if not normalized_file_name:
+        return ''
+
+    return _normalize_tabular_related_document_text(os.path.splitext(normalized_file_name)[0])
+
+
+def _is_tabular_related_document_candidate(file_name):
+    normalized_file_name = str(file_name or '').strip()
+    if not normalized_file_name:
+        return False
+
+    file_extension = os.path.splitext(normalized_file_name)[1].lower().lstrip('.')
+    if not file_extension:
+        return False
+
+    return file_extension not in set(TABULAR_EXTENSIONS)
+
+
+def _tabular_text_mentions_related_document_reference(cell_text, reference_name):
+    normalized_text = _normalize_tabular_related_document_text(cell_text)
+    normalized_reference = _normalize_tabular_related_document_text(reference_name)
+    if not normalized_text or not normalized_reference:
+        return False
+
+    reference_pattern = rf'(?<![a-z0-9]){re.escape(normalized_reference)}(?![a-z0-9])'
+    return re.search(reference_pattern, normalized_text) is not None
+
+
+def _select_tabular_related_document_scope_query(source_hint, user_id, group_id=None, public_workspace_id=None):
+    normalized_source_hint = str(source_hint or 'workspace').strip().lower() or 'workspace'
+    active_visibility_clause = "(NOT IS_DEFINED(c.search_visibility_state) OR c.search_visibility_state = 'active')"
+    current_version_clause = "(NOT IS_DEFINED(c.is_current_version) OR c.is_current_version = true)"
+
+    if normalized_source_hint == 'workspace' and user_id:
+        return {
+            'doc_scope': 'personal',
+            'group_id': None,
+            'public_workspace_id': None,
+            'cosmos_container': cosmos_user_documents_container,
+            'query': f"""
+                SELECT c.id, c.file_name, c.title
+                FROM c
+                WHERE {active_visibility_clause}
+                    AND {current_version_clause}
+                    AND (
+                        c.user_id = @user_id
+                        OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                        OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
+                    )
+            """,
+            'parameters': [
+                {'name': '@user_id', 'value': user_id},
+                {'name': '@user_id_prefix', 'value': f"{user_id},"},
+            ],
+        }
+
+    if normalized_source_hint == 'group' and group_id:
+        return {
+            'doc_scope': 'group',
+            'group_id': group_id,
+            'public_workspace_id': None,
+            'cosmos_container': cosmos_group_documents_container,
+            'query': f"""
+                SELECT c.id, c.file_name, c.title
+                FROM c
+                WHERE {active_visibility_clause}
+                    AND {current_version_clause}
+                    AND (
+                        c.group_id = @group_id
+                        OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                        OR ARRAY_CONTAINS(c.shared_group_ids, @group_id_approved)
+                    )
+            """,
+            'parameters': [
+                {'name': '@group_id', 'value': group_id},
+                {'name': '@group_id_approved', 'value': f"{group_id},approved"},
+            ],
+        }
+
+    if normalized_source_hint == 'public' and public_workspace_id:
+        return {
+            'doc_scope': 'public',
+            'group_id': None,
+            'public_workspace_id': public_workspace_id,
+            'cosmos_container': cosmos_public_documents_container,
+            'query': f"""
+                SELECT c.id, c.file_name, c.title
+                FROM c
+                WHERE {active_visibility_clause}
+                    AND {current_version_clause}
+                    AND c.public_workspace_id = @public_workspace_id
+            """,
+            'parameters': [
+                {'name': '@public_workspace_id', 'value': public_workspace_id},
+            ],
+        }
+
+    return None
+
+
+def _resolve_tabular_related_document_scope_ids(
+    source_hint,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    conversation_id=None,
+):
+    normalized_source_hint = str(source_hint or 'workspace').strip().lower() or 'workspace'
+    resolved_group_id = str(group_id or '').strip() or None
+    resolved_public_workspace_id = str(public_workspace_id or '').strip() or None
+
+    if normalized_source_hint not in {'group', 'public'}:
+        return {
+            'group_id': resolved_group_id,
+            'public_workspace_id': resolved_public_workspace_id,
+        }
+
+    if normalized_source_hint == 'group' and resolved_group_id:
+        return {
+            'group_id': resolved_group_id,
+            'public_workspace_id': resolved_public_workspace_id,
+        }
+
+    if normalized_source_hint == 'public' and resolved_public_workspace_id:
+        return {
+            'group_id': resolved_group_id,
+            'public_workspace_id': resolved_public_workspace_id,
+        }
+
+    if not has_request_context():
+        return {
+            'group_id': resolved_group_id,
+            'public_workspace_id': resolved_public_workspace_id,
+        }
+
+    authorized_context = getattr(g, 'authorized_chat_context', None)
+    if not isinstance(authorized_context, dict):
+        return {
+            'group_id': resolved_group_id,
+            'public_workspace_id': resolved_public_workspace_id,
+        }
+
+    authorized_user_id = str(authorized_context.get('user_id') or '').strip()
+    if authorized_user_id and authorized_user_id != str(user_id or '').strip():
+        return {
+            'group_id': resolved_group_id,
+            'public_workspace_id': resolved_public_workspace_id,
+        }
+
+    normalized_conversation_id = str(conversation_id or '').strip()
+    authorized_conversation_id = str(authorized_context.get('conversation_id') or '').strip()
+    if normalized_conversation_id and authorized_conversation_id and authorized_conversation_id != normalized_conversation_id:
+        return {
+            'group_id': resolved_group_id,
+            'public_workspace_id': resolved_public_workspace_id,
+        }
+
+    if normalized_source_hint == 'group' and not resolved_group_id:
+        resolved_group_id = str(
+            authorized_context.get('active_group_id')
+            or ((authorized_context.get('active_group_ids') or [None])[0])
+            or ''
+        ).strip() or None
+    elif normalized_source_hint == 'public' and not resolved_public_workspace_id:
+        resolved_public_workspace_id = str(
+            authorized_context.get('active_public_workspace_id')
+            or ((authorized_context.get('active_public_workspace_ids') or [None])[0])
+            or ''
+        ).strip() or None
+
+    return {
+        'group_id': resolved_group_id,
+        'public_workspace_id': resolved_public_workspace_id,
+    }
+
+
+def _build_tabular_related_document_catalog(user_id, source_hint, group_id=None, public_workspace_id=None):
+    scope_query = _select_tabular_related_document_scope_query(
+        source_hint,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not scope_query:
+        return {
+            'doc_scope': None,
+            'group_id': None,
+            'public_workspace_id': None,
+            'documents': [],
+        }
+
+    try:
+        raw_documents = list(scope_query['cosmos_container'].query_items(
+            query=scope_query['query'],
+            parameters=scope_query['parameters'],
+            enable_cross_partition_query=True,
+        ))
+    except Exception as exc:
+        log_event(
+            '[Tabular Related Documents] Failed to build related-document catalog',
+            extra={
+                'source_hint': source_hint,
+                'group_id': group_id,
+                'public_workspace_id': public_workspace_id,
+                'error_message': str(exc),
+            },
+            level=logging.WARNING,
+        )
+        raw_documents = []
+
+    normalized_documents = []
+    seen_document_ids = set()
+    for raw_document in raw_documents:
+        document_id = str(raw_document.get('id') or '').strip()
+        file_name = str(raw_document.get('file_name') or '').strip()
+        if not document_id or not file_name or document_id in seen_document_ids:
+            continue
+        if not _is_tabular_related_document_candidate(file_name):
+            continue
+
+        seen_document_ids.add(document_id)
+        normalized_documents.append({
+            'document_id': document_id,
+            'file_name': file_name,
+            'title': str(raw_document.get('title') or '').strip(),
+            'normalized_file_name': _normalize_tabular_related_document_text(file_name),
+            'normalized_basename': _normalize_tabular_related_document_basename(file_name),
+        })
+
+    return {
+        'doc_scope': scope_query['doc_scope'],
+        'group_id': scope_query['group_id'],
+        'public_workspace_id': scope_query['public_workspace_id'],
+        'documents': normalized_documents,
+    }
+
+
+def _extract_tabular_row_related_documents(row, document_catalog, max_matches_per_row=TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW):
+    if not isinstance(row, dict):
+        return []
+
+    catalog_documents = list((document_catalog or {}).get('documents') or [])
+    if not catalog_documents:
+        return []
+
+    candidate_cells = []
+    seen_candidate_cells = set()
+    for column_name, cell_value in row.items():
+        normalized_column_name = str(column_name or '').strip()
+        if normalized_column_name in {'referenced_documents', '_matched_columns', '_matched_values', '_related_document_reference_values'}:
+            continue
+        if isinstance(cell_value, (dict, list, tuple, set)):
+            continue
+
+        candidate_key = (normalized_column_name.casefold(), str(cell_value or '').strip())
+        if candidate_key in seen_candidate_cells:
+            continue
+        seen_candidate_cells.add(candidate_key)
+        candidate_cells.append((normalized_column_name, cell_value))
+
+    for extra_column_values in (
+        row.get('_matched_values'),
+        row.get('_related_document_reference_values'),
+    ):
+        if not isinstance(extra_column_values, dict):
+            continue
+
+        for column_name, cell_value in extra_column_values.items():
+            normalized_column_name = str(column_name or '').strip()
+            candidate_key = (normalized_column_name.casefold(), str(cell_value or '').strip())
+            if candidate_key in seen_candidate_cells:
+                continue
+            seen_candidate_cells.add(candidate_key)
+            candidate_cells.append((normalized_column_name, cell_value))
+
+    related_documents = []
+    seen_document_ids = set()
+    for column_name, cell_value in candidate_cells:
+        normalized_cell_text = _normalize_tabular_related_document_text(cell_value)
+        if not normalized_cell_text:
+            continue
+
+        for catalog_document in catalog_documents:
+            document_id = catalog_document['document_id']
+            if document_id in seen_document_ids:
+                continue
+
+            matched_reference = None
+            if _tabular_text_mentions_related_document_reference(
+                normalized_cell_text,
+                catalog_document['normalized_file_name'],
+            ):
+                matched_reference = catalog_document['file_name']
+            elif catalog_document['normalized_basename'] and _tabular_text_mentions_related_document_reference(
+                normalized_cell_text,
+                catalog_document['normalized_basename'],
+            ):
+                matched_reference = os.path.splitext(catalog_document['file_name'])[0]
+
+            if not matched_reference:
+                continue
+
+            related_documents.append({
+                'document_id': document_id,
+                'file_name': catalog_document['file_name'],
+                'title': catalog_document['title'],
+                'matched_column': str(column_name or '').strip(),
+                'matched_text': str(cell_value or '').strip(),
+                'matched_reference': matched_reference,
+            })
+            seen_document_ids.add(document_id)
+            if len(related_documents) >= max_matches_per_row:
+                return related_documents
+
+    return related_documents
+
+
+def _build_tabular_related_document_search_query(user_question, matched_text, file_name):
+    query_parts = []
+    normalized_user_question = str(user_question or '').strip()
+    normalized_matched_text = str(matched_text or '').strip()
+    normalized_file_name = str(file_name or '').strip()
+
+    if normalized_user_question:
+        query_parts.append(normalized_user_question)
+    if normalized_matched_text and normalized_matched_text not in query_parts:
+        query_parts.append(normalized_matched_text)
+    if normalized_file_name and normalized_file_name not in query_parts:
+        query_parts.append(normalized_file_name)
+
+    rendered_query = '\n'.join(query_parts).strip()
+    return rendered_query[:800] if rendered_query else normalized_file_name[:800]
+
+
+def _truncate_tabular_related_document_excerpt(value, max_length=TABULAR_RELATED_DOCUMENT_MAX_EXCERPT_CHARS):
+    normalized_value = str(value or '').strip()
+    if len(normalized_value) <= max_length:
+        return normalized_value
+    return f"{normalized_value[:max_length]}..."
+
+
+def _resolve_tabular_related_document_evidence(document_match, user_question, user_id, document_catalog, conversation_id=None):
+    # Import lazily to keep the chat route decoupled from search-service startup paths.
+    from functions_search_service import get_document_chunks_payload, search_documents
+
+    doc_scope = (document_catalog or {}).get('doc_scope')
+    if not doc_scope:
+        return None
+
+    document_id = str((document_match or {}).get('document_id') or '').strip()
+    if not document_id:
+        return None
+
+    group_id = (document_catalog or {}).get('group_id')
+    public_workspace_id = (document_catalog or {}).get('public_workspace_id')
+    active_group_ids = [group_id] if group_id else None
+    search_query = _build_tabular_related_document_search_query(
+        user_question,
+        (document_match or {}).get('matched_text'),
+        (document_match or {}).get('file_name'),
+    )
+
+    excerpt = ''
+    page_number = None
+    chunk_sequence = None
+    try:
+        search_payload = search_documents(
+            query=search_query,
+            user_id=user_id,
+            top_n=2,
+            doc_scope=doc_scope,
+            document_ids=[document_id],
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=public_workspace_id,
+            enable_file_sharing=True,
+        )
+        for result in search_payload.get('results', []):
+            candidate_excerpt = _truncate_tabular_related_document_excerpt(result.get('chunk_text'))
+            if not candidate_excerpt:
+                continue
+
+            excerpt = candidate_excerpt
+            page_number = result.get('page_number')
+            chunk_sequence = result.get('chunk_sequence')
+            break
+    except Exception as exc:
+        log_event(
+            '[Tabular Related Documents] Search lookup failed for resolved document reference',
+            extra={
+                'document_id': document_id,
+                'file_name': (document_match or {}).get('file_name'),
+                'doc_scope': doc_scope,
+                'error_message': str(exc),
+            },
+            level=logging.WARNING,
+        )
+
+    if not excerpt:
+        try:
+            chunk_payload = get_document_chunks_payload(
+                document_id=document_id,
+                user_id=user_id,
+                doc_scope=doc_scope,
+                active_group_ids=active_group_ids,
+                active_public_workspace_id=public_workspace_id,
+                conversation_id=conversation_id,
+                window_unit='chunks',
+                window_size=1,
+                window_number=1,
+            )
+            first_chunk = ((chunk_payload or {}).get('chunks') or [{}])[0]
+            excerpt = _truncate_tabular_related_document_excerpt(first_chunk.get('chunk_text'))
+            page_number = page_number if page_number is not None else first_chunk.get('page_number')
+            chunk_sequence = chunk_sequence if chunk_sequence is not None else first_chunk.get('chunk_sequence')
+        except Exception as exc:
+            log_event(
+                '[Tabular Related Documents] Chunk fallback failed for resolved document reference',
+                extra={
+                    'document_id': document_id,
+                    'file_name': (document_match or {}).get('file_name'),
+                    'doc_scope': doc_scope,
+                    'error_message': str(exc),
+                },
+                level=logging.WARNING,
+            )
+
+    if not excerpt:
+        return None
+
+    return {
+        'excerpt': excerpt,
+        'page_number': page_number,
+        'chunk_sequence': chunk_sequence,
+        'doc_scope': doc_scope,
+    }
+
+
+def augment_tabular_invocations_with_related_document_evidence(invocations, user_question, user_id, conversation_id=None):
+    catalog_cache = {}
+    evidence_cache = {}
+    augmented_row_count = 0
+    augmented_document_count = 0
+
+    for invocation in invocations or []:
+        if get_tabular_invocation_error_message(invocation):
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation)
+        if not isinstance(result_payload, dict):
+            continue
+
+        row_payloads = result_payload.get('data')
+        if not isinstance(row_payloads, list) or not row_payloads:
+            continue
+
+        invocation_parameters = getattr(invocation, 'parameters', {}) or {}
+        source_hint = str(
+            invocation_parameters.get('source')
+            or result_payload.get('source')
+            or 'workspace'
+        ).strip().lower() or 'workspace'
+        if source_hint == 'chat':
+            continue
+
+        resolved_scope_ids = _resolve_tabular_related_document_scope_ids(
+            source_hint,
+            user_id,
+            group_id=invocation_parameters.get('group_id'),
+            public_workspace_id=invocation_parameters.get('public_workspace_id'),
+            conversation_id=conversation_id,
+        )
+        group_id = resolved_scope_ids.get('group_id')
+        public_workspace_id = resolved_scope_ids.get('public_workspace_id')
+        scope_key = (source_hint, group_id or '', public_workspace_id or '')
+        if scope_key not in catalog_cache:
+            catalog_cache[scope_key] = _build_tabular_related_document_catalog(
+                user_id,
+                source_hint,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+
+        document_catalog = catalog_cache[scope_key]
+        if not document_catalog.get('documents'):
+            continue
+
+        updated_rows = []
+        rows_changed = False
+        augmented_rows_for_invocation = 0
+        augmented_documents_for_invocation = 0
+        matched_document_names = set()
+        for row_payload in row_payloads:
+            if not isinstance(row_payload, dict):
+                updated_rows.append(row_payload)
+                continue
+
+            related_documents = _extract_tabular_row_related_documents(row_payload, document_catalog)
+            if not related_documents:
+                updated_rows.append(row_payload)
+                continue
+
+            enriched_documents = []
+            for document_match in related_documents:
+                evidence_cache_key = (
+                    document_match['document_id'],
+                    document_match.get('matched_text') or '',
+                )
+                if evidence_cache_key not in evidence_cache:
+                    evidence_cache[evidence_cache_key] = _resolve_tabular_related_document_evidence(
+                        document_match,
+                        user_question,
+                        user_id,
+                        document_catalog,
+                        conversation_id=conversation_id,
+                    )
+
+                document_evidence = evidence_cache[evidence_cache_key]
+                if not document_evidence:
+                    continue
+
+                enriched_document = dict(document_match)
+                enriched_document.update(document_evidence)
+                enriched_documents.append(enriched_document)
+                matched_document_names.add(str(document_match.get('file_name') or '').strip())
+
+            if not enriched_documents:
+                updated_rows.append(row_payload)
+                continue
+
+            updated_row_payload = dict(row_payload)
+            updated_row_payload['referenced_documents'] = enriched_documents
+            updated_rows.append(updated_row_payload)
+            rows_changed = True
+            augmented_rows_for_invocation += 1
+            augmented_documents_for_invocation += len(enriched_documents)
+
+        if not rows_changed:
+            continue
+
+        log_event(
+            '[Tabular Related Documents] Resolved row-linked document evidence',
+            {
+                'conversation_id': conversation_id,
+                'source_hint': source_hint,
+                'source_file_name': result_payload.get('filename'),
+                'selected_sheet': result_payload.get('selected_sheet'),
+                'augmented_row_count': augmented_rows_for_invocation,
+                'augmented_document_count': augmented_documents_for_invocation,
+                'matched_document_names': sorted(
+                    file_name for file_name in matched_document_names if file_name
+                )[:5],
+            },
+            debug_only=True,
+        )
+        augmented_row_count += augmented_rows_for_invocation
+        augmented_document_count += augmented_documents_for_invocation
+        updated_result_payload = dict(result_payload)
+        updated_result_payload['data'] = updated_rows
+        updated_result_payload['referenced_document_row_count'] = augmented_rows_for_invocation
+        updated_result_payload['referenced_document_match_count'] = augmented_documents_for_invocation
+        if isinstance(getattr(invocation, 'result', None), dict):
+            invocation.result = updated_result_payload
+        else:
+            invocation.result = json.dumps(updated_result_payload, indent=2, default=str, ensure_ascii=False)
+
+    return {
+        'augmented_row_count': augmented_row_count,
+        'augmented_document_count': augmented_document_count,
+    }
+
+
+def _extract_tabular_related_row_identity(row_payload):
+    if not isinstance(row_payload, dict):
+        return {}
+
+    preferred_identity = {}
+    for column_name, column_value in row_payload.items():
+        if column_name == 'referenced_documents' or isinstance(column_value, (dict, list, tuple)) or column_value in (None, ''):
+            continue
+
+        normalized_column_name = str(column_name or '').strip().lower()
+        if normalized_column_name == 'id' or normalized_column_name.endswith('id'):
+            preferred_identity[str(column_name)] = str(column_value)
+            if len(preferred_identity) >= 3:
+                return preferred_identity
+
+    fallback_identity = {}
+    for column_name, column_value in row_payload.items():
+        if column_name == 'referenced_documents' or isinstance(column_value, (dict, list, tuple)) or column_value in (None, ''):
+            continue
+        fallback_identity[str(column_name)] = _truncate_log_text(column_value, max_length=80)
+        if len(fallback_identity) >= 2:
+            break
+
+    return preferred_identity or fallback_identity
+
+
+def build_tabular_related_document_evidence_summary(invocations):
+    summary_rows = []
+    for invocation in invocations or []:
+        if get_tabular_invocation_error_message(invocation):
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+        for row_payload in result_payload.get('data') or []:
+            referenced_documents = row_payload.get('referenced_documents') if isinstance(row_payload, dict) else None
+            if not isinstance(referenced_documents, list) or not referenced_documents:
+                continue
+
+            rendered_documents = []
+            for referenced_document in referenced_documents[:TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW]:
+                rendered_documents.append({
+                    'document_id': referenced_document.get('document_id'),
+                    'file_name': referenced_document.get('file_name'),
+                    'matched_column': referenced_document.get('matched_column'),
+                    'matched_reference': referenced_document.get('matched_reference'),
+                    'page_number': referenced_document.get('page_number'),
+                    'excerpt': referenced_document.get('excerpt'),
+                })
+
+            summary_rows.append({
+                'row_identity': _extract_tabular_related_row_identity(row_payload),
+                'referenced_documents': rendered_documents,
+            })
+            if len(summary_rows) >= TABULAR_RELATED_DOCUMENT_MAX_SUMMARY_ROWS:
+                break
+
+        if len(summary_rows) >= TABULAR_RELATED_DOCUMENT_MAX_SUMMARY_ROWS:
+            break
+
+    if not summary_rows:
+        return ''
+
+    return json.dumps(summary_rows, indent=2, default=str, ensure_ascii=False)
+
+
+def build_tabular_computed_results_system_message(source_label, tabular_analysis, related_document_evidence_summary=''):
     """Build the outer-model handoff message for successful tabular analysis."""
     rendered_analysis = str(tabular_analysis or '').strip()
     max_handoff_chars = 24000
@@ -1416,6 +2065,16 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
         rendered_analysis = (
             rendered_analysis[:max_handoff_chars]
             + "\n[Computed results handoff truncated for prompt budget.]"
+        )
+
+    rendered_related_document_evidence = str(related_document_evidence_summary or '').strip()
+    related_document_handoff = ''
+    if rendered_related_document_evidence:
+        related_document_handoff = (
+            "\n\nRelated document evidence resolved from explicit document references in the tabular rows:\n\n"
+            f"{rendered_related_document_evidence}\n\n"
+            "Treat these excerpts as tabular-adjacent source evidence because they were resolved from row-level document references in the source data. "
+            "Use them when they materially support the user's request, while preserving the originating row identity."
         )
 
     return (
@@ -1427,6 +2086,7 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
         "Do not say that you lack direct access to the data if the answer is present in these computed results. "
         "If a tool summary includes a full scalar value list, you may enumerate those values directly in the final answer. "
         "If a tool summary includes the full matching rows from a row or text search, use the surrounding cell context in those rows when deciding which content is relevant to the user's question."
+        f"{related_document_handoff}"
     )
 
 
@@ -1594,6 +2254,261 @@ def _sanitize_tabular_generated_output_base_name(file_name):
     return normalized_base_name or 'tabular_output'
 
 
+def _normalize_tabular_generated_output_field_label(value):
+    expanded_value = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', str(value or '').strip())
+    return re.sub(r'[^a-z0-9]+', ' ', expanded_value.casefold()).strip()
+
+
+def _select_tabular_generated_output_scalar_value(row, candidate_labels):
+    normalized_candidate_labels = {
+        _normalize_tabular_generated_output_field_label(candidate_label)
+        for candidate_label in (candidate_labels or [])
+        if _normalize_tabular_generated_output_field_label(candidate_label)
+    }
+    if not normalized_candidate_labels:
+        return ''
+
+    for column_name, column_value in (row or {}).items():
+        if isinstance(column_value, (dict, list, tuple, set)):
+            continue
+
+        rendered_value = str(column_value or '').strip()
+        if not rendered_value:
+            continue
+
+        normalized_column_name = _normalize_tabular_generated_output_field_label(column_name)
+        if normalized_column_name in normalized_candidate_labels:
+            return rendered_value
+
+    return ''
+
+
+def _is_tabular_generated_output_attachment_column_name(column_name):
+    normalized_column_name = _normalize_tabular_generated_output_field_label(column_name)
+    if not normalized_column_name:
+        return False
+
+    column_tokens = set(normalized_column_name.split())
+    if column_tokens & {
+        'attachment',
+        'attachments',
+        'appendix',
+        'appendices',
+        'document',
+        'documents',
+        'exhibit',
+        'exhibits',
+        'file',
+        'files',
+        'filename',
+        'filenames',
+        'pdf',
+        'pdfs',
+        'supporting',
+    }:
+        return True
+
+    condensed_label = normalized_column_name.replace(' ', '')
+    return any(
+        keyword in condensed_label
+        for keyword in (
+            'attachedfile',
+            'attachedfiles',
+            'attachmentname',
+            'attachmentnames',
+            'documentfile',
+            'documentfiles',
+            'documentname',
+            'documentnames',
+            'referencefile',
+            'referencefiles',
+            'supportingfile',
+            'supportingfiles',
+            'supportingdocument',
+            'supportingdocuments',
+        )
+    )
+
+
+def _split_tabular_generated_output_attachment_names(value):
+    if isinstance(value, list):
+        raw_candidates = value
+    else:
+        rendered_value = str(value or '').strip()
+        if not rendered_value:
+            return []
+
+        raw_candidates = None
+        if rendered_value.startswith('['):
+            try:
+                parsed_value = json.loads(rendered_value)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed_value = None
+            if isinstance(parsed_value, list):
+                raw_candidates = parsed_value
+
+        if raw_candidates is None:
+            raw_candidates = re.split(r'[;|\n]+', rendered_value)
+
+    attachment_names = []
+    seen_attachment_names = set()
+    for raw_candidate in raw_candidates:
+        rendered_candidate = str(raw_candidate or '').strip().strip('"').strip("'")
+        if not rendered_candidate:
+            continue
+
+        lowered_candidate = rendered_candidate.casefold()
+        if lowered_candidate in seen_attachment_names:
+            continue
+
+        seen_attachment_names.add(lowered_candidate)
+        attachment_names.append(rendered_candidate)
+
+    return attachment_names
+
+
+def _extract_tabular_generated_output_attachment_names(row, source_file_name=None):
+    attachment_names = []
+    seen_attachment_names = set()
+
+    def add_attachment_name(candidate_name):
+        rendered_candidate_name = str(candidate_name or '').strip()
+        if not rendered_candidate_name:
+            return
+        if source_file_name and rendered_candidate_name.casefold() == str(source_file_name).strip().casefold():
+            return
+
+        lowered_candidate_name = rendered_candidate_name.casefold()
+        if lowered_candidate_name in seen_attachment_names:
+            return
+
+        seen_attachment_names.add(lowered_candidate_name)
+        attachment_names.append(rendered_candidate_name)
+
+    existing_attachment_names = row.get('attachment_names') if isinstance(row, dict) else None
+    for attachment_name in _split_tabular_generated_output_attachment_names(existing_attachment_names or []):
+        add_attachment_name(attachment_name)
+
+    if isinstance(row, dict):
+        referenced_documents = row.get('referenced_documents')
+        if isinstance(referenced_documents, list):
+            for referenced_document in referenced_documents:
+                if not isinstance(referenced_document, dict):
+                    continue
+                add_attachment_name(referenced_document.get('file_name'))
+
+        direct_file_name = str(row.get('file_name') or '').strip()
+        if direct_file_name and _is_tabular_related_document_candidate(direct_file_name):
+            add_attachment_name(direct_file_name)
+
+        related_reference_values = row.get('_related_document_reference_values')
+        if isinstance(related_reference_values, dict):
+            for column_name, column_value in related_reference_values.items():
+                if not _is_tabular_generated_output_attachment_column_name(column_name):
+                    continue
+                for attachment_name in _split_tabular_generated_output_attachment_names(column_value):
+                    add_attachment_name(attachment_name)
+
+        for column_name, column_value in row.items():
+            if not _is_tabular_generated_output_attachment_column_name(column_name):
+                continue
+            if isinstance(column_value, (dict, list, tuple, set)):
+                continue
+            for attachment_name in _split_tabular_generated_output_attachment_names(column_value):
+                add_attachment_name(attachment_name)
+
+    return attachment_names
+
+
+def _build_tabular_generated_output_attachment_text(row):
+    if not isinstance(row, dict):
+        return ''
+
+    existing_attachment_text = _select_tabular_generated_output_scalar_value(
+        row,
+        candidate_labels=('attachment_text', 'attachment text', 'letter_text', 'letter text'),
+    )
+    if existing_attachment_text:
+        return existing_attachment_text
+
+    excerpt_blocks = []
+    referenced_documents = row.get('referenced_documents')
+    if not isinstance(referenced_documents, list):
+        return ''
+
+    for referenced_document in referenced_documents:
+        if not isinstance(referenced_document, dict):
+            continue
+
+        excerpt = str(referenced_document.get('excerpt') or '').strip()
+        if not excerpt:
+            continue
+
+        file_name = str(referenced_document.get('file_name') or '').strip()
+        if file_name:
+            excerpt_blocks.append(f'Attachment: {file_name}\n{excerpt}')
+        else:
+            excerpt_blocks.append(excerpt)
+
+    return '\n\n'.join(excerpt_blocks)
+
+
+def _build_tabular_generated_output_input_row(row, source_file_name=None):
+    if not isinstance(row, dict):
+        return row
+
+    normalized_row = dict(row)
+
+    comment_id = _select_tabular_generated_output_scalar_value(
+        normalized_row,
+        candidate_labels=('comment_id', 'comment id', 'id', 'submission_id', 'submission id'),
+    )
+    if comment_id and not str(normalized_row.get('comment_id') or '').strip():
+        normalized_row['comment_id'] = comment_id
+
+    body_text = _select_tabular_generated_output_scalar_value(
+        normalized_row,
+        candidate_labels=(
+            'body_text',
+            'body text',
+            'comment_text',
+            'comment text',
+            'comment',
+            'submission_text',
+            'submission text',
+            'public comment',
+            'text',
+        ),
+    )
+    if body_text and not str(normalized_row.get('body_text') or '').strip():
+        normalized_row['body_text'] = body_text
+
+    source_file = _select_tabular_generated_output_scalar_value(
+        normalized_row,
+        candidate_labels=('source_file', 'source file', 'source_name', 'source name', 'workbook_name', 'workbook name', 'csv_name', 'csv name'),
+    ) or str(source_file_name or '').strip()
+    if source_file and not str(normalized_row.get('source_file') or '').strip():
+        normalized_row['source_file'] = source_file
+
+    attachment_names = _extract_tabular_generated_output_attachment_names(
+        normalized_row,
+        source_file_name=source_file_name,
+    )
+    if attachment_names:
+        normalized_row['attachment_names'] = attachment_names
+        if not str(normalized_row.get('file_name') or '').strip():
+            normalized_row['file_name'] = attachment_names[0]
+
+    attachment_text = _build_tabular_generated_output_attachment_text(normalized_row)
+    if attachment_text:
+        normalized_row['attachment_text'] = attachment_text
+
+    if attachment_names or attachment_text:
+        normalized_row['attachment_present'] = True
+
+    return normalized_row
+
+
 def _build_tabular_generated_output_file_name(source_file_name, output_format):
     timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     normalized_base_name = _sanitize_tabular_generated_output_base_name(source_file_name)
@@ -1625,53 +2540,87 @@ def _build_tabular_generated_output_row_batches(rows):
     return batches
 
 
+def _build_tabular_generated_output_candidate_diagnostic(invocation):
+    function_name = str(getattr(invocation, 'function_name', '') or '').strip()
+    plugin_name = str(getattr(invocation, 'plugin_name', '') or '').strip()
+    error_message = get_tabular_invocation_error_message(invocation)
+    result_payload = get_tabular_invocation_result_payload(invocation)
+
+    data_rows = result_payload.get('data') if isinstance(result_payload, dict) else None
+    data_row_count = len(data_rows) if isinstance(data_rows, list) else 0
+    returned_rows = _safe_int(result_payload.get('returned_rows')) if isinstance(result_payload, dict) else 0
+    total_matches = _safe_int(result_payload.get('total_matches')) if isinstance(result_payload, dict) else 0
+    full_result_available = bool(
+        returned_rows > 0
+        and data_row_count == returned_rows
+        and total_matches == returned_rows
+    )
+    function_rank = {
+        'query_tabular_data': 3,
+        'filter_rows': 2,
+        'search_rows': 1,
+    }.get(function_name, 0)
+
+    skip_reason = None
+    if error_message:
+        skip_reason = 'invocation_error'
+    elif not isinstance(result_payload, dict):
+        skip_reason = 'missing_result_payload'
+    elif not isinstance(data_rows, list) or not data_rows:
+        skip_reason = 'no_data_rows'
+
+    return {
+        'plugin_name': plugin_name or None,
+        'function_name': function_name or None,
+        'file_name': result_payload.get('filename') if isinstance(result_payload, dict) else None,
+        'selected_sheet': result_payload.get('selected_sheet') if isinstance(result_payload, dict) else None,
+        'returned_rows': returned_rows,
+        'total_matches': total_matches,
+        'data_row_count': data_row_count,
+        'full_result_available': full_result_available,
+        'function_rank': function_rank,
+        'max_rows': result_payload.get('max_rows') if isinstance(result_payload, dict) else None,
+        'filter_applied': result_payload.get('filter_applied') if isinstance(result_payload, dict) else None,
+        'normalized_match': result_payload.get('normalized_match') if isinstance(result_payload, dict) else None,
+        'skip_reason': skip_reason,
+        'error_message': error_message,
+    }
+
+
+def _build_tabular_generated_output_candidate_diagnostics(invocations):
+    return [
+        _build_tabular_generated_output_candidate_diagnostic(invocation)
+        for invocation in (invocations or [])
+    ]
+
+
 def _build_tabular_generated_output_source_candidate(invocations):
     best_candidate = None
     best_score = None
 
     for invocation in invocations or []:
-        if get_tabular_invocation_error_message(invocation):
+        diagnostic = _build_tabular_generated_output_candidate_diagnostic(invocation)
+        if diagnostic.get('skip_reason'):
             continue
-
-        result_payload = get_tabular_invocation_result_payload(invocation)
-        if not isinstance(result_payload, dict):
-            continue
-
-        data_rows = result_payload.get('data')
-        if not isinstance(data_rows, list) or not data_rows:
-            continue
-
-        returned_rows = _safe_int(result_payload.get('returned_rows'))
-        total_matches = _safe_int(result_payload.get('total_matches'))
-        full_result_available = bool(
-            returned_rows > 0
-            and len(data_rows) == returned_rows
-            and total_matches == returned_rows
-        )
-
-        function_name = getattr(invocation, 'function_name', '')
-        function_rank = {
-            'query_tabular_data': 3,
-            'filter_rows': 2,
-            'search_rows': 1,
-        }.get(function_name, 0)
 
         score = (
-            1 if full_result_available else 0,
-            returned_rows,
-            function_rank,
+            1 if diagnostic.get('full_result_available') else 0,
+            diagnostic.get('returned_rows') or diagnostic.get('data_row_count') or 0,
+            diagnostic.get('function_rank') or 0,
         )
         if best_score is not None and score <= best_score:
             continue
 
+        result_payload = get_tabular_invocation_result_payload(invocation)
         best_candidate = {
-            'function_name': function_name,
+            'function_name': diagnostic.get('function_name'),
             'filename': result_payload.get('filename'),
             'selected_sheet': result_payload.get('selected_sheet'),
-            'rows': data_rows,
-            'row_count': returned_rows or len(data_rows),
-            'total_matches': total_matches,
-            'full_result_available': full_result_available,
+            'rows': result_payload.get('data'),
+            'row_count': diagnostic.get('returned_rows') or diagnostic.get('data_row_count'),
+            'total_matches': diagnostic.get('total_matches'),
+            'full_result_available': diagnostic.get('full_result_available'),
+            'diagnostics': diagnostic,
         }
         best_score = score
 
@@ -1690,6 +2639,9 @@ def _build_tabular_generated_output_batch_prompt(user_question, batch_rows, batc
         'Return ONLY a valid JSON array.\n'
         f'Return exactly {len(batch_rows)} JSON object(s), one per input row, in the same order.\n'
         'Do not drop, merge, summarize, or cap rows.\n'
+        'Input rows may include normalized helper fields such as comment_id, body_text, source_file, attachment_present, attachment_names, and attachment_text. Use those normalized fields when they are present.\n'
+        'Input rows may include a referenced_documents array containing row-linked evidence from explicitly referenced non-tabular documents. Use that evidence as part of the source row context when it is relevant to the requested output.\n'
+        'If referenced_documents contains excerpt text or attachment_text is present, treat that excerpt content as available attachment text. Do not say attachment text is unavailable when such excerpts are present.\n'
         'If a requested field cannot be derived, include the field with null or an empty string instead of omitting the row.\n'
         'Do not wrap the JSON in markdown fences.\n\n'
         f'Source file: {source_file_name}\n'
@@ -1712,6 +2664,32 @@ def _build_tabular_generated_output_system_message(output_metadata):
     )
 
 
+def _truncate_tabular_generated_output_response_preview(response_content, max_chars=400):
+    cleaned = _clean_tabular_generated_json_code_fence(response_content)
+    normalized = re.sub(r'\s+', ' ', cleaned).strip()
+    if not normalized:
+        return ''
+    if len(normalized) <= max_chars:
+        return normalized
+    return f"{normalized[:max_chars]}..."
+
+
+def _log_tabular_generated_output_handoff(conversation_id, user_question, output_metadata, injection_target):
+    log_event(
+        '[Tabular Generated Output] Added summary-only handoff system message',
+        {
+            'conversation_id': conversation_id,
+            'injection_target': injection_target,
+            'generated_file_name': output_metadata.get('file_name'),
+            'output_format': output_metadata.get('output_format'),
+            'row_count': output_metadata.get('row_count'),
+            'source_file_name': output_metadata.get('source_file_name'),
+            'structured_output_requested': question_requests_tabular_structured_object_output(user_question),
+        },
+        debug_only=True,
+    )
+
+
 async def _generate_tabular_structured_output_entries(
     user_question,
     source_candidate,
@@ -1723,7 +2701,13 @@ async def _generate_tabular_structured_output_entries(
     from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 
-    rows = source_candidate.get('rows') or []
+    rows = [
+        _build_tabular_generated_output_input_row(
+            row,
+            source_file_name=source_candidate.get('filename'),
+        )
+        for row in (source_candidate.get('rows') or [])
+    ]
     if not rows:
         return None
 
@@ -1854,8 +2838,26 @@ async def _generate_tabular_structured_output_entries(
 
             execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output')
             result = await chat_service.get_chat_message_contents(chat_history, execution_settings)
+            raw_response_content = result[0].content if result and result[0].content else ''
             if result and result[0].content:
-                parsed_entries = _parse_tabular_generated_json_entries(result[0].content)
+                parsed_entries = _parse_tabular_generated_json_entries(raw_response_content)
+            parsed_entry_count = len(parsed_entries) if parsed_entries is not None else 0
+            if parsed_entries is None or parsed_entry_count != len(batch_rows):
+                log_event(
+                    '[Tabular Generated Output] Structured export batch attempt mismatch',
+                    {
+                        'source_file_name': source_candidate.get('filename'),
+                        'output_format': normalized_output_format,
+                        'batch_number': batch_number,
+                        'batch_count': total_batches,
+                        'attempt_number': attempt_number,
+                        'expected_row_count': len(batch_rows),
+                        'parsed_row_count': parsed_entry_count,
+                        'response_char_count': len(raw_response_content),
+                        'response_preview': _truncate_tabular_generated_output_response_preview(raw_response_content),
+                    },
+                    debug_only=True,
+                )
             if parsed_entries is not None and len(parsed_entries) == len(batch_rows):
                 break
 
@@ -1905,11 +2907,52 @@ async def maybe_create_tabular_generated_output(
     if not question_requests_tabular_generated_output(user_question):
         return None
 
-    source_candidate = _build_tabular_generated_output_source_candidate(invocations)
-    if not source_candidate or not source_candidate.get('full_result_available'):
-        return None
-
     output_format = get_tabular_generated_output_format(user_question)
+    candidate_diagnostics = _build_tabular_generated_output_candidate_diagnostics(invocations)
+    source_candidate = _build_tabular_generated_output_source_candidate(invocations)
+    if candidate_diagnostics:
+        log_event(
+            '[Tabular Generated Output] Evaluated source candidates',
+            {
+                'conversation_id': conversation_id,
+                'output_format': output_format,
+                'candidate_count': len(candidate_diagnostics),
+                'candidates': candidate_diagnostics,
+            },
+            debug_only=True,
+        )
+    if not source_candidate:
+        log_event(
+            '[Tabular Generated Output] No eligible source candidate selected',
+            {
+                'conversation_id': conversation_id,
+                'output_format': output_format,
+                'candidate_count': len(candidate_diagnostics),
+                'structured_output_requested': question_requests_tabular_structured_object_output(user_question),
+            },
+            debug_only=True,
+        )
+        return None
+    if not source_candidate.get('full_result_available'):
+        log_event(
+            '[Tabular Generated Output] Selected source candidate is incomplete; skipping export',
+            {
+                'conversation_id': conversation_id,
+                'output_format': output_format,
+                'selected_candidate': source_candidate.get('diagnostics'),
+            },
+            debug_only=True,
+        )
+        return None
+    log_event(
+        '[Tabular Generated Output] Selected source candidate',
+        {
+            'conversation_id': conversation_id,
+            'output_format': output_format,
+            'selected_candidate': source_candidate.get('diagnostics'),
+        },
+        debug_only=True,
+    )
     rows = source_candidate.get('rows') or []
     if not output_format or not rows:
         return None
@@ -5421,7 +6464,6 @@ def _score_tabular_entity_sheet_match(sheet_name, question_text, columns=None):
 
     return score
 
-
 def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1, per_sheet=None, score_match_fn=None):
     """Return all workbook sheets that appear relevant to the question."""
     score_match_fn = score_match_fn or _score_tabular_sheet_match
@@ -8161,22 +9203,55 @@ def register_route_backend_chats(app):
 
         step_index_state = {'value': 0}
 
+        def publish_thought_payload(thought_payload, default_step_type='document_review'):
+            payload = thought_payload if isinstance(thought_payload, dict) else {}
+            payload_step_index = payload.get('step_index')
+
+            if isinstance(payload_step_index, (int, float)):
+                step_index = int(payload_step_index)
+                step_index_state['value'] = max(step_index_state['value'], step_index + 1)
+            else:
+                step_index = step_index_state['value']
+                step_index_state['value'] += 1
+
+            outbound_payload = {
+                'type': 'thought',
+                'message_id': payload.get('message_id') or assistant_message_id,
+                'step_index': step_index,
+                'step_type': str(payload.get('step_type') or default_step_type).strip() or default_step_type,
+                'content': str(payload.get('content') or '').strip(),
+            }
+
+            detail = payload.get('detail')
+            if detail is not None:
+                outbound_payload['detail'] = detail
+
+            activity = payload.get('activity')
+            if isinstance(activity, dict) and activity:
+                outbound_payload['activity'] = activity
+
+            progress = payload.get('progress')
+            if isinstance(progress, dict) and progress:
+                outbound_payload['progress'] = progress
+
+            publish_background_event(f"data: {json.dumps(make_json_serializable(outbound_payload))}\n\n")
+
         def publish_thought(content, progress=None):
             payload = {
-                'type': 'thought',
-                'message_id': assistant_message_id,
-                'step_index': step_index_state['value'],
                 'step_type': 'document_review',
                 'content': content,
             }
             if isinstance(progress, dict) and progress:
                 payload['progress'] = progress
 
-            step_index_state['value'] += 1
-            publish_background_event(f"data: {json.dumps(make_json_serializable(payload))}\n\n")
+            publish_thought_payload(payload)
 
         def callback(event):
             event = event if isinstance(event, dict) else {}
+            if event.get('step_type') or isinstance(event.get('activity'), dict):
+                publish_thought_payload(event)
+                return
+
             publish_thought(
                 _build_document_action_stream_content(event),
                 progress=event.get('progress') if isinstance(event.get('progress'), dict) else None,
@@ -10391,6 +11466,17 @@ def register_route_backend_chats(app):
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
                     baseline_tabular_invocation_count
                 )
+                tabular_related_document_summary = ''
+                tabular_related_document_stats = augment_tabular_invocations_with_related_document_evidence(
+                    tabular_invocations,
+                    user_message,
+                    user_id,
+                    conversation_id=conversation_id,
+                )
+                if tabular_related_document_stats.get('augmented_row_count'):
+                    tabular_related_document_summary = build_tabular_related_document_evidence_summary(
+                        tabular_invocations,
+                    )
                 if not streamed_tabular_tool_thoughts:
                     tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
                     for thought_content, thought_detail in tabular_thought_payloads:
@@ -10418,6 +11504,7 @@ def register_route_backend_chats(app):
                     tabular_system_msg = build_tabular_computed_results_system_message(
                         f"the file(s) {tabular_filenames_str}",
                         tabular_analysis,
+                        related_document_evidence_summary=tabular_related_document_summary,
                     )
                 else:
                     tabular_system_msg = build_tabular_fallback_system_message(
@@ -10434,6 +11521,12 @@ def register_route_backend_chats(app):
                         'role': 'system',
                         'content': _build_tabular_generated_output_system_message(tabular_generated_output)
                     })
+                    _log_tabular_generated_output_handoff(
+                        conversation_id,
+                        user_message,
+                        tabular_generated_output,
+                        'workspace_search_augmentation',
+                    )
 
                 if tabular_analysis:
                     tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -10600,6 +11693,17 @@ def register_route_backend_chats(app):
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
                         baseline_tabular_invocation_count
                     )
+                    chat_tabular_related_document_summary = ''
+                    chat_tabular_related_document_stats = augment_tabular_invocations_with_related_document_evidence(
+                        chat_tabular_invocations,
+                        user_message,
+                        user_id,
+                        conversation_id=conversation_id,
+                    )
+                    if chat_tabular_related_document_stats.get('augmented_row_count'):
+                        chat_tabular_related_document_summary = build_tabular_related_document_evidence_summary(
+                            chat_tabular_invocations,
+                        )
                     if not streamed_chat_tabular_tool_thoughts:
                         chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
                         for thought_content, thought_detail in chat_tabular_thought_payloads:
@@ -10630,6 +11734,7 @@ def register_route_backend_chats(app):
                             'content': build_tabular_computed_results_system_message(
                                 f"the chat-uploaded file(s) {chat_tabular_filenames_str}",
                                 chat_tabular_analysis,
+                                related_document_evidence_summary=chat_tabular_related_document_summary,
                             )
                         })
                         final_api_source_refs.append('system:tabular_results')
@@ -10639,6 +11744,12 @@ def register_route_backend_chats(app):
                                 'content': _build_tabular_generated_output_system_message(chat_tabular_generated_output)
                             })
                             final_api_source_refs.append('system:tabular_generated_output')
+                            _log_tabular_generated_output_handoff(
+                                conversation_id,
+                                user_message,
+                                chat_tabular_generated_output,
+                                'chat_upload_history',
+                            )
 
                         # Collect tool execution citations from SK tabular analysis
                         chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -10653,6 +11764,12 @@ def register_route_backend_chats(app):
                                 'content': _build_tabular_generated_output_system_message(chat_tabular_generated_output)
                             })
                             final_api_source_refs.append('system:tabular_generated_output')
+                            _log_tabular_generated_output_handoff(
+                                conversation_id,
+                                user_message,
+                                chat_tabular_generated_output,
+                                'chat_upload_history_fallback',
+                            )
                         thought_tracker.add_thought(
                             'tabular_analysis',
                             "Tabular analysis could not compute results; using existing chat file context",
@@ -12992,6 +14109,17 @@ def register_route_backend_chats(app):
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
                         baseline_tabular_invocation_count
                     )
+                    tabular_related_document_summary = ''
+                    tabular_related_document_stats = augment_tabular_invocations_with_related_document_evidence(
+                        tabular_invocations,
+                        user_message,
+                        user_id,
+                        conversation_id=conversation_id,
+                    )
+                    if tabular_related_document_stats.get('augmented_row_count'):
+                        tabular_related_document_summary = build_tabular_related_document_evidence_summary(
+                            tabular_invocations,
+                        )
                     debug_print(
                         "[Streaming][Tabular SK] Completed workspace tabular analysis | "
                         f"analysis_returned={bool(tabular_analysis)} | new_invocations={len(tabular_invocations)}"
@@ -13025,6 +14153,7 @@ def register_route_backend_chats(app):
                             'content': build_tabular_computed_results_system_message(
                                 f"the file(s) {tabular_filenames_str}",
                                 tabular_analysis,
+                                related_document_evidence_summary=tabular_related_document_summary,
                             )
                         })
                         if tabular_generated_output:
@@ -13032,6 +14161,12 @@ def register_route_backend_chats(app):
                                 'role': 'system',
                                 'content': _build_tabular_generated_output_system_message(tabular_generated_output)
                             })
+                            _log_tabular_generated_output_handoff(
+                                conversation_id,
+                                user_message,
+                                tabular_generated_output,
+                                'streaming_workspace_search_augmentation',
+                            )
 
                         tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
                         if tabular_sk_citations:
@@ -13049,6 +14184,12 @@ def register_route_backend_chats(app):
                                 'role': 'system',
                                 'content': _build_tabular_generated_output_system_message(tabular_generated_output)
                             })
+                            _log_tabular_generated_output_handoff(
+                                conversation_id,
+                                user_message,
+                                tabular_generated_output,
+                                'streaming_workspace_search_fallback',
+                            )
 
                         yield emit_thought(
                             'tabular_analysis',
@@ -13183,6 +14324,17 @@ def register_route_backend_chats(app):
                             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
                             baseline_tabular_invocation_count
                         )
+                        chat_tabular_related_document_summary = ''
+                        chat_tabular_related_document_stats = augment_tabular_invocations_with_related_document_evidence(
+                            chat_tabular_invocations,
+                            user_message,
+                            user_id,
+                            conversation_id=conversation_id,
+                        )
+                        if chat_tabular_related_document_stats.get('augmented_row_count'):
+                            chat_tabular_related_document_summary = build_tabular_related_document_evidence_summary(
+                                chat_tabular_invocations,
+                            )
                         debug_print(
                             "[Streaming][Chat Tabular SK] Completed chat-uploaded tabular analysis | "
                             f"analysis_returned={bool(chat_tabular_analysis)} | new_invocations={len(chat_tabular_invocations)}"
@@ -13216,6 +14368,7 @@ def register_route_backend_chats(app):
                                 'content': build_tabular_computed_results_system_message(
                                     f"the chat-uploaded file(s) {chat_tabular_filenames_str}",
                                     chat_tabular_analysis,
+                                    related_document_evidence_summary=chat_tabular_related_document_summary,
                                 )
                             })
                             final_api_source_refs.append('system:tabular_results')
@@ -13225,6 +14378,12 @@ def register_route_backend_chats(app):
                                     'content': _build_tabular_generated_output_system_message(chat_tabular_generated_output)
                                 })
                                 final_api_source_refs.append('system:tabular_generated_output')
+                                _log_tabular_generated_output_handoff(
+                                    conversation_id,
+                                    user_message,
+                                    chat_tabular_generated_output,
+                                    'streaming_chat_upload_history',
+                                )
 
                             # Collect tool execution citations
                             chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -13239,6 +14398,12 @@ def register_route_backend_chats(app):
                                     'content': _build_tabular_generated_output_system_message(chat_tabular_generated_output)
                                 })
                                 final_api_source_refs.append('system:tabular_generated_output')
+                                _log_tabular_generated_output_handoff(
+                                    conversation_id,
+                                    user_message,
+                                    chat_tabular_generated_output,
+                                    'streaming_chat_upload_history_fallback',
+                                )
                             yield emit_thought(
                                 'tabular_analysis',
                                 "Tabular analysis could not compute results; using existing chat file context",

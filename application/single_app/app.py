@@ -480,14 +480,14 @@ def record_request_settings_source(source):
             settings_source_last_non_cache_log_epoch = now_epoch
 
     g.request_settings_source = normalized_source
-    debug_print(
-        f"[SETTINGS SOURCE] path={request.path} source={normalized_source}",
-        category="SETTINGS",
-        cache_hits=cache_hits,
-        cosmos_fallback_hits=cosmos_fallback_hits,
-        cosmos_forced_hits=cosmos_forced_hits,
-        unknown_hits=unknown_hits
-    )
+    # debug_print(
+    #     f"[SETTINGS SOURCE] path={request.path} source={normalized_source}",
+    #     category="SETTINGS",
+    #     cache_hits=cache_hits,
+    #     cosmos_fallback_hits=cosmos_fallback_hits,
+    #     cosmos_forced_hits=cosmos_forced_hits,
+    #     unknown_hits=unknown_hits
+    # )
 
     if should_log_non_cache_info:
         log_event(

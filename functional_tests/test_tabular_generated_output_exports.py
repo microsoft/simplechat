@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # test_tabular_generated_output_exports.py
 """
-Functional test for generated tabular output exports.
-Version: 0.241.125
-Implemented in: 0.241.125
+Functional test for generated tabular output exports and diagnostics.
+Version: 0.241.141
+Implemented in: 0.241.141
 
 This test ensures large tabular structured-output requests now persist both
 generic analysis artifact metadata and tabular compatibility metadata, expose
-a secure download route, and render a downloadable preview card in the chat UI.
+a secure download route, render a downloadable preview card in the chat UI,
+and retain diagnostics that explain export candidate selection and summary handoff behavior.
 """
 
 from pathlib import Path
@@ -22,7 +23,7 @@ SIMPLECHAT_OPERATIONS_FILE = ROOT / "application" / "single_app" / "functions_si
 FUNCTIONS_SETTINGS_FILE = ROOT / "application" / "single_app" / "functions_settings.py"
 SEARCH_SERVICE_FILE = ROOT / "application" / "single_app" / "functions_search_service.py"
 CHAT_MESSAGES_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-messages.js"
-EXPECTED_VERSION = "0.241.125"
+EXPECTED_VERSION = "0.241.141"
 
 
 def read_text(path: Path) -> str:
@@ -89,6 +90,71 @@ def test_generated_tabular_output_backend_plumbing() -> None:
     print("Backend plumbing checks passed")
 
 
+def test_generated_tabular_output_diagnostics_hooks() -> None:
+    print("Testing generated tabular output diagnostics hooks...")
+
+    current_version = read_current_version()
+    chat_route_content = read_text(CHAT_ROUTE_FILE)
+
+    assert current_version == EXPECTED_VERSION, (
+        f"Expected config.py version {EXPECTED_VERSION} for the generated output diagnostics follow-up."
+    )
+    assert 'def _build_tabular_generated_output_candidate_diagnostic(' in chat_route_content, (
+        "Expected route_backend_chats.py to summarize each tabular invocation considered for export selection."
+    )
+    assert 'def _build_tabular_generated_output_candidate_diagnostics(' in chat_route_content, (
+        "Expected route_backend_chats.py to collect export-source diagnostics across tabular invocations."
+    )
+    assert "'[Tabular Generated Output] Evaluated source candidates'" in chat_route_content, (
+        "Expected route_backend_chats.py to log the tabular export candidate set before choosing an export source."
+    )
+    assert "'[Tabular Generated Output] Selected source candidate'" in chat_route_content, (
+        "Expected route_backend_chats.py to log the selected tabular export source candidate."
+    )
+    assert "'[Tabular Generated Output] Structured export batch attempt mismatch'" in chat_route_content, (
+        "Expected route_backend_chats.py to log structured-export batch parse mismatches with a response preview."
+    )
+    assert "'[Tabular Related Documents] Resolved row-linked document evidence'" in chat_route_content, (
+        "Expected route_backend_chats.py to log when row-linked related-document evidence is successfully resolved."
+    )
+    assert 'def _log_tabular_generated_output_handoff(' in chat_route_content, (
+        "Expected route_backend_chats.py to centralize logging for the summary-only generated-output handoff."
+    )
+    assert chat_route_content.count('_log_tabular_generated_output_handoff(') >= 7, (
+        "Expected each generated-output handoff path to emit an explicit summary-only diagnostic log."
+    )
+
+    print("Diagnostics hook checks passed")
+
+
+def test_generated_tabular_output_attachment_context_normalization() -> None:
+    print("Testing generated tabular output attachment-context normalization...")
+
+    current_version = read_current_version()
+    chat_route_content = read_text(CHAT_ROUTE_FILE)
+
+    assert current_version == EXPECTED_VERSION, (
+        f"Expected config.py version {EXPECTED_VERSION} for the generated output attachment-context fix."
+    )
+    assert 'def _build_tabular_generated_output_input_row(' in chat_route_content, (
+        "Expected route_backend_chats.py to normalize generated-output rows with canonical attachment context fields."
+    )
+    assert "normalized_row['attachment_text'] = attachment_text" in chat_route_content, (
+        "Expected generated-output row normalization to surface attachment_text when referenced document excerpts are available."
+    )
+    assert "normalized_row['attachment_present'] = True" in chat_route_content, (
+        "Expected generated-output row normalization to mark attachment presence when attachment evidence or names are present."
+    )
+    assert "Do not say attachment text is unavailable when such excerpts are present." in chat_route_content, (
+        "Expected the structured export batch prompt to forbid claiming attachment text is unavailable when referenced excerpts are present."
+    )
+    assert '_build_tabular_generated_output_input_row(' in chat_route_content.split('async def _generate_tabular_structured_output_entries', 1)[1], (
+        "Expected structured export generation to normalize batch rows before sending them to the model."
+    )
+
+    print("Attachment-context normalization checks passed")
+
+
 def test_generated_tabular_output_download_route() -> None:
     print("Testing generated tabular output download route...")
 
@@ -149,6 +215,8 @@ def test_generated_tabular_output_chat_ui_hooks() -> None:
 def run_tests() -> bool:
     tests = [
         test_generated_tabular_output_backend_plumbing,
+        test_generated_tabular_output_diagnostics_hooks,
+        test_generated_tabular_output_attachment_context_normalization,
         test_generated_tabular_output_download_route,
         test_generated_tabular_output_chat_ui_hooks,
     ]

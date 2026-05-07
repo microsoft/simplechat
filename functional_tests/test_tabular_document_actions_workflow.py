@@ -2,12 +2,12 @@
 # test_tabular_document_actions_workflow.py
 """
 Functional test for tabular document-action workflow support.
-Version: 0.241.126
-Implemented in: 0.241.126
+Version: 0.241.141
+Implemented in: 0.241.140
 
 This test ensures tabular document actions reuse the shared tabular analysis
 path for review and comparison workflows instead of relying only on the
-search-grounded chat path.
+search-grounded chat path, including row-linked related-document evidence.
 """
 
 from pathlib import Path
@@ -36,6 +36,12 @@ def test_shared_tabular_document_action_helper_exists() -> None:
     assert 'def _resolve_tabular_document_action_documents(' in workflow_runner_content, (
         "Expected functions_workflow_runner.py to resolve selected tabular documents before dispatching review or comparison."
     )
+    assert 'augment_tabular_invocations_with_related_document_evidence(' in workflow_runner_content, (
+        "Expected the shared helper to reuse row-linked related-document augmentation for tabular workflows."
+    )
+    assert 'maybe_create_tabular_generated_output(' in workflow_runner_content, (
+        "Expected the shared helper to reuse generated tabular export creation for workflow-backed tabular actions."
+    )
 
     print("Shared tabular document-action helper checks passed")
 
@@ -50,6 +56,12 @@ def test_review_and_compare_dispatch_use_tabular_helper() -> None:
     )
     assert "DOCUMENT_ACTION_TYPE_COMPARISON,\n                    workflow,\n                    comparison_config," in workflow_runner_content, (
         "Expected document comparison workflow execution to call the shared tabular document-action helper."
+    )
+    assert "related_document_evidence_summary=tabular_document.get('related_document_evidence_summary') or ''" in workflow_runner_content, (
+        "Expected tabular review prompts to carry resolved related-document evidence into synthesis."
+    )
+    assert "related_document_evidence_summary=left_document.get('related_document_evidence_summary') or ''" in workflow_runner_content, (
+        "Expected tabular comparison prompts to carry source-document related evidence into synthesis."
     )
     assert "'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or [])" in workflow_runner_content, (
         "Expected workflow execution results to expose generated tabular outputs when the shared helper is used."

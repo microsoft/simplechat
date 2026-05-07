@@ -1808,6 +1808,91 @@ class TabularProcessingPlugin:
 
         return normalized_columns or None
 
+    def _is_related_document_reference_column_name(self, column_name) -> bool:
+        """Return True when a column label likely stores attachment or file references."""
+        normalized_column_name = str(column_name or '').strip()
+        if not normalized_column_name:
+            return False
+
+        expanded_column_name = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', normalized_column_name)
+        normalized_label = self._normalize_entity_match_text(expanded_column_name)
+        if not normalized_label:
+            return False
+
+        column_tokens = set(normalized_label.split())
+        if column_tokens & {
+            'attachment',
+            'attachments',
+            'appendix',
+            'appendices',
+            'exhibit',
+            'exhibits',
+            'file',
+            'files',
+            'filename',
+            'filenames',
+            'filepath',
+            'filepaths',
+            'pdf',
+            'pdfs',
+        }:
+            return True
+
+        condensed_label = normalized_label.replace(' ', '')
+        return any(
+            keyword in condensed_label
+            for keyword in (
+                'attachedfile',
+                'attachedfiles',
+                'attachmentname',
+                'attachmentnames',
+                'documentfile',
+                'documentfiles',
+                'documentname',
+                'documentnames',
+                'referencefile',
+                'referencefiles',
+                'referencedocument',
+                'referencedocuments',
+                'supportingfile',
+                'supportingfiles',
+                'supportingdocument',
+                'supportingdocuments',
+            )
+        )
+
+    def _build_related_document_reference_values(self, row, excluded_columns=None, max_columns=6) -> dict:
+        """Preserve file/attachment columns even when the visible row payload is trimmed."""
+        excluded_column_names = {
+            str(column_name or '').strip().casefold()
+            for column_name in (excluded_columns or [])
+            if str(column_name or '').strip()
+        }
+
+        related_reference_values = {}
+        for column_name, cell_value in row.items():
+            normalized_column_name = str(column_name or '').strip()
+            if not normalized_column_name:
+                continue
+            if normalized_column_name.casefold() in excluded_column_names:
+                continue
+            if not self._is_related_document_reference_column_name(normalized_column_name):
+                continue
+            if isinstance(cell_value, (dict, list, tuple, set)):
+                continue
+            if cell_value is None or (not isinstance(cell_value, str) and pandas.isna(cell_value)):
+                continue
+
+            rendered_value = str(cell_value).strip()
+            if not rendered_value:
+                continue
+
+            related_reference_values[normalized_column_name] = cell_value
+            if len(related_reference_values) >= int(max_columns):
+                break
+
+        return related_reference_values
+
     def _search_dataframe_rows(
         self,
         df: pandas.DataFrame,
@@ -1870,6 +1955,12 @@ class TabularProcessingPlugin:
                     column_name: row.get(column_name)
                     for column_name in resolved_return_columns
                 }
+                related_document_reference_values = self._build_related_document_reference_values(
+                    row,
+                    excluded_columns=resolved_return_columns,
+                )
+                if related_document_reference_values:
+                    row_payload['_related_document_reference_values'] = related_document_reference_values
             else:
                 row_payload = {
                     str(key): value for key, value in row.to_dict().items()

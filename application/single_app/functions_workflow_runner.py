@@ -725,6 +725,7 @@ def _build_tabular_review_action_prompt(review_prompt, tabular_documents):
             build_tabular_computed_results_system_message(
                 tabular_document.get('document_name') or tabular_document.get('file_name') or 'the selected tabular document',
                 _truncate_tabular_document_action_analysis(tabular_document.get('analysis')),
+                related_document_evidence_summary=tabular_document.get('related_document_evidence_summary') or '',
             )
         )
 
@@ -749,6 +750,7 @@ def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, ri
         build_tabular_computed_results_system_message(
             f"source document {left_document.get('document_name') or left_document.get('file_name') or 'Source'}",
             _truncate_tabular_document_action_analysis(left_document.get('analysis')),
+            related_document_evidence_summary=left_document.get('related_document_evidence_summary') or '',
         )
     )
 
@@ -757,6 +759,7 @@ def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, ri
             build_tabular_computed_results_system_message(
                 f"target document {right_document.get('document_name') or right_document.get('file_name') or 'Target'}",
                 _truncate_tabular_document_action_analysis(right_document.get('analysis')),
+                related_document_evidence_summary=right_document.get('related_document_evidence_summary') or '',
             )
         )
 
@@ -809,7 +812,13 @@ def _maybe_execute_tabular_document_action(
         return None
 
     # Import lazily to avoid a circular dependency with route_backend_chats.
-    from route_backend_chats import get_new_plugin_invocations, run_tabular_analysis_with_thought_tracking
+    from route_backend_chats import (
+        augment_tabular_invocations_with_related_document_evidence,
+        build_tabular_related_document_evidence_summary,
+        get_new_plugin_invocations,
+        maybe_create_tabular_generated_output,
+        run_tabular_analysis_with_thought_tracking,
+    )
 
     plugin_logger = get_plugin_logger()
     baseline_invocation_count = 0
@@ -817,14 +826,22 @@ def _maybe_execute_tabular_document_action(
         baseline_invocation_count = len(
             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
         )
+    generated_tabular_outputs = []
+    task_prompt = str(workflow.get('task_prompt', '') or '').strip()
 
     try:
         for tabular_document in tabular_documents:
+            document_baseline_invocation_count = 0
+            if conversation_id:
+                document_baseline_invocation_count = len(
+                    plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                )
+
             tabular_analysis, _ = asyncio.run(
                 run_tabular_analysis_with_thought_tracking(
                     user_question=_build_tabular_analysis_request_prompt(
                         action_type,
-                        workflow.get('task_prompt', ''),
+                        task_prompt,
                         tabular_document,
                     ),
                     tabular_filenames={tabular_document.get('file_name')},
@@ -849,6 +866,40 @@ def _maybe_execute_tabular_document_action(
                     f"Tabular analysis returned no computed results for {tabular_document.get('document_name') or tabular_document.get('file_name') or tabular_document.get('document_id')}."
                 )
             tabular_document['analysis'] = str(tabular_analysis).strip()
+
+            if conversation_id:
+                invocations_after_document = plugin_logger.get_invocations_for_conversation(
+                    user_id,
+                    conversation_id,
+                    limit=1000,
+                )
+                document_tabular_invocations = get_new_plugin_invocations(
+                    invocations_after_document,
+                    document_baseline_invocation_count,
+                )
+
+                related_document_stats = augment_tabular_invocations_with_related_document_evidence(
+                    document_tabular_invocations,
+                    task_prompt,
+                    user_id,
+                    conversation_id=conversation_id,
+                )
+                if related_document_stats.get('augmented_row_count'):
+                    tabular_document['related_document_evidence_summary'] = build_tabular_related_document_evidence_summary(
+                        document_tabular_invocations,
+                    )
+
+                generated_tabular_output = asyncio.run(
+                    maybe_create_tabular_generated_output(
+                        user_question=task_prompt,
+                        invocations=document_tabular_invocations,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        conversation_id=conversation_id,
+                    )
+                )
+                if generated_tabular_output:
+                    generated_tabular_outputs.append(generated_tabular_output)
     except Exception as exc:
         log_event(
             f'[WorkflowDocumentAction] Tabular document-action helper skipped: {exc}',
@@ -897,7 +948,7 @@ def _maybe_execute_tabular_document_action(
         return {
             'result': review_result,
             'agent_citations': tabular_agent_citations,
-            'generated_tabular_outputs': [],
+            'generated_tabular_outputs': generated_tabular_outputs,
         }
 
     left_document = tabular_documents[0] if tabular_documents else {}
@@ -939,7 +990,7 @@ def _maybe_execute_tabular_document_action(
     return {
         'result': comparison_result,
         'agent_citations': tabular_agent_citations,
-        'generated_tabular_outputs': [],
+        'generated_tabular_outputs': generated_tabular_outputs,
     }
 
 
