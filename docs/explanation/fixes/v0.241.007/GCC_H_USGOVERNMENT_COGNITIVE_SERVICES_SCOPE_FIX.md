@@ -1,6 +1,7 @@
 # GCC-H US Government Cognitive Services Scope Fix
 
-Fixed/Implemented in version: **0.241.006**
+Fixed/Implemented in version: **0.241.007**
+**GitHub Issue:** #876 — Agent invocations fail with 401 in Azure Government (GCC-H) when using managed_identity auth
 
 ## Issue Description
 
