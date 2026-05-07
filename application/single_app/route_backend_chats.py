@@ -37,6 +37,7 @@ from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
+from functions_assistant_table_exports import build_assistant_table_csv_export
 from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
@@ -184,6 +185,87 @@ def _build_generated_analysis_metadata(
     return {
         'generated_analysis_artifacts': normalized_artifacts,
         'generated_tabular_outputs': normalized_tabular_outputs,
+    }
+
+
+def _has_generated_tabular_csv_output(generated_outputs):
+    for generated_output in generated_outputs or []:
+        if not isinstance(generated_output, dict):
+            continue
+
+        capability = str(generated_output.get('capability') or '').strip().lower()
+        output_format = str(generated_output.get('output_format') or '').strip().lower()
+        file_name = str(generated_output.get('file_name') or '').strip().lower()
+        if output_format == 'csv' or file_name.endswith('.csv'):
+            if not capability or capability == 'tabular':
+                return True
+
+    return False
+
+
+def maybe_create_assistant_table_generated_output(
+    user_question,
+    assistant_content,
+    conversation_id,
+    existing_outputs=None,
+):
+    """Save a CSV artifact when a table-request answer contains a parseable table."""
+    if _has_generated_tabular_csv_output(existing_outputs):
+        return None
+
+    export_payload = build_assistant_table_csv_export(user_question, assistant_content)
+    if not export_payload:
+        return None
+
+    generated_file_name = export_payload.get('file_name')
+    row_count = _safe_int(export_payload.get('row_count'))
+    try:
+        upload_result = upload_generated_analysis_artifact_for_current_user(
+            conversation_id=conversation_id,
+            file_name=generated_file_name,
+            file_content=export_payload.get('file_content'),
+            capability='tabular',
+            output_format='csv',
+            summary=export_payload.get('summary'),
+        )
+    except Exception as exc:
+        log_event(
+            '[Assistant Table Export] Failed to save assistant table CSV artifact',
+            {
+                'conversation_id': conversation_id,
+                'generated_file_name': generated_file_name,
+                'row_count': row_count,
+                'error': str(exc),
+            },
+            debug_only=True,
+        )
+        return None
+
+    artifact_message_id = upload_result.get('message', {}).get('id')
+    if not artifact_message_id:
+        return None
+
+    uploaded_file_name = upload_result.get('message', {}).get('file_name') or generated_file_name
+    log_event(
+        '[Assistant Table Export] Saved assistant table CSV artifact',
+        {
+            'conversation_id': conversation_id,
+            'artifact_message_id': artifact_message_id,
+            'generated_file_name': uploaded_file_name,
+            'row_count': row_count,
+        },
+        debug_only=True,
+    )
+    return {
+        'capability': 'tabular',
+        'artifact_message_id': artifact_message_id,
+        'conversation_id': conversation_id,
+        'storage_scope': 'chat',
+        'file_name': uploaded_file_name,
+        'output_format': 'csv',
+        'row_count': row_count,
+        'preview_rows': export_payload.get('preview_rows') or [],
+        'summary': export_payload.get('summary'),
     }
 
 
@@ -1180,11 +1262,101 @@ def get_tabular_analysis_function_names():
     return TabularProcessingPlugin.get_analysis_function_names()
 
 
+def get_tabular_attachment_search_function_names():
+    """Return document-search functions that help resolve attachment-backed rows."""
+    return [
+        'search_documents',
+        'retrieve_document_chunks',
+        'summarize_document',
+    ]
+
+
 def get_tabular_thought_excluded_parameter_names():
     """Return tabular parameter names hidden from thought details."""
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
     return TabularProcessingPlugin.get_thought_excluded_parameter_names()
+
+
+def question_requests_attachment_backed_row_follow_up(user_question):
+    """Return True when the user likely wants attachment-backed row substance."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return False
+
+    per_row_markers = (
+        'each row',
+        'every row',
+        'per row',
+        'each comment',
+        'every comment',
+        'per comment',
+        'each submission',
+        'every submission',
+        'summarize each',
+        'summarize the comment',
+        'one or two sentences per',
+        'include the comment id',
+        'put that into a table',
+        'put this into a table',
+        'put it into a table',
+    )
+    attachment_markers = (
+        'attachment',
+        'attached file',
+        'attached letter',
+        'see attached',
+        'file somewhere else',
+        'get the comment out of that file',
+        'use the file',
+        'pull them in',
+    )
+
+    return (
+        any(marker in normalized_question for marker in per_row_markers)
+        or any(marker in normalized_question for marker in attachment_markers)
+    )
+
+
+def tabular_invocations_include_attachment_candidates(invocations):
+    """Return True when successful tabular rows reference related files or attachments."""
+    for invocation in invocations or []:
+        if get_tabular_invocation_error_message(invocation):
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation)
+        if not isinstance(result_payload, dict):
+            continue
+
+        source_file_name = result_payload.get('filename')
+        for row_payload in result_payload.get('data') or []:
+            if not isinstance(row_payload, dict):
+                continue
+            attachment_names = _extract_tabular_generated_output_attachment_names(
+                row_payload,
+                source_file_name=source_file_name,
+            )
+            if attachment_names:
+                return True
+
+    return False
+
+
+def tabular_document_search_invocations_succeeded(invocations):
+    """Return True when attachment follow-up used document search successfully."""
+    allowed_function_names = set(get_tabular_attachment_search_function_names())
+    for invocation in invocations or []:
+        plugin_name = str(getattr(invocation, 'plugin_name', '') or '').strip()
+        function_name = str(getattr(invocation, 'function_name', '') or '').strip()
+        if plugin_name != 'DocumentSearchPlugin':
+            continue
+        if function_name not in allowed_function_names:
+            continue
+        if get_tabular_invocation_error_message(invocation):
+            continue
+        return True
+
+    return False
 
 
 def is_tabular_schema_summary_question(user_question):
@@ -2074,7 +2246,9 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
             "\n\nRelated document evidence resolved from explicit document references in the tabular rows:\n\n"
             f"{rendered_related_document_evidence}\n\n"
             "Treat these excerpts as tabular-adjacent source evidence because they were resolved from row-level document references in the source data. "
-            "Use them when they materially support the user's request, while preserving the originating row identity."
+            "Use them when they materially support the user's request, while preserving the originating row identity. "
+            "Do not say the attachment was not searched or that attachment text is unavailable when these row-linked excerpts are present. "
+            "If the visible row text is only a cover note such as 'see attached', prefer the referenced document excerpt when summarizing or classifying that row."
         )
 
     return (
@@ -2112,7 +2286,33 @@ def get_tabular_generated_output_format(user_question):
         'save csv',
         'make a csv',
         'create a csv',
+        'turn that into a table',
+        'turn these into a table',
+        'turn this into a table',
+        'turn it into a table',
+        'convert that to a table',
+        'convert these to a table',
+        'convert this to a table',
+        'convert it to a table',
+        'format that as a table',
+        'format these as a table',
+        'format this as a table',
+        'format it as a table',
+        'put that into a table',
+        'put these into a table',
+        'put that in a table',
+        'put these in a table',
+        'put this into a table',
+        'put it into a table',
+        'put this in a table',
+        'put it in a table',
+        'make that a table',
+        'make these a table',
+        'make this a table',
+        'make it a table',
         'make a table',
+        'table for me',
+        'in table format',
         'download table',
         'spreadsheet',
         'table file',
@@ -4902,7 +5102,33 @@ def question_requests_tabular_exhaustive_results(user_question):
         'save csv',
         'make a csv',
         'create a csv',
+        'turn that into a table',
+        'turn these into a table',
+        'turn this into a table',
+        'turn it into a table',
+        'convert that to a table',
+        'convert these to a table',
+        'convert this to a table',
+        'convert it to a table',
+        'format that as a table',
+        'format these as a table',
+        'format this as a table',
+        'format it as a table',
+        'put that into a table',
+        'put these into a table',
+        'put that in a table',
+        'put these in a table',
+        'put this into a table',
+        'put it into a table',
+        'put this in a table',
+        'put it in a table',
+        'make that a table',
+        'make these a table',
+        'make this a table',
+        'make it a table',
         'make a table',
+        'table for me',
+        'in table format',
         'download table',
         'spreadsheet',
         'table file',
@@ -6677,10 +6903,11 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    execution_mode='analysis',
                                    tabular_file_contexts=None,
                                    thought_callback=None):
-    """Run lightweight SK with TabularProcessingPlugin to analyze tabular data.
+    """Run lightweight SK with tabular analysis and attachment follow-up support.
 
-    Creates a temporary Kernel with only the TabularProcessingPlugin, uses the
-    same chat model as the user's session, and returns computed analysis results.
+    Creates a temporary Kernel with TabularProcessingPlugin plus document-search
+    helpers for attachment-backed rows, uses the same chat model as the user's
+    session, and returns computed analysis results.
     Returns None on failure for graceful degradation.
     """
     from semantic_kernel import Kernel as SKKernel
@@ -6688,6 +6915,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
     from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
+    from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
     from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
@@ -6712,10 +6940,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             level=logging.INFO,
         )
 
-        # 1. Create lightweight kernel with only tabular plugin
+        # 1. Create lightweight kernel with tabular and document-search plugins
         kernel = SKKernel()
         tabular_plugin = TabularProcessingPlugin()
+        document_search_plugin = DocumentSearchPlugin()
         kernel.add_plugin(tabular_plugin, plugin_name="tabular_processing")
+        kernel.add_plugin(document_search_plugin, plugin_name="document_search")
         if fact_memory_enabled:
             kernel.add_plugin(FactMemoryPlugin(), plugin_name="fact_memory")
 
@@ -6752,6 +6982,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         # 3. Pre-dispatch: load file schemas to eliminate discovery LLM rounds
         source_context = build_tabular_analysis_source_context(
+            analysis_file_contexts,
+            fallback_source_hint=source_hint,
+            fallback_group_id=group_id,
+            fallback_public_workspace_id=public_workspace_id,
+        )
+        attachment_search_scope_context = build_tabular_attachment_search_scope_context(
             analysis_file_contexts,
             fallback_source_hint=source_hint,
             fallback_group_id=group_id,
@@ -6895,12 +7131,16 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         schema_context = "\n".join(schema_parts)
         allow_multi_sheet_discovery = has_multi_sheet_workbook and not schema_summary_mode
         allowed_function_names = ['describe_tabular_file'] if schema_summary_mode else sorted(get_tabular_analysis_function_names())
+        attachment_search_function_names = [] if schema_summary_mode else get_tabular_attachment_search_function_names()
         if allow_multi_sheet_discovery:
             allowed_function_names = ['describe_tabular_file'] + allowed_function_names
         allowed_function_filters = {
             'included_functions': [
                 f"tabular_processing-{function_name}"
                 for function_name in allowed_function_names
+            ] + [
+                f"document_search-{function_name}"
+                for function_name in attachment_search_function_names
             ]
         }
 
@@ -6985,6 +7225,16 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "WORKBOOK DISCOVERY RESULTS:\n"
                     f"{rendered_discovery_feedback}\n"
                     "Use these discovery results to choose the next analytical tool calls. Discovery alone does not answer the question.\n\n"
+                )
+
+            attachment_follow_up_feedback = ""
+            if attachment_search_function_names:
+                attachment_follow_up_feedback = (
+                    "ATTACHMENT FOLLOW-UP:\n"
+                    "If returned rows reference attachments, PDFs, DOCX files, letters, or other external documents and the user's request needs the substance of those rows, use document_search functions to fetch the referenced document text before answering. "
+                    "Search by the exact file name or basename from the row, then use retrieve_document_chunks or summarize_document on the matched document_id. "
+                    "Do not stop at cover-note text like 'see attached' when attachment retrieval is available.\n"
+                    f"{attachment_search_scope_context}\n\n"
                 )
 
             missing_sheet_feedback = ""
@@ -7168,6 +7418,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 f"{tool_error_feedback}"
                 f"{execution_gap_feedback}"
                 f"{discovery_feedback}"
+                f"{attachment_follow_up_feedback}"
                 f"{recovery_sheet_feedback}"
                 f"{sheet_hint_feedback}"
                 f"{related_sheet_feedback}"
@@ -7176,7 +7427,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 f"{missing_sheet_feedback}"
                 f"FILE SCHEMAS:\n"
                 f"{schema_context}\n\n"
-                f"AVAILABLE FUNCTIONS: {', '.join(allowed_function_names)} for year/quarter/month/week/day/hour trend analysis.\n\n"
+                f"AVAILABLE FUNCTIONS: {', '.join(allowed_function_names)} for year/quarter/month/week/day/hour trend analysis"
+                + (
+                    "; document_search search_documents, retrieve_document_chunks, summarize_document for attachment-backed rows.\n\n"
+                    if attachment_search_function_names else
+                    ".\n\n"
+                )
                 + (
                     "Workbook discovery is available through describe_tabular_file. Discovery-only results do NOT complete the analysis. After exploration, continue with analytical functions before answering.\n\n"
                     if allow_multi_sheet_discovery else
@@ -7209,8 +7465,10 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "23. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
                 "24. Return only computed findings and name the strongest drivers clearly.\n"
                 "25. If a successful tool result reports returned_rows == total_matches or returned_values == distinct_count, treat that as the full matching result set. Do not claim that only sample rows or workbook metadata are available in that case.\n"
-                "26. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
-                "27. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
+                "26. If returned rows include attachment or file references and the user's task depends on the substantive content of those rows, use document_search to retrieve the referenced document text before answering. Search by exact file name or basename first, then retrieve chunks or summarize the matched document.\n"
+                "27. Do not claim that attachment text is unavailable when you have already retrieved row-linked document text through document_search or through related-document excerpts in the prompt context.\n"
+                "28. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
+                "29. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -7301,6 +7559,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             new_invocation_count = len(new_invocations)
             discovery_invocations, analytical_invocations, _ = split_tabular_plugin_invocations(new_invocations)
             successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(new_invocations)
+            successful_document_search = tabular_document_search_invocations_succeeded(new_invocations)
             successful_schema_summary_invocations = []
             failed_schema_summary_invocations = []
             for invocation in discovery_invocations:
@@ -7418,6 +7677,16 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                 )
 
                         execution_gap_messages.extend(retry_gap_messages)
+
+                        if (
+                            attachment_search_function_names
+                            and question_requests_attachment_backed_row_follow_up(user_question)
+                            and tabular_invocations_include_attachment_candidates(successful_analytical_invocations)
+                            and not successful_document_search
+                        ):
+                            execution_gap_messages.append(
+                                'Previous attempt returned rows that reference attachments or external files but did not retrieve the referenced document text. Use document_search to resolve the referenced file names and incorporate that evidence before answering.'
+                            )
 
                         if execution_gap_messages and attempt_number < 3:
                             previous_execution_gap_messages = execution_gap_messages
@@ -7955,6 +8224,39 @@ def build_tabular_analysis_source_context(tabular_file_contexts=None, fallback_s
     if fallback_source_hint == 'public' and fallback_public_workspace_id:
         fallback_parts.append(f"public_workspace_id='{fallback_public_workspace_id}'")
     return f"Use {', '.join(fallback_parts)} on tabular_processing tool calls."
+
+
+def build_tabular_attachment_search_scope_context(tabular_file_contexts=None, fallback_source_hint='workspace',
+                                                  fallback_group_id=None, fallback_public_workspace_id=None):
+    """Build prompt instructions for document-search scope arguments tied to tabular files."""
+    normalized_contexts = normalize_tabular_file_contexts_for_analysis(
+        tabular_file_contexts=tabular_file_contexts,
+        fallback_source_hint=fallback_source_hint,
+        fallback_group_id=fallback_group_id,
+        fallback_public_workspace_id=fallback_public_workspace_id,
+    )
+
+    lines = [
+        'Use the following document_search scope arguments when retrieving attachment-backed row evidence:',
+    ]
+    for file_context in normalized_contexts:
+        scope_parts = []
+        source_hint = file_context.get('source_hint', 'workspace')
+        if source_hint == 'group':
+            scope_parts.append("doc_scope='group'")
+            if file_context.get('group_id'):
+                scope_parts.append(f"active_group_ids='{file_context['group_id']}'")
+        elif source_hint == 'public':
+            scope_parts.append("doc_scope='public'")
+            if file_context.get('public_workspace_id'):
+                scope_parts.append(
+                    f"active_public_workspace_id='{file_context['public_workspace_id']}'"
+                )
+        else:
+            scope_parts.append("doc_scope='personal'")
+        lines.append(f"- {file_context['file_name']}: {', '.join(scope_parts)}")
+
+    return '\n'.join(lines)
 
 
 def determine_tabular_source_hint(document_scope, active_group_id=None, active_public_workspace_id=None):
@@ -9548,9 +9850,20 @@ def register_route_backend_chats(app):
             created_timestamp=assistant_timestamp,
             user_info=response_message_context.get('user_info'),
         )
+        document_generated_analysis_artifacts = list(execution_result.get('generated_analysis_artifacts') or [])
+        document_generated_tabular_outputs = list(execution_result.get('generated_tabular_outputs') or [])
+        assistant_table_generated_output = maybe_create_assistant_table_generated_output(
+            user_question=user_message,
+            assistant_content=execution_result.get('reply', ''),
+            conversation_id=conversation_id,
+            existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
+        )
+        if assistant_table_generated_output:
+            document_generated_analysis_artifacts.append(assistant_table_generated_output)
+            document_generated_tabular_outputs.append(assistant_table_generated_output)
         generated_analysis_metadata = _build_generated_analysis_metadata(
-            generated_analysis_artifacts=execution_result.get('generated_analysis_artifacts'),
-            generated_tabular_outputs=execution_result.get('generated_tabular_outputs'),
+            generated_analysis_artifacts=document_generated_analysis_artifacts,
+            generated_tabular_outputs=document_generated_tabular_outputs,
         )
 
         assistant_doc = make_json_serializable({
@@ -12621,6 +12934,15 @@ def register_route_backend_chats(app):
                 created_timestamp=assistant_timestamp,
                 user_info=user_info_for_assistant,
             )
+            assistant_table_generated_output = maybe_create_assistant_table_generated_output(
+                user_question=user_message,
+                assistant_content=ai_message,
+                conversation_id=conversation_id,
+                existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+            )
+            if assistant_table_generated_output:
+                generated_analysis_artifacts_list.append(assistant_table_generated_output)
+                generated_tabular_outputs_list.append(assistant_table_generated_output)
             generated_analysis_metadata = _build_generated_analysis_metadata(
                 generated_analysis_artifacts=generated_analysis_artifacts_list,
                 generated_tabular_outputs=generated_tabular_outputs_list,
@@ -14965,6 +15287,15 @@ def register_route_backend_chats(app):
                         created_timestamp=assistant_timestamp,
                         user_info=user_info_for_assistant,
                     )
+                    assistant_table_generated_output = maybe_create_assistant_table_generated_output(
+                        user_question=user_message,
+                        assistant_content=accumulated_content,
+                        conversation_id=conversation_id,
+                        existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                    )
+                    if assistant_table_generated_output:
+                        generated_analysis_artifacts_list.append(assistant_table_generated_output)
+                        generated_tabular_outputs_list.append(assistant_table_generated_output)
                     generated_analysis_metadata = _build_generated_analysis_metadata(
                         generated_analysis_artifacts=generated_analysis_artifacts_list,
                         generated_tabular_outputs=generated_tabular_outputs_list,

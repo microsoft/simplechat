@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.142)**
+
+#### Bug Fixes
+
+*   **Authenticated Request Login Activity Tracking**
+    *   Fixed login analytics so passive authenticated browser visits now contribute to login activity even when the user does not explicitly trigger the OAuth callback during that session.
+    *   Added throttled authenticated-request tracking to avoid inflating counts on every page load, while still preserving the explicit `azure_ad` login signal and avoiding an immediate duplicate on the post-login redirect.
+    *   This improves Control Center and profile login visibility for seamless SSO and session-reuse scenarios without changing the user-facing login flow.
+    *   (Ref: authenticated request login activity, `functions_activity_logging.py`, `app.py`, `route_frontend_authentication.py`, `test_authenticated_request_login_activity.py`, `AUTHENTICATED_REQUEST_LOGIN_ACTIVITY_FIX.md`)
+
 ### **(v0.241.137)**
 
 #### New Features

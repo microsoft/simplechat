@@ -2,8 +2,8 @@
 # test_tabular_generated_output_exports.py
 """
 Functional test for generated tabular output exports and diagnostics.
-Version: 0.241.141
-Implemented in: 0.241.141
+Version: 0.241.144
+Implemented in: 0.241.144
 
 This test ensures large tabular structured-output requests now persist both
 generic analysis artifact metadata and tabular compatibility metadata, expose
@@ -23,7 +23,7 @@ SIMPLECHAT_OPERATIONS_FILE = ROOT / "application" / "single_app" / "functions_si
 FUNCTIONS_SETTINGS_FILE = ROOT / "application" / "single_app" / "functions_settings.py"
 SEARCH_SERVICE_FILE = ROOT / "application" / "single_app" / "functions_search_service.py"
 CHAT_MESSAGES_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-messages.js"
-EXPECTED_VERSION = "0.241.141"
+EXPECTED_VERSION = "0.241.144"
 
 
 def read_text(path: Path) -> str:
@@ -212,6 +212,24 @@ def test_generated_tabular_output_chat_ui_hooks() -> None:
     print("Chat UI hook checks passed")
 
 
+def test_table_request_marker_variants_cover_natural_phrasing() -> None:
+    print("Testing table request marker variants for natural phrasing...")
+
+    chat_route_content = read_text(CHAT_ROUTE_FILE)
+
+    assert "'put that into a table'" in chat_route_content, (
+        "Expected route_backend_chats.py to recognize 'put that into a table' as a table-export request."
+    )
+    assert "'turn that into a table'" in chat_route_content, (
+        "Expected route_backend_chats.py to recognize 'turn that into a table' as a table-export request."
+    )
+    assert "'put this into a table'" in chat_route_content, (
+        "Expected route_backend_chats.py to recognize 'put this into a table' as a table-export request."
+    )
+
+    print("Table marker variant checks passed")
+
+
 def run_tests() -> bool:
     tests = [
         test_generated_tabular_output_backend_plumbing,
@@ -219,6 +237,7 @@ def run_tests() -> bool:
         test_generated_tabular_output_attachment_context_normalization,
         test_generated_tabular_output_download_route,
         test_generated_tabular_output_chat_ui_hooks,
+        test_table_request_marker_variants_cover_natural_phrasing,
     ]
     results = []
 
