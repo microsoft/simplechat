@@ -26,6 +26,10 @@ body.sidebar-nav-enabled #sidebar-nav {
   display: flex !important;
 }
 
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav {
+  display: flex !important;
+}
+
 /* Hide top navbar when sidebar is enabled */
 body.sidebar-nav-enabled nav.navbar {
   display: none !important;
@@ -58,14 +62,95 @@ body.has-classification-banner #sidebar-nav {
 
 /* Chats top-nav layout: align the fixed sidebar just below the navbar */
 nav.navbar.fixed-top + #sidebar-nav {
-  top: 66px !important;
-  height: calc(100vh - 66px);
+  top: var(--top-nav-height) !important;
+  height: calc(100vh - var(--top-nav-height));
 }
 
 /* Account for classification banner when present */
 body.has-classification-banner nav.navbar + #sidebar-nav {
-  top: 98px !important;
-  height: calc(100vh - 98px);
+  top: calc(var(--top-nav-height) + var(--classification-banner-height)) !important;
+  height: calc(100vh - var(--top-nav-height) - var(--classification-banner-height));
+}
+
+body.chat-top-nav-shell {
+  --chat-sidebar-top: var(--top-nav-height);
+}
+
+body.chat-top-nav-shell.has-classification-banner {
+  --chat-sidebar-top: calc(var(--top-nav-height) + var(--classification-banner-height));
+}
+
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav {
+  width: var(--sidebar-width, 260px);
+  min-width: var(--sidebar-min-width, 220px);
+}
+
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav #sidebar-user-account {
+  min-width: 0;
+  width: 100%;
+}
+
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav.show {
+  transform: none !important;
+}
+
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .offcanvas-header {
+  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .chat-sidebar-mobile-header {
+  display: none;
+}
+
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .chat-sidebar-user-account {
+  background-color: inherit;
+}
+
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .chat-sidebar-mobile-sections {
+  background-color: inherit;
+}
+
+body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .chat-sidebar-mobile-section + .chat-sidebar-mobile-section {
+  margin-top: 1rem;
+}
+
+@media (min-width: 992px) {
+  body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav {
+    height: calc(100vh - var(--chat-sidebar-top));
+    left: 0;
+    max-width: none;
+    position: fixed;
+    top: var(--chat-sidebar-top);
+    z-index: 1040;
+  }
+
+  body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .offcanvas-header {
+    display: none;
+  }
+}
+
+@media (max-width: 991.98px) {
+  body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav {
+    height: calc(100vh - var(--chat-sidebar-top));
+    max-width: min(88vw, 22rem);
+    top: var(--chat-sidebar-top);
+    z-index: 1045;
+  }
+
+  body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .chat-sidebar-mobile-header {
+    display: flex;
+  }
+
+  body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .sidebar-short-header,
+  body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav #sidebar-resize-handle {
+    display: none;
+  }
+
+  body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav #sidebar-user-account {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    position: static;
+  }
 }
 
 /* Floating expand button positioning when classification banner is present */

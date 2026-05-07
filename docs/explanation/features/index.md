@@ -14,3 +14,4 @@ category: Version History
 ## Admin Experience Features
 
 - [AI Voice Conversations Setup Guide](AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
+- [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)

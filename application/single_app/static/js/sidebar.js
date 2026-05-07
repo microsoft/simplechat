@@ -1,3 +1,5 @@
+// sidebar.js
+
 // Sidebar Navigation Functionality
 
 /**
@@ -69,9 +71,9 @@ function getSidebarElements() {
 }
 
 function syncSidebarControls(isExpanded, toggleButton, floatingButton) {
-  if (toggleButton) {
-    toggleButton.setAttribute('aria-expanded', String(isExpanded));
-  }
+  document.querySelectorAll('[data-sidebar-toggle="toggle"]').forEach((control) => {
+    control.setAttribute('aria-expanded', String(isExpanded));
+  });
 
   if (floatingButton) {
     floatingButton.classList.toggle('d-none', isExpanded);
@@ -144,6 +146,35 @@ function initializeSidebarToggleButtons() {
   setSidebarExpandedState(isExpanded);
 }
 
+function initializeChatSidebarDrawer() {
+  const sidebar = document.querySelector('#sidebar-nav[data-navigation-drawer="chat-rail"]');
+  if (!sidebar || typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) {
+    return;
+  }
+
+  if (sidebar.dataset.chatSidebarDrawerBound === 'true') {
+    return;
+  }
+
+  sidebar.dataset.chatSidebarDrawerBound = 'true';
+
+  sidebar.addEventListener('click', (event) => {
+    if (window.innerWidth > 991) {
+      return;
+    }
+
+    const dismissTrigger = event.target.closest('a[href], #sidebar-new-chat-btn, .sidebar-conversation-item');
+    if (!dismissTrigger || dismissTrigger.matches('a[href^="#"]')) {
+      return;
+    }
+
+    const offcanvasInstance = bootstrap.Offcanvas.getInstance(sidebar);
+    if (offcanvasInstance) {
+      offcanvasInstance.hide();
+    }
+  });
+}
+
 if (typeof window !== 'undefined') {
   window.toggleSidebar = toggleSidebar;
 }
@@ -195,6 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   initializeSidebarToggleButtons();
+  initializeChatSidebarDrawer();
 });
 
 // Export functions for use in other modules if needed

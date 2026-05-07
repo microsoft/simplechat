@@ -1,5 +1,6 @@
-<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top top-nav-bar">
-    <div class="container-fluid top-nav-shell">
+{% set is_chat_page = request.endpoint == 'chats' %}
+<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top top-nav-bar{% if is_chat_page %} top-nav-bar-chat{% endif %}">
+    <div class="container-fluid top-nav-shell{% if is_chat_page %} top-nav-shell-chat{% endif %}">
         <div class="top-nav-brand">
             {% if app_settings.show_logo %}
                 <a class="navbar-brand d-flex align-items-center top-nav-brand-link" href="{{ url_for('index') }}">
@@ -31,7 +32,7 @@
             {% endif %}
         </div>
 
-        <div class="navbar-nav me-auto d-none d-lg-flex top-nav-primary-nav">
+        <div class="navbar-nav me-auto d-none d-lg-flex top-nav-primary-nav{% if is_chat_page %} top-nav-chat-nav{% endif %}">
             {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
                 {% if app_settings.enable_user_workspace %}
                     <div class="nav-item">
@@ -107,79 +108,15 @@
         </div>
 
         <div class="top-nav-actions">
+            {% if is_chat_page %}
+            <button class="btn btn-outline-secondary d-lg-none top-nav-mobile-toggle" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebar-nav" aria-label="Open chat navigation">
+                <i class="bi bi-list"></i>
+            </button>
+            {% else %}
             <button class="btn btn-outline-secondary d-lg-none top-nav-mobile-toggle" type="button" data-bs-toggle="offcanvas" data-bs-target="#topNavMobileMenu" aria-controls="topNavMobileMenu" aria-label="Open navigation">
                 <i class="bi bi-list"></i>
             </button>
-
-            <div class="offcanvas offcanvas-start top-nav-mobile-drawer" tabindex="-1" id="topNavMobileMenu" aria-labelledby="topNavMobileMenuLabel">
-                <div class="offcanvas-header">
-                    <h5 class="offcanvas-title" id="topNavMobileMenuLabel">Navigation</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-                </div>
-                <div class="offcanvas-body">
-                    {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
-                        <div class="top-nav-mobile-section-label">Workspace</div>
-                        <div class="list-group list-group-flush top-nav-mobile-list">
-                            {% if app_settings.enable_user_workspace %}
-                                <a class="list-group-item list-group-item-action" href="{{ url_for('workspace') }}">
-                                    <i class="bi bi-person-workspace me-2"></i>Personal
-                                </a>
-                            {% endif %}
-                            {% if app_settings.enable_group_workspaces %}
-                                <a class="list-group-item list-group-item-action" href="{{ url_for('group_workspaces') }}">
-                                    <i class="bi bi-people me-2"></i>Groups
-                                </a>
-                            {% endif %}
-                            {% if app_settings.enable_public_workspaces %}
-                                <a class="list-group-item list-group-item-action" href="{{ url_for('public_directory') }}">
-                                    <i class="bi bi-globe-americas me-2"></i>Public
-                                </a>
-                            {% endif %}
-                            <a class="list-group-item list-group-item-action" href="{{ url_for('chats') }}">
-                                <i class="bi bi-chat-dots me-2"></i>Chat
-                            </a>
-                        </div>
-
-                        {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
-                        {% if support_menu_role_allowed and app_settings.enable_support_menu %}
-                            {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
-                            {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
-                            {% if show_support_latest_features or show_support_send_feedback %}
-                                <div class="top-nav-mobile-section-label">{{ app_settings.support_menu_name or 'Support' }}</div>
-                                <div class="list-group list-group-flush top-nav-mobile-list">
-                                    {% if show_support_latest_features %}
-                                        <a class="list-group-item list-group-item-action" href="{{ url_for('support_latest_features') }}">
-                                            <i class="bi bi-stars me-2"></i>Latest Features
-                                        </a>
-                                    {% endif %}
-                                    {% if show_support_send_feedback %}
-                                        <a class="list-group-item list-group-item-action" href="{{ url_for('support_send_feedback') }}">
-                                            <i class="bi bi-chat-left-text me-2"></i>Send Feedback
-                                        </a>
-                                    {% endif %}
-                                </div>
-                            {% endif %}
-                        {% endif %}
-
-                        {% if app_settings.enable_external_links and app_settings.external_links %}
-                            <div class="top-nav-mobile-section-label">{{ app_settings.external_links_menu_name or 'External Links' }}</div>
-                            <div class="list-group list-group-flush top-nav-mobile-list">
-                                {% for link in app_settings.external_links %}
-                                    <a class="list-group-item list-group-item-action" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
-                                        <i class="bi bi-box-arrow-up-right me-2"></i>{{ link.label }}
-                                    </a>
-                                {% endfor %}
-                            </div>
-                        {% endif %}
-                    {% else %}
-                        <div class="list-group list-group-flush top-nav-mobile-list">
-                            <a class="list-group-item list-group-item-action" href="{{ url_for('login') }}">
-                                <i class="bi bi-box-arrow-in-right me-2"></i>Login
-                            </a>
-                        </div>
-                    {% endif %}
-                </div>
-            </div>
+            {% endif %}
 
             <div class="navbar-nav top-nav-user-nav">
                 {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
@@ -280,3 +217,74 @@
         </div>
     </div>
 </nav>
+{% if not is_chat_page %}
+<div class="offcanvas offcanvas-start top-nav-mobile-drawer" tabindex="-1" id="topNavMobileMenu" aria-labelledby="topNavMobileMenuLabel" data-navigation-drawer="top-nav">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title" id="topNavMobileMenuLabel">Navigation</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+        {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+            <div class="top-nav-mobile-section-label">Workspace</div>
+            <div class="list-group list-group-flush top-nav-mobile-list">
+                {% if app_settings.enable_user_workspace %}
+                    <a class="list-group-item list-group-item-action" href="{{ url_for('workspace') }}">
+                        <i class="bi bi-person-workspace me-2"></i>Personal
+                    </a>
+                {% endif %}
+                {% if app_settings.enable_group_workspaces %}
+                    <a class="list-group-item list-group-item-action" href="{{ url_for('group_workspaces') }}">
+                        <i class="bi bi-people me-2"></i>Groups
+                    </a>
+                {% endif %}
+                {% if app_settings.enable_public_workspaces %}
+                    <a class="list-group-item list-group-item-action" href="{{ url_for('public_directory') }}">
+                        <i class="bi bi-globe-americas me-2"></i>Public
+                    </a>
+                {% endif %}
+                <a class="list-group-item list-group-item-action" href="{{ url_for('chats') }}">
+                    <i class="bi bi-chat-dots me-2"></i>Chat
+                </a>
+            </div>
+
+            {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
+            {% if support_menu_role_allowed and app_settings.enable_support_menu %}
+                {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+                {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
+                {% if show_support_latest_features or show_support_send_feedback %}
+                    <div class="top-nav-mobile-section-label">{{ app_settings.support_menu_name or 'Support' }}</div>
+                    <div class="list-group list-group-flush top-nav-mobile-list">
+                        {% if show_support_latest_features %}
+                            <a class="list-group-item list-group-item-action" href="{{ url_for('support_latest_features') }}">
+                                <i class="bi bi-stars me-2"></i>Latest Features
+                            </a>
+                        {% endif %}
+                        {% if show_support_send_feedback %}
+                            <a class="list-group-item list-group-item-action" href="{{ url_for('support_send_feedback') }}">
+                                <i class="bi bi-chat-left-text me-2"></i>Send Feedback
+                            </a>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            {% endif %}
+
+            {% if app_settings.enable_external_links and app_settings.external_links %}
+                <div class="top-nav-mobile-section-label">{{ app_settings.external_links_menu_name or 'External Links' }}</div>
+                <div class="list-group list-group-flush top-nav-mobile-list">
+                    {% for link in app_settings.external_links %}
+                        <a class="list-group-item list-group-item-action" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                            <i class="bi bi-box-arrow-up-right me-2"></i>{{ link.label }}
+                        </a>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% else %}
+            <div class="list-group list-group-flush top-nav-mobile-list">
+                <a class="list-group-item list-group-item-action" href="{{ url_for('login') }}">
+                    <i class="bi bi-box-arrow-in-right me-2"></i>Login
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}

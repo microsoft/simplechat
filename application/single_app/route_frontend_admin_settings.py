@@ -713,7 +713,7 @@ def register_route_frontend_admin_settings(app):
                     level=logging.INFO,
                 )
                 log_general_admin_action(
-                    admin_user_id=admin_user,
+                    admin_user_id=user_id,
                     admin_email=admin_email,
                     action='Enabled and migrated multi-model endpoints',
                     description=f'Migrated {len(migrated_models)} models to multi-endpoint configuration.'

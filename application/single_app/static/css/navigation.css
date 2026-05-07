@@ -1,7 +1,7 @@
 /* Top Navigation Styles */
 
 :root {
-  --top-nav-height: 56px;
+  --top-nav-height: 66px;
   --classification-banner-height: 40px;
 }
 
@@ -16,6 +16,7 @@ body {
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   box-shadow: 0 0.35rem 1.25rem rgba(15, 23, 42, 0.08);
+  z-index: 1046;
 }
 
 .top-nav-shell {
@@ -58,6 +59,15 @@ body {
   white-space: nowrap;
 }
 
+.top-nav-chat-nav {
+  flex: 1 1 auto;
+}
+
+.top-nav-chat-nav .nav-link {
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
 .top-nav-actions {
   align-items: center;
   display: flex;
@@ -79,6 +89,18 @@ body {
 
 .top-nav-mobile-drawer {
   max-width: min(88vw, 22rem);
+}
+
+@media (max-width: 991.98px) {
+  .top-nav-mobile-drawer.offcanvas-start {
+    height: calc(100vh - var(--top-nav-height));
+    top: var(--top-nav-height);
+  }
+
+  body.has-classification-banner .top-nav-mobile-drawer.offcanvas-start {
+    height: calc(100vh - var(--top-nav-height) - var(--classification-banner-height));
+    top: calc(var(--top-nav-height) + var(--classification-banner-height));
+  }
 }
 
 .top-nav-mobile-drawer .offcanvas-header {
