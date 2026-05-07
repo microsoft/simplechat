@@ -603,6 +603,23 @@ def _is_idle_timeout_exempt(path):
         return True
     return any(path.startswith(prefix) for prefix in IDLE_TIMEOUT_EXEMPT_PREFIXES)
 
+
+def maybe_log_authenticated_browser_request():
+    """Record throttled login activity for authenticated browser page requests."""
+    if request.method != 'GET' or request.path.startswith('/api/'):
+        return
+
+    user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
+    if not user_id:
+        return
+
+    maybe_log_authenticated_request_login(
+        user_id=user_id,
+        session_state=session,
+        request_path=request.path,
+        request_method=request.method
+    )
+
 @app.before_request
 def enforce_idle_session_timeout():
     """
@@ -646,6 +663,7 @@ def enforce_idle_session_timeout():
         if should_refresh_last_activity:
             session['last_activity_epoch'] = now_epoch
             session.modified = True
+        maybe_log_authenticated_browser_request()
         return None
 
     idle_timeout_minutes, _ = get_idle_timeout_settings(request_settings)
@@ -698,6 +716,7 @@ def enforce_idle_session_timeout():
 
     session['last_activity_epoch'] = now_epoch
     session.modified = True
+    maybe_log_authenticated_browser_request()
     return None
 
 @app.after_request

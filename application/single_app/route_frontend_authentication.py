@@ -2,6 +2,7 @@
 
 from unittest import result
 from config import *
+from functions_activity_logging import log_user_login, record_user_login_session_activity
 from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, get_requested_oauth_scopes
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
@@ -133,10 +134,10 @@ def register_route_frontend_authentication(app):
         
         # Log the login activity
         try:
-            from functions_activity_logging import log_user_login
             user_id = session['user'].get('oid') or session['user'].get('sub')
             if user_id:
                 log_user_login(user_id, 'azure_ad')
+                record_user_login_session_activity(session)
         except Exception as e:
             debug_print(f"Could not log login activity: {e}")
         
