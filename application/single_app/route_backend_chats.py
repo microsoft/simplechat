@@ -1179,8 +1179,12 @@ def build_search_augmentation_system_prompt(retrieved_content):
 def build_tabular_computed_results_system_message(source_label, tabular_analysis):
     """Build the outer-model handoff message for successful tabular analysis."""
     rendered_analysis = str(tabular_analysis or '').strip()
-    max_handoff_chars = 24000
+    max_handoff_chars = 100000
     if len(rendered_analysis) > max_handoff_chars:
+        log_event(
+            f"[Tabular SK Analysis] Handoff truncated: analysis length {len(rendered_analysis)} chars exceeds max_handoff_chars {max_handoff_chars}",
+            level=logging.WARNING,
+        )
         rendered_analysis = (
             rendered_analysis[:max_handoff_chars]
             + "\n[Computed results handoff truncated for prompt budget.]"
