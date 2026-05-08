@@ -2179,116 +2179,6 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=5):
     return compact_payload
 
 
-def build_tabular_direct_csv_from_invocations(invocations, max_chars=20000):
-    """Format invocation data rows directly as a CSV when LLM synthesis fails.
-
-    Used when the synthesis step hits a token rate limit and we have a complete
-    result set from a row-fetch function. Bypasses the need for gpt to re-process
-    the raw data, staying well within token budgets for the final streaming call.
-    """
-    successful_invocations = [
-        invocation for invocation in (invocations or [])
-        if not get_tabular_invocation_error_message(invocation)
-    ]
-    if not successful_invocations:
-        return None
-
-    best_invocation = None
-    best_row_count = 0
-
-    for invocation in successful_invocations:
-        function_name = getattr(invocation, 'function_name', '')
-        if function_name not in {'query_tabular_data', 'filter_rows', 'search_rows'}:
-            continue
-
-        result_payload = get_tabular_invocation_result_payload(invocation)
-        if not result_payload:
-            continue
-
-        data_rows = get_tabular_invocation_data_rows(invocation)
-        if not data_rows:
-            continue
-
-        row_count = len(data_rows)
-        if row_count > best_row_count:
-            best_row_count = row_count
-            best_invocation = invocation
-
-    if not best_invocation or best_row_count == 0:
-        return None
-
-    data_rows = get_tabular_invocation_data_rows(best_invocation)
-    result_payload = get_tabular_invocation_result_payload(best_invocation)
-
-    filename = str(result_payload.get('filename') or '').strip()
-    selected_sheet = str(result_payload.get('selected_sheet') or '').strip()
-    total_matches = result_payload.get('total_matches')
-    returned_rows = result_payload.get('returned_rows')
-
-    try:
-        total_matches_int = int(total_matches)
-    except (TypeError, ValueError):
-        total_matches_int = len(data_rows)
-
-    first_row = data_rows[0] if data_rows else None
-    if not isinstance(first_row, dict):
-        return None
-
-    columns = list(first_row.keys())
-
-    header_line = ','.join(
-        f'"{col}"' if ',' in str(col) else str(col)
-        for col in columns
-    )
-    csv_lines = [header_line]
-    chars_used = len(header_line)
-    is_truncated = False
-
-    for row in data_rows:
-        if not isinstance(row, dict):
-            continue
-        row_values = []
-        for col in columns:
-            cell = str(row.get(col, '') or '')
-            cell = cell.replace('"', '""')
-            row_values.append(f'"{cell}"' if (',' in cell or '\n' in cell or '"' in cell) else cell)
-        row_line = ','.join(row_values)
-        if chars_used + len(row_line) + 1 > max_chars:
-            is_truncated = True
-            break
-        csv_lines.append(row_line)
-        chars_used += len(row_line) + 1
-
-    actual_row_count = len(csv_lines) - 1
-
-    source_parts = [f"Source: {filename}"] if filename else []
-    if selected_sheet:
-        source_parts.append(f"Sheet: {selected_sheet}")
-
-    header_parts = ["The following computed results come directly from a successful tabular tool execution."]
-    if source_parts:
-        header_parts.append(" | ".join(source_parts))
-
-    row_count_line = f"Rows: {actual_row_count}"
-    if is_truncated:
-        row_count_line += f" shown of {total_matches_int} total (truncated for prompt budget)"
-    elif total_matches_int != actual_row_count:
-        row_count_line += f" (of {total_matches_int} total matches)"
-
-    header_parts.append(row_count_line)
-    header_parts.append("")
-    header_parts.append("COMPUTED CSV DATA:")
-    header_parts.append("\n".join(csv_lines))
-
-    if is_truncated:
-        header_parts.append(
-            f"\n[Result truncated: {actual_row_count} rows shown of {total_matches_int} total. "
-            "Request a subset or filter the data to retrieve more specific results.]"
-        )
-
-    return "\n".join(header_parts)
-
-
 def build_tabular_analysis_fallback_from_invocations(invocations):
     """Build a compact computed-results handoff from successful tool calls.
 
@@ -2826,7 +2716,6 @@ def question_requests_tabular_exhaustive_results(user_question):
         'all values',
         'all of them',
         'complete list',
-        'csv table',
         'each one',
         'every one',
         'exhaustive',
@@ -2836,17 +2725,11 @@ def question_requests_tabular_exhaustive_results(user_question):
         'list every',
         'list them all',
         'list them out',
-        'of all',
         'return all',
         'show all',
         'show me all',
-        'table of all',
-        'table of every',
     )
     if any(phrase in normalized_question for phrase in explicit_phrases):
-        return True
-
-    if 'csv' in normalized_question and ' all ' in normalized_question:
         return True
 
     return (
@@ -3280,7 +3163,6 @@ def derive_tabular_follow_up_calls_from_invocations(user_question, invocations):
             expanded_row_limit = determine_tabular_follow_up_limit(
                 result_payload.get('total_matches'),
                 result_payload.get('returned_rows'),
-                max_cap=1000,
             )
             if expanded_row_limit:
                 expanded_arguments = {
@@ -5024,24 +4906,6 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     successful_schema_summary_invocations.append(invocation)
 
             if synthesis_exception is not None:
-                # When synthesis fails on an exhaustive-results query and we have a complete
-                # row-fetch dataset, format the data directly in Python to bypass token limits.
-                # This avoids sending thousands of rows back through the LLM for re-processing.
-                if not schema_summary_mode and wants_exhaustive_results:
-                    direct_csv = build_tabular_direct_csv_from_invocations(
-                        successful_analytical_invocations
-                    )
-                    if direct_csv:
-                        log_event(
-                            f"[Tabular SK Analysis] Using direct CSV format after synthesis failure on exhaustive-results query",
-                            extra={
-                                'successful_tool_count': len(successful_analytical_invocations),
-                                'attempt_number': attempt_number,
-                            },
-                            level=logging.INFO,
-                        )
-                        return direct_csv
-
                 raw_tool_fallback = None
                 if not schema_summary_mode:
                     raw_tool_fallback = build_tabular_analysis_fallback_from_invocations(
