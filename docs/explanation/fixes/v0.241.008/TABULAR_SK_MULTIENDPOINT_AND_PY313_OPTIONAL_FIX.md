@@ -1,4 +1,6 @@
-# Fixes — v0.241.009 (branch: feature/tabular-plugin-gpt51-redesign)
+# Fixes — v0.241.008
+
+> Resolves [Bug] Tabular SK analysis: multi-endpoint DeploymentNotFound 404 and Python 3.13 Optional[str] type error [#891](../../../../../../issues/891)
 
 Two related issues were identified and resolved in this release while diagnosing why tabular SK analysis was falling back to "schema context instead" when querying an Excel file (NIST SP-800-53) using a multi-endpoint model (`gpt-5.1`).
 
