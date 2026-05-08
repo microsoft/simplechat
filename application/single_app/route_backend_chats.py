@@ -20,6 +20,7 @@ import ast
 import inspect
 import json
 import os
+import time
 import app_settings_cache
 import queue
 import re
@@ -4829,8 +4830,10 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         previous_execution_gap_messages = []
         previous_discovery_feedback_messages = []
         analysis_requires_immediate_tool_choice = has_multi_sheet_workbook and not schema_summary_mode
+        _analysis_start_time = time.monotonic()
 
         for attempt_number in range(1, 4):
+            _attempt_start_time = time.monotonic()
             force_tool_use = attempt_number > 1 or (attempt_number == 1 and analysis_requires_immediate_tool_choice)
             # 4. Build chat history with pre-loaded schemas
             chat_history = SKChatHistory()
@@ -4879,9 +4882,10 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     chat_history, execution_settings, kernel=kernel
                 )
             except Exception as exc:
+                _attempt_elapsed = time.monotonic() - _attempt_start_time
                 synthesis_exception = exc
                 log_event(
-                    f"[Tabular SK Analysis] Attempt {attempt_number} synthesis failed after tool execution setup: {exc}",
+                    f"[Tabular SK Analysis] Attempt {attempt_number} synthesis failed after tool execution setup: {exc} (elapsed {_attempt_elapsed:.2f}s)",
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -4918,6 +4922,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         extra={
                             'successful_tool_count': len(successful_analytical_invocations),
                             'attempt_number': attempt_number,
+                            'total_elapsed_seconds': round(time.monotonic() - _analysis_start_time, 2),
                         },
                         level=logging.WARNING,
                     )
@@ -4936,13 +4941,15 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
             if result and result[0].content:
                 analysis = result[0].content.strip()
-                if len(analysis) > 20000:
-                    analysis = analysis[:20000] + "\n[Analysis truncated]"
+                if len(analysis) > 100000:
+                    analysis = analysis[:100000] + "\n[Analysis truncated]"
+                _attempt_elapsed = time.monotonic() - _attempt_start_time
 
                 if schema_summary_mode:
                     if successful_schema_summary_invocations:
                         log_event(
                             f"[Tabular SK Analysis] Schema summary complete via {len(successful_schema_summary_invocations)} workbook tool call(s) on attempt {attempt_number}",
+                            extra={'attempt_elapsed_seconds': round(_attempt_elapsed, 2), 'total_elapsed_seconds': round(time.monotonic() - _analysis_start_time, 2)},
                             level=logging.INFO,
                         )
                         return analysis
@@ -5033,6 +5040,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         previous_execution_gap_messages = []
                         log_event(
                             f"[Tabular SK Analysis] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
+                            extra={'attempt_elapsed_seconds': round(_attempt_elapsed, 2), 'total_elapsed_seconds': round(time.monotonic() - _analysis_start_time, 2)},
                             level=logging.INFO
                         )
                         return analysis
@@ -5199,7 +5207,11 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             if reviewer_recovery and reviewer_recovery.get('fallback'):
                 return reviewer_recovery['fallback']
 
-        log_event("[Tabular SK Analysis] Unable to obtain computed tool-backed results", level=logging.WARNING)
+        log_event(
+            "[Tabular SK Analysis] Unable to obtain computed tool-backed results",
+            extra={'total_elapsed_seconds': round(time.monotonic() - _analysis_start_time, 2)},
+            level=logging.WARNING,
+        )
         return None
 
     except Exception as e:

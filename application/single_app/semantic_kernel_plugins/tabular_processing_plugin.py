@@ -515,6 +515,70 @@ class TabularProcessingPlugin:
 
         return None
 
+    def _auto_trim_df_for_output(self, df, max_chars=50_000):
+        """Auto-exclude heavy-value columns and/or truncate rows when the estimated JSON
+        output would exceed max_chars.
+
+        Called only when return_columns was NOT specified by the caller.
+        Two-phase trimming:
+          1. Drop the heaviest-value columns first (by average serialised length).
+          2. If the result is still over budget after dropping all but one column,
+             truncate rows so that pagination can retrieve the rest.
+
+        Returns (trimmed_df, excluded_columns).
+          - When no trimming was needed the original df object is returned unchanged
+            (identity is preserved so callers can use `trimmed_df is df` to detect this).
+          - excluded_columns is empty when only row truncation was applied.
+        """
+        if df.empty or len(df) <= 10:
+            return df, []
+
+        # Estimate output size from a small sample
+        sample_size = min(20, len(df))
+        sample = df.head(sample_size)
+        sample_json_size = len(json.dumps(sample.to_dict(orient='records'), default=str))
+        estimated_total = (sample_json_size / sample_size) * len(df)
+
+        if estimated_total <= max_chars:
+            return df, []
+
+        # Step 1: Drop columns heaviest-first until the estimated size fits within max_chars
+        col_avg_lens = {
+            col: sample[col].astype(str).str.len().mean()
+            for col in df.columns
+        }
+        current_cols = list(df.columns)
+        excluded = []
+
+        for col_to_drop in sorted(df.columns, key=lambda c: col_avg_lens[c], reverse=True):
+            if len(current_cols) <= 1:
+                break
+            current_cols.remove(col_to_drop)
+            excluded.append(col_to_drop)
+
+            # Re-estimate size with remaining columns
+            sample_subset = sample[current_cols]
+            new_sample_json = len(json.dumps(sample_subset.to_dict(orient='records'), default=str))
+            new_estimated = (new_sample_json / sample_size) * len(df)
+
+            if new_estimated <= max_chars:
+                break
+
+        result_df = df[current_cols] if excluded else df
+
+        # Step 2: If still over budget after column drops, truncate rows so that the model
+        # can see has_more=True and use pagination to retrieve the rest.
+        col_sample = result_df.head(sample_size)
+        col_sample_json = len(json.dumps(col_sample.to_dict(orient='records'), default=str))
+        row_estimated = (col_sample_json / sample_size) * len(result_df)
+
+        if row_estimated > max_chars and len(result_df) > 10:
+            chars_per_row = max(1, col_sample_json / sample_size)
+            target_rows = max(10, int(max_chars / chars_per_row))
+            result_df = result_df.head(target_rows)
+
+        return result_df, excluded
+
     def _filter_rows_across_sheets(
         self,
         container_name: str,
@@ -528,6 +592,8 @@ class TabularProcessingPlugin:
         additional_filter_value=None,
         normalize_match: bool = False,
         max_rows: int = 100,
+        start_row: int = 0,
+        return_columns=None,
     ) -> Optional[str]:
         """Search for matching rows across all sheets that contain the requested column.
 
@@ -580,12 +646,9 @@ class TabularProcessingPlugin:
 
             sheets_matched.append(sheet)
             total_matches += sheet_matches
-            remaining_capacity = max(0, max_rows - len(combined_results))
-            if remaining_capacity > 0:
-                filtered = filtered_df.head(remaining_capacity)
-                for row in filtered.to_dict(orient='records'):
-                    row['_sheet'] = sheet
-                    combined_results.append(row)
+            for row in filtered_df.to_dict(orient='records'):
+                row['_sheet'] = sheet
+                combined_results.append(row)
 
         if not sheets_searched:
             return None
@@ -598,16 +661,48 @@ class TabularProcessingPlugin:
             level=logging.INFO,
         )
 
-        return json.dumps({
+        paginated = combined_results[start_row:start_row + max_rows]
+        filter_auto_excluded_columns = []
+        rows_before_trim = len(paginated)
+
+        if paginated:
+            all_keys = list(paginated[0].keys())
+            if return_columns:
+                resolved_return_columns = [c for c in return_columns if c in all_keys]
+                if resolved_return_columns:
+                    paginated = [{c: row.get(c) for c in resolved_return_columns} for row in paginated]
+            else:
+                temp_df = pandas.DataFrame(paginated)
+                trimmed_df, filter_auto_excluded_columns = self._auto_trim_df_for_output(temp_df)
+                if trimmed_df is not temp_df:
+                    paginated = trimmed_df.to_dict(orient='records')
+
+        filter_cross_result_payload = {
             "filename": filename,
             "selected_sheet": "ALL (cross-sheet search)",
             "sheets_searched": sheets_searched,
             "sheets_matched": sheets_matched,
             "filter_applied": applied_filters,
             "total_matches": total_matches,
-            "returned_rows": len(combined_results),
-            "data": combined_results,
-        }, indent=2, default=str)
+            "returned_rows": len(paginated),
+            "has_more": True if (start_row + len(paginated)) < total_matches else None,
+            "next_start_row": (start_row + len(paginated)) if (start_row + len(paginated)) < total_matches else None,
+            "data": paginated,
+        }
+        if filter_auto_excluded_columns:
+            filter_cross_result_payload["auto_excluded_columns"] = filter_auto_excluded_columns
+            filter_cross_result_payload["note"] = (
+                f"Columns {filter_auto_excluded_columns!r} were automatically excluded because the full "
+                "result would exceed the safe output size. Use return_columns to request specific "
+                "columns, or use max_rows/start_row pagination to retrieve data in smaller chunks."
+            )
+        elif len(paginated) < rows_before_trim:
+            filter_cross_result_payload["note"] = (
+                f"Result automatically trimmed to {len(paginated)} rows (from {rows_before_trim} requested) "
+                "to prevent exceeding safe output size. Use start_row/max_rows pagination to retrieve "
+                "more rows, or use return_columns to include only needed columns."
+            )
+        return json.dumps(filter_cross_result_payload, indent=2, default=str)
 
     def _search_rows_across_sheets(
         self,
@@ -870,6 +965,8 @@ class TabularProcessingPlugin:
         filename: str,
         query_expression: str,
         max_rows: int = 100,
+        start_row: int = 0,
+        return_columns=None,
     ) -> Optional[str]:
         """Execute a pandas query expression across all sheets of a multi-sheet workbook.
 
@@ -918,11 +1015,9 @@ class TabularProcessingPlugin:
 
             sheets_matched.append(sheet)
             total_matches += sheet_matches
-            remaining_capacity = max(0, max_rows - len(combined_results))
-            if remaining_capacity > 0:
-                for row in result_df.head(remaining_capacity).to_dict(orient='records'):
-                    row['_sheet'] = sheet
-                    combined_results.append(row)
+            for row in result_df.to_dict(orient='records'):
+                row['_sheet'] = sheet
+                combined_results.append(row)
 
         if not sheets_searched:
             if query_errors:
@@ -958,15 +1053,47 @@ class TabularProcessingPlugin:
             level=logging.INFO,
         )
 
-        return json.dumps({
+        paginated = combined_results[start_row:start_row + max_rows]
+        auto_excluded_columns = []
+        rows_before_trim = len(paginated)
+
+        if paginated:
+            all_keys = list(paginated[0].keys())
+            if return_columns:
+                resolved_return_columns = [c for c in return_columns if c in all_keys]
+                if resolved_return_columns:
+                    paginated = [{c: row.get(c) for c in resolved_return_columns} for row in paginated]
+            else:
+                temp_df = pandas.DataFrame(paginated)
+                trimmed_df, auto_excluded_columns = self._auto_trim_df_for_output(temp_df)
+                if trimmed_df is not temp_df:
+                    paginated = trimmed_df.to_dict(orient='records')
+
+        cross_result_payload = {
             "filename": filename,
             "selected_sheet": "ALL (cross-sheet search)",
             "sheets_searched": sheets_searched,
             "sheets_matched": sheets_matched,
             "total_matches": total_matches,
-            "returned_rows": len(combined_results),
-            "data": combined_results,
-        }, indent=2, default=str)
+            "returned_rows": len(paginated),
+            "has_more": True if (start_row + len(paginated)) < total_matches else None,
+            "next_start_row": (start_row + len(paginated)) if (start_row + len(paginated)) < total_matches else None,
+            "data": paginated,
+        }
+        if auto_excluded_columns:
+            cross_result_payload["auto_excluded_columns"] = auto_excluded_columns
+            cross_result_payload["note"] = (
+                f"Columns {auto_excluded_columns!r} were automatically excluded because the full "
+                "result would exceed the safe output size. Use return_columns to request specific "
+                "columns, or use max_rows/start_row pagination to retrieve data in smaller chunks."
+            )
+        elif len(paginated) < rows_before_trim:
+            cross_result_payload["note"] = (
+                f"Result automatically trimmed to {len(paginated)} rows (from {rows_before_trim} requested) "
+                "to prevent exceeding safe output size. Use start_row/max_rows pagination to retrieve "
+                "more rows, or use return_columns to include only needed columns."
+            )
+        return json.dumps(cross_result_payload, indent=2, default=str)
 
     def _count_rows_across_sheets(
         self,
@@ -3719,7 +3846,9 @@ class TabularProcessingPlugin:
         sheet_name: Annotated[str, "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
         sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        max_rows: Annotated[str, "Maximum rows to return"] = "100",
+        return_columns: Annotated[str, "Optional comma-separated columns to include in each result row. Omit to return all columns."] = None,
+        start_row: Annotated[str, "Zero-based row offset for pagination. Use with max_rows to page through large results."] = "0",
+        max_rows: Annotated[str, "Maximum rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON list of matching rows"]:
@@ -3727,6 +3856,7 @@ class TabularProcessingPlugin:
         def _sync_work():
             try:
                 normalize_match_flag = self._parse_boolean_argument(normalize_match, default=False)
+                parsed_return_columns = self._parse_optional_column_list_argument(return_columns)
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
@@ -3747,6 +3877,8 @@ class TabularProcessingPlugin:
                         additional_filter_value=additional_filter_value,
                         normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
+                        start_row=int(start_row),
+                        return_columns=parsed_return_columns,
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -3808,16 +3940,44 @@ class TabularProcessingPlugin:
                     return json.dumps({"error": str(filter_error)})
 
                 limit = int(max_rows)
-                filtered = filtered_df.head(limit)
-                return json.dumps({
+                start = int(start_row)
+                rows_before_trim = len(filtered_df)
+                sliced = filtered_df.iloc[start:start + limit]
+                sliced_count = len(sliced)
+                auto_excluded_columns = []
+                if parsed_return_columns:
+                    resolved_return_columns = [c for c in parsed_return_columns if c in sliced.columns]
+                    if resolved_return_columns:
+                        sliced = sliced[resolved_return_columns]
+                else:
+                    trimmed, auto_excluded_columns = self._auto_trim_df_for_output(sliced)
+                    if trimmed is not sliced:
+                        sliced = trimmed
+                result_payload = {
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
                     "filter_applied": applied_filters,
                     "normalize_match": normalize_match_flag,
-                    "total_matches": len(filtered_df),
-                    "returned_rows": len(filtered),
-                    "data": filtered.to_dict(orient='records')
-                }, indent=2, default=str)
+                    "total_matches": rows_before_trim,
+                    "returned_rows": len(sliced),
+                    "has_more": True if (start + sliced_count) < rows_before_trim else None,
+                    "next_start_row": (start + sliced_count) if (start + sliced_count) < rows_before_trim else None,
+                    "data": sliced.to_dict(orient='records'),
+                }
+                if auto_excluded_columns:
+                    result_payload["auto_excluded_columns"] = auto_excluded_columns
+                    result_payload["note"] = (
+                        f"Columns {auto_excluded_columns!r} were automatically excluded because the full "
+                        "result would exceed the safe output size. Use return_columns to request specific "
+                        "columns, or use max_rows/start_row pagination to retrieve data in smaller chunks."
+                    )
+                elif len(sliced) < sliced_count:
+                    result_payload["note"] = (
+                        f"Result automatically trimmed to {len(sliced)} rows (from {sliced_count} requested) "
+                        "to prevent exceeding safe output size. Use start_row/max_rows pagination to retrieve "
+                        "more rows, or use return_columns to include only needed columns."
+                    )
+                return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error filtering rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
@@ -4025,13 +4185,16 @@ class TabularProcessingPlugin:
         sheet_name: Annotated[str, "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
         sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        max_rows: Annotated[str, "Maximum rows to return"] = "100",
+        return_columns: Annotated[str, "Optional comma-separated columns to include in each result row. Omit to return all columns."] = None,
+        start_row: Annotated[str, "Zero-based row offset for pagination. Use with max_rows to page through large results."] = "0",
+        max_rows: Annotated[str, "Maximum rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the query"]:
         """Execute a pandas query expression against a tabular file."""
         def _sync_work():
             try:
+                parsed_return_columns = self._parse_optional_column_list_argument(return_columns)
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
@@ -4043,6 +4206,8 @@ class TabularProcessingPlugin:
                     cross_sheet_result = self._query_tabular_data_across_sheets(
                         container, blob_path, filename, query_expression,
                         max_rows=int(max_rows),
+                        start_row=int(start_row),
+                        return_columns=parsed_return_columns,
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -4067,15 +4232,44 @@ class TabularProcessingPlugin:
                     normalize_match=False,
                 )
                 limit = int(max_rows)
-                return json.dumps({
+                start = int(start_row)
+                rows_before_trim = len(result_df)
+                sliced = result_df.iloc[start:start + limit]
+                sliced_count = len(sliced)
+                auto_excluded_columns = []
+                if parsed_return_columns:
+                    resolved_return_columns = [c for c in parsed_return_columns if c in sliced.columns]
+                    if resolved_return_columns:
+                        sliced = sliced[resolved_return_columns]
+                else:
+                    trimmed, auto_excluded_columns = self._auto_trim_df_for_output(sliced)
+                    if trimmed is not sliced:
+                        sliced = trimmed
+                result_payload = {
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
                     "query_expression": query_expression,
                     "query_expression_fallback": used_reviewer_style_fallback,
-                    "total_matches": len(result_df),
-                    "returned_rows": min(len(result_df), limit),
-                    "data": result_df.head(limit).to_dict(orient='records')
-                }, indent=2, default=str)
+                    "total_matches": rows_before_trim,
+                    "returned_rows": len(sliced),
+                    "has_more": True if (start + sliced_count) < rows_before_trim else None,
+                    "next_start_row": (start + sliced_count) if (start + sliced_count) < rows_before_trim else None,
+                    "data": sliced.to_dict(orient='records'),
+                }
+                if auto_excluded_columns:
+                    result_payload["auto_excluded_columns"] = auto_excluded_columns
+                    result_payload["note"] = (
+                        f"Columns {auto_excluded_columns!r} were automatically excluded because the full "
+                        "result would exceed the safe output size. Use return_columns to request specific "
+                        "columns, or use max_rows/start_row pagination to retrieve data in smaller chunks."
+                    )
+                elif len(sliced) < sliced_count:
+                    result_payload["note"] = (
+                        f"Result automatically trimmed to {len(sliced)} rows (from {sliced_count} requested) "
+                        "to prevent exceeding safe output size. Use start_row/max_rows pagination to retrieve "
+                        "more rows, or use return_columns to include only needed columns."
+                    )
+                return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error querying data: {e}", level=logging.WARNING)
                 return json.dumps({"error": f"Query error: {str(e)}. Ensure column names and values are correct."})
