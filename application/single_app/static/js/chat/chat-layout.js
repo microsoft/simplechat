@@ -70,7 +70,10 @@ export function saveUserSetting(settingUpdate) {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-            console.log('User setting saved successfully:', settingUpdate);
+            return response.json();
+        })
+        .then(result => {
+            console.log('User setting saved successfully:', settingUpdate, 'Response:', result);
         })
         .catch(error => {
             console.error('Failed to save user setting:', error);

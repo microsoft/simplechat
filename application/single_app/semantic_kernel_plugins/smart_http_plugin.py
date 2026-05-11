@@ -343,7 +343,7 @@ class SmartHttpPlugin:
             parsed = json.loads(json_content)
             formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
             return self._truncate_content(formatted, "JSON content")
-        except:
+        except Exception as ex:
             return self._truncate_content(json_content, "Raw JSON content")
     
     def _clean_text(self, text: str) -> str:
@@ -560,6 +560,7 @@ class SmartHttpPlugin:
             from functions_settings import get_settings
             from openai import AzureOpenAI
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            from config import cognitive_services_scope
             
             settings = get_settings()
             
@@ -580,7 +581,6 @@ class SmartHttpPlugin:
                 )
             else:
                 if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
-                    cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
                     token_provider = get_bearer_token_provider(
                         DefaultAzureCredential(), 
                         cognitive_services_scope

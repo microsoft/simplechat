@@ -3,22 +3,130 @@
 
 from flask import jsonify, request, Response
 from datetime import datetime, timedelta
+import logging
 import os
 import tempfile
 import requests
 import mimetypes
 import io
+import pandas
+import fitz
 
 from functions_authentication import login_required, user_required, get_current_user_id
+from functions_appinsights import log_event
 from functions_settings import get_settings, enabled_required
-from functions_documents import get_document_metadata
+from functions_documents import get_document_metadata, get_document_blob_storage_info
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
-from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name
+from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
+from functions_debug import debug_print
+
+
+def _sanitize_tabular_preview_value(value):
+    """Convert pandas preview values into JSON-safe display strings."""
+    if hasattr(value, 'item') and not isinstance(value, (str, bytes)):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+
+    if value is None:
+        return ''
+
+    if pandas.api.types.is_scalar(value):
+        try:
+            if pandas.isna(value):
+                return ''
+        except (TypeError, ValueError):
+            pass
+
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+
+    return str(value)
+
+
+def _serialize_tabular_preview_table(df_preview):
+    """Build JSON-safe tabular preview payload pieces for the browser."""
+    columns = [
+        _sanitize_tabular_preview_value(column)
+        for column in df_preview.columns.tolist()
+    ]
+    rows = [
+        [_sanitize_tabular_preview_value(cell) for cell in row]
+        for row in df_preview.itertuples(index=False, name=None)
+    ]
+    return columns, rows
+
+
+def _log_enhanced_citations_debug(message, **details):
+    """Write debug-gated enhanced citations diagnostics."""
+    log_event(
+        f"[EnhancedCitations] {message}",
+        extra=details or None,
+        debug_only=True,
+        category="EnhancedCitations",
+    )
+
+
+def _log_enhanced_citations_error(message, error, **details):
+    """Write structured error diagnostics for enhanced citations failures."""
+    error_details = dict(details)
+    error_details["error"] = str(error)
+    log_event(
+        f"[EnhancedCitations] {message}",
+        extra=error_details,
+        level=logging.ERROR,
+        exceptionTraceback=True,
+    )
 
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
+
+    @app.route("/api/enhanced_citations/document_metadata", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_document_metadata():
+        """
+        Return minimal document metadata for an exact historical or current doc_id.
+        This lets the chat UI render enhanced citations even when the cited
+        document revision is not part of the currently loaded workspace list.
+        """
+        doc_id = request.args.get("doc_id")
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            return jsonify({
+                "id": raw_doc.get("id"),
+                "document_id": raw_doc.get("id"),
+                "file_name": raw_doc.get("file_name"),
+                "version": raw_doc.get("version"),
+                "is_current_version": raw_doc.get("is_current_version"),
+                "enhanced_citations": bool(raw_doc.get("enhanced_citations", False)),
+            }), 200
+
+        except Exception as e:
+            debug_print(f"Error getting enhanced citation document metadata: {e}")
+            return jsonify({"error": str(e)}), 500
     
     @app.route("/api/enhanced_citations/image", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -48,9 +156,8 @@ def register_enhanced_citations_routes(app):
             # Check if it's an image file
             file_name = raw_doc['file_name']
             ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
-            image_extensions = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif']
             
-            if ext not in image_extensions:
+            if ext not in IMAGE_EXTENSIONS:
                 return jsonify({"error": "File is not an image"}), 400
 
             # Serve the image content directly
@@ -87,9 +194,8 @@ def register_enhanced_citations_routes(app):
             # Check if it's a video file
             file_name = raw_doc['file_name']
             ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
-            video_extensions = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'webm', 'wmv']
             
-            if ext not in video_extensions:
+            if ext not in VIDEO_EXTENSIONS:
                 return jsonify({"error": "File is not a video"}), 400
 
             # Serve the video content directly
@@ -126,9 +232,8 @@ def register_enhanced_citations_routes(app):
             # Check if it's an audio file
             file_name = raw_doc['file_name']
             ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
-            audio_extensions = ['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a']
             
-            if ext not in audio_extensions:
+            if ext not in AUDIO_EXTENSIONS:
                 return jsonify({"error": "File is not an audio file"}), 400
 
             # Serve the audio content directly
@@ -148,9 +253,19 @@ def register_enhanced_citations_routes(app):
         """
         doc_id = request.args.get("doc_id")
         page_number = request.args.get("page", default=1, type=int)
+        show_all = request.args.get("show_all", "false").lower() in ['true', '1', 'yes']
+        download = request.args.get("download", default=False, type=bool)
         
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
+
+        _log_enhanced_citations_debug(
+            "PDF request received",
+            doc_id=doc_id,
+            page=page_number,
+            show_all=show_all,
+            download=download,
+        )
 
         user_id = get_current_user_id()
         if not user_id:
@@ -171,10 +286,291 @@ def register_enhanced_citations_routes(app):
             if ext != 'pdf':
                 return jsonify({"error": "File is not a PDF"}), 400
 
+            # For download, serve the original PDF without page extraction
+            if download:
+                return serve_enhanced_citation_content(raw_doc, content_type='application/pdf', force_download=True)
+            
             # Serve the PDF content directly with page extraction logic
-            return serve_enhanced_citation_pdf_content(raw_doc, page_number)
+            return serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all)
 
         except Exception as e:
+            _log_enhanced_citations_error(
+                "PDF request failed",
+                e,
+                doc_id=doc_id,
+                page=page_number,
+                show_all=show_all,
+                download=download,
+            )
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/enhanced_citations/tabular", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_tabular():
+        """
+        Serve original tabular file (CSV, XLSX, etc.) from blob storage for download.
+        Used for chat-uploaded tabular files stored in blob storage.
+        """
+        conversation_id = request.args.get("conversation_id")
+        file_id = request.args.get("file_id")
+
+        if not conversation_id or not file_id:
+            return jsonify({"error": "conversation_id and file_id are required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            # Verify the current user owns the conversation
+            try:
+                conversation = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+            except Exception:
+                return jsonify({"error": "Conversation not found"}), 404
+
+            if conversation.get('user_id') != user_id:
+                return jsonify({"error": "Forbidden"}), 403
+
+            # Look up the file message in Cosmos to get blob reference
+            query_str = """
+                SELECT * FROM c
+                WHERE c.conversation_id = @conversation_id
+                AND c.id = @file_id
+            """
+            items = list(cosmos_messages_container.query_items(
+                query=query_str,
+                parameters=[
+                    {'name': '@conversation_id', 'value': conversation_id},
+                    {'name': '@file_id', 'value': file_id}
+                ],
+                partition_key=conversation_id
+            ))
+
+            if not items:
+                return jsonify({"error": "File not found"}), 404
+
+            file_msg = items[0]
+            file_content_source = file_msg.get('file_content_source', '')
+
+            if file_content_source != 'blob':
+                return jsonify({"error": "File is not stored in blob storage"}), 400
+
+            blob_container = file_msg.get('blob_container', '')
+            blob_path = file_msg.get('blob_path', '')
+            filename = file_msg.get('filename', 'download')
+
+            if not blob_container or not blob_path:
+                return jsonify({"error": "Blob reference is incomplete"}), 500
+
+            blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+            if not blob_service_client:
+                return jsonify({"error": "Storage not available"}), 500
+
+            blob_client = blob_service_client.get_blob_client(
+                container=blob_container,
+                blob=blob_path
+            )
+            stream = blob_client.download_blob()
+            content = stream.readall()
+
+            # Determine content type
+            content_type, _ = mimetypes.guess_type(filename)
+            if not content_type:
+                content_type = 'application/octet-stream'
+
+            return Response(
+                content,
+                content_type=content_type,
+                headers={
+                    'Content-Length': str(len(content)),
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Cache-Control': 'private, max-age=300',
+                }
+            )
+
+        except Exception as e:
+            debug_print(f"Error serving tabular citation: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/enhanced_citations/tabular_workspace", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_tabular_workspace():
+        """
+        Serve tabular file (CSV, XLSX, etc.) from blob storage for workspace documents.
+        Uses doc_id to look up the document across personal, group, and public workspaces.
+        """
+        doc_id = request.args.get("doc_id")
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            file_name = raw_doc.get('file_name', '')
+            ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
+
+            if ext not in ('csv', 'xlsx', 'xls', 'xlsm'):
+                return jsonify({"error": "File is not a tabular file"}), 400
+
+            return serve_enhanced_citation_content(raw_doc, force_download=True)
+
+        except Exception as e:
+            debug_print(f"Error serving tabular workspace citation: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_tabular_preview():
+        """
+        Return JSON preview of a tabular file for rendering as an HTML table.
+        Reads the file into a pandas DataFrame and returns columns + rows as JSON.
+        """
+        doc_id = request.args.get("doc_id")
+        sheet_name = request.args.get("sheet_name")
+        sheet_index = request.args.get("sheet_index")
+        max_rows = min(request.args.get("max_rows", 200, type=int), 500)
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            file_name = raw_doc.get('file_name', '')
+            ext = file_name.lower().rsplit('.', 1)[-1] if '.' in file_name else ''
+            if ext not in ('csv', 'xlsx', 'xls', 'xlsm'):
+                return jsonify({"error": "File is not a tabular file"}), 400
+
+            # Download blob with size cap to protect memory
+            settings = get_settings()
+            max_blob_size = int(settings.get('tabular_preview_max_blob_size_mb', 200)) * 1024 * 1024
+            workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
+            blob_name = get_blob_name(raw_doc, workspace_type)
+            blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+            if not blob_service_client:
+                return jsonify({"error": "Blob storage client not available"}), 500
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            blob_props = blob_client.get_blob_properties()
+            if blob_props.size > max_blob_size:
+                return jsonify({"error": "File is too large to preview"}), 400
+            data = blob_client.download_blob().readall()
+
+            # Read into DataFrame, limiting rows for preview efficiency
+            # Read max_rows + 1 so we can detect truncation without loading the full file
+            nrows_limit = max_rows + 1
+            selected_sheet = None
+            sheet_names = []
+            if ext == 'csv':
+                df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str, nrows=nrows_limit)
+            elif ext in ('xlsx', 'xlsm'):
+                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='openpyxl')
+                sheet_names = list(excel_file.sheet_names)
+                if not sheet_names:
+                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
+
+                if sheet_name:
+                    requested_sheet_name = sheet_name.strip()
+                    matching_sheet_name = next(
+                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
+                        None,
+                    )
+                    if not matching_sheet_name:
+                        return jsonify({
+                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = matching_sheet_name
+                elif sheet_index not in (None, ''):
+                    try:
+                        resolved_sheet_index = int(sheet_index)
+                    except ValueError:
+                        return jsonify({"error": "sheet_index must be an integer"}), 400
+                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
+                        return jsonify({
+                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = sheet_names[resolved_sheet_index]
+                else:
+                    selected_sheet = sheet_names[0]
+
+                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
+            elif ext == 'xls':
+                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='xlrd')
+                sheet_names = list(excel_file.sheet_names)
+                if not sheet_names:
+                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
+
+                if sheet_name:
+                    requested_sheet_name = sheet_name.strip()
+                    matching_sheet_name = next(
+                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
+                        None,
+                    )
+                    if not matching_sheet_name:
+                        return jsonify({
+                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = matching_sheet_name
+                elif sheet_index not in (None, ''):
+                    try:
+                        resolved_sheet_index = int(sheet_index)
+                    except ValueError:
+                        return jsonify({"error": "sheet_index must be an integer"}), 400
+                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
+                        return jsonify({
+                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = sheet_names[resolved_sheet_index]
+                else:
+                    selected_sheet = sheet_names[0]
+
+                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
+            else:
+                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+
+            total_rows = len(df)
+            truncated = total_rows > max_rows
+            preview = df.head(max_rows)
+            columns, rows = _serialize_tabular_preview_table(preview)
+
+            return jsonify({
+                "filename": file_name,
+                "selected_sheet": selected_sheet,
+                "sheet_names": sheet_names,
+                "sheet_count": len(sheet_names),
+                "total_rows": total_rows if not truncated else None,
+                "total_columns": len(df.columns),
+                "columns": columns,
+                "rows": rows,
+                "truncated": truncated
+            })
+
+        except Exception as e:
+            debug_print(f"Error generating tabular preview: {e}")
             return jsonify({"error": str(e)}), 500
 
 def get_document(user_id, doc_id):
@@ -193,7 +589,7 @@ def get_document(user_id, doc_id):
             doc_response, status_code = backend_get_document(user_id, doc_id)
             if status_code == 200:
                 return doc_response, status_code
-        except:
+        except Exception as ex:
             pass
     
     # Try group workspaces if enabled
@@ -209,9 +605,9 @@ def get_document(user_id, doc_id):
                         doc_response, status_code = backend_get_document(user_id, doc_id, group_id=group_id)
                         if status_code == 200:
                             return doc_response, status_code
-                    except:
+                    except Exception as ex:
                         continue
-        except:
+        except Exception as ex:
             pass
     
     # Try public workspaces if enabled
@@ -225,9 +621,9 @@ def get_document(user_id, doc_id):
                     doc_response, status_code = backend_get_document(user_id, doc_id, public_workspace_id=workspace_id)
                     if status_code == 200:
                         return doc_response, status_code
-                except:
+                except Exception as ex:
                     continue
-        except:
+        except Exception as ex:
             pass
     
     # If document not found in any workspace
@@ -238,43 +634,72 @@ def determine_workspace_type_and_container(raw_doc):
     Determine workspace type and appropriate container based on document metadata
     """
     if raw_doc.get('public_workspace_id'):
-        return 'public', storage_account_public_documents_container_name
+        return 'public', raw_doc.get('blob_container') or storage_account_public_documents_container_name
     elif raw_doc.get('group_id'):
-        return 'group', storage_account_group_documents_container_name
+        return 'group', raw_doc.get('blob_container') or storage_account_group_documents_container_name
     else:
-        return 'personal', storage_account_user_documents_container_name
+        return 'personal', raw_doc.get('blob_container') or storage_account_user_documents_container_name
 
 def get_blob_name(raw_doc, workspace_type):
     """
     Determine the correct blob name based on workspace type
     """
-    if workspace_type == 'public':
-        return f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
-    elif workspace_type == 'group':
-        return f"{raw_doc['group_id']}/{raw_doc['file_name']}"
-    else:
-        return f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+    _, blob_name = get_document_blob_storage_info(raw_doc)
+    if blob_name:
+        _log_enhanced_citations_debug(
+            "Using stored blob path for citation content",
+            doc_id=raw_doc.get('id'),
+            workspace_type=workspace_type,
+            blob_name=blob_name,
+        )
+        return blob_name
 
-def serve_enhanced_citation_content(raw_doc, content_type=None):
+    if workspace_type == 'public':
+        fallback_blob_name = f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
+    elif workspace_type == 'group':
+        fallback_blob_name = f"{raw_doc['group_id']}/{raw_doc['file_name']}"
+    else:
+        fallback_blob_name = f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+
+    _log_enhanced_citations_debug(
+        "Using legacy blob path fallback for citation content",
+        doc_id=raw_doc.get('id'),
+        workspace_type=workspace_type,
+        blob_name=fallback_blob_name,
+    )
+    return fallback_blob_name
+
+def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=False):
     """
     Server-side rendering: Serve enhanced citation file content directly
     Based on the logic from the existing view_pdf function but serves content directly
     """
-    settings = get_settings()
-    
     # Get blob storage client
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
         raise Exception("Blob storage client not available")
-    
-    # Determine workspace type and container
-    workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-    container_client = blob_service_client.get_container_client(container_name)
-    
-    # Build blob name based on workspace type
-    blob_name = get_blob_name(raw_doc, workspace_type)
-    
+
+    doc_id = raw_doc.get('id')
+    file_name = raw_doc.get('file_name')
+    workspace_type = None
+    container_name = None
+    blob_name = None
+
     try:
+        workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
+        blob_name = get_blob_name(raw_doc, workspace_type)
+        container_client = blob_service_client.get_container_client(container_name)
+
+        _log_enhanced_citations_debug(
+            "Downloading citation content from blob storage",
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            force_download=force_download,
+        )
+
         # Download blob content directly
         blob_client = container_client.get_blob_client(blob_name)
         blob_data = blob_client.download_blob()
@@ -298,6 +723,21 @@ def serve_enhanced_citation_content(raw_doc, content_type=None):
                     content_type = 'audio/mpeg'
                 else:
                     content_type = 'application/octet-stream'
+
+        _log_enhanced_citations_debug(
+            "Citation content downloaded successfully",
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            content_type=content_type,
+            content_length=len(content),
+            force_download=force_download,
+        )
+        
+        # Set content disposition based on force_download parameter
+        disposition = 'attachment' if force_download else 'inline'
         
         # Create Response with the blob content
         response = Response(
@@ -306,7 +746,7 @@ def serve_enhanced_citation_content(raw_doc, content_type=None):
             headers={
                 'Content-Length': str(len(content)),
                 'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
-                'Content-Disposition': f'inline; filename="{raw_doc["file_name"]}"',
+                'Content-Disposition': f'{disposition}; filename="{raw_doc["file_name"]}"',
                 'Accept-Ranges': 'bytes'  # Support range requests for video/audio
             }
         )
@@ -314,31 +754,62 @@ def serve_enhanced_citation_content(raw_doc, content_type=None):
         return response
         
     except Exception as e:
-        print(f"Error serving enhanced citation content: {e}")
-        raise Exception(f"Failed to load content: {str(e)}")
+        _log_enhanced_citations_error(
+            "Failed to serve citation content",
+            e,
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            force_download=force_download,
+        )
+        raise Exception(f"Failed to load content: {str(e)}") from e
 
-def serve_enhanced_citation_pdf_content(raw_doc, page_number):
+def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
     """
     Serve PDF content with page extraction (±1 page logic from original view_pdf)
     Based on the logic from the existing view_pdf function but serves content directly
+    
+    Args:
+        raw_doc: Document metadata
+        page_number: Current page number
+        show_all: If True, show all pages instead of just ±1 pages around current
     """
-    import io
-    import uuid
-    import tempfile
-    import fitz  # PyMuPDF
+    _log_enhanced_citations_debug(
+        "Preparing PDF citation content",
+        doc_id=raw_doc.get('id'),
+        file_name=raw_doc.get('file_name'),
+        page=page_number,
+        show_all=show_all,
+    )
     
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
         raise Exception("Blob storage client not available")
-    
-    # Determine workspace type and container
-    workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-    container_client = blob_service_client.get_container_client(container_name)
-    
-    # Build blob name based on workspace type
-    blob_name = get_blob_name(raw_doc, workspace_type)
-    
+
+    doc_id = raw_doc.get('id')
+    file_name = raw_doc.get('file_name')
+    workspace_type = None
+    container_name = None
+    blob_name = None
+
     try:
+        workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
+        blob_name = get_blob_name(raw_doc, workspace_type)
+        container_client = blob_service_client.get_container_client(container_name)
+
+        _log_enhanced_citations_debug(
+            "Downloading PDF citation blob",
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            page=page_number,
+            show_all=show_all,
+        )
+
         # Download blob content directly
         blob_client = container_client.get_blob_client(blob_name)
         blob_data = blob_client.download_blob()
@@ -356,21 +827,54 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number):
             current_idx = page_number - 1  # zero-based
 
             if current_idx < 0 or current_idx >= total_pages:
+                _log_enhanced_citations_debug(
+                    "Requested PDF page was out of range",
+                    doc_id=doc_id,
+                    file_name=file_name,
+                    page=page_number,
+                    total_pages=total_pages,
+                )
                 pdf_document.close()
                 os.remove(temp_pdf_path)
                 return jsonify({"error": "Requested page out of range"}), 400
 
-            # Default to just the current page
-            start_idx = current_idx
-            end_idx = current_idx
+            if show_all:
+                # Show all pages
+                start_idx = 0
+                end_idx = total_pages - 1
+                new_page_number = page_number  # Keep original page number
+            else:
+                # Default to just the current page
+                start_idx = current_idx
+                end_idx = current_idx
 
-            # If a previous page exists, include it
-            if current_idx > 0:
-                start_idx = current_idx - 1
+                # If a previous page exists, include it
+                if current_idx > 0:
+                    start_idx = current_idx - 1
 
-            # If a next page exists, include it
-            if current_idx < total_pages - 1:
-                end_idx = current_idx + 1
+                # If a next page exists, include it
+                if current_idx < total_pages - 1:
+                    end_idx = current_idx + 1
+
+                # Determine new_page_number (within the sub-document)
+                extracted_count = end_idx - start_idx + 1
+                
+                if extracted_count == 1:
+                    # Only current page
+                    new_page_number = 1
+                elif extracted_count == 3:
+                    # current page is in the middle
+                    new_page_number = 2
+                else:
+                    # Exactly 2 pages
+                    # If start_idx == current_idx, the user is on the first page
+                    # If current_idx == end_idx, the user is on the second page
+                    if start_idx == current_idx:
+                        # e.g. pages = [current, next]
+                        new_page_number = 1
+                    else:
+                        # e.g. pages = [previous, current]
+                        new_page_number = 2
 
             # Create new PDF with only start_idx..end_idx
             extracted_pdf = fitz.open()
@@ -381,37 +885,54 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number):
             extracted_pdf.close()
             pdf_document.close()
 
-            # Determine new_page_number (within the sub-document)
-            extracted_count = end_idx - start_idx + 1
-            
-            if extracted_count == 1:
-                # Only current page
-                new_page_number = 1
-            elif extracted_count == 3:
-                # current page is in the middle
-                new_page_number = 2
-            else:
-                # Exactly 2 pages
-                # If start_idx == current_idx, the user is on the first page
-                # If current_idx == end_idx, the user is on the second page
-                if start_idx == current_idx:
-                    # e.g. pages = [current, next]
-                    new_page_number = 1
-                else:
-                    # e.g. pages = [previous, current]
-                    new_page_number = 2
+            _log_enhanced_citations_debug(
+                "Built PDF citation sub-document",
+                doc_id=doc_id,
+                file_name=file_name,
+                page=page_number,
+                show_all=show_all,
+                total_pages=total_pages,
+                start_idx=start_idx,
+                end_idx=end_idx,
+                viewer_page=new_page_number,
+                content_length=len(extracted_content),
+            )
 
             # Return the extracted PDF
+            headers = {
+                'Content-Length': str(len(extracted_content)),
+                'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
+                'Content-Disposition': f'inline; filename="{raw_doc["file_name"]}"',
+                'X-Sub-PDF-Page': str(new_page_number),  # Custom header with page info
+                'Accept-Ranges': 'bytes'
+            }
+            
+            # When show_all is True, allow iframe embedding
+            if show_all:
+                _log_enhanced_citations_debug(
+                    "Setting CSP headers for iframe embedding",
+                    doc_id=doc_id,
+                    file_name=file_name,
+                    show_all=show_all,
+                )
+                headers['Content-Security-Policy'] = (
+                    "default-src 'self'; "
+                    "frame-ancestors 'self'; "  # Allow embedding in same origin
+                    "object-src 'none';"
+                )
+                headers['X-Frame-Options'] = 'SAMEORIGIN'  # Allow same-origin framing
+            else:
+                _log_enhanced_citations_debug(
+                    "Skipping iframe embedding headers for sub-document response",
+                    doc_id=doc_id,
+                    file_name=file_name,
+                    show_all=show_all,
+                )
+            
             response = Response(
                 extracted_content,
                 content_type='application/pdf',
-                headers={
-                    'Content-Length': str(len(extracted_content)),
-                    'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
-                    'Content-Disposition': f'inline; filename="{raw_doc["file_name"]}"',
-                    'X-Sub-PDF-Page': str(new_page_number),  # Custom header with page info
-                    'Accept-Ranges': 'bytes'
-                }
+                headers=headers
             )
             return response
             
@@ -421,5 +942,15 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number):
                 os.remove(temp_pdf_path)
         
     except Exception as e:
-        print(f"Error serving PDF citation content: {e}")
-        raise Exception(f"Failed to load PDF content: {str(e)}")
+        _log_enhanced_citations_error(
+            "Failed to serve PDF citation content",
+            e,
+            doc_id=doc_id,
+            file_name=file_name,
+            workspace_type=workspace_type,
+            container_name=container_name,
+            blob_name=blob_name,
+            page=page_number,
+            show_all=show_all,
+        )
+        raise Exception(f"Failed to load PDF content: {str(e)}") from e

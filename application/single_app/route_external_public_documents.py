@@ -181,34 +181,22 @@ def register_route_external_public_documents(app):
 
         where_clause = " AND ".join(query_conditions)
 
-        # --- 3) Get total count ---
-        try:
-            count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            count_items = list(cosmos_public_documents_container.query_items(
-                query=count_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True
-            ))
-            total_count = count_items[0] if count_items else 0
-        except Exception as e:
-            print(f"Error executing count query for public: {e}")
-            return jsonify({"error": f"Error counting documents: {str(e)}"}), 500
-
-        # --- 4) Get paginated data ---
+        # --- 3) Query matching documents, then collapse to current revisions before paginating ---
         try:
             offset = (page - 1) * page_size
             data_query_str = f"""
                 SELECT *
                 FROM c
                 WHERE {where_clause}
-                ORDER BY c._ts DESC
-                OFFSET {offset} LIMIT {page_size}
             """
-            docs = list(cosmos_public_documents_container.query_items(
+            matching_docs = list(cosmos_public_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,
                 enable_cross_partition_query=True
             ))
+            current_docs = sort_documents(select_current_documents(matching_docs))
+            total_count = len(current_docs)
+            docs = current_docs[offset:offset + page_size]
         except Exception as e:
             print(f"Error fetching public documents: {e}")
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
@@ -282,6 +270,9 @@ def register_route_external_public_documents(app):
             return jsonify({'error': 'Active public workspace not found'}), 404
 
         data = request.get_json()
+        
+        # Track which fields were updated
+        updated_fields = {}
 
         try:
             if 'title' in data:
@@ -291,6 +282,7 @@ def register_route_external_public_documents(app):
                     user_id=user_id,
                     title=data['title']
                 )
+                updated_fields['title'] = data['title']
             if 'abstract' in data:
                 update_document(
                     document_id=document_id,
@@ -298,6 +290,7 @@ def register_route_external_public_documents(app):
                     user_id=user_id,
                     abstract=data['abstract']
                 )
+                updated_fields['abstract'] = data['abstract']
             if 'keywords' in data:
                 if isinstance(data['keywords'], list):
                     update_document(
@@ -306,13 +299,16 @@ def register_route_external_public_documents(app):
                         user_id=user_id,
                         keywords=data['keywords']
                     )
+                    updated_fields['keywords'] = data['keywords']
                 else:
+                    keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
                     update_document(
                         document_id=document_id,
                         public_workspace_id=active_workspace_id,
                         user_id=user_id,
-                        keywords=[kw.strip() for kw in data['keywords'].split(',')]
+                        keywords=keywords_list
                     )
+                    updated_fields['keywords'] = keywords_list
             if 'publication_date' in data:
                 update_document(
                     document_id=document_id,
@@ -320,6 +316,7 @@ def register_route_external_public_documents(app):
                     user_id=user_id,
                     publication_date=data['publication_date']
                 )
+                updated_fields['publication_date'] = data['publication_date']
             if 'document_classification' in data:
                 update_document(
                     document_id=document_id,
@@ -327,6 +324,7 @@ def register_route_external_public_documents(app):
                     user_id=user_id,
                     document_classification=data['document_classification']
                 )
+                updated_fields['document_classification'] = data['document_classification']
             if 'authors' in data:
                 if isinstance(data['authors'], list):
                     update_document(
@@ -335,12 +333,41 @@ def register_route_external_public_documents(app):
                         user_id=user_id,
                         authors=data['authors']
                     )
+                    updated_fields['authors'] = data['authors']
                 else:
+                    authors_list = [data['authors']]
                     update_document(
                         document_id=document_id,
                         public_workspace_id=active_workspace_id,
                         user_id=user_id,
-                        authors=[data['authors']]
+                        authors=authors_list
+                    )
+                    updated_fields['authors'] = authors_list
+
+            # Log the metadata update transaction if any fields were updated
+            if updated_fields:
+                from functions_documents import get_document
+                from functions_activity_logging import log_document_metadata_update_transaction
+                doc_response = get_document(user_id, document_id, public_workspace_id=active_workspace_id)
+                doc = None
+                if isinstance(doc_response, tuple):
+                    resp, status_code = doc_response
+                    if status_code == 200 and hasattr(resp, 'get_json'):
+                        doc = resp.get_json()
+                elif hasattr(doc_response, 'get_json'):
+                    doc = doc_response.get_json()
+                else:
+                    doc = doc_response
+
+                if doc and isinstance(doc, dict):
+                    log_document_metadata_update_transaction(
+                        user_id=user_id,
+                        document_id=document_id,
+                        workspace_type='public',
+                        file_name=doc.get('file_name', 'Unknown'),
+                        updated_fields=updated_fields,
+                        file_type=doc.get('file_type'),
+                        public_workspace_id=active_workspace_id
                     )
 
             return jsonify({'message': 'Public document metadata updated successfully'}), 200
@@ -359,11 +386,22 @@ def register_route_external_public_documents(app):
         """
         user_id = request.args.get('user_id')
         active_workspace_id = request.args.get('active_workspace_id')
+        delete_mode = request.args.get('delete_mode', 'all_versions')
+
+        if delete_mode not in {'all_versions', 'current_only'}:
+            return jsonify({'error': 'Invalid delete mode'}), 400
 
         try:
-            delete_document(user_id=user_id, document_id=document_id, public_workspace_id=active_workspace_id)
-            delete_document_chunks(document_id=document_id, public_workspace_id=active_workspace_id)
-            return jsonify({'message': 'Public document deleted successfully'}), 200
+            delete_result = delete_document_revision(
+                user_id=user_id,
+                document_id=document_id,
+                delete_mode=delete_mode,
+                public_workspace_id=active_workspace_id,
+            )
+            return jsonify({
+                'message': 'Public document deleted successfully',
+                **delete_result,
+            }), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting public document: {str(e)}'}), 500
 

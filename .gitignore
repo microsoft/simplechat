@@ -38,5 +38,18 @@ application/single_app/static/.DS_Store
 application/external_apps/bulkloader/map.csv
 
 flask_session
-
-commands.txt
+**/abd_proto.py
+**/my_chart.png
+**/sample_pie.csv
+**/sample_stacked_column.csv
+tmp**cwd
+/tmp_images
+nul
+/.github/plans
+*.xlsx
+/artifacts/tests
+/artifacts/tmp/*
+/artifacts/tmp
+scripts/agent.json
+scripts/me.json
+.github/instructions/python-venv-path.instructions.md

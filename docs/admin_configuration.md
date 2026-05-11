@@ -1,38 +1,246 @@
-# Simple Chat - Admin Configuration
+---
+layout: showcase-page
+title: Admin Configuration
+permalink: /admin_configuration/
+menubar: docs_menu
+accent: violet
+eyebrow: Central Control Surface
+description: Admin Settings turns a raw deployment into an operating environment by centralizing branding, model routing, workspace policy, safety controls, scale features, and logging.
+hero_icons:
+  - bi-gear
+  - bi-sliders2-vertical
+  - bi-shield-check
+hero_pills:
+  - Guided setup walkthrough included
+  - Model and workspace configuration in one UI
+  - Logging, safety, and scale controls available
+hero_links:
+  - label: Getting started guide
+    url: /setup_instructions/
+    style: primary
+  - label: Manual setup reference
+    url: /setup_instructions_manual/
+    style: secondary
+---
 
-[Return to Main](../README.md)
+Once the application is running and you sign in with the Admin role, the Admin Settings page becomes the main place to configure the product without editing environment variables directly.
 
+<section class="latest-release-card-grid">
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-brush"></i></div>
+    <h2>General</h2>
+    <p>Brand the app, tune appearance, manage landing-page content, and control global behavior such as file limits and system prompts.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-cpu"></i></div>
+    <h2>Models and retrieval</h2>
+    <p>Configure GPT, embeddings, image generation, Azure AI Search, Document Intelligence, and enhanced citations from the same settings surface.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-people"></i></div>
+    <h2>Workspaces and agents</h2>
+    <p>Enable personal, group, and public workspaces, define classification behavior, and manage agent and action capabilities.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-speedometer"></i></div>
+    <h2>Safety, scale, and logging</h2>
+    <p>Turn on Content Safety, Redis, Front Door, Application Insights logging, and other controls that matter once the deployment grows up.</p>
+  </article>
+</section>
 
-Once the application is running and you log in as a user assigned the Admin role, you can access the **Admin Settings** page. This UI provides a centralized location to configure most application features and service connections.
+<div class="latest-release-note-panel">
+  <h2>Best starting point</h2>
+  <p>The Setup Walkthrough is the fastest way to move a fresh environment from partially configured to usable. It guides admins through the critical dependencies in the right order and skips steps that do not apply.</p>
+</div>
 
-![alt text](./images/admin_settings_page.png)
+![Admin Settings page](./images/admin_settings_page.png)
+
+## Setup Walkthrough
+
+The Admin Settings page includes an interactive **Setup Walkthrough** feature that guides you through the initial configuration process. This is particularly helpful for first-time setup.
+
+### Starting the Walkthrough
+
+- The walkthrough automatically appears on first-time setup when critical settings are missing
+- You can manually launch it anytime by clicking the **"Start Setup Walkthrough"** button at the top of the Admin Settings page
+- The walkthrough will automatically navigate to the relevant configuration tabs as you progress through each step
+
+### Walkthrough Features
+
+- **Automatic Tab Navigation**: As you move through steps, the walkthrough automatically switches to the relevant admin settings tab and scrolls to the appropriate section
+- **Smart Step Skipping**: Steps that aren't applicable based on your configuration choices (e.g., workspace-dependent features) are automatically skipped
+- **Real-time Validation**: The "Next" button becomes available only when required fields for the current step are completed
+- **Progress Tracking**: Visual progress bar shows your completion status through the setup process
+- **Flexible Navigation**: Use "Previous" and "Next" buttons to move between steps, or close the walkthrough at any time to configure settings manually
+
+### Walkthrough Steps Overview
+
+The walkthrough covers these key configuration areas in order:
+
+1. **Application Basics** (Optional) - App title and logo
+2. **GPT API Settings** (Required) - Azure OpenAI GPT endpoint and authentication
+3. **GPT Model Selection** (Required) - Select available GPT models for users
+4. **Workspaces** (Optional) - Enable personal and/or group workspaces
+5. **Embedding API** (Required if workspaces enabled) - Configure embedding service
+6. **Azure AI Search** (Required if workspaces enabled) - Configure search indexing
+7. **Document Intelligence** (Required if workspaces enabled) - Configure document processing
+8. **Video Support** (Optional, workspace-dependent) - Configure video file processing
+9. **Shared Speech Service** (Optional) - Configure the shared Speech resource used for audio uploads, voice input, and voice responses
+10. **Content Safety** (Optional) - Configure content filtering
+11. **User Feedback & Archiving** (Optional) - Enable feedback and conversation archiving
+12. **Enhanced Features** (Optional) - Enhanced citations and image generation
+
+The walkthrough automatically adjusts which steps are required based on your selections. For example, if you don't enable workspaces, embedding and search configuration steps become optional.
+
+## Configuration Sections
 
 Key configuration sections include:
 
-1. **General**: Application title, custom logo upload, landing page markdown text.
-2. **GPT**: Configure Azure OpenAI endpoint(s) for chat models. Supports Direct endpoint or APIM. Allows Key or Managed Identity authentication. Test connection button. Select active deployment(s).
-   1. Setting up Multi-model selection for users
-3. **Embeddings**: Configure Azure OpenAI endpoint(s) for embedding models. Supports Direct/APIM, Key/Managed Identity. Test connection. Select active deployment.
-4. **Image Generation** *(Optional)*: Enable/disable feature. Configure Azure OpenAI DALL-E endpoint. Supports Direct/APIM, Key/Managed Identity. Test connection. Select active deployment.
-5. **Workspaces**:
-   - Enable/disable **Your Workspace** (personal docs).
-   - Enable/disable **My Groups** (group docs). Option to enforce `CreateGroups` RBAC role for creating new groups.
-   - Enable/disable **Multimedia Support** (Video/Audio uploads). Configure **Video Indexer** (Account ID, Location, Key, API Endpoint, Timeout) and **Speech Service** (Endpoint, Region, Key).
-   - Enable/disable **Metadata Extraction**. Select the GPT model used for extraction.
-   - Enable/disable **Document Classification**. Define classification labels and colors.
-6. **Citations**:
-   - Standard Citations (basic text references) are always on.
-   - Enable/disable **Enhanced Citations**. Configure **Azure Storage Account Connection String** (or indicate Managed Identity use if applicable).
-7. **Safety**:
-   - Enable/disable **Content Safety**. Configure endpoint (Direct/APIM), Key/Managed Identity. Test connection.
-   - Enable/disable **User Feedback**.
-   - Configure **Admin Access RBAC**: Option to require `SafetyViolationAdmin` or `FeedbackAdmin` roles for respective admin views.
-   - Enable/disable **Conversation Archiving**.
-8. **Search & Extract**:
-   - Configure **Azure AI Search** connection (Endpoint, Key/Managed Identity). Test connection. (Primarily for testing, main indexing uses backend logic).
-   - Configure **Document Intelligence** connection (Endpoint, Key/Managed Identity). Test connection.
-9. **Other**:
-   - Set **Maximum File Size** for uploads (in MB).
-   - Set **Conversation History Limit** (max number of past conversations displayed).
-   - Define the **Default System Prompt** used for the AI model.
-   - Enable/disable **File Processing Logs** (verbose logging for ingestion pipelines).
+### 1. General
+- **Branding**: Application title, custom logo upload (light and dark mode), favicon
+- **Home Page Text**: Landing page markdown content with alignment options and optional editor
+- **Appearance**: Default theme (light/dark mode) and navigation layout (top nav or left sidebar)
+- **Health Check**: External health check endpoint configuration for monitoring systems
+- **API Documentation**: Enable/disable Swagger/OpenAPI documentation endpoint
+- **Classification Banner**: Security classification banner for data sensitivity indication
+- **External Links**: Custom navigation links to external resources with configurable menu behavior
+- **System Settings**: Maximum file size, conversation history limit, default system prompt
+
+### 2. AI Models
+- **GPT Configuration**: 
+  - Configure Azure OpenAI endpoint(s) for chat models
+  - Supports Direct endpoint or APIM (API Management)
+  - Allows Key or Managed Identity authentication
+  - Test connection button
+  - Select multiple active deployment(s) - users can choose from available models
+  - Multi-model selection for users
+  
+- **Embeddings Configuration**:
+  - Configure Azure OpenAI endpoint(s) for embedding models
+  - Supports Direct/APIM, Key/Managed Identity
+  - Test connection
+  - Select active deployment
+  
+- **Image Generation** *(Optional)*:
+  - Enable/disable feature
+  - Configure Azure OpenAI DALL-E endpoint
+  - Supports Direct/APIM, Key/Managed Identity
+  - Test connection
+  - Select active deployment
+
+### 3. Workspaces
+- **Personal Workspaces**: Enable/disable "Your Workspace" (personal docs)
+- **Group Workspaces**: 
+  - Enable/disable "Groups" (group docs)
+  - Option to enforce `CreateGroups` RBAC role for creating new groups
+- **Public Workspaces**: 
+  - Enable/disable "Public" (public docs)
+  - Option to enforce `CreatePublicWorkspaces` RBAC role for creating new public workspaces
+- **File Sharing**:
+  - Enable/disable file sharing capabilities between users and workspaces.
+- **Metadata Extraction**:
+  - Enable/disable metadata extraction from documents
+  - Select the GPT model used for extraction
+- **Multi-Modal Vision Analysis**:
+  - Enable vision-capable models for image analysis in addition to document OCR
+  - Automatic filtering of compatible GPT models (GPT-4o, GPT-4 Vision, etc.)
+- **Document Classification**:
+  - Enable/disable classification features
+  - Define custom classification labels and colors
+  - Dynamic category management with inline editing
+
+### 4. Citations
+- **Standard Citations**: Basic text references (always enabled)
+- **Enhanced Citations**:
+  - Enable/disable enhanced citation features
+  - Configure Azure Storage Account Connection String or Service Endpoint with Managed Identity
+  - Store original files for direct reference and preview
+
+### 5. Safety
+- **Content Safety**:
+  - Enable/disable content filtering
+  - Configure endpoint (Direct/APIM)
+  - Key/Managed Identity authentication
+  - Test connection
+- **User Feedback**:
+  - Enable/disable thumbs up/down feedback on AI responses
+- **Admin Access RBAC**:
+  - Option to require `SafetyViolationAdmin` role for safety violation admin views
+  - Option to require `FeedbackAdmin` role for feedback admin views
+- **Conversation Archiving**:
+  - Enable/disable conversation archiving instead of permanent deletion
+
+### 6. Search & Extract
+- **Azure AI Search**:
+  - Configure connection (Endpoint, Key/Managed Identity)
+  - Support for Direct or APIM routing
+  - Test connection
+- **Document Intelligence**:
+  - Configure connection (Endpoint, Key/Managed Identity)
+  - Support for Direct or APIM routing
+  - Test connection
+- **Multimedia Support** (Video/Audio uploads):
+  - **Video Files**: Configure Azure Video Indexer with the App Service system-assigned managed identity
+    - Cloud / Endpoint Mode, Resource Group, Subscription ID, Account Name, Location, Account ID
+    - Effective API Endpoint, ARM API Version, Timeout
+    - Video Indexer API keys are not used by the current setup flow
+  - **Shared Speech Service**: One Speech resource powers audio uploads, speech-to-text input, and text-to-speech
+    - Endpoint, Location/Region, Locale, Authentication Type
+    - Key authentication uses the Speech key
+    - Managed identity uses the custom-domain Speech endpoint; voice responses also require the Speech Resource ID
+
+### 7. Agents
+- **Agents Configuration**:
+  - Enable/disable Semantic Kernel-powered agents
+  - Configure workspace mode (per-user vs global agents)
+  - Agent orchestration settings (single agent vs multi-agent group chat)
+  - Manage global agents and select default/orchestrator agent
+- **Actions Configuration**:
+  - Enable/disable core plugins (Time, HTTP, Wait, Math, Text, Fact Memory, Embedding)
+  - Configure user and group plugin permissions
+  - Manage custom OpenAPI plugins
+
+### 8. Scale
+- **Redis Cache**:
+  - Enable distributed session storage for horizontal scaling
+  - Configure Redis endpoint and authentication (Key or Managed Identity)
+  - Test connection
+- **Front Door**:
+  - Enable Azure Front Door integration
+  - Configure Front Door URL for authentication flows
+  - Supports global load balancing and custom domains
+
+### 9. Logging
+- **Application Insights Logging**:
+  - Enable global logging for agents and orchestration
+  - Requires application restart to take effect
+- **Debug Logging**:
+  - Enable/disable debug print statements
+  - Optional time-based auto-disable feature
+  - Warning: Collects tokens and keys during debug
+- **File Processing Logs**:
+  - Enable logging of file processing events
+  - Logs stored in Cosmos DB file_processing container
+  - Optional time-based auto-disable feature
+
+## Navigation Options
+
+The Admin Settings page supports two navigation layouts:
+
+1. **Tab Navigation** (Default): Horizontal tabs at the top for switching between configuration sections
+2. **Left Sidebar Navigation**: Collapsible left sidebar with grouped navigation items
+   - Can be set as the default for all users in General → Appearance settings
+   - Users can toggle between layouts individually
+   - The Setup Walkthrough works seamlessly with both navigation styles
+
+## Tips for Configuration
+
+- **Save Changes**: The floating "Save Settings" button in the bottom-right becomes active (blue) when you make changes
+- **Test Connections**: Use the "Test Connection" buttons to verify your service configurations before saving
+- **APIM vs Direct**: When using Azure API Management (APIM), you'll need to manually specify model names as automatic model fetching is not available
+- **Managed Identity**: When using Managed Identity authentication, ensure your Service Principal has the appropriate roles assigned:
+  - **Azure OpenAI**: Cognitive Services OpenAI User role
+  - **Speech Service**: Start with `Cognitive Services Speech User`; add `Cognitive Services Speech Contributor` if transcription operations still require it. Managed identity also requires the custom-domain Speech endpoint, and text-to-speech needs the Speech Resource ID.
+  - **Video Indexer**: Grant the App Service system-assigned managed identity `Contributor` on the Video Indexer resource. If Azure asks for a user-assigned managed identity during Video Indexer resource creation, that identity is for the Video Indexer resource itself, not for Simple Chat runtime calls.
+- **Dependencies**: The walkthrough will alert you if required services aren't configured when you enable dependent features (e.g., workspaces require embeddings, AI Search, and Document Intelligence)
+- **Required vs Optional**: The walkthrough clearly indicates which settings are required vs optional based on your configuration choices

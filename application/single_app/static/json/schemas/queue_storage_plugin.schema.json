@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Queue Storage Plugin",
+  "description": "Schema for Azure Queue Storage plugin configuration.",
+  "allOf": [
+    { "$ref": "plugin.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https://.*\\.queue\\.core\\.windows\\.net/?$",
+          "description": "Must be a valid Azure Queue Storage endpoint."
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["key", "identity"],
+              "description": "Only 'key' or 'identity' are allowed for queue storage."
+            }
+          }
+        }
+      }
+    }
+  ]
+}

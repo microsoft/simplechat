@@ -1,6 +1,8 @@
 // static/js/workspace/workspace-documents.js
 
 import { escapeHtml } from "./workspace-utils.js";
+import { initializeTags, renderTagBadges, loadWorkspaceTags, currentView } from "./workspace-tags.js";
+import { getSelectedTagsArray, setSelectedTags, clearSelectedTags, updateDocumentTagsDisplay, loadWorkspaceTags as loadTagManagementTags } from './workspace-tag-management.js';
 
 // ------------- State Variables -------------
 let docsCurrentPage = 1;
@@ -10,10 +12,14 @@ let docsClassificationFilter = '';
 let docsAuthorFilter = ''; // Added for Author filter
 let docsKeywordsFilter = ''; // Added for Keywords filter
 let docsAbstractFilter = ''; // Added for Abstract filter
+let docsTagsFilter = ''; // Added for Tags filter
+let docsSortBy = '_ts';    // Current sort field
+let docsSortOrder = 'desc'; // Current sort order
 const activePolls = new Set();
 
 // ------------- DOM Elements (Documents Tab) -------------
 const documentsTableBody = document.querySelector("#documents-table tbody");
+const documentsCardView = document.getElementById("documents-card-view");
 const docsPaginationContainer = document.getElementById("docs-pagination-container");
 const docsPageSizeSelect = document.getElementById("docs-page-size-select");
 const fileInput = document.getElementById("workspace-file-input");
@@ -23,8 +29,13 @@ const docMetadataModalEl = document.getElementById("docMetadataModal") ? new boo
 const docMetadataForm = document.getElementById("doc-metadata-form");
 const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
-const removeSelectedBtn = document.getElementById("remove-selected-btn");
-const bulkActionsColumn = document.getElementById("bulk-actions");
+const clearSelectionBtn = document.getElementById("clear-selection-btn");
+const documentDeleteModalElement = document.getElementById("documentDeleteModal");
+const documentDeleteModal = documentDeleteModalElement ? new bootstrap.Modal(documentDeleteModalElement) : null;
+const documentDeleteModalTitle = document.getElementById("documentDeleteModalLabel");
+const documentDeleteModalBody = document.getElementById("documentDeleteModalBody");
+const documentDeleteCurrentBtn = document.getElementById("documentDeleteCurrentBtn");
+const documentDeleteAllBtn = document.getElementById("documentDeleteAllBtn");
 
 // Selection mode variables
 let selectionModeActive = false;
@@ -39,9 +50,19 @@ const docsClassificationFilterSelect = (window.enable_document_classification ==
 const docsAuthorFilterInput = document.getElementById('docs-author-filter');
 const docsKeywordsFilterInput = document.getElementById('docs-keywords-filter');
 const docsAbstractFilterInput = document.getElementById('docs-abstract-filter');
+const docsTagsFilterSelect = document.getElementById('docs-tags-filter');
 // Buttons (get them regardless, they might be rendered in different places)
 const docsApplyFiltersBtn = document.getElementById('docs-apply-filters-btn');
 const docsClearFiltersBtn = document.getElementById('docs-clear-filters-btn');
+
+// Expose state variables globally for workspace-tags.js
+window.docsCurrentPage = docsCurrentPage;
+window.docsTagsFilter = docsTagsFilter;
+window.selectedDocuments = selectedDocuments;
+window.fetchUserDocuments = fetchUserDocuments;
+window.lastFetchedDocs = window.lastFetchedDocs || [];
+window.lastFetchedDocsError = null;
+window.hasFetchedUserDocuments = window.hasFetchedUserDocuments || false;
 
 // ------------- Helper Functions -------------
 function isColorLight(hexColor) {
@@ -73,6 +94,519 @@ function isColorLight(hexColor) {
     return luminance > 0.5;
 }
 
+function truncateDocumentText(text, maxLength = 150) {
+    if (!text) {
+        return "";
+    }
+
+    return text.length > maxLength ? `${text.slice(0, maxLength).trimEnd()}…` : text;
+}
+
+function getDocumentProcessingState(doc) {
+    const pctString = String(doc?.percentage_complete ?? "");
+    const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
+    const docStatus = doc?.status || "";
+    const normalizedStatus = docStatus.toLowerCase();
+    const hasError = normalizedStatus.includes("error");
+    const isComplete = pct >= 100 || normalizedStatus.includes("complete") || hasError;
+
+    return { pct, docStatus, hasError, isComplete };
+}
+
+function getPersonalDocumentAccess(doc) {
+    const currentUserId = window.current_user_id;
+    const isOwner = doc.user_id === currentUserId;
+    let sharedUserEntry = null;
+
+    if (!isOwner) {
+        sharedUserEntry = (doc.shared_user_ids || []).find(
+            entry => entry.startsWith(`${currentUserId},`)
+        ) || null;
+    }
+
+    return {
+        isOwner,
+        sharedUserEntry,
+        requiresApproval: Boolean(!isOwner && sharedUserEntry && sharedUserEntry.endsWith(",not_approved")),
+        hasApprovedAccess: isOwner || (!sharedUserEntry || sharedUserEntry.endsWith(",approved"))
+    };
+}
+
+function getDocumentCardIcon(fileName = "") {
+    const extension = (fileName.split('.').pop() || '').toLowerCase();
+    const iconMap = {
+        pdf: 'bi-filetype-pdf',
+        doc: 'bi-file-earmark-word',
+        docx: 'bi-file-earmark-word',
+        ppt: 'bi-file-earmark-slides',
+        pptx: 'bi-file-earmark-slides',
+        xls: 'bi-file-earmark-spreadsheet',
+        xlsx: 'bi-file-earmark-spreadsheet',
+        xlsm: 'bi-file-earmark-spreadsheet',
+        csv: 'bi-filetype-csv',
+        png: 'bi-file-earmark-image',
+        jpg: 'bi-file-earmark-image',
+        jpeg: 'bi-file-earmark-image',
+        gif: 'bi-file-earmark-image',
+        txt: 'bi-file-earmark-text',
+        md: 'bi-file-earmark-richtext',
+        html: 'bi-filetype-html',
+        json: 'bi-filetype-json',
+        xml: 'bi-filetype-xml'
+    };
+
+    return iconMap[extension] || 'bi-file-earmark-text';
+}
+
+function getDocumentClassificationBadge(doc) {
+    if (!(window.enable_document_classification === true || window.enable_document_classification === "true")) {
+        return '';
+    }
+
+    const currentLabel = doc.document_classification || null;
+    const categories = window.classification_categories || [];
+    const category = categories.find(cat => cat.label === currentLabel);
+
+    if (category) {
+        const bgColor = category.color || '#6c757d';
+        const textColorClass = isColorLight(bgColor) ? 'text-dark' : '';
+        return `<span class="classification-badge ${textColorClass}" style="background-color: ${escapeHtml(bgColor)};">${escapeHtml(category.label)}</span>`;
+    }
+
+    if (currentLabel) {
+        return `<span class="badge bg-warning text-dark">${escapeHtml(currentLabel)}</span>`;
+    }
+
+    return '<span class="badge bg-secondary">None</span>';
+}
+
+function getDocumentMetaPills(doc) {
+    const pills = [];
+    const authors = Array.isArray(doc.authors)
+        ? doc.authors.filter(Boolean)
+        : (doc.authors ? [doc.authors] : []);
+
+    if (doc.version) {
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-layers"></i>v${escapeHtml(String(doc.version))}</span>`);
+    }
+    if (doc.number_of_pages) {
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeHtml(String(doc.number_of_pages))} pages</span>`);
+    }
+    if (authors.length) {
+        const authorLabel = authors.length > 2
+            ? `${authors.slice(0, 2).join(', ')} +${authors.length - 2}`
+            : authors.join(', ');
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-people"></i>${escapeHtml(authorLabel)}</span>`);
+    }
+    if (doc.publication_date) {
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-calendar-event"></i>${escapeHtml(String(doc.publication_date))}</span>`);
+    }
+
+    return pills.join('');
+}
+
+function getDocumentSummaryText(doc) {
+    const abstractText = truncateDocumentText((doc.abstract || '').trim(), 165);
+    if (abstractText) {
+        return abstractText;
+    }
+
+    const keywords = Array.isArray(doc.keywords)
+        ? doc.keywords.filter(Boolean).join(', ')
+        : (doc.keywords || '');
+
+    if (keywords) {
+        return `Keywords: ${truncateDocumentText(keywords, 165)}`;
+    }
+
+    return 'Use chat, metadata tools, and sharing actions directly from this document card.';
+}
+
+function renderDocumentsEmptyState(filtersActive) {
+    const message = filtersActive
+        ? 'No documents found matching the current filters.'
+        : 'No documents found. Upload a document to get started.';
+    const resetHtml = filtersActive
+        ? '<br /><button class="btn btn-link btn-sm p-0 docs-reset-filter-msg-btn" type="button">Clear filters</button> to see all documents.'
+        : '';
+
+    documentsTableBody.innerHTML = `
+        <tr>
+            <td colspan="4" class="text-center p-4 text-muted">${message}${resetHtml}</td>
+        </tr>`;
+
+    if (documentsCardView) {
+        documentsCardView.innerHTML = `
+            <div class="col-12 text-center text-muted py-5">
+                <i class="bi bi-folder2-open display-6 mb-2 d-block"></i>
+                <p class="mb-2">${message}</p>
+                ${filtersActive ? '<button class="btn btn-link btn-sm p-0 docs-reset-filter-msg-btn" type="button">Clear filters</button>' : ''}
+            </div>`;
+    }
+
+    document.querySelectorAll('.docs-reset-filter-msg-btn').forEach(button => {
+        if (button.dataset.bound === 'true') {
+            return;
+        }
+
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => {
+            docsClearFiltersBtn?.click();
+        });
+    });
+}
+
+function renderDocumentsErrorState(message) {
+    documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${message}</td></tr>`;
+
+    if (documentsCardView) {
+        documentsCardView.innerHTML = `
+            <div class="col-12 text-center text-danger py-5">
+                <i class="bi bi-exclamation-triangle display-6 mb-2 d-block"></i>
+                <p class="mb-0">${message}</p>
+            </div>`;
+    }
+}
+
+function createDocumentCard(doc) {
+    const docId = doc.id;
+    const { pct, docStatus, hasError, isComplete } = getDocumentProcessingState(doc);
+    const access = getPersonalDocumentAccess(doc);
+    const displayTitle = doc.title && doc.title !== doc.file_name ? doc.title : (doc.file_name || 'Untitled');
+    const subtitle = doc.title && doc.title !== doc.file_name ? (doc.file_name || '') : '';
+    const selected = selectedDocuments.has(docId);
+    const checkboxClass = selectionModeActive ? '' : ' d-none';
+
+    let statusBadge = '<span class="badge bg-success">Ready</span>';
+    if (access.requiresApproval) {
+        statusBadge = '<span class="badge bg-warning text-dark">Pending Approval</span>';
+    } else if (hasError) {
+        statusBadge = '<span class="badge bg-danger">Error</span>';
+    } else if (!isComplete) {
+        statusBadge = `<span class="badge bg-info text-dark">Processing ${pct.toFixed(0)}%</span>`;
+    }
+
+    let primaryButtonsHtml = '';
+    if (access.requiresApproval) {
+        primaryButtonsHtml += `
+            <button class="btn btn-sm btn-success me-1" onclick="window.approveSharedDocument('${docId}', this, '${escapeHtml(doc.owner_id || doc.user_id)}')">
+                <i class="bi bi-check-circle me-1"></i>Approve
+            </button>`;
+    } else if (isComplete && !hasError && access.hasApprovedAccess) {
+        primaryButtonsHtml += `
+            <button class="btn btn-sm btn-primary me-1" onclick="window.redirectToChat('${docId}')">
+                <i class="bi bi-chat-dots me-1"></i>Chat
+            </button>
+            <button class="btn btn-sm btn-outline-secondary me-1" onclick="window.onEditDocument('${docId}')">
+                <i class="bi bi-pencil me-1"></i>Edit
+            </button>`;
+    }
+
+    let dropdownItems = '';
+    if (isComplete && !hasError) {
+        dropdownItems += `
+            <li><a class="dropdown-item select-btn" href="#" onclick="window.toggleSelectionMode(); return false;">
+                <i class="bi bi-check-square me-2"></i>Select
+            </a></li>`;
+
+        if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+            dropdownItems += `
+                <li><a class="dropdown-item" href="#" onclick="window.onExtractMetadata('${docId}', event); return false;">
+                    <i class="bi bi-magic me-2"></i>Extract Metadata
+                </a></li>`;
+        }
+
+        if (access.isOwner && (window.enable_file_sharing === true || window.enable_file_sharing === "true")) {
+            const shareCount = Array.isArray(doc.shared_user_ids) ? doc.shared_user_ids.length : 0;
+            dropdownItems += `
+                <li><a class="dropdown-item" href="#" onclick="window.shareDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
+                    <i class="bi bi-share-fill me-2"></i>Share
+                    <span class="badge bg-secondary ms-1">${shareCount}</span>
+                </a></li>`;
+        }
+
+        if (access.isOwner) {
+            dropdownItems += `
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
+                    <i class="bi bi-trash-fill me-2"></i>Delete
+                </a></li>`;
+        } else if (access.sharedUserEntry && !access.requiresApproval) {
+            dropdownItems += `
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="window.removeSelfFromDocument('${docId}', event); return false;">
+                    <i class="bi bi-x-circle-fill me-2"></i>Remove
+                </a></li>`;
+        }
+    } else if (access.isOwner) {
+        dropdownItems += `
+            <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
+                <i class="bi bi-trash-fill me-2"></i>Delete
+            </a></li>`;
+    }
+
+    const dropdownHtml = dropdownItems
+        ? `
+            <div class="dropdown action-dropdown d-inline-block ms-auto">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-three-dots-vertical"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">${dropdownItems}</ul>
+            </div>`
+        : '';
+
+    const progressHtml = hasError
+        ? `<div class="alert alert-danger py-2 px-3 small mb-0"><i class="bi bi-exclamation-triangle-fill me-1"></i>${escapeHtml(docStatus || 'Processing error')}</div>`
+        : (!isComplete
+            ? `<div class="document-item-card__progress"><div class="progress" style="height: 10px;"><div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: ${pct}%" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"></div></div><span class="document-item-card__progress-label">${escapeHtml(docStatus)} (${pct.toFixed(0)}%)</span></div>`
+            : '');
+
+    const cardColumn = document.createElement('div');
+    cardColumn.className = 'col-12 col-md-6 col-xl-4';
+    cardColumn.innerHTML = `
+        <div class="card item-card document-item-card h-100${selected ? ' is-selected' : ''}" data-document-id="${docId}">
+            <div class="card-body d-flex flex-column">
+                <div class="document-item-card__header">
+                    <div class="document-item-card__check">
+                        <input type="checkbox" class="form-check-input document-checkbox${checkboxClass}" data-document-id="${docId}" ${selected ? 'checked' : ''} />
+                    </div>
+                    <div class="item-card-icon"><i class="bi ${getDocumentCardIcon(doc.file_name || '')}" style="font-size: 1.75rem;"></i></div>
+                    <div class="document-item-card__title-wrap">
+                        <div class="document-item-card__eyebrow">Personal document</div>
+                        <h6 class="card-title mb-1" title="${escapeHtml(displayTitle)}">${escapeHtml(truncateDocumentText(displayTitle, 60))}</h6>
+                        ${subtitle ? `<div class="document-item-card__subtitle" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</div>` : ''}
+                    </div>
+                    <div class="document-item-card__status">${statusBadge}</div>
+                </div>
+                <div class="document-item-card__summary">${escapeHtml(getDocumentSummaryText(doc))}</div>
+                <div class="document-item-card__meta">${getDocumentMetaPills(doc)}</div>
+                <div class="document-item-card__badges">
+                    ${getDocumentClassificationBadge(doc)}
+                    <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
+                </div>
+                <div class="document-item-card__tags">${renderTagBadges(doc.tags || [], 4)}</div>
+                ${progressHtml}
+                <div class="item-card-buttons mt-auto d-flex flex-wrap gap-1">
+                    ${primaryButtonsHtml}
+                    ${dropdownHtml}
+                </div>
+            </div>
+        </div>`;
+
+    return cardColumn;
+}
+
+function renderDocumentCards(docs) {
+    if (!documentsCardView) {
+        return;
+    }
+
+    documentsCardView.innerHTML = '';
+    docs.forEach(doc => {
+        documentsCardView.appendChild(createDocumentCard(doc));
+    });
+}
+
+function renderWorkspaceDocumentView() {
+    const docs = Array.isArray(window.lastFetchedDocs) ? window.lastFetchedDocs : [];
+    const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter || docsTagsFilter;
+
+    if (!window.hasFetchedUserDocuments && !window.lastFetchedDocsError) {
+        return;
+    }
+
+    if (window.lastFetchedDocsError) {
+        renderDocumentsErrorState(window.lastFetchedDocsError);
+        return;
+    }
+
+    documentsTableBody.innerHTML = '';
+    if (documentsCardView) {
+        documentsCardView.innerHTML = '';
+    }
+
+    if (!docs.length) {
+        renderDocumentsEmptyState(filtersActive);
+        return;
+    }
+
+    if (currentView === 'cards') {
+        renderDocumentCards(docs);
+    } else {
+        docs.forEach(doc => renderDocumentRow(doc));
+    }
+
+    syncDocumentSelectionModeUI();
+}
+
+window.renderWorkspaceDocumentView = renderWorkspaceDocumentView;
+
+function getDocumentDeleteModalContent(documentCount) {
+    if (documentCount === 1) {
+        return {
+            title: "Delete Document",
+            body: `
+                <p class="mb-2">Choose how to delete this document revision.</p>
+                <p class="mb-2"><strong>Delete Current Version</strong> removes the visible revision and keeps older revisions for later comparison.</p>
+                <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for this document.</p>
+            `,
+        };
+    }
+
+    return {
+        title: "Delete Selected Documents",
+        body: `
+            <p class="mb-2">Choose how to delete ${documentCount} selected current document revision(s).</p>
+            <p class="mb-2"><strong>Delete Current Version</strong> removes only the visible revision for each selected document and keeps older revisions.</p>
+            <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for each selected document.</p>
+        `,
+    };
+}
+
+function showDocumentDeleteFeedback(message, variant = "danger") {
+    if (typeof window.showToast === "function") {
+        window.showToast(message, variant);
+        return;
+    }
+
+    let container = document.getElementById("documentDeleteFeedbackContainer");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "documentDeleteFeedbackContainer";
+        container.className = "toast-container position-fixed top-0 end-0 p-3";
+        document.body.appendChild(container);
+    }
+
+    if (window.bootstrap && typeof window.bootstrap.Toast === "function") {
+        const toastElement = document.createElement("div");
+        toastElement.className = `toast align-items-center text-white bg-${variant} border-0`;
+        toastElement.setAttribute("role", "alert");
+        toastElement.setAttribute("aria-live", "assertive");
+        toastElement.setAttribute("aria-atomic", "true");
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "d-flex";
+
+        const body = document.createElement("div");
+        body.className = "toast-body";
+        body.textContent = message;
+
+        const closeButton = document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className = "btn-close btn-close-white me-2 m-auto";
+        closeButton.setAttribute("data-bs-dismiss", "toast");
+        closeButton.setAttribute("aria-label", "Close");
+
+        wrapper.appendChild(body);
+        wrapper.appendChild(closeButton);
+        toastElement.appendChild(wrapper);
+        container.appendChild(toastElement);
+
+        const toast = new window.bootstrap.Toast(toastElement);
+        toast.show();
+        toastElement.addEventListener("hidden.bs.toast", () => {
+            toastElement.remove();
+        });
+        return;
+    }
+
+    const alertElement = document.createElement("div");
+    alertElement.className = `alert alert-${variant} alert-dismissible fade show mb-2`;
+    alertElement.setAttribute("role", "alert");
+
+    const body = document.createElement("span");
+    body.textContent = message;
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "btn-close";
+    closeButton.setAttribute("data-bs-dismiss", "alert");
+    closeButton.setAttribute("aria-label", "Close");
+
+    alertElement.appendChild(body);
+    alertElement.appendChild(closeButton);
+    container.appendChild(alertElement);
+}
+
+function isDocumentDeleteModalReady() {
+    return Boolean(
+        documentDeleteModal &&
+        documentDeleteModalElement &&
+        documentDeleteModalElement.isConnected &&
+        documentDeleteModalBody &&
+        documentDeleteModalBody.isConnected &&
+        documentDeleteCurrentBtn &&
+        documentDeleteCurrentBtn.isConnected &&
+        documentDeleteAllBtn &&
+        documentDeleteAllBtn.isConnected
+    );
+}
+
+function promptDocumentDeleteMode(documentCount = 1) {
+    if (!isDocumentDeleteModalReady()) {
+        showDocumentDeleteFeedback("Delete confirmation dialog is unavailable. Refresh the page and try again.");
+        return Promise.resolve(null);
+    }
+
+    const modalContent = getDocumentDeleteModalContent(documentCount);
+    if (documentDeleteModalTitle) {
+        documentDeleteModalTitle.textContent = modalContent.title;
+    }
+    documentDeleteModalBody.innerHTML = modalContent.body;
+
+    return new Promise((resolve) => {
+        let settled = false;
+
+        const cleanup = () => {
+            documentDeleteModalElement.removeEventListener("hidden.bs.modal", handleHidden);
+            documentDeleteCurrentBtn.removeEventListener("click", handleCurrentOnly);
+            documentDeleteAllBtn.removeEventListener("click", handleAllVersions);
+        };
+
+        const finalize = (value) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            resolve(value);
+        };
+
+        const handleHidden = () => finalize(null);
+        const handleCurrentOnly = () => {
+            documentDeleteModal.hide();
+            finalize("current_only");
+        };
+        const handleAllVersions = () => {
+            documentDeleteModal.hide();
+            finalize("all_versions");
+        };
+
+        documentDeleteModalElement.addEventListener("hidden.bs.modal", handleHidden);
+        documentDeleteCurrentBtn.addEventListener("click", handleCurrentOnly);
+        documentDeleteAllBtn.addEventListener("click", handleAllVersions);
+        documentDeleteModal.show();
+    });
+}
+
+async function requestDocumentDeletion(documentId, deleteMode) {
+    const query = new URLSearchParams({ delete_mode: deleteMode });
+    const response = await fetch(`/api/documents/${documentId}?${query.toString()}`, { method: "DELETE" });
+
+    let responseData = {};
+    try {
+        responseData = await response.json();
+    } catch (error) {
+        responseData = {};
+    }
+
+    if (!response.ok) {
+        throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
+    }
+
+    return responseData;
+}
+
 // ------------- Event Listeners -------------
 
 // Page Size
@@ -93,6 +627,14 @@ if (docsApplyFiltersBtn) {
         docsAuthorFilter = docsAuthorFilterInput ? docsAuthorFilterInput.value.trim() : '';
         docsKeywordsFilter = docsKeywordsFilterInput ? docsKeywordsFilterInput.value.trim() : '';
         docsAbstractFilter = docsAbstractFilterInput ? docsAbstractFilterInput.value.trim() : '';
+        
+        // Get selected tags
+        if (docsTagsFilterSelect) {
+            const selectedOptions = Array.from(docsTagsFilterSelect.selectedOptions);
+            docsTagsFilter = selectedOptions.map(opt => opt.value).join(',');
+        } else {
+            docsTagsFilter = '';
+        }
 
         docsCurrentPage = 1; // Reset to first page
         fetchUserDocuments();
@@ -121,12 +663,19 @@ if (docsClearFiltersBtn) {
         if (docsAuthorFilterInput) docsAuthorFilterInput.value = '';
         if (docsKeywordsFilterInput) docsKeywordsFilterInput.value = '';
         if (docsAbstractFilterInput) docsAbstractFilterInput.value = '';
+        if (docsTagsFilterSelect) {
+            Array.from(docsTagsFilterSelect.options).forEach(opt => opt.selected = false);
+        }
 
         docsSearchTerm = '';
         docsClassificationFilter = '';
         docsAuthorFilter = '';
         docsKeywordsFilter = '';
         docsAbstractFilter = '';
+        docsTagsFilter = '';
+        docsSortBy = '_ts';
+        docsSortOrder = 'desc';
+        updateListSortIcons();
 
         docsCurrentPage = 1; // Reset to first page
         fetchUserDocuments();
@@ -160,6 +709,37 @@ if (docsSearchInput) {
     }
 });
 
+// Sortable column headers in list view
+document.querySelectorAll('#documents-table .sortable-header').forEach(th => {
+    th.addEventListener('click', () => {
+        const field = th.getAttribute('data-sort-field');
+        if (docsSortBy === field) {
+            docsSortOrder = docsSortOrder === 'asc' ? 'desc' : 'asc';
+        } else {
+            docsSortBy = field;
+            docsSortOrder = 'asc';
+        }
+        docsCurrentPage = 1;
+        updateListSortIcons();
+        fetchUserDocuments();
+    });
+});
+
+function updateListSortIcons() {
+    document.querySelectorAll('#documents-table .sortable-header').forEach(th => {
+        const field = th.getAttribute('data-sort-field');
+        const icon = th.querySelector('.sort-icon');
+        if (!icon) return;
+        if (field === docsSortBy) {
+            icon.className = docsSortOrder === 'asc'
+                ? 'bi bi-sort-alpha-down small sort-icon'
+                : 'bi bi-sort-alpha-up small sort-icon';
+        } else {
+            icon.className = 'bi bi-arrow-down-up text-muted small sort-icon';
+        }
+    });
+}
+
 
 // Metadata Modal Form Submission
 if (docMetadataForm && docMetadataModalEl) { // Check both exist
@@ -185,6 +765,9 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
         if (payload.authors) {
             payload.authors = payload.authors.split(",").map(a => a.trim()).filter(Boolean);
         } else { payload.authors = []; }
+        
+        // Get selected tags from the tag management system
+        payload.tags = getSelectedTagsArray();
 
         // Add classification if enabled AND selected (handle 'none' value)
         // Use the window flag to check if classification is enabled
@@ -207,6 +790,7 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
             .then(updatedDoc => {
                 if (docMetadataModalEl) docMetadataModalEl.hide();
                 fetchUserDocuments(); // Refresh the table
+                loadWorkspaceTags(); // Refresh tag counts and grid view
             })
             .catch(err => {
                 console.error("Error updating document:", err);
@@ -355,10 +939,22 @@ async function uploadWorkspaceFiles(files) {
 // Upload Button Handler
 const uploadArea = document.getElementById("upload-area");
 if (fileInput && uploadArea && uploadStatusSpan) {
-    // Auto-upload on file selection
+    // Auto-upload on file selection (with user agreement check)
     fileInput.addEventListener("change", () => {
         if (fileInput.files && fileInput.files.length > 0) {
-            uploadWorkspaceFiles(fileInput.files);
+            // Check for user agreement before uploading
+            if (window.UserAgreementManager) {
+                window.UserAgreementManager.checkBeforeUpload(
+                    fileInput.files,
+                    'personal',
+                    'default',
+                    function(files) {
+                        uploadWorkspaceFiles(files);
+                    }
+                );
+            } else {
+                uploadWorkspaceFiles(fileInput.files);
+            }
         }
     });
 
@@ -386,7 +982,19 @@ if (fileInput && uploadArea && uploadStatusSpan) {
         uploadArea.classList.remove("dragover");
         uploadArea.style.borderColor = "";
         if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            uploadWorkspaceFiles(e.dataTransfer.files);
+            // Check for user agreement before uploading (drag-and-drop)
+            if (window.UserAgreementManager) {
+                window.UserAgreementManager.checkBeforeUpload(
+                    e.dataTransfer.files,
+                    'personal',
+                    'default',
+                    function(files) {
+                        uploadWorkspaceFiles(files);
+                    }
+                );
+            } else {
+                uploadWorkspaceFiles(e.dataTransfer.files);
+            }
         }
     });
 }
@@ -404,6 +1012,13 @@ function fetchUserDocuments() {
                 Loading documents...
             </td>
         </tr>`;
+    if (documentsCardView) {
+        documentsCardView.innerHTML = `
+            <div class="col-12 text-center text-muted py-5">
+                <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                Loading documents...
+            </div>`;
+    }
     if (docsPaginationContainer) docsPaginationContainer.innerHTML = ''; // Clear pagination
 
     // Build query parameters - Include all active filters
@@ -427,9 +1042,20 @@ function fetchUserDocuments() {
     if (docsAbstractFilter) {
         params.append('abstract', docsAbstractFilter); // Assumes backend uses 'abstract'
     }
+    // Add tags filter if selected
+    if (docsTagsFilter) {
+        params.append('tags', docsTagsFilter); // Comma-separated tags
+    }
     // Add shared only filter
     if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
         params.append('shared_only', 'true');
+    }
+    // Add sort parameters
+    if (docsSortBy !== '_ts') {
+        params.append('sort_by', docsSortBy);
+    }
+    if (docsSortOrder !== 'desc') {
+        params.append('sort_order', docsSortOrder);
     }
 
     console.log("Fetching documents with params:", params.toString()); // Debugging: Check params
@@ -441,41 +1067,25 @@ function fetchUserDocuments() {
                 showLegacyUpdatePrompt();
               }
 
-            documentsTableBody.innerHTML = ""; // Clear loading/existing rows
-            if (!data.documents || data.documents.length === 0) {
-                // Check if any filters are active
-                const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter;
-                documentsTableBody.innerHTML = `
-                    <tr>
-                        <td colspan="4" class="text-center p-4 text-muted">
-                            ${ filtersActive
-                                ? 'No documents found matching the current filters.'
-                                : 'No documents found. Upload a document to get started.'
-                            }
-                            ${ filtersActive
-                                ? '<br><button class="btn btn-link btn-sm p-0" id="docs-reset-filter-msg-btn">Clear filters</button> to see all documents.'
-                                : ''
-                            }
-                        </td>
-                    </tr>`;
-                 // Add event listener for the reset button within the message
-                 const resetButton = document.getElementById('docs-reset-filter-msg-btn');
-                 if (resetButton && docsClearFiltersBtn) { // Ensure clear button exists
-                     resetButton.addEventListener('click', () => {
-                         docsClearFiltersBtn.click(); // Simulate clicking the main clear button
-                     });
-                 }
-            } else {
-                // If backend does not support shared_only, filter client-side as fallback
-                let docs = data.documents;
-                if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
-                    docs = docs.filter(doc =>
-                        Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
-                    );
-                }
-                window.lastFetchedDocs = docs;
-                docs.forEach(doc => renderDocumentRow(doc));
+            let docs = data.documents || [];
+            if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
+                docs = docs.filter(doc =>
+                    Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
+                );
             }
+            if (docsSortBy !== '_ts') {
+                docs.sort((a, b) => {
+                    const valA = String(a[docsSortBy] || '').toLowerCase();
+                    const valB = String(b[docsSortBy] || '').toLowerCase();
+                    const cmp = valA.localeCompare(valB);
+                    return docsSortOrder === 'asc' ? cmp : -cmp;
+                });
+            }
+
+            window.lastFetchedDocs = docs;
+            window.lastFetchedDocsError = null;
+            window.hasFetchedUserDocuments = true;
+            renderWorkspaceDocumentView();
             renderDocsPaginationControls(data.page, data.page_size, data.total_count);
         })
         .catch(error => {
@@ -488,7 +1098,10 @@ function fetchUserDocuments() {
             } else {
                 displayMsg = `Error loading documents: ${escapeHtml(error.error || error.message || 'Unknown error')}`;
             }
-            documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${displayMsg}</td></tr>`;
+            window.lastFetchedDocs = [];
+            window.lastFetchedDocsError = displayMsg;
+            window.hasFetchedUserDocuments = true;
+            renderDocumentsErrorState(displayMsg);
             renderDocsPaginationControls(1, docsPageSize, 0); // Show empty pagination on error
         });
 }
@@ -523,7 +1136,7 @@ function renderDocumentRow(doc) {
     // First column with checkbox and expand/collapse
     let firstColumnHtml = `
         <td class="align-middle">
-            <input type="checkbox" class="document-checkbox" data-document-id="${docId}" style="display: none;">
+            <input type="checkbox" class="form-check-input document-checkbox${selectionModeActive ? '' : ' d-none'}" data-document-id="${docId}" ${selectedDocuments.has(docId) ? 'checked' : ''}>
             <span class="expand-collapse-container">
             ${isComplete && !hasError ?
                 `<button class="btn btn-link p-0" onclick="window.toggleDetails('${docId}')" title="Show/Hide Details">
@@ -579,10 +1192,10 @@ function renderDocumentRow(doc) {
             `;
         }
         
-        // Add Search in Chat option
+        // Add Chat option
         actionsDropdown += `
             <li><a class="dropdown-item" href="#" onclick="window.redirectToChat('${docId}'); return false;">
-                <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+                <i class="bi bi-chat-dots-fill me-2"></i>Chat
             </a></li>
         `;
         
@@ -653,9 +1266,9 @@ function renderDocumentRow(doc) {
     // Complete row HTML
     docRow.innerHTML = `
         ${firstColumnHtml}
-        <td class="align-middle" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
-        <td class="align-middle" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
-        <td class="align-middle">
+        <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
+        <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
+        <td class="align-middle document-actions-cell">
             ${approvalButton}
             ${chatButton}
             ${actionsDropdown}
@@ -668,6 +1281,7 @@ function renderDocumentRow(doc) {
     if (isComplete && !hasError) {
         const detailsRow = document.createElement("tr");
         detailsRow.id = `details-row-${docId}`;
+        detailsRow.classList.add("document-details-row");
         detailsRow.style.display = "none"; // Initially hidden
 
         let classificationDisplayHTML = '';
@@ -701,6 +1315,7 @@ function renderDocumentRow(doc) {
                     <p class="mb-1"><strong>Citations:</strong> ${doc.enhanced_citations ? '<span class="badge bg-success">Enhanced</span>' : '<span class="badge bg-secondary">Standard</span>'}</p>
                     <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || "N/A")}</p>
                     <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(Array.isArray(doc.keywords) ? doc.keywords.join(", ") : doc.keywords || "N/A")}</p>
+                    <p class="mb-1"><strong>Tags:</strong> ${renderTagBadges(doc.tags || [])}</p>
                     <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(doc.abstract || "N/A")}</p>
                     <hr class="my-2">
                     <div class="d-flex flex-wrap gap-2">
@@ -727,6 +1342,7 @@ function renderDocumentRow(doc) {
     if (!isComplete || hasError) {
         const statusRow = document.createElement("tr");
         statusRow.id = `status-row-${docId}`;
+        statusRow.classList.add("document-status-row");
         if (hasError) {
              statusRow.innerHTML = `
                 <td colspan="4">
@@ -1061,7 +1677,7 @@ window.onEditDocument = function(docId) {
             const docKeywordsInput = document.getElementById("doc-keywords");
             const docPubDateInput = document.getElementById("doc-publication-date");
             const docAuthorsInput = document.getElementById("doc-authors");
-            const classificationSelect = document.getElementById("doc-classification"); // Use the correct ID
+            const classificationSelect = document.getElementById("doc-classification");
 
             if (docIdInput) docIdInput.value = doc.id;
             if (docTitleInput) docTitleInput.value = doc.title || "";
@@ -1069,6 +1685,15 @@ window.onEditDocument = function(docId) {
             if (docKeywordsInput) docKeywordsInput.value = Array.isArray(doc.keywords) ? doc.keywords.join(", ") : (doc.keywords || "");
             if (docPubDateInput) docPubDateInput.value = doc.publication_date || "";
             if (docAuthorsInput) docAuthorsInput.value = Array.isArray(doc.authors) ? doc.authors.join(", ") : (doc.authors || "");
+            
+            // Set selected tags in the new tag management system
+            const docTags = doc.tags || [];
+            setSelectedTags(docTags);
+
+            // Load workspace tags (for color info) then update the display
+            loadTagManagementTags().then(() => {
+                updateDocumentTagsDisplay();
+            });
 
             // Handle classification dropdown visibility and value based on the window flag - CORRECTED CHECK
             if ((window.enable_document_classification === true || window.enable_document_classification === "true") && classificationSelect) {
@@ -1137,59 +1762,37 @@ window.onExtractMetadata = function (docId, event) {
 };
 
 
-window.deleteDocument = function(documentId, event) {
-    if (!confirm("Are you sure you want to delete this document? This action cannot be undone.")) return;
-
-    const deleteBtn = event ? event.target.closest('button') : null;
-    if (deleteBtn) {
-        deleteBtn.disabled = true;
-        deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+window.deleteDocument = async function(documentId, event) {
+    const deleteMode = await promptDocumentDeleteMode(1);
+    if (!deleteMode) {
+        return;
     }
 
-    // Stop polling if active for this document
+    const deleteTrigger = event ? event.target.closest('a, button') : null;
+    const originalDeleteTriggerHtml = deleteTrigger ? deleteTrigger.innerHTML : null;
+    if (deleteTrigger) {
+        deleteTrigger.classList.add('disabled');
+        deleteTrigger.setAttribute('aria-disabled', 'true');
+        deleteTrigger.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+    }
+
     if (activePolls.has(documentId)) {
-        // Find the interval ID associated with this poll to clear it (more robust approach needed if storing interval IDs)
-        // For now, just remove from the active set; the poll will eventually fail or stop when elements disappear
         activePolls.delete(documentId);
-        // Ideally, you'd store intervalId with the docId in a map to clear it here.
     }
 
-
-    fetch(`/api/documents/${documentId}`, { method: "DELETE" })
-        .then(response => {
-            if (!response.ok) {
-                return response.json().then(data => Promise.reject(data)).catch(() => Promise.reject({ error: `Server responded with status ${response.status}` }));
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log("Document deleted successfully:", data);
-            const docRow = document.getElementById(`doc-row-${documentId}`);
-            const detailsRow = document.getElementById(`details-row-${documentId}`);
-            const statusRow = document.getElementById(`status-row-${documentId}`);
-            if (docRow) docRow.remove();
-            if (detailsRow) detailsRow.remove();
-            if (statusRow) statusRow.remove();
-
-             // Refresh if the table body becomes empty OR to update pagination total count
-             if (documentsTableBody && documentsTableBody.childElementCount === 0) {
-                 fetchUserDocuments(); // Refresh to show 'No documents' message and correct pagination
-             } else {
-                  // Maybe just decrement total count locally and re-render pagination?
-                  // For simplicity, a full refresh might be acceptable unless dealing with huge lists/slow API
-                  fetchUserDocuments(); // Refresh to update pagination potentially
-             }
-
-        })
-        .catch(error => {
-            console.error("Error deleting document:", error);
-            alert("Error deleting document: " + (error.error || error.message || "Unknown error"));
-            // Re-enable button only if it still exists
-            if (deleteBtn && document.body.contains(deleteBtn)) {
-                 deleteBtn.disabled = false;
-                 deleteBtn.innerHTML = '<i class="bi bi-trash-fill"></i>';
-            }
-        });
+    try {
+        const responseData = await requestDocumentDeletion(documentId, deleteMode);
+        console.log("Document deleted successfully:", responseData);
+        fetchUserDocuments();
+    } catch (error) {
+        console.error("Error deleting document:", error);
+        alert("Error deleting document: " + (error.error || error.message || "Unknown error"));
+        if (deleteTrigger && document.body.contains(deleteTrigger)) {
+            deleteTrigger.classList.remove('disabled');
+            deleteTrigger.removeAttribute('aria-disabled');
+            deleteTrigger.innerHTML = originalDeleteTriggerHtml;
+        }
+    }
 }
 
 window.removeSelfFromDocument = function(documentId, event) {
@@ -1245,6 +1848,13 @@ window.redirectToChat = function(documentId) {
     window.location.href = `/chats?search_documents=true&doc_scope=personal&document_id=${documentId}`;
 }
 
+window.chatWithSelected = function() {
+    const docIds = Array.from(window.selectedDocuments);
+    if (docIds.length === 0) return;
+    const idsParam = encodeURIComponent(docIds.join(','));
+    window.location.href = `/chats?search_documents=true&doc_scope=personal&document_ids=${idsParam}`;
+}
+
 // Make fetchUserDocuments globally available for workspace-init.js
 window.fetchUserDocuments = fetchUserDocuments;
 
@@ -1253,56 +1863,12 @@ window.fetchUserDocuments = fetchUserDocuments;
 // Toggle selection mode
 window.toggleSelectionMode = function() {
     selectionModeActive = !selectionModeActive;
-    
-    const documentsTable = document.getElementById("documents-table");
-    const checkboxes = document.querySelectorAll('.document-checkbox');
-    const expandContainers = document.querySelectorAll('.expand-collapse-container');
-    
-    if (selectionModeActive) {
-        // Enter selection mode
-        documentsTable.classList.add('selection-mode');
-        
-        // Show checkboxes and hide expand buttons
-        checkboxes.forEach(checkbox => {
-            checkbox.style.display = 'inline-block';
-        });
-        
-        expandContainers.forEach(container => {
-            container.style.display = 'none';
-        });
-        
-        // Show bulk actions
-        if (bulkActionsColumn) {
-            bulkActionsColumn.style.display = 'inline-block';
-        }
-    } else {
-        // Exit selection mode
-        documentsTable.classList.remove('selection-mode');
-        
-        // Hide checkboxes and show expand buttons
-        checkboxes.forEach(checkbox => {
-            checkbox.style.display = 'none';
-            checkbox.checked = false;
-        });
-        
-        expandContainers.forEach(container => {
-            container.style.display = 'inline-block';
-        });
-        
-        // Hide bulk actions and buttons
-        if (bulkActionsColumn) {
-            bulkActionsColumn.style.display = 'none';
-        }
-        if (deleteSelectedBtn) {
-            deleteSelectedBtn.style.display = 'none';
-        }
-        if (removeSelectedBtn) {
-            removeSelectedBtn.style.display = 'none';
-        }
-        
-        // Clear selected documents
+
+    if (!selectionModeActive) {
         selectedDocuments.clear();
     }
+
+    syncDocumentSelectionModeUI();
 };
 
 // Update selected documents
@@ -1312,102 +1878,109 @@ window.updateSelectedDocuments = function(documentId, isSelected) {
     } else {
         selectedDocuments.delete(documentId);
     }
-    
-    // Show/hide appropriate action buttons based on selection
+
+    document.querySelectorAll(`.document-checkbox[data-document-id="${documentId}"]`).forEach(checkbox => {
+        checkbox.checked = isSelected;
+    });
+    document.querySelectorAll(`.document-item-card[data-document-id="${documentId}"]`).forEach(card => {
+        card.classList.toggle('is-selected', isSelected);
+    });
+
     updateBulkActionButtons();
 };
 
 // Update bulk action buttons visibility
 function updateBulkActionButtons() {
+    const bulkActionsBar = document.getElementById('bulkActionsBar');
+    const selectedCountSpan = document.getElementById('selectedCount');
+    
     if (selectedDocuments.size > 0) {
-        // At least one document is selected
-        if (deleteSelectedBtn) {
-            deleteSelectedBtn.style.display = 'inline-block';
+        // Show bulk actions bar with count
+        if (bulkActionsBar) {
+            bulkActionsBar.classList.remove('d-none');
+            bulkActionsBar.classList.add('d-block');
+        }
+        if (selectedCountSpan) {
+            selectedCountSpan.textContent = selectedDocuments.size;
         }
         
-        // Check if any selected documents are shared (for remove button)
-        const hasSharedDocuments = Array.from(selectedDocuments).some(docId => {
-            const docRow = document.getElementById(`doc-row-${docId}`);
-            if (docRow && docRow.__docData) {
-                const doc = docRow.__docData;
-                return doc.user_id !== window.current_user_id;
-            }
-            return false;
-        });
-        
-        if (removeSelectedBtn) {
-            removeSelectedBtn.style.display = hasSharedDocuments ? 'inline-block' : 'none';
-        }
     } else {
-        // No documents selected
-        if (deleteSelectedBtn) {
-            deleteSelectedBtn.style.display = 'none';
-        }
-        if (removeSelectedBtn) {
-            removeSelectedBtn.style.display = 'none';
+        // Hide bulk actions bar
+        if (bulkActionsBar) {
+            bulkActionsBar.classList.remove('d-block');
+            bulkActionsBar.classList.add('d-none');
         }
     }
 }
 
+function syncDocumentSelectionModeUI() {
+    const documentsTable = document.getElementById('documents-table');
+    const bulkActionsBar = document.getElementById('bulkActionsBar');
+
+    documentsTable?.classList.toggle('selection-mode', selectionModeActive);
+    documentsCardView?.classList.toggle('selection-mode', selectionModeActive);
+
+    document.querySelectorAll('.document-checkbox').forEach(checkbox => {
+        checkbox.classList.toggle('d-none', !selectionModeActive);
+        checkbox.checked = selectionModeActive && selectedDocuments.has(checkbox.getAttribute('data-document-id'));
+    });
+
+    document.querySelectorAll('.expand-collapse-container').forEach(container => {
+        container.classList.toggle('d-none', selectionModeActive);
+        container.classList.toggle('d-inline-block', !selectionModeActive);
+    });
+
+    document.querySelectorAll('.document-item-card').forEach(card => {
+        const documentId = card.getAttribute('data-document-id');
+        card.classList.toggle('is-selected', selectedDocuments.has(documentId));
+    });
+
+    if (!selectionModeActive && bulkActionsBar) {
+        bulkActionsBar.classList.remove('d-block');
+        bulkActionsBar.classList.add('d-none');
+    }
+
+    updateBulkActionButtons();
+}
+
 // Delete selected documents
-window.deleteSelectedDocuments = function() {
+window.deleteSelectedDocuments = async function() {
     if (selectedDocuments.size === 0) return;
-    
-    if (!confirm(`Are you sure you want to delete ${selectedDocuments.size} document(s)? This action cannot be undone.`)) {
+
+    const deleteMode = await promptDocumentDeleteMode(selectedDocuments.size);
+    if (!deleteMode) {
         return;
     }
-    
+
     const documentIds = Array.from(selectedDocuments);
-    let completed = 0;
-    let failed = 0;
-    
-    // Process each document deletion sequentially
-    documentIds.forEach(docId => {
-        fetch(`/api/documents/${docId}`, { method: "DELETE" })
-            .then(response => {
-                if (response.ok) {
-                    completed++;
-                    const docRow = document.getElementById(`doc-row-${docId}`);
-                    const detailsRow = document.getElementById(`details-row-${docId}`);
-                    const statusRow = document.getElementById(`status-row-${docId}`);
-                    if (docRow) docRow.remove();
-                    if (detailsRow) detailsRow.remove();
-                    if (statusRow) statusRow.remove();
-                } else {
-                    failed++;
-                }
-                
-                // Update status when all operations complete
-                if (completed + failed === documentIds.length) {
-                    if (failed > 0) {
-                        alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
-                    } else {
-                        alert(`Successfully deleted ${completed} document(s).`);
-                    }
-                    
-                    // Refresh the documents list
-                    fetchUserDocuments();
-                    
-                    // Exit selection mode
-                    window.toggleSelectionMode();
-                }
-            })
-            .catch(error => {
-                failed++;
-                console.error("Error deleting document:", error);
-                
-                // Update status when all operations complete
-                if (completed + failed === documentIds.length) {
-                    alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
-                    
-                    // Refresh the documents list
-                    fetchUserDocuments();
-                    
-                    // Exit selection mode
-                    window.toggleSelectionMode();
-                }
-            });
-    });
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.disabled = true;
+        deleteSelectedBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Deleting...`;
+    }
+
+    documentIds.forEach((docId) => activePolls.delete(docId));
+
+    const results = await Promise.allSettled(documentIds.map((docId) => requestDocumentDeletion(docId, deleteMode)));
+    const completed = results.filter((result) => result.status === 'fulfilled').length;
+    const failed = results.filter((result) => result.status === 'rejected').length;
+
+    if (failed > 0) {
+        alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
+    }
+
+    if (selectionModeActive) {
+        window.toggleSelectionMode();
+    } else {
+        selectedDocuments.clear();
+        updateBulkActionButtons();
+    }
+
+    fetchUserDocuments();
+
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.disabled = false;
+        deleteSelectedBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Selected';
+    }
 };
 
 // Remove self from selected shared documents
@@ -1472,6 +2045,16 @@ window.removeSelectedDocuments = function() {
     }
 };
 
+// Clear selection handler
+window.clearDocumentSelection = function() {
+    const checkboxes = document.querySelectorAll('.document-checkbox');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    selectedDocuments.clear();
+    syncDocumentSelectionModeUI();
+};
+
 // Add event listeners for selection functionality
 document.addEventListener('DOMContentLoaded', function() {
     // Delete selected button
@@ -1479,20 +2062,17 @@ document.addEventListener('DOMContentLoaded', function() {
         deleteSelectedBtn.addEventListener('click', window.deleteSelectedDocuments);
     }
     
-    // Remove selected button
-    if (removeSelectedBtn) {
-        removeSelectedBtn.addEventListener('click', window.removeSelectedDocuments);
+    // Clear selection button
+    if (clearSelectionBtn) {
+        clearSelectionBtn.addEventListener('click', window.clearDocumentSelection);
     }
     
-    // Delegate event listener for checkboxes (they're dynamically created)
-    if (documentsTableBody) {
-        documentsTableBody.addEventListener('change', function(event) {
-            if (event.target.classList.contains('document-checkbox')) {
-                const documentId = event.target.getAttribute('data-document-id');
-                window.updateSelectedDocuments(documentId, event.target.checked);
-            }
-        });
-    }
+    document.addEventListener('change', function(event) {
+        if (event.target.classList.contains('document-checkbox')) {
+            const documentId = event.target.getAttribute('data-document-id');
+            window.updateSelectedDocuments(documentId, event.target.checked);
+        }
+    });
 });
 
 // Approve shared document handler

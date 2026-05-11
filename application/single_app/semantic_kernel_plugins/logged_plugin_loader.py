@@ -13,13 +13,14 @@ from semantic_kernel import Kernel
 from semantic_kernel.functions import kernel_function
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.base_plugin import BasePlugin
-from semantic_kernel_plugins.plugin_invocation_logger import (
-    get_plugin_logger, 
-    plugin_function_logger, 
-    auto_wrap_plugin_functions
-)
+from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, plugin_function_logger, auto_wrap_plugin_functions
+from semantic_kernel_plugins.plugin_loader import discover_plugins
 from functions_appinsights import log_event
-
+from functions_debug import debug_print
+from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
+from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
+from app_settings_cache import get_settings_cache
 
 class LoggedPluginLoader:
     """Enhanced plugin loader that automatically adds invocation logging."""
@@ -48,35 +49,35 @@ class LoggedPluginLoader:
         log_event(f"[Logged Plugin Loader] Starting to load plugin: {plugin_name} (type: {plugin_type})")
         
         if not plugin_name:
-            self.logger.error("Plugin manifest missing required 'name' field")
+            log_event(f"[Logged Plugin Loader] Plugin manifest missing required 'name' field", level=logging.ERROR)
             return False
         
         try:
             # Load the plugin instance
+            debug_print(f"[Logged Plugin Loader] Creating plugin instance for {plugin_name} of type {plugin_type}")
             plugin_instance = self._create_plugin_instance(manifest)
+            debug_print(f"[Logged Plugin Loader] Created plugin instance: {plugin_instance}")
             if not plugin_instance:
+                debug_print(f"[Logged Plugin Loader] Failed to create plugin instance for {plugin_name} of type {plugin_type}")
                 return False
             
             # Enable logging if the plugin supports it
             if hasattr(plugin_instance, 'enable_invocation_logging'):
+                debug_print(f"[Logged Plugin Loader] Enabling invocation logging for {plugin_name}")
                 plugin_instance.enable_invocation_logging(True)
             
-            # Auto-wrap plugin functions with logging
-            if isinstance(plugin_instance, BasePlugin):
-                log_event(f"[Logged Plugin Loader] Wrapping functions for BasePlugin", 
-                         extra={"plugin_name": plugin_name}, 
-                         level=logging.DEBUG)
-                self._wrap_plugin_functions(plugin_instance, plugin_name)
-            else:
-                log_event(f"[Logged Plugin Loader] Plugin is not a BasePlugin", 
-                         extra={"plugin_name": plugin_name, "plugin_type": type(plugin_instance).__name__}, 
-                         level=logging.WARNING)
+            # Auto-wrap plugin functions with logging for any plugin instance exposing kernel functions.
+            self._wrap_plugin_functions(plugin_instance, plugin_name)
             
             # Register the plugin with the kernel
             self._register_plugin_with_kernel(plugin_instance, plugin_name)
             
+            # Auto-create companion SQL Schema plugin when loading a SQL Query plugin
+            if plugin_type == 'sql_query':
+                self._auto_create_companion_schema_plugin(manifest, plugin_name)
+            
             log_event(
-                f"[Plugin Loader] Successfully loaded plugin: {plugin_name}",
+                f"[Logged Plugin Loader] Successfully loaded plugin: {plugin_name}",
                 extra={
                     "plugin_name": plugin_name,
                     "plugin_type": plugin_type,
@@ -90,7 +91,7 @@ class LoggedPluginLoader:
             
         except Exception as e:
             log_event(
-                f"[Plugin Loader] Failed to load plugin: {plugin_name}",
+                f"[Logged Plugin Loader] Failed to load plugin: {plugin_name}",
                 extra={
                     "plugin_name": plugin_name,
                     "plugin_type": plugin_type,
@@ -112,13 +113,40 @@ class LoggedPluginLoader:
             return self._create_openapi_plugin(manifest)
         elif plugin_type == 'python':
             return self._create_python_plugin(manifest)
-        elif plugin_type == 'custom':
-            return self._create_custom_plugin(manifest)
         elif plugin_type in ['sql_schema', 'sql_query']:
             return self._create_sql_plugin(manifest)
         else:
-            self.logger.warning(f"Unknown plugin type: {plugin_type} for plugin: {plugin_name}")
-            return None
+            try:
+                debug_print(f"[Logged Plugin Loader] Attempting to discover plugin type: {plugin_type}")
+                discovered_plugins = discover_plugins()
+                plugin_type = manifest.get('type')
+                name = manifest.get('name')
+                description = manifest.get('description', '')
+                # Normalize for matching
+                def normalize(s):
+                    return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
+                debug_print(f"[Logged Plugin Loader] Normalizing plugin type for matching: {plugin_type}")
+                normalized_type = normalize(plugin_type)
+                debug_print(f"[Logged Plugin Loader] Normalized plugin type: {normalized_type}")
+                matched_class = None
+                for class_name, cls in discovered_plugins.items():
+                    normalized_class = normalize(class_name)
+                    print("[Logged Plugin Loader] Checking plugin class:", class_name, "normalized:", normalized_class)
+                    if normalized_type == normalized_class or normalized_type in normalized_class:
+                        matched_class = cls
+                        debug_print(f"[Logged Plugin Loader] Matched class for plugin '{name}' of type '{plugin_type}': {matched_class}")
+                        break
+                if matched_class:
+                    try:
+                        plugin = matched_class(manifest) if 'manifest' in matched_class.__init__.__code__.co_varnames else matched_class()
+                        log_event(f"[Logged Plugin Loader] Instanced plugin: {name} (type: {plugin_type})", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
+                        return plugin
+                    except Exception as e:
+                        log_event(f"[Logged Plugin Loader] Failed to instantiate plugin: {name}: {e}", {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+                else:
+                    log_event(f"[Logged Plugin Loader] Unknown plugin type: {plugin_type} for plugin '{name}'", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
+            except Exception as e:
+                log_event(f"[Logged Plugin Loader] Error discovering plugin types: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
     
     def _create_openapi_plugin(self, manifest: Dict[str, Any]):
         """Create an OpenAPI plugin instance."""
@@ -126,9 +154,6 @@ class LoggedPluginLoader:
         log_event(f"[Logged Plugin Loader] Attempting to create OpenAPI plugin: {plugin_name}", level=logging.DEBUG)
         
         try:
-            from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
-            log_event(f"[Logged Plugin Loader] Successfully imported OpenApiPluginFactory", level=logging.DEBUG)
-            
             log_event(f"[Logged Plugin Loader] Creating OpenAPI plugin using factory", 
                      extra={"plugin_name": plugin_name, "manifest": manifest}, 
                      level=logging.DEBUG)
@@ -176,22 +201,14 @@ class LoggedPluginLoader:
             self.logger.error(f"Failed to create Python plugin {class_name} from {module_name}: {e}")
             return None
     
-    def _create_custom_plugin(self, manifest: Dict[str, Any]):
-        """Create a custom plugin instance."""
-        # This is where you'd handle custom plugin types specific to your application
-        self.logger.warning(f"Custom plugin type not yet implemented: {manifest}")
-        return None
-    
     def _create_sql_plugin(self, manifest: Dict[str, Any]):
         """Create a SQL plugin instance."""
         plugin_type = manifest.get('type')
         
         try:
             if plugin_type == 'sql_schema':
-                from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
                 return SQLSchemaPlugin(manifest)
             elif plugin_type == 'sql_query':
-                from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
                 return SQLQueryPlugin(manifest)
             else:
                 self.logger.error(f"Unknown SQL plugin type: {plugin_type}")
@@ -200,13 +217,67 @@ class LoggedPluginLoader:
             self.logger.error(f"Failed to import SQL plugin class for {plugin_type}: {e}")
             return None
     
+    def _auto_create_companion_schema_plugin(self, query_manifest: Dict[str, Any], query_plugin_name: str):
+        """
+        Auto-create a companion SQLSchemaPlugin when a SQLQueryPlugin is loaded.
+        This ensures the agent has access to database schema information for constructing queries.
+        The schema plugin uses the same connection details as the query plugin.
+        """
+        try:
+            # Derive schema plugin name from query plugin name
+            if query_plugin_name.endswith('_query'):
+                schema_plugin_name = query_plugin_name[:-6] + '_schema'
+            else:
+                schema_plugin_name = query_plugin_name + '_schema'
+            
+            # Check if schema plugin already exists in kernel
+            if schema_plugin_name in self.kernel.plugins:
+                log_event(
+                    f"[Logged Plugin Loader] Companion schema plugin already exists: {schema_plugin_name}",
+                    level=logging.DEBUG
+                )
+                return
+            
+            # Create schema manifest from query manifest (same connection details)
+            schema_manifest = dict(query_manifest)
+            schema_manifest['type'] = 'sql_schema'
+            schema_manifest['name'] = schema_plugin_name
+            
+            # Create the schema plugin instance
+            schema_instance = SQLSchemaPlugin(schema_manifest)
+            
+            # Enable logging if supported
+            if hasattr(schema_instance, 'enable_invocation_logging'):
+                schema_instance.enable_invocation_logging(True)
+            
+            # Wrap functions if it's a BasePlugin
+            if isinstance(schema_instance, BasePlugin):
+                self._wrap_plugin_functions(schema_instance, schema_plugin_name)
+            
+            # Register with kernel
+            self._register_plugin_with_kernel(schema_instance, schema_plugin_name)
+            
+            log_event(
+                f"[Logged Plugin Loader] Auto-created companion SQL Schema plugin: {schema_plugin_name}",
+                extra={"query_plugin": query_plugin_name, "schema_plugin": schema_plugin_name},
+                level=logging.INFO
+            )
+            
+        except Exception as e:
+            log_event(
+                f"[Logged Plugin Loader] Warning: Failed to auto-create companion schema plugin",
+                extra={"query_plugin": query_plugin_name, "error": str(e)},
+                level=logging.WARNING,
+                exceptionTraceback=True
+            )
+    
     def _wrap_plugin_functions(self, plugin_instance, plugin_name: str):
         """Wrap all kernel functions in a plugin with logging."""
         log_event(f"[Logged Plugin Loader] Checking logging status for plugin", 
                  extra={"plugin_name": plugin_name}, 
                  level=logging.DEBUG)
         
-        if not hasattr(plugin_instance, 'is_logging_enabled') or not plugin_instance.is_logging_enabled():
+        if hasattr(plugin_instance, 'is_logging_enabled') and not plugin_instance.is_logging_enabled():
             log_event(f"[Logged Plugin Loader] Plugin does not have logging enabled", 
                      extra={"plugin_name": plugin_name}, 
                      level=logging.WARNING)
@@ -215,77 +286,27 @@ class LoggedPluginLoader:
         log_event(f"[Logged Plugin Loader] Starting to wrap functions for plugin", 
                  extra={"plugin_name": plugin_name}, 
                  level=logging.DEBUG)
-        wrapped_count = 0
-        
-        # Debug: List all attributes
-        all_attrs = [attr for attr in dir(plugin_instance) if not attr.startswith('_')]
-        log_event(f"[Logged Plugin Loader] Plugin attribute analysis", 
-                 extra={
-                     "plugin_name": plugin_name, 
-                     "total_public_attributes": len(all_attrs),
-                     "sample_attributes": all_attrs[:10]
-                 }, 
-                 level=logging.DEBUG)
-        
-        # Find and wrap all kernel functions
+        wrapped_before = 0
         for attr_name in dir(plugin_instance):
-            if attr_name.startswith('_'):
-                continue
-                
             attr = getattr(plugin_instance, attr_name)
-            
-            # Debug: Check each callable attribute
-            if callable(attr):
-                has_sk_function = hasattr(attr, '__sk_function__')
-                sk_function_value = getattr(attr, '__sk_function__', None) if has_sk_function else None
-                log_event(f"[Logged Plugin Loader] Function analysis", 
-                         extra={
-                             "plugin_name": plugin_name,
-                             "function_name": attr_name,
-                             "callable": True,
-                             "has_sk_function": has_sk_function,
-                             "sk_function_value": sk_function_value
-                         }, 
-                         level=logging.DEBUG)
-            
-            # Check if it's a kernel function
-            is_kernel_function = False
-            
-            # Standard check for __sk_function__ attribute
-            if (callable(attr) and 
-                hasattr(attr, '__sk_function__') and 
-                attr.__sk_function__):
-                is_kernel_function = True
-            
-            # For OpenAPI plugins, also check if this is one of the known API operation functions
-            elif (callable(attr) and 
-                  attr_name in ['listAPIs', 'getMetrics', 'getProviders', 'getProvider', 'getAPI', 'getServiceAPI', 'getServices'] and
-                  hasattr(plugin_instance, 'base_url')):  # OpenAPI plugins have base_url
-                is_kernel_function = True
-                log_event(f"[Logged Plugin Loader] Detected OpenAPI function for enhanced logging", 
-                         extra={"plugin_name": plugin_name, "function_name": attr_name}, 
-                         level=logging.DEBUG)
-            
-            if is_kernel_function:
-                # Create a logged wrapper
-                logged_method = self._create_logged_method(attr, plugin_name, attr_name)
-                
-                # Replace the method on the instance
-                setattr(plugin_instance, attr_name, logged_method)
-                
-                wrapped_count += 1
-                log_event(f"[Logged Plugin Loader] Wrapped function with logging", 
-                         extra={"plugin_name": plugin_name, "function_name": attr_name}, 
-                         level=logging.INFO)
-        
-        # DISABLED: OpenAPI kernel plugin wrapping to prevent excessive logging
-        # Plugin logging is now handled by the @plugin_function_logger decorator system
-        log_event(f"[Logged Plugin Loader] Skipping OpenAPI kernel function wrapping to avoid duplication with decorator logging", 
-                 extra={"plugin_name": plugin_name}, 
-                 level=logging.DEBUG)
+            if callable(attr) and getattr(attr, '__plugin_invocation_logger_wrapped__', False):
+                wrapped_before += 1
+
+        auto_wrap_plugin_functions(plugin_instance, plugin_name)
+
+        wrapped_after = 0
+        for attr_name in dir(plugin_instance):
+            attr = getattr(plugin_instance, attr_name)
+            if callable(attr) and getattr(attr, '__plugin_invocation_logger_wrapped__', False):
+                wrapped_after += 1
         
         log_event(f"[Logged Plugin Loader] Function wrapping completed", 
-                 extra={"plugin_name": plugin_name, "wrapped_count": wrapped_count}, 
+                 extra={
+                     "plugin_name": plugin_name,
+                     "wrapped_before": wrapped_before,
+                     "wrapped_after": wrapped_after,
+                     "newly_wrapped": max(wrapped_after - wrapped_before, 0)
+                 }, 
                  level=logging.INFO)
     
     def _create_logged_method(self, original_method, plugin_name: str, function_name: str):
@@ -336,7 +357,7 @@ class LoggedPluginLoader:
         total_count = len(results)
         
         log_event(
-            f"[Plugin Loader] Loaded {successful_count}/{total_count} plugins",
+            f"[Logged Plugin Loader] Loaded {successful_count}/{total_count} plugins",
             extra={
                 "successful_plugins": [name for name, success in results.items() if success],
                 "failed_plugins": [name for name, success in results.items() if not success],

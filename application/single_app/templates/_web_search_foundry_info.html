@@ -1,0 +1,414 @@
+<!-- Web Search (Azure AI Foundry Agent) Configuration Information Modal -->
+<div class="modal fade" id="webSearchFoundryInfoModal" tabindex="-1" aria-labelledby="webSearchFoundryInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="webSearchFoundryInfoModalLabel">
+                    <i class="bi bi-globe me-2"></i>
+                    Web Search Configuration Guide (Azure AI Foundry Agent)
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>What is Grounding with Bing Search?</strong> Grounding with Bing Search enhances your AI agents with real-time, web-based insights. It leverages billions of publicly available web pages to provide up-to-date information, ensuring accurate and relevant responses with source citations.
+                </div>
+
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Important Data Processing Notice:</strong> When using Grounding with Bing Search, customer data is transferred outside of the Azure compliance boundary. Grounding with Bing Search is not subject to the same data processing terms and does not have the same compliance standards as Azure AI Agent Service. Review the <a href="https://www.microsoft.com/en-us/bing/apis/grounding-legal" target="_blank" rel="noopener noreferrer">Grounding with Bing Search Terms of Use</a>.
+                </div>
+
+
+                <!-- Step-by-Step Setup -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-list-ol me-2"></i>Step-by-Step Setup Guide</h6>
+                    </div>
+                    <div class="card-body">
+                        
+                        <!-- Step 1: Create Agent -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">1</span>Create the Web Search Agent</h6>
+                            <ol class="mb-3">
+                                <li>Log in to <a href="https://ai.azure.com" target="_blank" rel="noopener noreferrer">ai.azure.com</a> (or <a href="https://ai.azure.us" target="_blank" rel="noopener noreferrer">ai.azure.us</a> for Azure Government)</li>
+                                <li>Navigate to <strong>Agents</strong> in the left menu</li>
+                                <li>Click <strong>+ New agent</strong></li>
+                                <li>Rename the agent to <strong>"websearch"</strong> (or your preferred name)</li>
+                            </ol>
+                        </div>
+
+                        <!-- Step 2: Select Model -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">2</span>Select a Compatible Model</h6>
+                            <p class="mb-2">Choose a model that supports Grounding with Bing Search:</p>
+                            <ul class="mb-3">
+                                <li><strong>gpt-4o</strong> (recommended)</li>
+                                <li><strong>gpt-4o-mini</strong></li>
+                                <li>Other GPT-4 variants that support grounding</li>
+                            </ul>
+                            <div class="alert alert-info py-2 small mb-0">
+                                <i class="bi bi-lightbulb me-1"></i>
+                                If gpt-4o is not deployed, click <strong>Deploy model</strong> to create a new deployment.
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Add Instructions -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">3</span>Add Agent Instructions</h6>
+                            <p class="mb-2">Paste the following instructions into the <strong>Instructions</strong> field:</p>
+                            <div class="bg-dark text-white rounded p-3 mb-2" style="font-size: 0.85rem; max-height: 300px; overflow-y: auto;">
+                                <pre class="mb-0 text-white" style="white-space: pre-wrap;">You are a web search assistant that provides accurate, up-to-date information by searching the internet.
+
+## Core Behavior
+- Use the web search results provided to answer user questions
+- Synthesize information from the search results into clear, helpful answers
+- Always prioritize information from the search results over your training data
+
+## How to Use Search Results
+- When search results are available, use them to formulate your answer
+- Cite sources inline using the citation format [source_name] immediately after relevant information
+- Include multiple citations throughout your response when multiple sources support your answer
+
+## Response Guidelines
+- Begin with a direct answer to the user's question
+- Support your answer with details from the search results
+- Include citations for key facts
+- Keep responses clear and conversational
+
+## Important
+- Trust the search results provided to you - they contain current information
+- If search results directly answer the question, provide that answer confidently with citations
+- Only express uncertainty if the search results genuinely don't contain relevant information</pre>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyWebSearchInstructions()">
+                                <i class="bi bi-clipboard me-1"></i>Copy Instructions
+                            </button>
+                        </div>
+
+                        <!-- Step 4: Add Description -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">4</span>Add Agent Description</h6>
+                            <p class="mb-2">Paste the following into the <strong>Description</strong> field:</p>
+                            <div class="bg-light border rounded p-2 mb-2">
+                                <code>A web search assistant that retrieves current information from the internet and provides helpful answers with source citations.</code>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyWebSearchDescription()">
+                                <i class="bi bi-clipboard me-1"></i>Copy Description
+                            </button>
+                        </div>
+
+                        <!-- Step 5: Create Bing Resource -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">5</span>Create Grounding with Bing Search Resource</h6>
+                            <ol class="mb-3">
+                                <li>In the agent configuration, click <strong>+ Add</strong> under <strong>Knowledge</strong></li>
+                                <li>Select <strong>Ground with Bing Search</strong></li>
+                                <li>Click <strong>+ Create connection</strong></li>
+                                <li>Select <strong>Create a new resource</strong> - this opens the Azure Portal</li>
+                            </ol>
+                            
+                            <div class="alert alert-secondary py-2 mb-3">
+                                <strong>In Azure Portal:</strong>
+                                <ol class="mb-0 mt-2" style="padding-left: 1.2rem;">
+                                    <li>Select your <strong>Subscription</strong></li>
+                                    <li>Select or create a <strong>Resource Group</strong></li>
+                                    <li>Enter a <strong>Name</strong> for the Bing resource</li>
+                                    <li>Region is <strong>Global</strong> (only option)</li>
+                                    <li>Select the <strong>Pricing Tier</strong> (one option available)</li>
+                                    <li><strong>Check the box</strong> to accept terms at the bottom</li>
+                                    <li>Click <strong>Next</strong>, add tags if needed</li>
+                                    <li>Click <strong>Review + create</strong>, then <strong>Create</strong></li>
+                                    <li>Wait 1-2 minutes for deployment to complete</li>
+                                </ol>
+                            </div>
+                        </div>
+
+                        <!-- Step 6: Connect Bing Resource -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">6</span>Connect the Bing Resource to Your Agent</h6>
+                            <ol class="mb-3">
+                                <li>Return to <strong>Azure AI Foundry</strong></li>
+                                <li>Click <strong>Back</strong> to return to the connection selection</li>
+                                <li>Click <strong>Create connection</strong> again</li>
+                                <li>Your new Bing resource should now appear - select it</li>
+                                <li>Click <strong>Add connection</strong></li>
+                                <li>Wait for status to show <span class="badge bg-success">Connected ✓</span></li>
+                                <li>Click <strong>Next</strong></li>
+                            </ol>
+                        </div>
+
+                        <!-- Step 7: Configure Result Count -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">7</span>Configure Search Result Count</h6>
+                            <ol class="mb-3">
+                                <li>In the configuration screen, locate the <strong>Count</strong> field</li>
+                                <li>Update the value to <strong>10</strong> (default is usually 3)</li>
+                                <li>Click <strong>Connect</strong> to finalize</li>
+                            </ol>
+                            <div class="alert alert-info py-2 small mb-0">
+                                <i class="bi bi-info-circle me-1"></i>
+                                <strong>Why 10 results?</strong> This provides the AI model with more sources to synthesize information from, resulting in better-cited and more comprehensive answers.
+                            </div>
+                        </div>
+
+                        <!-- Step 8: Copy Agent ID -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">8</span>Copy the Agent ID</h6>
+                            <ol class="mb-3">
+                                <li>Your agent is now configured - copy the <strong>Agent ID</strong> shown (starts with <code>asst_</code>)</li>
+                                <li>Click <strong>Overview</strong> in the left menu</li>
+                                <li>Under <strong>Libraries</strong> in the center, click <strong>Microsoft Foundry</strong></li>
+                                <li>Copy the <strong>Microsoft Foundry project endpoint</strong></li>
+                            </ol>
+                        </div>
+
+                        <!-- Step 9: Configure RBAC -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">9</span>Configure Managed Identity Permissions</h6>
+                            <ol class="mb-3">
+                                <li>Go to the <strong>Azure Portal</strong></li>
+                                <li>Navigate to your <strong>AI Foundry project</strong> resource</li>
+                                <li>Go to <strong>Access control (IAM)</strong></li>
+                                <li>Add role assignment for your App Service's managed identity:</li>
+                            </ol>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Role</th>
+                                            <th>Purpose</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><strong>Cognitive Services User</strong></td>
+                                            <td>Required to invoke AI models</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Azure AI Developer</strong></td>
+                                            <td>Required to access and run agents</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Step 10: Configure SimpleChat -->
+                        <div class="mb-4">
+                            <h6 class="text-primary"><span class="badge bg-primary me-2">10</span>Configure SimpleChat</h6>
+                            <p class="mb-2">In this Admin Settings page:</p>
+                            <ol class="mb-0">
+                                <li>Enable <strong>Web Search via Foundry Agent</strong></li>
+                                <li>Accept the consent modal</li>
+                                <li>Paste the <strong>Foundry Project Endpoint</strong></li>
+                                <li>Paste the <strong>Agent ID</strong></li>
+                                <li>Select <strong>Authentication Type</strong> (Managed Identity recommended)</li>
+                                <li>Click <strong>Save Settings</strong></li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Required Configuration Values -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Required Configuration Values</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Field</th>
+                                        <th>Description</th>
+                                        <th>Example</th>
+                                        <th>Required</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>Foundry Project Endpoint</strong></td>
+                                        <td>Microsoft Foundry project endpoint URL</td>
+                                        <td><code>https://&lt;resource&gt;.services.ai.azure.com/api/projects/&lt;project&gt;</code></td>
+                                        <td><span class="badge bg-danger">Required</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Agent ID</strong></td>
+                                        <td>The agent identifier from Azure AI Foundry</td>
+                                        <td><code>asst_Iy1snGMaNM5yQ9GrK6a11dH3</code></td>
+                                        <td><span class="badge bg-danger">Required</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>API Version</strong></td>
+                                        <td>Azure AI Foundry API version</td>
+                                        <td><code>2025-05-01</code></td>
+                                        <td><span class="badge bg-secondary">Optional</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Authentication Type</strong></td>
+                                        <td>How to authenticate to Foundry</td>
+                                        <td>Managed Identity or Service Principal</td>
+                                        <td><span class="badge bg-danger">Required</span></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Troubleshooting -->
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-tools me-2"></i>Troubleshooting</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="accordion" id="webSearchTroubleshootingAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootWS1">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseWS1">
+                                        Web search returns error or no results
+                                    </button>
+                                </h2>
+                                <div id="collapseWS1" class="accordion-collapse collapse" data-bs-parent="#webSearchTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li><strong>Verify Agent ID:</strong> Ensure the Agent ID matches exactly (starts with <code>asst_</code>)</li>
+                                            <li><strong>Check Endpoint Format:</strong> Use the project endpoint, not the inference endpoint</li>
+                                            <li><strong>Confirm RBAC Roles:</strong> App Service identity needs both Cognitive Services User and Azure AI Developer roles</li>
+                                            <li><strong>Wait for Role Propagation:</strong> After assigning roles, wait 5-10 minutes</li>
+                                            <li><strong>Enable Debug Logging:</strong> Check Logging tab to enable debug output</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootWS2">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseWS2">
+                                        Agent answers from training data instead of web search
+                                    </button>
+                                </h2>
+                                <div id="collapseWS2" class="accordion-collapse collapse" data-bs-parent="#webSearchTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li><strong>Check Bing Connection:</strong> Ensure the Grounding with Bing Search is connected in the agent's Knowledge section</li>
+                                            <li><strong>Verify Instructions:</strong> Agent instructions should explicitly tell it to use search results</li>
+                                            <li><strong>Test in Foundry:</strong> Test the agent directly in Azure AI Foundry to confirm web search works</li>
+                                            <li><strong>Check Error Logs:</strong> If search fails, SimpleChat will inform the user - check for error messages</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootWS3">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseWS3">
+                                        Only getting 3 citations when expecting more
+                                    </button>
+                                </h2>
+                                <div id="collapseWS3" class="accordion-collapse collapse" data-bs-parent="#webSearchTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li><strong>Check Count Setting:</strong> In Foundry, verify the Bing connection's "Count" is set to 10</li>
+                                            <li><strong>Understand Model Behavior:</strong> The AI model decides which sources to cite based on relevance - not all retrieved results may be cited</li>
+                                            <li><strong>Review Instructions:</strong> Ensure instructions emphasize including multiple citations</li>
+                                            <li><strong>Query Specificity:</strong> More specific queries often result in more relevant citations</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootWS4">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseWS4">
+                                        Authentication errors (401/403)
+                                    </button>
+                                </h2>
+                                <div id="collapseWS4" class="accordion-collapse collapse" data-bs-parent="#webSearchTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li><strong>Managed Identity Enabled:</strong> Verify System-Assigned Managed Identity is enabled on App Service</li>
+                                            <li><strong>Check Both Roles:</strong> Identity needs <strong>both</strong> Cognitive Services User AND Azure AI Developer roles</li>
+                                            <li><strong>Correct Scope:</strong> Roles must be assigned at the Foundry project level, not subscription</li>
+                                            <li><strong>For Service Principal:</strong> Verify Tenant ID, Client ID, and Client Secret are correct</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="https://www.microsoft.com/en-us/bing/apis/grounding-pricing" target="_blank" class="btn btn-outline-success">
+                    <i class="bi bi-currency-dollar me-2"></i>View Pricing
+                </a>
+                <a href="https://learn.microsoft.com/en-us/azure/ai-services/agents/how-to/tools/bing-grounding" target="_blank" class="btn btn-primary">
+                    <i class="bi bi-book me-2"></i>View Full Documentation
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyWebSearchInstructions() {
+    const instructions = `You are a web search assistant that provides accurate, up-to-date information by searching the internet.
+
+## Core Behavior
+- Use the web search results provided to answer user questions
+- Synthesize information from the search results into clear, helpful answers
+- Always prioritize information from the search results over your training data
+
+## How to Use Search Results
+- When search results are available, use them to formulate your answer
+- Cite sources inline using the citation format [source_name] immediately after relevant information
+- Include multiple citations throughout your response when multiple sources support your answer
+
+## Response Guidelines
+- Begin with a direct answer to the user's question
+- Support your answer with details from the search results
+- Include citations for key facts
+- Keep responses clear and conversational
+
+## Important
+- Trust the search results provided to you - they contain current information
+- If search results directly answer the question, provide that answer confidently with citations
+- Only express uncertainty if the search results genuinely don't contain relevant information`;
+
+    navigator.clipboard.writeText(instructions).then(() => {
+        // Show brief toast or feedback
+        const btn = event.target.closest('button');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+        btn.classList.remove('btn-outline-secondary');
+        btn.classList.add('btn-success');
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-secondary');
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
+}
+
+function copyWebSearchDescription() {
+    const description = 'A web search assistant that retrieves current information from the internet and provides helpful answers with source citations.';
+
+    navigator.clipboard.writeText(description).then(() => {
+        const btn = event.target.closest('button');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+        btn.classList.remove('btn-outline-secondary');
+        btn.classList.add('btn-success');
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-secondary');
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
+}
+</script>

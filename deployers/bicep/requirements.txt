@@ -1,0 +1,4 @@
+# requirements.txt
+azure-identity==1.23.0
+azure-cosmos==4.9.0
+azure-keyvault-secrets==4.10.0

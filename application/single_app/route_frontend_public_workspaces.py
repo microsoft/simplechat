@@ -2,19 +2,19 @@
 
 from config import *
 from functions_authentication import *
+from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_public_workspaces(app):
     @app.route("/my_public_workspaces", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
     def my_public_workspaces():
         user = session.get('user', {})
+        user_id = get_current_user_id()
         settings = get_settings()
         require_member_of_create_public_workspace = settings.get("require_member_of_create_public_workspace", False)
         
@@ -23,18 +23,21 @@ def register_route_frontend_public_workspaces(app):
         if require_member_of_create_public_workspace:
             can_create_public_workspaces = 'roles' in user and 'CreatePublicWorkspaces' in user['roles']
         
+        # Get user settings to retrieve active public workspace ID
+        user_settings = get_user_settings(user_id)
+        active_public_workspace_id = user_settings.get("settings", {}).get("activePublicWorkspaceOid", "")
+        
         public_settings = sanitize_settings_for_user(settings)
         return render_template(
             "my_public_workspaces.html",
             settings=public_settings,
             app_settings=public_settings,
-            can_create_public_workspaces=can_create_public_workspaces
+            can_create_public_workspaces=can_create_public_workspaces,
+            active_public_workspace_id=active_public_workspace_id
         )
 
     @app.route("/public_workspaces/<workspace_id>", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
@@ -49,9 +52,7 @@ def register_route_frontend_public_workspaces(app):
         )
     
     @app.route("/public_workspaces", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
@@ -69,17 +70,13 @@ def register_route_frontend_public_workspaces(app):
         enable_video_file_support = settings.get('enable_video_file_support', False)
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
 
-        # Build allowed extensions string as in workspace.html
-        allowed_extensions = [
-            "txt", "pdf", "docx", "xlsx", "xls", "csv", "pptx", "html",
-            "jpg", "jpeg", "png", "bmp", "tiff", "tif", "heif", "md", "json"
-        ]
-        if enable_video_file_support in [True, 'True', 'true']:
-            allowed_extensions += ["mp4", "mov", "avi", "wmv", "mkv", "webm"]
-        if enable_audio_file_support in [True, 'True', 'true']:
-            allowed_extensions += ["mp3", "wav", "ogg", "aac", "flac", "m4a"]
+        # Get allowed extensions from central function and build allowed extensions string
+        allowed_extensions = sorted(get_allowed_extensions(
+            enable_video=enable_video_file_support in [True, 'True', 'true'],
+            enable_audio=enable_audio_file_support in [True, 'True', 'true']
+        ))
         allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
-
+        
         return render_template(
             'public_workspaces.html',
             settings=public_settings,
@@ -92,9 +89,7 @@ def register_route_frontend_public_workspaces(app):
         )
 
     @app.route("/public_directory", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
@@ -113,9 +108,7 @@ def register_route_frontend_public_workspaces(app):
         )
 
     @app.route('/set_active_public_workspace', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
@@ -124,7 +117,10 @@ def register_route_frontend_public_workspaces(app):
         workspace_id = request.form.get("workspace_id")
         if not user_id or not workspace_id:
             return "Missing user or workspace id", 400
-        success = update_user_settings(user_id, {"activePublicWorkspaceOid": workspace_id})
-        if not success:
-            return "Failed to update user settings", 500
+
+        try:
+            update_active_public_workspace_for_user(user_id, workspace_id)
+        except LookupError:
+            return "Workspace not found", 404
+
         return redirect(url_for('public_workspaces'))

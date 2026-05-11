@@ -1,21 +1,106 @@
 // chat-onload.js
 
-import { loadConversations } from "./chat-conversations.js";
+import { loadConversations, selectConversation, ensureConversationPresent, createNewConversation } from "./chat-conversations.js";
 // Import handleDocumentSelectChange
-import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange } from "./chat-documents.js";
+import {
+    loadAllDocs,
+    populateDocumentSelectScope,
+    handleDocumentSelectChange,
+    loadTagsForScope,
+    filterDocumentsBySelectedTags,
+    setScopeFromUrlParam,
+    ensureSearchDocumentsVisible,
+    showSearchDocumentsPanel,
+    openScopeDropdown,
+    openTagsDropdown,
+} from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
+import { initializeModelSelector, populateModelDropdown } from "./chat-model-selector.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
 import { initConversationInfoButton } from "./chat-conversation-info-button.js";
+import { initializeReasoningToggle } from "./chat-reasoning.js";
+import { initializeSpeechInput } from "./chat-speech-input.js";
+import { initChatTutorial } from "./chat-tutorial.js";
 
-window.addEventListener('DOMContentLoaded', () => {
+
+function clearFeatureActionParam() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('feature_action')) {
+        return;
+    }
+
+    url.searchParams.delete('feature_action');
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, nextUrl);
+}
+
+
+function getFirstConversationId() {
+    const currentConversationId = window.chatConversations?.getCurrentConversationId?.();
+    if (currentConversationId) {
+        return currentConversationId;
+    }
+
+    const firstConversation = document.querySelector('.conversation-item[data-conversation-id]');
+    return firstConversation?.getAttribute('data-conversation-id') || null;
+}
+
+
+async function handleLatestFeatureLaunch(featureAction) {
+    switch (featureAction) {
+        case 'conversation_export': {
+            const conversationId = getFirstConversationId();
+            if (!conversationId) {
+                showToast('Open or start a conversation before exporting.', 'info');
+                return;
+            }
+
+            await ensureConversationPresent(conversationId);
+            await selectConversation(conversationId);
+
+            if (window.chatExport?.openExportWizard) {
+                window.chatExport.openExportWizard([conversationId], true);
+            } else {
+                showToast('Conversation export is not available right now.', 'warning');
+            }
+            return;
+        }
+        case 'multi_workspace_scope_management': {
+            await ensureSearchDocumentsVisible();
+            if (!openScopeDropdown()) {
+                showToast('Grounded-search scopes are not available right now.', 'info');
+            }
+            return;
+        }
+        case 'chat_document_and_tag_filtering': {
+            await ensureSearchDocumentsVisible();
+            if (!openTagsDropdown()) {
+                showToast('No tags are available yet for the current search scope.', 'info');
+            }
+            return;
+        }
+        default:
+            return;
+    }
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
 
-  loadConversations(); // Load conversations immediately
+    // Load conversations immediately (awaitable so deep-link can run after)
+    await loadConversations();
 
   // Initialize the conversation info button
   initConversationInfoButton();
+  
+  // Initialize speech input
+  try {
+    initializeSpeechInput();
+  } catch (error) {
+    console.warn('Speech input initialization failed:', error);
+  }
 
   // Grab references to the relevant elements
   const userInput = document.getElementById("user-input");
@@ -27,7 +112,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if (userInput && newConversationBtn) {
     userInput.addEventListener("focus", () => {
       if (!currentConversationId) {
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
       }
     });
   }
@@ -38,7 +123,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (!currentConversationId) {
         // Optionally prevent the default action if it does something immediately
         // event.preventDefault(); 
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
 
         // (Optional) If you need the prompt UI to appear *after* the conversation is created,
         // you can open the prompt UI programmatically in a small setTimeout or callback.
@@ -52,7 +137,7 @@ window.addEventListener('DOMContentLoaded', () => {
     fileBtn.addEventListener("click", (event) => {
       if (!currentConversationId) {
         // event.preventDefault(); // If file dialog should only open once conversation is created
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
 
         // (Optional) If you want the file dialog to appear *after* the conversation is created,
         // do it in a short setTimeout or callback:
@@ -62,32 +147,44 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // Load documents, prompts, and user settings
-  Promise.all([
-      loadAllDocs(),
-      loadUserPrompts(),
-      loadGroupPrompts(),
-      loadUserSettings()
-  ])
-  .then(([docsResult, userPromptsResult, groupPromptsResult, userSettings]) => {
-      console.log("Initial data (Docs, Prompts, Settings) loaded successfully."); // Log success
+  const docsPromise = loadAllDocs();
+  const userPromptsPromise = loadUserPrompts();
+  const groupPromptsPromise = loadGroupPrompts();
+  const userSettingsPromise = loadUserSettings();
+
+  try {
+      const userSettings = await userSettingsPromise;
       
-      // Set the preferred model if available
-      if (userSettings && userSettings.preferredModelDeployment) {
-          const modelSelect = document.getElementById("model-select");
-          if (modelSelect) {
-              console.log(`Setting preferred model: ${userSettings.preferredModelDeployment}`);
-              modelSelect.value = userSettings.preferredModelDeployment;
-          }
-      }
+                const preferredModelId = userSettings?.preferredModelId;
+                const preferredModelDeployment = userSettings?.preferredModelDeployment;
+
+            initializeModelSelector();
+            await populateModelDropdown({
+                preferredModelId,
+                preferredModelDeployment,
+                preserveCurrentSelection: false,
+            });
+      initializeReasoningToggle(userSettings);
+
+      const [docsResult, userPromptsResult, groupPromptsResult] = await Promise.all([
+          docsPromise,
+          userPromptsPromise,
+          groupPromptsPromise
+      ]);
+      console.log("Initial data (Docs, Prompts, Settings) loaded successfully."); // Log success
 
       // --- Initialize Document-related UI ---
       // This part handles URL params for documents - KEEP IT
       const localSearchDocsParam = getUrlParameter("search_documents") === "true";
       const localDocScopeParam = getUrlParameter("doc_scope") || "";
       const localDocumentIdParam = getUrlParameter("document_id") || "";
+      const localDocumentIdsParam = getUrlParameter("document_ids") || "";
+      const tagsParam = getUrlParameter("tags") || "";
       const workspaceParam = getUrlParameter("workspace") || "";
       const openSearchParam = getUrlParameter("openSearch") === "1";
       const scopeParam = getUrlParameter("scope") || "";
+      const groupIdParam = getUrlParameter("group_id") || "";
+      const workspaceIdParam = getUrlParameter("workspace_id") || "";
       const localSearchDocsBtn = document.getElementById("search-documents-btn");
       const localDocScopeSel = document.getElementById("doc-scope-select");
       const localDocSelectEl = document.getElementById("document-select");
@@ -108,20 +205,20 @@ window.addEventListener('DOMContentLoaded', () => {
               })
           })
           .then(response => response.json())
-          .then(data => {
+          .then(async data => {
               if (data.message) {
                   console.log('Active public workspace set successfully');
                   
                   // Auto-open search documents section
-                  localSearchDocsBtn.classList.add("active");
-                  searchDocumentsContainer.style.display = "block";
+                  await showSearchDocumentsPanel();
                   
                   // Set scope to public
-                  localDocScopeSel.value = "public";
-                  
+                  setScopeFromUrlParam("public", { workspaceId: workspaceParam });
+
                   // Populate documents for public scope
                   populateDocumentSelectScope();
-                  
+                  loadTagsForScope();
+
                   // Trigger change to update UI
                   handleDocumentSelectChange();
                   
@@ -141,35 +238,113 @@ window.addEventListener('DOMContentLoaded', () => {
           });
       } else if (localSearchDocsParam && localSearchDocsBtn && localDocScopeSel && localDocSelectEl && searchDocumentsContainer) {
           console.log("Handling document URL parameters."); // Log
-          localSearchDocsBtn.classList.add("active");
-          searchDocumentsContainer.style.display = "block";
+          await showSearchDocumentsPanel();
           if (localDocScopeParam) {
-              localDocScopeSel.value = localDocScopeParam;
+              setScopeFromUrlParam(localDocScopeParam, { groupId: groupIdParam, workspaceId: workspaceIdParam });
           }
           populateDocumentSelectScope(); // Populate based on scope (might be default or from URL)
 
-          if (localDocumentIdParam) {
-               // Wait a tiny moment for populateDocumentSelectScope potentially async operations
-               // This delay is necessary to ensure the document options are fully populated
-               setTimeout(() => {
-                   if ([...localDocSelectEl.options].some(option => option.value === localDocumentIdParam)) {
-                       localDocSelectEl.value = localDocumentIdParam;
-                   } else {
-                       console.warn(`Document ID "${localDocumentIdParam}" not found for scope "${localDocScopeSel.value}".`);
-                   }
-                   // Ensure classification updates after setting document
-                   handleDocumentSelectChange();
-               }, 100); // Small delay to ensure options are populated
+          // Pre-select tags from URL parameter
+          if (tagsParam) {
+              await loadTagsForScope();
+              const chatTagsFilter = document.getElementById("chat-tags-filter");
+              const tagsDropdownItems = document.getElementById("tags-dropdown-items");
+              const tagsDropdownButton = document.getElementById("tags-dropdown-button");
+              if (chatTagsFilter) {
+                  const tagValues = tagsParam.split(",").map(t => t.trim());
+                  // Select matching options in hidden select
+                  Array.from(chatTagsFilter.options).forEach(opt => {
+                      if (tagValues.includes(opt.value)) {
+                          opt.selected = true;
+                      }
+                  });
+                  // Also check matching checkboxes in custom dropdown
+                  if (tagsDropdownItems) {
+                      tagsDropdownItems.querySelectorAll('.dropdown-item').forEach(item => {
+                          const tagVal = item.getAttribute('data-tag-value');
+                          const cb = item.querySelector('.tag-checkbox');
+                          if (cb && tagVal && tagValues.includes(tagVal)) {
+                              cb.checked = true;
+                          }
+                      });
+                  }
+                  // Update button text
+                  if (tagsDropdownButton) {
+                      const textEl = tagsDropdownButton.querySelector('.selected-tags-text');
+                      if (textEl) {
+                          if (tagValues.length === 1) {
+                              textEl.textContent = tagValues[0];
+                          } else {
+                              textEl.textContent = `${tagValues.length} tags selected`;
+                          }
+                      }
+                  }
+                  filterDocumentsBySelectedTags();
+              }
           } else {
-              // If no specific doc ID, still might need to trigger change if scope changed
+              // Load tags for current scope even without URL tag param
+              await loadTagsForScope();
+          }
+
+          // Pre-select documents from URL parameters
+          const docIdsToSelect = localDocumentIdsParam
+              ? localDocumentIdsParam.split(",").map(id => id.trim()).filter(Boolean)
+              : localDocumentIdParam
+                  ? [localDocumentIdParam]
+                  : [];
+
+          if (docIdsToSelect.length > 0) {
+               // Small delay to ensure document options are fully populated
+               setTimeout(() => {
+                   const docDropdownItems = document.getElementById("document-dropdown-items");
+                   const docDropdownButton = document.getElementById("document-dropdown-button");
+
+                   // Check matching checkboxes in custom dropdown
+                   if (docDropdownItems) {
+                       docDropdownItems.querySelectorAll('.dropdown-item').forEach(item => {
+                           const docId = item.getAttribute('data-document-id');
+                           const cb = item.querySelector('.doc-checkbox');
+                           if (cb && docId && docIdsToSelect.includes(docId)) {
+                               cb.checked = true;
+                           }
+                       });
+                   }
+
+                   // Select matching options in hidden select
+                   Array.from(localDocSelectEl.options).forEach(opt => {
+                       if (docIdsToSelect.includes(opt.value)) {
+                           opt.selected = true;
+                       }
+                   });
+
+                   // Update dropdown button text
+                   if (docDropdownButton) {
+                       const textEl = docDropdownButton.querySelector('.selected-document-text');
+                       if (textEl) {
+                           if (docIdsToSelect.length === 1) {
+                               // Find the label from the dropdown item
+                               const matchItem = docDropdownItems
+                                   ? docDropdownItems.querySelector(`.dropdown-item[data-document-id="${docIdsToSelect[0]}"] span`)
+                                   : null;
+                               textEl.textContent = matchItem ? matchItem.textContent : "1 document selected";
+                           } else {
+                               textEl.textContent = `${docIdsToSelect.length} documents selected`;
+                           }
+                       }
+                   }
+
+                   handleDocumentSelectChange();
+               }, 100);
+          } else {
+              // If no specific doc IDs, still might need to trigger change if scope changed
                handleDocumentSelectChange();
           }
       } else if (openSearchParam && scopeParam === "public" && localSearchDocsBtn && localDocScopeSel && searchDocumentsContainer) {
           // Handle openSearch=1&scope=public from public directory chat button
-          localSearchDocsBtn.classList.add("active");
-          searchDocumentsContainer.style.display = "block";
-          localDocScopeSel.value = "public";
+          await showSearchDocumentsPanel();
+          setScopeFromUrlParam("public");
           populateDocumentSelectScope();
+          loadTagsForScope();
           handleDocumentSelectChange();
       } else {
           // If not loading from URL params, maybe still populate default scope?
@@ -183,13 +358,37 @@ window.addEventListener('DOMContentLoaded', () => {
       initializePromptInteractions();
 
 
+      // Deep-link: conversationId query param
+      const conversationId = getUrlParameter("conversationId") || getUrlParameter("conversation_id");
+      if (conversationId) {
+          try {
+              await ensureConversationPresent(conversationId);
+              await selectConversation(conversationId);
+          } catch (err) {
+              console.error('Failed to load conversation from URL param:', err);
+              showToast('Could not open that conversation.', 'danger');
+          }
+      }
+
+      const featureAction = getUrlParameter('feature_action') || '';
+      if (featureAction) {
+          try {
+              await handleLatestFeatureLaunch(featureAction);
+          } catch (err) {
+              console.error('Failed to handle latest-feature launch action:', err);
+          } finally {
+              clearFeatureActionParam();
+          }
+      }
+
       console.log("All initializations complete."); // Log end
 
-  })
-  .catch((err) => {
+  } catch (err) {
       console.error("Error during initial data loading or setup:", err);
       // Maybe try to initialize prompts even if doc loading fails? Depends on requirements.
       // console.log("Attempting to initialize prompts despite data load error...");
       // initializePromptInteractions();
-  });
+  } finally {
+      initChatTutorial();
+  }
 });

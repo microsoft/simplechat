@@ -10,6 +10,17 @@ import { showEnhancedCitationModal } from './chat-enhanced-citations.js';
 // ------------------
 
 const chatboxEl = document.getElementById("chatbox");
+const AGENT_CITATION_PREVIEW_ROWS = 3;
+const AGENT_CITATION_EXPANDED_ROWS = 25;
+let activeAgentCitationState = null;
+
+function escapeAttribute(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
 export function parseDocIdAndPage(citationId) {
   // ... (keep existing implementation)
@@ -24,9 +35,9 @@ export function parseDocIdAndPage(citationId) {
 
 export function parseCitations(message) {
   // ... (keep existing implementation)
-  const citationRegex = /\(Source:\s*([^,]+),\s*Page(?:s)?:\s*([^)]+)\)\s*((?:\[#.*?\]\s*)+)/gi;
+  const citationRegex = /\(Source:\s*([^,]+),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*([^)]+)\)\s*((?:\[#.*?\]\s*)+)/gi;
 
-  return message.replace(citationRegex, (whole, filename, pages, bracketSection) => {
+  let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
     let filenameHtml;
     if (/^https?:\/\/.+/i.test(filename.trim())) {
       filenameHtml = `<a href="${filename.trim()}" target="_blank" rel="noopener noreferrer">${filename.trim()}</a>`;
@@ -36,6 +47,7 @@ export function parseCitations(message) {
 
     const bracketMatches = bracketSection.match(/\[#.*?\]/g) || [];
     const pageToRefMap = {};
+    const orderedRefs = [];
 
     bracketMatches.forEach((match) => {
       let inner = match.slice(2, -1).trim();
@@ -43,6 +55,7 @@ export function parseCitations(message) {
       refs.forEach((r) => {
         let ref = r.trim();
         if (ref.startsWith('#')) ref = ref.slice(1);
+        orderedRefs.push(ref);
         const parts = ref.split('_');
         const pageNumber = parts.pop();
         // Ensure docId part is also captured if needed, though ref is the full ID here
@@ -56,8 +69,15 @@ export function parseCitations(message) {
       return underscoreIndex === -1 ? ref : ref.slice(0, underscoreIndex + 1);
     }
 
-    const pagesTokens = pages.split(/,/).map(tok => tok.trim());
-    const linkedTokens = pagesTokens.map(token => {
+    const normalizedLocationLabel = locationLabel.toLowerCase();
+    const locationTokens = locations.split(/,/).map(tok => tok.trim());
+    const linkedTokens = locationTokens.map((token, index) => {
+      if (!normalizedLocationLabel.startsWith('page')) {
+        const ref = orderedRefs[index] || orderedRefs[0];
+        const sheetName = normalizedLocationLabel.startsWith('sheet') ? token : null;
+        return buildAnchorIfExists(token, ref, sheetName);
+      }
+
       const dashParts = token.split(/[–—-]/).map(p => p.trim());
 
       if (dashParts.length === 2 && dashParts[0] && dashParts[1]) {
@@ -94,19 +114,28 @@ export function parseCitations(message) {
     });
 
     const linkedPagesText = linkedTokens.join(', ');
-    return `(Source: ${filenameHtml}, Pages: ${linkedPagesText})`;
+    return `(Source: ${filenameHtml}, ${locationLabel}: ${linkedPagesText})`;
   });
+
+  // Cleanup pass: strip any remaining [#guid...] bracket groups that the main regex didn't match.
+  // These appear when the model uses non-standard citation formats (e.g. "passim" instead of "Page: N").
+  // Pattern matches brackets containing one or more UUID-like citation IDs (with optional _suffix parts).
+  const guidBracketRegex = /\s*\[#?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[^\]]*\]/gi;
+  result = result.replace(guidBracketRegex, '');
+
+  return result;
 }
 
 
-export function buildAnchorIfExists(pageStr, citationId) {
+export function buildAnchorIfExists(pageStr, citationId, sheetName = null) {
   // ... (keep existing implementation)
    if (!citationId) {
     return pageStr;
   }
   // Ensure citationId doesn't have a leading # if passed accidentally
   const cleanCitationId = citationId.startsWith('#') ? citationId.slice(1) : citationId;
-  return `<a href="#" class="citation-link" data-citation-id="${cleanCitationId}" target="_blank" rel="noopener noreferrer">${pageStr}</a>`;
+  const sheetNameAttribute = sheetName ? ` data-sheet-name="${escapeAttribute(sheetName)}"` : '';
+  return `<a href="#" class="citation-link" data-citation-id="${cleanCitationId}"${sheetNameAttribute} target="_blank" rel="noopener noreferrer">${pageStr}</a>`;
 }
 
 // --- MODIFIED: fetchCitedText handles errors more gracefully ---
@@ -166,7 +195,7 @@ export function showCitedTextPopup(citedText, fileName, pageNumber) {
       <div class="modal-dialog modal-dialog-scrollable modal-xl modal-fullscreen-sm-down">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title">Source: ${fileName}, Page: ${pageNumber}</h5>
+            <h5 class="modal-title"></h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body">
@@ -176,11 +205,11 @@ export function showCitedTextPopup(citedText, fileName, pageNumber) {
       </div>
     `;
     document.body.appendChild(modalContainer);
-  } else {
-    const modalTitle = modalContainer.querySelector(".modal-title");
-    if (modalTitle) {
-      modalTitle.textContent = `Source: ${fileName}, Page: ${pageNumber}`;
-    }
+  }
+
+  const modalTitle = modalContainer.querySelector(".modal-title");
+  if (modalTitle) {
+    modalTitle.textContent = `Source: ${fileName}, Page: ${pageNumber}`;
   }
 
   const citedTextContent = document.getElementById("cited-text-content");
@@ -226,8 +255,252 @@ export function showImagePopup(imageSrc) {
   modal.show();
 }
 
-export function showAgentCitationModal(toolName, toolArgs, toolResult) {
-  // Create or reuse the agent citation modal
+export function showMetadataModal(metadataType, metadataContent, fileName) {
+  // Create or reuse the metadata modal
+  let modalContainer = document.getElementById("metadata-modal");
+  if (!modalContainer) {
+    modalContainer = document.createElement("div");
+    modalContainer.id = "metadata-modal";
+    modalContainer.classList.add("modal", "fade");
+    modalContainer.tabIndex = -1;
+    modalContainer.setAttribute("aria-hidden", "true");
+
+    modalContainer.innerHTML = `
+      <div class="modal-dialog modal-dialog-scrollable modal-lg modal-fullscreen-sm-down">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="metadata-modal-title">Document Metadata</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-2">
+              <strong>File:</strong> <span id="metadata-file-name"></span>
+            </div>
+            <div class="mb-2">
+              <strong>Type:</strong> <span id="metadata-type" class="badge bg-info"></span>
+            </div>
+            <div class="mt-3">
+              <strong>Content:</strong>
+              <div id="metadata-content" class="mt-2 p-3 bg-light rounded" style="white-space: pre-wrap; max-height: 60vh; overflow-y: auto;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modalContainer);
+  }
+
+  // Update modal content
+  const modalTitle = modalContainer.querySelector("#metadata-modal-title");
+  const fileNameEl = modalContainer.querySelector("#metadata-file-name");
+  const metadataTypeEl = modalContainer.querySelector("#metadata-type");
+  const metadataContentEl = modalContainer.querySelector("#metadata-content");
+
+  if (modalTitle) {
+    modalTitle.textContent = `Document Metadata - ${metadataType.charAt(0).toUpperCase() + metadataType.slice(1)}`;
+  }
+  if (fileNameEl) {
+    fileNameEl.textContent = fileName;
+  }
+  if (metadataTypeEl) {
+    metadataTypeEl.textContent = metadataType.charAt(0).toUpperCase() + metadataType.slice(1);
+  }
+  if (metadataContentEl) {
+    metadataContentEl.textContent = metadataContent;
+  }
+
+  const modal = new bootstrap.Modal(modalContainer);
+  modal.show();
+}
+
+function parseAgentCitationValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "object") {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmedValue = value.trim();
+  if (!trimmedValue || (trimmedValue[0] !== "{" && trimmedValue[0] !== "[")) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(trimmedValue);
+  } catch (error) {
+    return value;
+  }
+}
+
+function prettyPrintAgentCitationValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "No result";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function cloneAgentCitationPayload(value) {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return value;
+  }
+}
+
+function isTabularAgentCitationResult(resultPayload) {
+  return Boolean(
+    resultPayload
+    && typeof resultPayload === "object"
+    && !Array.isArray(resultPayload)
+    && Array.isArray(resultPayload.data)
+    && (
+      Object.prototype.hasOwnProperty.call(resultPayload, "returned_rows")
+      || Object.prototype.hasOwnProperty.call(resultPayload, "total_matches")
+      || Object.prototype.hasOwnProperty.call(resultPayload, "filename")
+      || Object.prototype.hasOwnProperty.call(resultPayload, "selected_sheet")
+    )
+  );
+}
+
+function getAgentCitationRowLimit(rowMode, totalRowCount) {
+  if (rowMode === "all") {
+    return totalRowCount;
+  }
+
+  if (rowMode === "expanded25") {
+    return Math.min(totalRowCount, AGENT_CITATION_EXPANDED_ROWS);
+  }
+
+  return Math.min(totalRowCount, AGENT_CITATION_PREVIEW_ROWS);
+}
+
+function buildAgentCitationResultView(resultPayload, rowMode) {
+  if (!isTabularAgentCitationResult(resultPayload)) {
+    return {
+      resultText: prettyPrintAgentCitationValue(resultPayload),
+      summaryText: "",
+      controls: [],
+    };
+  }
+
+  const allRows = Array.isArray(resultPayload.data) ? resultPayload.data : [];
+  const totalRowCount = allRows.length;
+  const displayedRowCount = getAgentCitationRowLimit(rowMode, totalRowCount);
+  const displayedPayload = cloneAgentCitationPayload(resultPayload) || {};
+  displayedPayload.data = allRows.slice(0, displayedRowCount);
+  displayedPayload.displayed_rows = displayedRowCount;
+  displayedPayload.data_rows_limited = displayedRowCount < totalRowCount;
+
+  const summaryParts = [];
+  if (Object.prototype.hasOwnProperty.call(resultPayload, "total_matches")) {
+    summaryParts.push(`total_matches: ${resultPayload.total_matches}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(resultPayload, "returned_rows")) {
+    summaryParts.push(`returned_rows: ${resultPayload.returned_rows}`);
+  }
+  summaryParts.push(`showing ${displayedRowCount} row${displayedRowCount === 1 ? "" : "s"}`);
+
+  const controls = [];
+  if (totalRowCount > AGENT_CITATION_PREVIEW_ROWS && rowMode !== "preview") {
+    controls.push({ mode: "preview", label: "Show preview" });
+  }
+  if (
+    totalRowCount > AGENT_CITATION_EXPANDED_ROWS
+    && rowMode !== "expanded25"
+  ) {
+    controls.push({ mode: "expanded25", label: "Show 25 rows" });
+  }
+  if (
+    totalRowCount > AGENT_CITATION_PREVIEW_ROWS
+    && rowMode !== "all"
+  ) {
+    controls.push({ mode: "all", label: "Show all rows" });
+  }
+
+  return {
+    resultText: JSON.stringify(displayedPayload, null, 2),
+    summaryText: summaryParts.join(" • "),
+    controls,
+  };
+}
+
+function renderAgentCitationResult(toolResultEl, toolResultSummaryEl, toolResultActionsEl) {
+  if (!toolResultEl || !toolResultSummaryEl || !toolResultActionsEl || !activeAgentCitationState) {
+    return;
+  }
+
+  const resultView = buildAgentCitationResultView(
+    activeAgentCitationState.parsedResult,
+    activeAgentCitationState.rowMode,
+  );
+
+  toolResultEl.textContent = resultView.resultText || "No result";
+  toolResultSummaryEl.textContent = resultView.summaryText || "";
+  toolResultSummaryEl.classList.toggle("d-none", !resultView.summaryText);
+
+  toolResultActionsEl.innerHTML = "";
+  toolResultActionsEl.classList.toggle("d-none", resultView.controls.length === 0);
+  resultView.controls.forEach((control) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-sm btn-outline-secondary";
+    button.textContent = control.label;
+    button.setAttribute("data-row-mode", control.mode);
+    button.addEventListener("click", () => {
+      activeAgentCitationState.rowMode = control.mode;
+      renderAgentCitationResult(toolResultEl, toolResultSummaryEl, toolResultActionsEl);
+    });
+    toolResultActionsEl.appendChild(button);
+  });
+}
+
+async function fetchAgentCitationArtifact(conversationId, artifactId) {
+  if (!conversationId || !artifactId) {
+    return null;
+  }
+
+  const response = await fetch(
+    `/api/conversation/${encodeURIComponent(conversationId)}/agent-citation/${encodeURIComponent(artifactId)}`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(payload?.error || `Server responded with status ${response.status}`);
+  }
+
+  return payload?.citation || null;
+}
+
+export async function showAgentCitationModal(toolName, toolArgs, toolResult, options = {}) {
   let modalContainer = document.getElementById("agent-citation-modal");
   if (!modalContainer) {
     modalContainer = document.createElement("div");
@@ -248,13 +521,24 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
               <h6 class="fw-bold">Tool Name:</h6>
               <div id="agent-tool-name" class="bg-light p-2 rounded"></div>
             </div>
+            <div class="mb-3 d-none" id="agent-tool-source">
+              <h6 class="fw-bold">Source:</h6>
+              <div>
+                <a id="agent-tool-url" href="#" target="_blank" rel="noopener noreferrer"></a>
+              </div>
+              <div id="agent-tool-url-meta" class="text-muted small"></div>
+            </div>
             <div class="mb-3">
               <h6 class="fw-bold">Function Arguments:</h6>
               <pre id="agent-tool-args" class="bg-light p-2 rounded" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
             </div>
             <div class="mb-3">
-              <h6 class="fw-bold">Function Result:</h6>
-              <pre id="agent-tool-result" class="bg-light p-2 rounded" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <h6 class="fw-bold mb-0">Function Result:</h6>
+                <div id="agent-tool-result-summary" class="text-muted small d-none"></div>
+              </div>
+              <div id="agent-tool-result-actions" class="d-none mt-2 d-flex flex-wrap gap-2"></div>
+              <pre id="agent-tool-result" class="bg-light p-2 rounded mt-2" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
             </div>
           </div>
         </div>
@@ -263,107 +547,123 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
     document.body.appendChild(modalContainer);
   }
 
-  // Update the content
   const toolNameEl = document.getElementById("agent-tool-name");
   const toolArgsEl = document.getElementById("agent-tool-args");
   const toolResultEl = document.getElementById("agent-tool-result");
+  const toolResultSummaryEl = document.getElementById("agent-tool-result-summary");
+  const toolResultActionsEl = document.getElementById("agent-tool-result-actions");
+  const toolSourceEl = document.getElementById("agent-tool-source");
+  const toolUrlEl = document.getElementById("agent-tool-url");
+  const toolUrlMetaEl = document.getElementById("agent-tool-url-meta");
+
+  const artifactId = options.artifactId || "";
+  const conversationId = options.conversationId
+    || window.chatConversations?.getCurrentConversationId?.()
+    || window.currentConversationId
+    || "";
+  let citationPayload = {
+    tool_name: toolName,
+    function_arguments: toolArgs,
+    function_result: toolResult,
+  };
+
+  if (artifactId && conversationId) {
+    showLoadingIndicator();
+    try {
+      const hydratedCitation = await fetchAgentCitationArtifact(conversationId, artifactId);
+      if (hydratedCitation && typeof hydratedCitation === "object") {
+        citationPayload = hydratedCitation;
+      }
+    } catch (error) {
+      console.warn("Failed to hydrate agent citation artifact, using compact payload.", error);
+    } finally {
+      hideLoadingIndicator();
+    }
+  }
+
+  const parsedArgs = parseAgentCitationValue(citationPayload.function_arguments ?? toolArgs);
+  const parsedResult = parseAgentCitationValue(citationPayload.function_result ?? toolResult);
+  activeAgentCitationState = {
+    rowMode: "preview",
+    parsedArgs,
+    parsedResult,
+  };
 
   if (toolNameEl) {
-    toolNameEl.textContent = toolName || "Unknown";
+    toolNameEl.textContent = citationPayload.tool_name || toolName || "Unknown";
   }
-  
+
   if (toolArgsEl) {
-    // Handle empty or no parameters more gracefully
-    let argsContent = "";
-    
-    try {
-      let parsedArgs;
-      if (!toolArgs || toolArgs === "" || toolArgs === "{}") {
-        argsContent = "No parameters required";
-      } else {
-        parsedArgs = JSON.parse(toolArgs);
-        // Check if it's an empty object
-        if (typeof parsedArgs === 'object' && Object.keys(parsedArgs).length === 0) {
-          argsContent = "No parameters required";
-        } else {
-          argsContent = JSON.stringify(parsedArgs, null, 2);
-        }
-      }
-    } catch (e) {
-      // If it's not valid JSON, check if it's an object representation
-      if (toolArgs === "[object Object]" || !toolArgs || toolArgs.trim() === "") {
-        argsContent = "No parameters required";
-      } else {
-        argsContent = toolArgs;
-      }
-    }
-    
-    // Add truncation with expand/collapse if content is long
-    if (argsContent.length > 300 && argsContent !== "No parameters required") {
-      const truncatedContent = argsContent.substring(0, 300);
-      const remainingContent = argsContent.substring(300);
-      
-      toolArgsEl.innerHTML = `
-        <div class="args-content position-relative">
-          <span class="args-truncated">${escapeHtml(truncatedContent)}</span><span class="args-remaining" style="display: none;">${escapeHtml(remainingContent)}</span>
-          <button class="btn btn-link p-0 ms-2 expand-args-btn" 
-                  style="font-size: 0.75rem; text-decoration: none; vertical-align: baseline;" 
-                  onclick="toggleArgsExpansion(this)">
-            <i class="bi bi-chevron-down" style="font-size: 0.7rem;"></i>
-          </button>
-        </div>
-      `;
-    } else {
-      toolArgsEl.textContent = argsContent;
-    }
+    toolArgsEl.textContent = parsedArgs === null
+      ? "No parameters required"
+      : prettyPrintAgentCitationValue(parsedArgs);
   }
-  
-  if (toolResultEl) {
-    // Handle result formatting and truncation with expand/collapse
-    let resultContent = "";
-    
-    try {
-      let parsedResult;
-      if (!toolResult || toolResult === "" || toolResult === "{}") {
-        resultContent = "No result";
-      } else if (toolResult === "[object Object]") {
-        resultContent = "No result data available";
-      } else {
-        // Try to parse as JSON first
-        try {
-          parsedResult = JSON.parse(toolResult);
-          resultContent = JSON.stringify(parsedResult, null, 2);
-        } catch (parseError) {
-          // If not JSON, treat as string
-          resultContent = toolResult;
-        }
-      }
-    } catch (e) {
-      resultContent = toolResult || "No result";
-    }
-    
-    // Add truncation with expand/collapse if content is long
-    if (resultContent.length > 300) {
-      const truncatedContent = resultContent.substring(0, 300);
-      const remainingContent = resultContent.substring(300);
-      
-      toolResultEl.innerHTML = `
-        <div class="result-content position-relative">
-          <span class="result-truncated">${escapeHtml(truncatedContent)}</span><span class="result-remaining" style="display: none;">${escapeHtml(remainingContent)}</span>
-          <button class="btn btn-link p-0 ms-2 expand-result-btn" 
-                  style="font-size: 0.75rem; text-decoration: none; vertical-align: baseline;" 
-                  onclick="toggleResultExpansion(this)">
-            <i class="bi bi-chevron-down" style="font-size: 0.7rem;"></i>
-          </button>
-        </div>
-      `;
-    } else {
-      toolResultEl.textContent = resultContent;
-    }
+
+  if (toolResultEl && toolResultSummaryEl && toolResultActionsEl) {
+    const citationDetails = extractAgentCitationDetails(parsedResult || parsedArgs);
+    updateAgentCitationSource(toolSourceEl, toolUrlEl, toolUrlMetaEl, citationDetails);
+    renderAgentCitationResult(toolResultEl, toolResultSummaryEl, toolResultActionsEl);
   }
 
   const modal = new bootstrap.Modal(modalContainer);
   modal.show();
+}
+
+function extractAgentCitationDetails(source) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  const url = source.url;
+  if (!isValidHttpUrl(url)) {
+    return null;
+  }
+
+  return {
+    url,
+    title: source.title || null,
+    quote: source.quote || null,
+    citationType: source.citation_type || null,
+  };
+}
+
+function updateAgentCitationSource(containerEl, linkEl, metaEl, details) {
+  if (!containerEl || !linkEl || !metaEl) {
+    return;
+  }
+
+  if (!details || !details.url) {
+    containerEl.classList.add("d-none");
+    linkEl.textContent = "";
+    linkEl.removeAttribute("href");
+    metaEl.textContent = "";
+    return;
+  }
+
+  containerEl.classList.remove("d-none");
+  linkEl.href = details.url;
+  linkEl.textContent = details.title || details.url;
+
+  const metaParts = [];
+  if (details.citationType) {
+    metaParts.push(`Type: ${details.citationType}`);
+  }
+  if (details.quote) {
+    metaParts.push(`Quote: ${details.quote}`);
+  }
+  metaEl.textContent = metaParts.join(" • ");
+}
+
+function isValidHttpUrl(value) {
+  if (!value || typeof value !== "string") {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
 }
 
 // --- MODIFIED: Added citationId parameter and fallback in catch ---
@@ -460,7 +760,20 @@ if (chatboxEl) {
           return;
       }
 
+      // Check if this is a metadata citation
+      const isMetadata = target.getAttribute("data-is-metadata") === "true";
+      if (isMetadata) {
+          // Show metadata content directly in a modal
+          const metadataType = target.getAttribute("data-metadata-type");
+          const metadataContent = target.getAttribute("data-metadata-content");
+          const fileName = citationId.split('_')[0]; // Extract filename from citation ID
+          
+          showMetadataModal(metadataType, metadataContent, fileName);
+          return;
+      }
+
       const { docId, pageNumber } = parseDocIdAndPage(citationId);
+      const sheetName = target.getAttribute("data-sheet-name");
 
       // Safety check: Ensure docId and pageNumber were parsed correctly
       if (!docId || !pageNumber) {
@@ -501,7 +814,7 @@ if (chatboxEl) {
       if (attemptEnhanced) {
           // console.log(`Attempting Enhanced Citation for ${docId}, page/timestamp ${pageNumber}, citationId ${citationId}`);
           // Use new enhanced citation system that supports multiple file types
-          showEnhancedCitationModal(docId, pageNumber, citationId);
+          showEnhancedCitationModal(docId, pageNumber, citationId, sheetName);
       } else {
           // console.log(`Fetching Text Citation for ${citationId}`);
           // Use text citation if globally disabled OR explicitly disabled for this doc OR if parsing failed earlier
@@ -514,6 +827,10 @@ if (chatboxEl) {
       const toolName = target.getAttribute("data-tool-name");
       const toolArgs = target.getAttribute("data-tool-args");
       const toolResult = target.getAttribute("data-tool-result");
+      const artifactId = target.getAttribute("data-artifact-id");
+      const conversationId = target.getAttribute("data-conversation-id")
+        || window.chatConversations?.getCurrentConversationId?.()
+        || window.currentConversationId;
       
       if (!toolName) {
         console.warn("Agent citation link clicked but data-tool-name is missing.");
@@ -521,7 +838,10 @@ if (chatboxEl) {
         return;
       }
       
-      showAgentCitationModal(toolName, toolArgs, toolResult);
+      void showAgentCitationModal(toolName, toolArgs, toolResult, {
+        artifactId,
+        conversationId,
+      });
       
     } else if (target && target.matches("a.file-link")) { // Keep existing file link logic
       event.preventDefault();
@@ -552,42 +872,4 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
-
-// Global function to toggle result expansion (called from inline onclick)
-window.toggleResultExpansion = function(button) {
-  const resultContent = button.closest('.result-content');
-  const remaining = resultContent.querySelector('.result-remaining');
-  const icon = button.querySelector('i');
-  
-  if (remaining.style.display === 'none') {
-    // Expand
-    remaining.style.display = 'inline';
-    icon.className = 'bi bi-chevron-up';
-    button.title = 'Show less';
-  } else {
-    // Collapse
-    remaining.style.display = 'none';
-    icon.className = 'bi bi-chevron-down';
-    button.title = 'Show more';
-  }
-};
-
-// Global function to toggle arguments expansion (called from inline onclick)
-window.toggleArgsExpansion = function(button) {
-  const argsContent = button.closest('.args-content');
-  const remaining = argsContent.querySelector('.args-remaining');
-  const icon = button.querySelector('i');
-  
-  if (remaining.style.display === 'none') {
-    // Expand
-    remaining.style.display = 'inline';
-    icon.className = 'bi bi-chevron-up';
-    button.title = 'Show less';
-  } else {
-    // Collapse
-    remaining.style.display = 'none';
-    icon.className = 'bi bi-chevron-down';
-    button.title = 'Show more';
-  }
-};
 // ---------------------------------------

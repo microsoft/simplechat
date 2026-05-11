@@ -2,18 +2,31 @@
 // Multi-step modal functionality for agent creation
 import { showToast } from "./chat/chat-toast.js";
 import * as agentsCommon from "./agents_common.js";
+import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
 export class AgentModalStepper {
-  constructor(isAdmin = false) {
+  constructor(isAdmin = false, options = {}) {
     this.currentStep = 1;
     this.maxSteps = 6;
     this.isEditMode = false;
     this.isAdmin = isAdmin; // Track if this is admin context
+    this.workspaceScope = options.workspaceScope || (isAdmin ? 'admin' : 'user');
+    this.settingsEndpoint = options.settingsEndpoint || (isAdmin ? '/api/admin/agent/settings' : '/api/user/agent/settings');
+    this.currentAgentType = 'local';
     this.originalAgent = null;  // Track original state for change detection
     this.actionsToSelect = null; // Store actions to select when they're loaded
     this.updateStepIndicatorTimeout = null; // For debouncing step indicator updates
+    this.templateSubmitButton = document.getElementById('agent-modal-submit-template-btn');
+    this.foundryPlaceholderInstructions = 'Placeholder instructions: Azure AI Foundry agent manages its own prompt.';
+    this.instructionsEditor = null;
+    this.foundryEndpoints = [];
+    this.foundryAgents = [];
     
     this.bindEvents();
+
+    if (this.templateSubmitButton) {
+      this.templateSubmitButton.addEventListener('click', () => this.submitTemplate());
+    }
   }
 
   bindEvents() {
@@ -22,6 +35,8 @@ export class AgentModalStepper {
     const prevBtn = document.getElementById('agent-modal-prev');
     const saveBtn = document.getElementById('agent-modal-save-btn');
     const skipBtn = document.getElementById('agent-modal-skip');
+    const powerUserToggle = document.getElementById('agent-power-user-toggle');
+    const agentTypeRadios = document.querySelectorAll('input[name="agent-type"]');
     
     if (nextBtn) {
       nextBtn.addEventListener('click', () => this.nextStep());
@@ -35,9 +50,151 @@ export class AgentModalStepper {
     if (skipBtn) {
       skipBtn.addEventListener('click', () => this.skipToEnd());
     }
+    if (powerUserToggle) {
+      powerUserToggle.addEventListener('change', (e) => this.togglePowerUserMode(e.target.checked));
+    }
+
+    if (agentTypeRadios && agentTypeRadios.length) {
+      agentTypeRadios.forEach(r => {
+        r.addEventListener('change', (e) => this.handleAgentTypeChange(e.target.value));
+      });
+    }
+
+    const agentModal = document.getElementById('agentModal');
+    if (agentModal) {
+      agentModal.addEventListener('shown.bs.modal', () => {
+        this.initializeInstructionsEditor();
+        this.refreshInstructionsEditor(this.currentStep === 3 && !this.isAnyFoundryType());
+      });
+    }
+
+    const foundryEndpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    const foundryFetchBtn = document.getElementById('agent-foundry-fetch-btn');
+    const foundryAgentSelect = document.getElementById('agent-foundry-agent-select');
+    if (foundryEndpointSelect) {
+      foundryEndpointSelect.addEventListener('change', () => this.applyFoundryEndpointSelection());
+    }
+    if (foundryFetchBtn) {
+      foundryFetchBtn.addEventListener('click', () => this.fetchFoundryAgents());
+    }
+    if (foundryAgentSelect) {
+      foundryAgentSelect.addEventListener('change', () => this.applyFoundryAgentSelection());
+    }
     
     // Set up display name to generated name conversion
     this.setupNameGeneration();
+    
+    // Set up model change listener for reasoning effort
+    this.setupModelChangeListener();
+  }
+
+  initializeInstructionsEditor() {
+    if (this.instructionsEditor || typeof window.SimpleMDE === 'undefined') {
+      return;
+    }
+
+    const instructionsInput = document.getElementById('agent-instructions');
+    if (!instructionsInput) {
+      return;
+    }
+
+    try {
+      this.instructionsEditor = new window.SimpleMDE({
+        element: instructionsInput,
+        spellChecker: false,
+        autoDownloadFontAwesome: false
+      });
+    } catch (error) {
+      console.error('Failed to initialize SimpleMDE for agent instructions:', error);
+      this.instructionsEditor = null;
+    }
+  }
+
+  getInstructionsValue() {
+    if (this.instructionsEditor) {
+      return this.instructionsEditor.value();
+    }
+
+    return document.getElementById('agent-instructions')?.value || '';
+  }
+
+  setInstructionsValue(value = '') {
+    const instructionsInput = document.getElementById('agent-instructions');
+    if (instructionsInput) {
+      instructionsInput.value = value;
+    }
+
+    if (this.instructionsEditor) {
+      this.instructionsEditor.value(value);
+    }
+  }
+
+  refreshInstructionsEditor(shouldFocus = false) {
+    if (!this.instructionsEditor?.codemirror) {
+      return;
+    }
+
+    setTimeout(() => {
+      this.instructionsEditor.codemirror.refresh();
+      if (shouldFocus) {
+        this.instructionsEditor.codemirror.focus();
+      }
+    }, 0);
+  }
+
+  isClassicFoundryType(agentType = this.currentAgentType) {
+    return (agentType || '').toLowerCase() === 'aifoundry';
+  }
+
+  isNewFoundryType(agentType = this.currentAgentType) {
+    return (agentType || '').toLowerCase() === 'new_foundry';
+  }
+
+  isAnyFoundryType(agentType = this.currentAgentType) {
+    return this.isClassicFoundryType(agentType) || this.isNewFoundryType(agentType);
+  }
+
+  getCurrentFoundryProvider(agentType = this.currentAgentType) {
+    return this.isNewFoundryType(agentType) ? 'new_foundry' : 'aifoundry';
+  }
+
+  matchesFoundryEndpointProvider(provider) {
+    const normalizedProvider = (provider || '').toLowerCase();
+    if (!normalizedProvider) {
+      return false;
+    }
+    return normalizedProvider === this.getCurrentFoundryProvider();
+  }
+
+  getAgentTypeLabel(agentType = this.currentAgentType) {
+    if (this.isNewFoundryType(agentType)) {
+      return 'New Foundry';
+    }
+    if (this.isClassicFoundryType(agentType)) {
+      return 'Foundry (classic)';
+    }
+    return 'Local (Semantic Kernel)';
+  }
+
+  getCurrentFoundrySettings(agentType = this.currentAgentType) {
+    const otherSettings = this.currentAgent?.other_settings || {};
+    if (this.isNewFoundryType(agentType)) {
+      return otherSettings.new_foundry || {};
+    }
+    if (this.isClassicFoundryType(agentType)) {
+      return otherSettings.azure_ai_foundry || {};
+    }
+    return {};
+  }
+
+  shouldPreserveCurrentFoundrySelection(endpointId) {
+    if (!endpointId || !this.currentAgent || !this.isAnyFoundryType()) {
+      return false;
+    }
+
+    const currentFoundrySettings = this.getCurrentFoundrySettings();
+    const currentEndpointId = this.currentAgent.model_endpoint_id || currentFoundrySettings.endpoint_id || '';
+    return currentEndpointId === endpointId;
   }
 
   setupNameGeneration() {
@@ -50,6 +207,236 @@ export class AgentModalStepper {
         const generatedName = this.generateAgentName(displayName);
         generatedNameInput.value = generatedName;
       });
+    }
+  }
+
+  setupModelChangeListener() {
+    const globalModelSelect = document.getElementById('agent-global-model-select');
+    if (globalModelSelect) {
+      globalModelSelect.addEventListener('change', () => {
+        this.updateModelEndpointSelection();
+        this.updateReasoningEffortForModel();
+      });
+    }
+  }
+
+  updateModelEndpointSelection() {
+    const globalModelSelect = document.getElementById('agent-global-model-select');
+    const modelEndpointInput = document.getElementById('agent-model-endpoint-id');
+    const modelIdInput = document.getElementById('agent-model-id');
+    const modelProviderInput = document.getElementById('agent-model-provider');
+    if (!globalModelSelect) {
+      return;
+    }
+
+    const selectedOption = globalModelSelect.options[globalModelSelect.selectedIndex];
+    if (modelEndpointInput) {
+      modelEndpointInput.value = selectedOption?.dataset?.endpointId || '';
+    }
+    if (modelIdInput) {
+      modelIdInput.value = selectedOption?.value || '';
+    }
+    if (modelProviderInput) {
+      modelProviderInput.value = selectedOption?.dataset?.provider || '';
+    }
+  }
+
+  handleAgentTypeChange(agentType) {
+    this.currentAgentType = agentType || 'local';
+    this.applyAgentTypeVisibility();
+    // Clear actions if switching to foundry
+    if (this.isAnyFoundryType()) {
+      this.clearSelectedActions();
+      this.loadFoundryEndpoints();
+    }
+    this.populateSummary();
+  }
+
+  applyAgentTypeVisibility() {
+    const isFoundry = this.isAnyFoundryType();
+    const isClassicFoundry = this.isClassicFoundryType();
+    const isNewFoundry = this.isNewFoundryType();
+    const foundryFields = document.getElementById('agent-foundry-fields');
+    const modelGroup = document.getElementById('agent-global-model-group');
+    const customToggle = document.getElementById('agent-custom-connection-toggle');
+    const customFields = document.getElementById('agent-custom-connection-fields');
+    const actionsSection = document.getElementById('agent-step-4');
+    const actionsDisabled = document.getElementById('agent-actions-disabled');
+    const actionsContainer = document.getElementById('agent-actions-container');
+    const actionsHeader = actionsSection?.querySelector('.card');
+    const summaryActionsSection = document.getElementById('summary-actions-section');
+    const instructionsContainer = document.getElementById('agent-instructions-container');
+    const instructionsFoundryNote = document.getElementById('agent-instructions-foundry-note');
+    const instructionsInput = document.getElementById('agent-instructions');
+    const advancedFoundryNote = document.getElementById('agent-advanced-foundry-note');
+    const localAgentAdvancedSettings = document.getElementById('local-agent-advanced-settings');
+    const foundryModeNote = document.getElementById('agent-foundry-mode-note');
+    const foundryFetchBtnLabel = document.getElementById('agent-foundry-fetch-btn-label');
+    const foundrySelectLabel = document.getElementById('agent-foundry-select-label');
+    const foundrySelectHelp = document.getElementById('agent-foundry-select-help');
+    const classicOnly = document.getElementById('agent-classic-foundry-only');
+    const classicOnlyFields = document.getElementById('agent-classic-foundry-fields');
+    const classicApiVersionGroup = document.getElementById('agent-classic-foundry-api-version-group');
+    const newFoundryOnly = document.getElementById('agent-new-foundry-only');
+
+    if (foundryFields) foundryFields.classList.toggle('d-none', !isFoundry);
+    if (modelGroup) modelGroup.classList.toggle('d-none', isFoundry);
+    if (customToggle) customToggle.classList.toggle('d-none', isFoundry);
+    if (customFields) customFields.classList.toggle('d-none', isFoundry);
+    if (classicOnly) classicOnly.classList.toggle('d-none', !isClassicFoundry);
+    if (classicOnlyFields) classicOnlyFields.classList.toggle('d-none', !isClassicFoundry);
+    if (classicApiVersionGroup) classicApiVersionGroup.classList.toggle('d-none', !isClassicFoundry);
+    if (newFoundryOnly) newFoundryOnly.classList.toggle('d-none', !isNewFoundry);
+
+    if (instructionsContainer) instructionsContainer.classList.toggle('d-none', isFoundry);
+    if (instructionsFoundryNote) instructionsFoundryNote.classList.toggle('d-none', !isFoundry);
+    if (instructionsInput) {
+      if (isFoundry) {
+        this.setInstructionsValue(this.foundryPlaceholderInstructions);
+      }
+    }
+
+    if (actionsSection) {
+      // Hide interactive actions when foundry
+      if (actionsDisabled) actionsDisabled.classList.toggle('d-none', !isFoundry);
+      if (actionsHeader) actionsHeader.classList.toggle('d-none', isFoundry);
+      if (actionsContainer) actionsContainer.classList.toggle('d-none', isFoundry);
+      const noActionsMsg = document.getElementById('agent-no-actions-message');
+      if (noActionsMsg) noActionsMsg.classList.toggle('d-none', isFoundry);
+      const selectedSummary = document.getElementById('agent-selected-actions-summary');
+      if (selectedSummary) selectedSummary.classList.toggle('d-none', isFoundry);
+    }
+
+    if (summaryActionsSection) {
+      summaryActionsSection.classList.toggle('d-none', isFoundry);
+    }
+
+    if (advancedFoundryNote) {
+      advancedFoundryNote.classList.toggle('d-none', !isFoundry);
+    }
+    if (localAgentAdvancedSettings) {
+      localAgentAdvancedSettings.classList.toggle('d-none', isFoundry);
+    }
+
+    // Update helper text
+    const helper = document.getElementById('agent-type-helper');
+    if (helper) {
+      if (isNewFoundry) {
+        helper.textContent = 'New Foundry applications use the Responses protocol endpoint. Actions are disabled.';
+      } else if (isClassicFoundry) {
+        helper.textContent = 'Classic Foundry agents use Azure-managed tools. Actions are disabled.';
+      } else {
+        helper.textContent = 'Local agents can attach actions and use SK plugins.';
+      }
+    }
+
+    if (foundryFetchBtnLabel) {
+      foundryFetchBtnLabel.textContent = isNewFoundry ? 'Fetch Applications' : 'Fetch Agents';
+    }
+
+    if (foundrySelectLabel) {
+      foundrySelectLabel.textContent = isNewFoundry ? 'New Foundry Application' : 'Foundry Agent';
+    }
+
+    if (foundrySelectHelp) {
+      if (isNewFoundry) {
+        foundrySelectHelp.textContent = 'Fetch a new Foundry application to populate the application name, version, and identifier fields.';
+      } else {
+        foundrySelectHelp.textContent = 'Select a classic Foundry agent to import its identity.';
+      }
+    }
+
+    if (foundryModeNote) {
+      if (isNewFoundry) {
+        foundryModeNote.textContent = 'New Foundry applications are invoked through the application Responses endpoint and use Foundry-managed tools.';
+      } else if (isClassicFoundry) {
+        foundryModeNote.textContent = 'Classic Foundry agents use Azure-managed tools and the existing SDK-backed invocation path.';
+      }
+    }
+  }
+
+  updateAgentTypeLock() {
+    const radios = document.querySelectorAll('input[name="agent-type"]');
+    if (!radios || !radios.length) {
+      return;
+    }
+
+    const shouldDisable = this.isEditMode || this.currentStep > 1;
+
+    radios.forEach(radio => {
+      radio.disabled = shouldDisable;
+      const wrapper = radio.closest('.form-check');
+      if (wrapper) {
+        wrapper.classList.toggle('opacity-50', shouldDisable);
+      }
+    });
+
+    const selector = document.getElementById('agent-type-selector');
+    if (selector) {
+      selector.classList.toggle('pe-none', shouldDisable);
+    }
+  }
+
+  updateReasoningEffortForModel() {
+    const globalModelSelect = document.getElementById('agent-global-model-select');
+    const reasoningEffortSelect = document.getElementById('agent-reasoning-effort');
+    const reasoningEffortGroup = reasoningEffortSelect?.closest('.mb-3');
+    
+    if (!globalModelSelect || !reasoningEffortSelect || !reasoningEffortGroup) {
+      return;
+    }
+    
+    const selectedModel = globalModelSelect.value;
+    if (!selectedModel) {
+      // No model selected, hide reasoning effort
+      reasoningEffortGroup.style.display = 'none';
+      return;
+    }
+    
+    // Get supported levels for the selected model
+    const supportedLevels = getModelSupportedLevels(selectedModel);
+    
+    // If model only supports 'none', hide the field
+    if (supportedLevels.length === 1 && supportedLevels[0] === 'none') {
+      reasoningEffortGroup.style.display = 'none';
+      reasoningEffortSelect.value = ''; // Clear selection
+      return;
+    }
+    
+    // Show the field
+    reasoningEffortGroup.style.display = 'block';
+    
+    // Update available options based on supported levels
+    const currentValue = reasoningEffortSelect.value;
+    const allOptions = reasoningEffortSelect.querySelectorAll('option');
+    
+    // Show/hide options based on supported levels
+    allOptions.forEach(option => {
+      const value = option.value;
+      if (value === '') {
+        // Always show the "inherit" option
+        option.style.display = '';
+        option.disabled = false;
+      } else if (supportedLevels.includes(value)) {
+        option.style.display = '';
+        option.disabled = false;
+      } else {
+        option.style.display = 'none';
+        option.disabled = true;
+      }
+    });
+    
+    // If current value is not supported, reset to inherit
+    if (currentValue && currentValue !== '' && !supportedLevels.includes(currentValue)) {
+      reasoningEffortSelect.value = '';
+    }
+  }
+
+  togglePowerUserMode(isEnabled) {
+    console.log('Toggling power user mode:', isEnabled);
+    const powerUserSection = document.getElementById('agent-power-user-settings');
+    if (powerUserSection) {
+      powerUserSection.classList.toggle('d-none', !isEnabled);
     }
   }
 
@@ -67,6 +454,7 @@ export class AgentModalStepper {
 
   showModal(agent = null) {
     this.isEditMode = !!agent;
+    this.currentAgentType = (agent && agent.agent_type) || 'local';
     
     // Store original state for change detection
     this.originalAgent = agent ? JSON.parse(JSON.stringify(agent)) : null;
@@ -99,9 +487,15 @@ export class AgentModalStepper {
     
     // Ensure generated name is populated for both new and existing agents
     this.updateGeneratedName();
+    this.initializeInstructionsEditor();
+    this.syncAgentTypeSelector();
+    this.applyAgentTypeVisibility();
+    this.updateAgentTypeLock();
     
     // Load models for the modal
     this.loadModelsForModal();
+    this.loadFoundryEndpoints();
+    this.updateModelEndpointSelection();
     
     // Show the Bootstrap modal
     const modalEl = document.getElementById('agentModal');
@@ -117,6 +511,7 @@ export class AgentModalStepper {
           this.updateStepIndicator();
           this.showStep(1);
           this.updateNavigationButtons();
+          this.updateTemplateButtonVisibility();
           console.log('Step indicators initialized');
         } else {
           // Modal not ready yet, try again
@@ -145,6 +540,14 @@ export class AgentModalStepper {
     }
   }
 
+  syncAgentTypeSelector() {
+    const radios = document.querySelectorAll('input[name="agent-type"]');
+    if (!radios || !radios.length) return;
+    radios.forEach(r => {
+      r.checked = r.value === this.currentAgentType;
+    });
+  }
+
   clearFields() {
     // Clear all form fields
     const displayName = document.getElementById('agent-display-name');
@@ -153,13 +556,45 @@ export class AgentModalStepper {
     const instructions = document.getElementById('agent-instructions');
     const modelSelect = document.getElementById('agent-global-model-select');
     const customConnection = document.getElementById('agent-custom-connection');
+    const modelEndpointId = document.getElementById('agent-model-endpoint-id');
+    const modelId = document.getElementById('agent-model-id');
+    const modelProvider = document.getElementById('agent-model-provider');
+    const foundryEndpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    const foundryAgentSelect = document.getElementById('agent-foundry-agent-select');
+    const foundryEndpointInput = document.getElementById('agent-foundry-endpoint');
+    const foundryApiVersionInput = document.getElementById('agent-foundry-api-version');
+    const foundryDeploymentInput = document.getElementById('agent-foundry-deployment');
+    const foundryAgentIdInput = document.getElementById('agent-foundry-agent-id');
+    const foundryResponsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
+    const foundryApplicationIdInput = document.getElementById('agent-new-foundry-application-id');
+    const foundryApplicationNameInput = document.getElementById('agent-new-foundry-application-name');
+    const foundryApplicationVersionInput = document.getElementById('agent-new-foundry-application-version');
+    const foundryActivityApiVersionInput = document.getElementById('agent-new-foundry-activity-api-version');
+    const foundryNotesInput = document.getElementById('agent-foundry-notes');
+    const foundryStatus = document.getElementById('agent-foundry-fetch-status');
     
     if (displayName) displayName.value = '';
     if (generatedName) generatedName.value = '';
     if (description) description.value = '';
-    if (instructions) instructions.value = '';
+    if (instructions) this.setInstructionsValue('');
     if (modelSelect) modelSelect.selectedIndex = 0;
     if (customConnection) customConnection.checked = false;
+    if (modelEndpointId) modelEndpointId.value = '';
+    if (modelId) modelId.value = '';
+    if (modelProvider) modelProvider.value = '';
+    if (foundryEndpointSelect) foundryEndpointSelect.selectedIndex = 0;
+    if (foundryAgentSelect) foundryAgentSelect.selectedIndex = 0;
+    if (foundryEndpointInput) foundryEndpointInput.value = '';
+    if (foundryApiVersionInput) foundryApiVersionInput.value = '';
+    if (foundryDeploymentInput) foundryDeploymentInput.value = '';
+    if (foundryAgentIdInput) foundryAgentIdInput.value = '';
+    if (foundryResponsesApiVersionInput) foundryResponsesApiVersionInput.value = '';
+    if (foundryApplicationIdInput) foundryApplicationIdInput.value = '';
+    if (foundryApplicationNameInput) foundryApplicationNameInput.value = '';
+    if (foundryApplicationVersionInput) foundryApplicationVersionInput.value = '';
+    if (foundryActivityApiVersionInput) foundryActivityApiVersionInput.value = '';
+    if (foundryNotesInput) foundryNotesInput.value = '';
+    if (foundryStatus) foundryStatus.textContent = '';
     
     // Clear any selected actions
     this.clearSelectedActions();
@@ -174,12 +609,15 @@ export class AgentModalStepper {
 
   async loadModelsForModal() {
     try {
-      const endpoint = '/api/user/agent/settings';
-      const { models, selectedModel } = await agentsCommon.fetchAndGetAvailableModels(endpoint, this.currentAgent);
+      const { models, selectedModel } = await agentsCommon.fetchAndGetAvailableModels(this.settingsEndpoint, this.currentAgent);
       const globalModelSelect = document.getElementById('agent-global-model-select');
       
       if (globalModelSelect) {
         agentsCommon.populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+        this.updateModelEndpointSelection();
+        
+        // Update reasoning effort options based on selected model
+        this.updateReasoningEffortForModel();
       }
     } catch (error) {
       console.error('Failed to load models for agent modal:', error);
@@ -191,6 +629,217 @@ export class AgentModalStepper {
     }
   }
 
+  async loadFoundryEndpoints() {
+    const endpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    if (!endpointSelect) {
+      return;
+    }
+
+    try {
+      const resp = await fetch(this.settingsEndpoint);
+      if (!resp.ok) {
+        throw new Error('Failed to load Foundry endpoints');
+      }
+      const settings = await resp.json();
+      const endpoints = Array.isArray(settings.model_endpoints) ? settings.model_endpoints : [];
+      this.foundryEndpoints = endpoints.filter(endpoint => this.matchesFoundryEndpointProvider(endpoint.provider));
+
+      endpointSelect.innerHTML = '<option value="">Select a configured endpoint...</option>';
+      this.foundryEndpoints.forEach(endpoint => {
+        const opt = document.createElement('option');
+        opt.value = endpoint.id || '';
+        opt.textContent = endpoint.name || endpoint.connection?.endpoint || 'Foundry Endpoint';
+        if (endpoint.scope) {
+          opt.dataset.scope = endpoint.scope;
+        }
+        endpointSelect.appendChild(opt);
+      });
+
+      const existingEndpointId =
+        (this.currentAgent && (
+          this.currentAgent.model_endpoint_id
+          || this.currentAgent.other_settings?.azure_ai_foundry?.endpoint_id
+          || this.currentAgent.other_settings?.new_foundry?.endpoint_id
+        )) || '';
+      if (existingEndpointId) {
+        endpointSelect.value = existingEndpointId;
+      }
+      this.applyFoundryEndpointSelection();
+    } catch (error) {
+      console.error('Failed to load Foundry endpoints:', error);
+    }
+  }
+
+  applyFoundryEndpointSelection() {
+    const endpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    const endpointInput = document.getElementById('agent-foundry-endpoint');
+    const apiVersionInput = document.getElementById('agent-foundry-api-version');
+    const deploymentInput = document.getElementById('agent-foundry-deployment');
+    const endpointIdInput = document.getElementById('agent-model-endpoint-id');
+    const providerInput = document.getElementById('agent-model-provider');
+    const statusEl = document.getElementById('agent-foundry-fetch-status');
+    const applicationIdInput = document.getElementById('agent-new-foundry-application-id');
+    const applicationVersionInput = document.getElementById('agent-new-foundry-application-version');
+    const applicationNameInput = document.getElementById('agent-new-foundry-application-name');
+
+    if (!endpointSelect) {
+      return;
+    }
+
+    const endpointId = endpointSelect.value || '';
+    if (endpointIdInput) endpointIdInput.value = endpointId;
+    if (providerInput) providerInput.value = endpointId ? this.getCurrentFoundryProvider() : '';
+
+    const selected = this.foundryEndpoints.find(endpoint => endpoint.id === endpointId);
+    if (selected) {
+      const currentFoundrySettings = this.getCurrentFoundrySettings();
+      const preserveCurrentSelection = this.shouldPreserveCurrentFoundrySelection(endpointId);
+      if (endpointInput) {
+        endpointInput.value = selected.connection?.endpoint || '';
+      }
+      if (apiVersionInput) {
+        apiVersionInput.value = selected.connection?.project_api_version || selected.connection?.api_version || 'v1';
+      }
+      if (deploymentInput) {
+        deploymentInput.value = selected.connection?.project_name || '';
+      }
+      const responsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
+      if (responsesApiVersionInput) {
+        const endpointResponsesApiVersion = selected.connection?.openai_api_version || selected.connection?.api_version || '';
+        const storedResponsesApiVersion = currentFoundrySettings.responses_api_version || '';
+        responsesApiVersionInput.value = preserveCurrentSelection && storedResponsesApiVersion
+          ? storedResponsesApiVersion
+          : endpointResponsesApiVersion;
+      }
+      const agentSelect = document.getElementById('agent-foundry-agent-select');
+      if (agentSelect) {
+        agentSelect.innerHTML = '<option value="">Select an agent...</option>';
+      }
+      if (applicationIdInput) applicationIdInput.value = preserveCurrentSelection ? (currentFoundrySettings.application_id || '') : '';
+      if (applicationVersionInput) applicationVersionInput.value = preserveCurrentSelection ? (currentFoundrySettings.application_version || '') : '';
+      if (applicationNameInput) {
+        if (preserveCurrentSelection) {
+          applicationNameInput.value = currentFoundrySettings.application_name || applicationNameInput.value || '';
+        } else if (!this.currentAgent) {
+          applicationNameInput.value = '';
+        }
+      }
+      this.foundryAgents = [];
+      if (statusEl) {
+        statusEl.textContent = '';
+      }
+    }
+  }
+
+  async fetchFoundryAgents() {
+    const endpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    const agentSelect = document.getElementById('agent-foundry-agent-select');
+    const statusEl = document.getElementById('agent-foundry-fetch-status');
+    if (!endpointSelect || !agentSelect) {
+      return;
+    }
+
+    const endpointId = endpointSelect.value || '';
+    const scope = endpointSelect.options[endpointSelect.selectedIndex]?.dataset?.scope || 'global';
+    if (!endpointId) {
+      showToast(`Select a ${this.isNewFoundryType() ? 'New Foundry' : 'Foundry'} endpoint before fetching ${this.isNewFoundryType() ? 'applications' : 'agents'}.`, 'warning');
+      return;
+    }
+
+    try {
+      if (statusEl) {
+        statusEl.textContent = 'Fetching agents...';
+      }
+      const response = await fetch('/api/models/foundry/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint_id: endpointId, scope })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to fetch Foundry agents');
+      }
+      this.foundryAgents = Array.isArray(payload.agents) ? payload.agents : [];
+      const responsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
+      const fetchedResponsesApiVersion = payload.responses_api_version || '';
+      if (this.isNewFoundryType() && responsesApiVersionInput && fetchedResponsesApiVersion) {
+        responsesApiVersionInput.value = fetchedResponsesApiVersion;
+      }
+      agentSelect.innerHTML = '<option value="">Select an agent...</option>';
+      this.foundryAgents.forEach(agent => {
+        const opt = document.createElement('option');
+        const applicationValue = agent.application_id || agent.id || '';
+        const optionValue = this.isNewFoundryType() ? applicationValue : (agent.id || '');
+        const versionSuffix = agent.application_version ? ` (v${agent.application_version})` : '';
+        opt.value = optionValue;
+        opt.textContent = this.isNewFoundryType()
+          ? `${agent.display_name || agent.application_name || agent.name || applicationValue}${versionSuffix}`
+          : (agent.display_name || agent.name || agent.id || '');
+        agentSelect.appendChild(opt);
+      });
+      if (statusEl) {
+        statusEl.textContent = `${this.foundryAgents.length} ${this.isNewFoundryType() ? 'application' : 'agent'}(s) found.`;
+      }
+    } catch (error) {
+      console.error('Failed to fetch Foundry agents:', error);
+      if (statusEl) {
+        statusEl.textContent = '';
+      }
+      showToast(error.message || 'Failed to fetch Foundry agents.', 'danger');
+    }
+  }
+
+  applyFoundryAgentSelection() {
+    const agentSelect = document.getElementById('agent-foundry-agent-select');
+    const agentIdInput = document.getElementById('agent-foundry-agent-id');
+    if (!agentSelect) {
+      return;
+    }
+
+    const selectedId = agentSelect.value || '';
+    if (agentIdInput && this.isClassicFoundryType()) {
+      agentIdInput.value = selectedId;
+    }
+    const selected = this.foundryAgents.find(agent => {
+      if (this.isNewFoundryType()) {
+        return (agent.application_id || agent.id || '') === selectedId;
+      }
+      return (agent.id || '') === selectedId;
+    });
+    if (!selected) {
+      return;
+    }
+
+    if (this.isNewFoundryType()) {
+      const applicationIdInput = document.getElementById('agent-new-foundry-application-id');
+      const applicationNameInput = document.getElementById('agent-new-foundry-application-name');
+      const applicationVersionInput = document.getElementById('agent-new-foundry-application-version');
+      const responsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
+      if (applicationIdInput) {
+        applicationIdInput.value = selected.application_id || selected.id || '';
+      }
+      if (applicationNameInput) {
+        applicationNameInput.value = selected.application_name || selected.name || '';
+      }
+      if (applicationVersionInput) {
+        applicationVersionInput.value = selected.application_version || '';
+      }
+      if (responsesApiVersionInput && selected.responses_api_version) {
+        responsesApiVersionInput.value = selected.responses_api_version;
+      }
+    }
+
+    const displayNameInput = document.getElementById('agent-display-name');
+    const descriptionInput = document.getElementById('agent-description');
+    if (displayNameInput && !displayNameInput.value.trim()) {
+      displayNameInput.value = selected.display_name || selected.application_name || selected.name || '';
+      this.updateGeneratedName();
+    }
+    if (descriptionInput && !descriptionInput.value.trim()) {
+      descriptionInput.value = selected.description || '';
+    }
+  }
+
   populateFields(agent) {
     // Use shared logic to determine if custom connection should be enabled
     const customConnection = document.getElementById('agent-custom-connection');
@@ -199,9 +848,28 @@ export class AgentModalStepper {
       customConnection.checked = agentsCommon.shouldEnableCustomConnection(agent);
     }
 
+    // Agent type selection
+    this.currentAgentType = agent.agent_type || 'local';
+    this.syncAgentTypeSelector();
+    this.applyAgentTypeVisibility();
+
     // Use shared function to populate all fields
     if (agentsCommon && typeof agentsCommon.setAgentModalFields === 'function') {
       agentsCommon.setAgentModalFields(agent);
+    }
+    this.setInstructionsValue(agent.instructions || '');
+
+    // any agent advanced settings
+    if (this.currentAgent 
+        && this.currentAgent.max_completion_tokens != -1) {
+      const powerUserToggle = document.getElementById('agent-power-user-toggle');
+      if (powerUserToggle) {
+        powerUserToggle.checked = true; // true/false from your agent data
+        const agentPowerUserSettings = document.getElementById('agent-power-user-settings');
+        if (agentPowerUserSettings) {
+          agentPowerUserSettings.classList.remove('d-none');
+        }
+      }
     }
 
     // Show/hide custom connection fields as needed
@@ -231,6 +899,36 @@ export class AgentModalStepper {
     if (agent.actions_to_load && Array.isArray(agent.actions_to_load)) {
       this.actionsToSelect = agent.actions_to_load;
     }
+
+    // Foundry-specific fields
+    if (this.isAnyFoundryType(agent.agent_type)) {
+      const other = agent.other_settings || {};
+      const foundry = this.isNewFoundryType(agent.agent_type)
+        ? ((other && other.new_foundry) || {})
+        : ((other && other.azure_ai_foundry) || {});
+      const endpointEl = document.getElementById('agent-foundry-endpoint');
+      const apiEl = document.getElementById('agent-foundry-api-version');
+      const depEl = document.getElementById('agent-foundry-deployment');
+      const idEl = document.getElementById('agent-foundry-agent-id');
+      const notesEl = document.getElementById('agent-foundry-notes');
+      const responsesApiEl = document.getElementById('agent-new-foundry-responses-api-version');
+      const applicationIdEl = document.getElementById('agent-new-foundry-application-id');
+      const applicationNameEl = document.getElementById('agent-new-foundry-application-name');
+      const applicationVersionEl = document.getElementById('agent-new-foundry-application-version');
+      const activityVersionEl = document.getElementById('agent-new-foundry-activity-api-version');
+      if (endpointEl) endpointEl.value = agent.azure_openai_gpt_endpoint || '';
+      if (apiEl) apiEl.value = foundry.api_version || agent.azure_openai_gpt_api_version || '';
+      if (depEl) depEl.value = agent.azure_openai_gpt_deployment || '';
+      if (idEl) idEl.value = foundry.agent_id || '';
+      if (responsesApiEl) responsesApiEl.value = foundry.responses_api_version || agent.azure_openai_gpt_api_version || '';
+      if (applicationIdEl) applicationIdEl.value = foundry.application_id || '';
+      if (applicationNameEl) applicationNameEl.value = foundry.application_name || '';
+      if (applicationVersionEl) applicationVersionEl.value = foundry.application_version || '';
+      if (activityVersionEl) activityVersionEl.value = foundry.activity_api_version || '';
+      if (notesEl) notesEl.value = foundry.notes || '';
+      // ensure actions cleared for UI
+      this.clearSelectedActions();
+    }
   }
 
   nextStep() {
@@ -249,9 +947,34 @@ export class AgentModalStepper {
     }
   }
 
-  skipToEnd() {
+  async skipToEnd() {
     // Skip to the summary step (step 6)
-    this.goToStep(this.maxSteps);
+    //if (this.actionsToSelect != null && this.actionsToSelect.length > 0) {
+    //  this.setSelectedActions(this.actionsToSelect);
+    //}
+    const skipBtn = document.getElementById('agent-modal-skip');
+    const originalText = skipBtn.innerHTML;
+    if (skipBtn) {
+      skipBtn.disabled = true;
+      skipBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Skipping...`;
+    }
+    try {
+      if (!this.isAnyFoundryType()) {
+        await this.loadAvailableActions();
+      }
+      this.goToStep(this.maxSteps);
+    } catch (error) {
+      console.error('Error loading actions:', error);
+      if (skipBtn) {
+        skipBtn.disabled = false;
+        skipBtn.innerHTML = originalText;
+      }
+    } finally {
+      if (skipBtn) {
+        skipBtn.disabled = false;
+        skipBtn.innerHTML = originalText;
+      }
+    }
   }
 
   goToStep(stepNumber) {
@@ -261,6 +984,8 @@ export class AgentModalStepper {
     this.showStep(stepNumber);
     this.updateStepIndicator();
     this.updateNavigationButtons();
+    this.updateTemplateButtonVisibility();
+    this.updateAgentTypeLock();
   }
 
   showStep(stepNumber) {
@@ -278,23 +1003,39 @@ export class AgentModalStepper {
       currentStep.classList.remove('d-none');
     }
 
+    if (stepNumber === 3) {
+      this.initializeInstructionsEditor();
+      this.refreshInstructionsEditor(!this.isAnyFoundryType());
+    }
+
     if (stepNumber === 2) {
-      if (!this.isAdmin) {
-        const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
-        if (customConnectionToggle) {
-          const allowUserCustom = appSettings?.allow_user_custom_agent_endpoints;
-          if (!allowUserCustom) {
-            customConnectionToggle.classList.add('d-none');
-          } else {
-            customConnectionToggle.classList.remove('d-none');
-          }
+      const isFoundry = this.isAnyFoundryType();
+      const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
+      const modelGroup = document.getElementById('agent-global-model-group');
+
+      if (customConnectionToggle) {
+        if (isFoundry) {
+          customConnectionToggle.classList.add('d-none');
+        } else if (!this.isAdmin) {
+          const allowCustomEndpoints = this.workspaceScope === 'group'
+            ? appSettings?.allow_group_custom_endpoints
+            : appSettings?.allow_user_custom_endpoints;
+          customConnectionToggle.classList.toggle('d-none', !allowCustomEndpoints);
+        } else {
+          customConnectionToggle.classList.remove('d-none');
         }
+      }
+
+      if (modelGroup) {
+        modelGroup.classList.toggle('d-none', isFoundry);
       }
     }
     
     // Load actions when reaching step 4
     if (stepNumber === 4) {
-      this.loadAvailableActions();
+      if (!this.isAnyFoundryType()) {
+        this.loadAvailableActions();
+      }
     }
     
     // Populate summary when reaching step 6
@@ -392,6 +1133,27 @@ export class AgentModalStepper {
     }
   }
 
+  canSubmitTemplate() {
+    if (!window.appSettings || !window.appSettings.enable_agent_template_gallery) {
+      return false;
+    }
+    if (this.isAdmin) {
+      return true;
+    }
+    if (window.appSettings.allow_user_agents === false) {
+      return false;
+    }
+    return window.appSettings.agent_templates_allow_user_submission !== false;
+  }
+
+  updateTemplateButtonVisibility() {
+    if (!this.templateSubmitButton) {
+      return;
+    }
+    const shouldShow = this.canSubmitTemplate() && this.currentStep === this.maxSteps;
+    this.templateSubmitButton.classList.toggle('d-none', !shouldShow);
+  }
+
   validateCurrentStep() {
     switch (this.currentStep) {
       case 1: // Basic Info
@@ -412,20 +1174,68 @@ export class AgentModalStepper {
         break;
         
       case 2: // Model & Connection
-        // Model validation would go here
-        break;
-        
-      case 3: // Instructions
-        const instructions = document.getElementById('agent-instructions');
-        if (!instructions || !instructions.value.trim()) {
-          this.showError('Please provide instructions for the agent.');
-          if (instructions) instructions.focus();
-          return false;
+        if (this.isAnyFoundryType()) {
+          const endpoint = document.getElementById('agent-foundry-endpoint');
+          const deployment = document.getElementById('agent-foundry-deployment');
+          if (!endpoint || !endpoint.value.trim()) {
+            this.showError('A Foundry project endpoint is required.');
+            endpoint?.focus();
+            return false;
+          }
+          if (!deployment || !deployment.value.trim()) {
+            this.showError('A Foundry project name is required.');
+            deployment?.focus();
+            return false;
+          }
+          if (this.isClassicFoundryType()) {
+            const apiVersion = document.getElementById('agent-foundry-api-version');
+            const agentId = document.getElementById('agent-foundry-agent-id');
+            if (!apiVersion || !apiVersion.value.trim()) {
+              this.showError('Classic Foundry API version is required.');
+              apiVersion?.focus();
+              return false;
+            }
+            if (!agentId || !agentId.value.trim()) {
+              this.showError('Foundry agent ID is required.');
+              agentId?.focus();
+              return false;
+            }
+          } else {
+            const responsesApiVersion = document.getElementById('agent-new-foundry-responses-api-version');
+            const applicationName = document.getElementById('agent-new-foundry-application-name');
+            if (!responsesApiVersion || !responsesApiVersion.value.trim()) {
+              this.showError('Select a New Foundry endpoint that provides an OpenAI API version before continuing.');
+              return false;
+            }
+            if (!applicationName || !applicationName.value.trim()) {
+              this.showError('Provide or fetch an application name for New Foundry.');
+              applicationName?.focus();
+              return false;
+            }
+          }
         }
         break;
         
+      case 3: // Instructions
+        const instructionsValue = this.getInstructionsValue();
+          if (!this.isAnyFoundryType()) {
+            if (!instructionsValue.trim()) {
+              this.showError('Please provide instructions for the agent.');
+              this.refreshInstructionsEditor(true);
+              return false;
+            }
+          } else {
+            // Ensure placeholder present
+            if (!instructionsValue.trim()) {
+              this.setInstructionsValue(this.foundryPlaceholderInstructions);
+            }
+          }
+        break;
+        
       case 4: // Actions
-        // Actions validation would go here if needed
+        if (!this.isAnyFoundryType()) {
+          // Actions validation would go here if needed
+        }
         break;
         
       case 5: // Advanced
@@ -529,6 +1339,15 @@ export class AgentModalStepper {
   }
 
   getFormModelName() {
+    if (this.isClassicFoundryType()) {
+      const foundryDeployment = document.getElementById('agent-foundry-deployment');
+      return foundryDeployment?.value?.trim() || '-';
+    }
+    if (this.isNewFoundryType()) {
+      const applicationName = document.getElementById('agent-new-foundry-application-name');
+      const applicationId = document.getElementById('agent-new-foundry-application-id');
+      return applicationName?.value?.trim() || applicationId?.value?.trim() || '-';
+    }
     const customConnection = document.getElementById('agent-custom-connection')?.checked || false;
     let modelName = '-';
     if (customConnection) {
@@ -552,13 +1371,14 @@ export class AgentModalStepper {
     const displayName = document.getElementById('agent-display-name')?.value || '-';
     const generatedName = document.getElementById('agent-name')?.value || '-';
     const description = document.getElementById('agent-description')?.value || '-';
+    const agentType = this.currentAgentType || 'local';
     
     // Model & Connection
     const customConnection = document.getElementById('agent-custom-connection')?.checked ? 'Yes' : 'No';
     const modelName = this.getFormModelName();
     
     // Instructions
-    const instructions = document.getElementById('agent-instructions')?.value || '-';
+    const instructions = this.getInstructionsValue() || '-';
     
     // Selected Actions
     const selectedActions = this.getSelectedActions();
@@ -572,6 +1392,15 @@ export class AgentModalStepper {
     // Update configuration
     document.getElementById('summary-model').textContent = modelName;
     document.getElementById('summary-custom-connection').textContent = customConnection;
+    const typeBadge = document.getElementById('summary-agent-type-badge');
+    if (typeBadge) {
+      typeBadge.textContent = this.getAgentTypeLabel(agentType);
+      typeBadge.className = this.isNewFoundryType(agentType)
+        ? 'badge bg-primary'
+        : this.isClassicFoundryType(agentType)
+          ? 'badge bg-warning text-dark'
+          : 'badge bg-info';
+    }
     
     // Update instructions
     document.getElementById('summary-instructions').textContent = instructions;
@@ -586,10 +1415,16 @@ export class AgentModalStepper {
     const actionsListContainer = document.getElementById('summary-actions-list');
     const actionsEmptyContainer = document.getElementById('summary-actions-empty');
     
-    if (actionsCount > 0) {
+    if (this.isAnyFoundryType()) {
+      // Hide actions entirely for Foundry
+      const actionsSection = document.getElementById('summary-actions-section');
+      if (actionsSection) actionsSection.style.display = 'none';
+    } else if (actionsCount > 0) {
       // Show actions list, hide empty message
       actionsListContainer.style.display = 'block';
       actionsEmptyContainer.style.display = 'none';
+      const actionsSection = document.getElementById('summary-actions-section');
+      if (actionsSection) actionsSection.style.display = '';
       
       // Clear existing content
       actionsListContainer.innerHTML = '';
@@ -632,6 +1467,8 @@ export class AgentModalStepper {
       // Hide actions list, show empty message
       actionsListContainer.style.display = 'none';
       actionsEmptyContainer.style.display = 'block';
+      const actionsSection = document.getElementById('summary-actions-section');
+      if (actionsSection) actionsSection.style.display = '';
     }
     
     // Update creation date
@@ -955,7 +1792,7 @@ export class AgentModalStepper {
       const currentDisplayName = document.getElementById('agent-display-name')?.value || '';
       const currentName = document.getElementById('agent-name')?.value || '';
       const currentDescription = document.getElementById('agent-description')?.value || '';
-      const currentInstructions = document.getElementById('agent-instructions')?.value || '';
+      const currentInstructions = this.getInstructionsValue() || '';
       
       // Custom connection
       const currentCustomConnection = document.getElementById('agent-custom-connection')?.checked || false;
@@ -965,7 +1802,7 @@ export class AgentModalStepper {
       
       // Selected actions
       const currentActions = this.getSelectedActionIds();
-      const originalActions = this.originalAgent.actions || [];
+      const originalActions = this.originalAgent.actions_to_load || [];
       
       // Compare fields
       if (currentDisplayName !== (this.originalAgent.display_name || '')) {
@@ -1095,6 +1932,7 @@ export class AgentModalStepper {
     try {
       // Get agent data from form
       const agentData = this.getAgentFormData();
+      agentData.agent_type = (this.originalAgent?.agent_type) || agentData.agent_type || 'local';
       
       // Validate required fields
       if (!agentData.display_name || !agentData.name) {
@@ -1127,8 +1965,12 @@ export class AgentModalStepper {
         }
       }
       
-      // Add selected actions
-      agentData.actions_to_load = this.getSelectedActionIds();
+      // Add selected actions (skip for Foundry)
+      if (this.isAnyFoundryType(agentData.agent_type)) {
+        agentData.actions_to_load = [];
+      } else {
+        agentData.actions_to_load = this.getSelectedActionIds();
+      }
       agentData.is_global = this.isAdmin; // Set based on admin context
       
       // Ensure required schema fields are present
@@ -1139,6 +1981,11 @@ export class AgentModalStepper {
         agentData.other_settings = JSON.parse(agentData.other_settings) || {};
       }
       
+      // Clean up empty reasoning_effort (inherit from model default)
+      if (!agentData.reasoning_effort || agentData.reasoning_effort === '') {
+        delete agentData.reasoning_effort;
+      }
+      
       // Clean up form-specific fields that shouldn't be sent to backend
       const formOnlyFields = ['custom_connection', 'model'];
       formOnlyFields.forEach(field => {
@@ -1147,30 +1994,23 @@ export class AgentModalStepper {
         }
       });
       
-      // Validate with schema if available
-      try {
-        if (!window.validateAgent) {
-          window.validateAgent = (await import('/static/js/validateAgent.mjs')).default;
-        }
-        const valid = window.validateAgent(agentData);
-        if (!valid) {
-          let errorMsg = 'Validation error: Invalid agent data.';
-          if (window.validateAgent.errors && window.validateAgent.errors.length) {
-            errorMsg += '\n' + window.validateAgent.errors.map(e => `${e.instancePath} ${e.message}`).join('\n');
-          }
-          throw new Error(errorMsg);
-        }
-      } catch (e) {
-        console.warn('Schema validation failed:', e.message);
-      }
-      
       // Use appropriate endpoint and save method based on context
-      if (this.isAdmin) {
-        // Admin context - save to global agents
-        await this.saveGlobalAgent(agentData);
-      } else {
-        // User context - save to personal agents
-        await this.savePersonalAgent(agentData);
+      let saveBtn = document.getElementById('agent-modal-save-btn');
+      const originalText = saveBtn.innerHTML;
+      saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Saving...`;
+      saveBtn.disabled = true;
+      try {
+        if (this.isAdmin) {
+          // Admin context - save to global agents
+          await this.saveGlobalAgent(agentData);
+        } else {
+          // User context - save to personal agents
+          await this.savePersonalAgent(agentData);
+        }
+      //No catch to allow outer catch to handle errors
+      } finally {
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
       }
       
     } catch (error) {
@@ -1186,15 +2026,107 @@ export class AgentModalStepper {
   }
 
   getAgentFormData() {
+    const agentTypeInput = document.querySelector('input[name="agent-type"]:checked');
+    const selectedAgentType = agentTypeInput ? agentTypeInput.value : 'local';
+
+    const modelSelect = document.getElementById('agent-global-model-select');
+    const selectedModelOption = modelSelect ? modelSelect.options[modelSelect.selectedIndex] : null;
+    const modelEndpointInput = document.getElementById('agent-model-endpoint-id');
+    const modelIdInput = document.getElementById('agent-model-id');
+    const modelProviderInput = document.getElementById('agent-model-provider');
+    const modelEndpointId = modelEndpointInput?.value || selectedModelOption?.dataset?.endpointId || '';
+    const modelId = modelIdInput?.value || selectedModelOption?.value || '';
+    const modelProvider = modelProviderInput?.value || selectedModelOption?.dataset?.provider || '';
+
     const formData = {
       display_name: document.getElementById('agent-display-name')?.value || '',
       name: document.getElementById('agent-name')?.value || '',
       description: document.getElementById('agent-description')?.value || '',
-      instructions: document.getElementById('agent-instructions')?.value || '',
-      model: document.getElementById('agent-global-model-select')?.value || '',
+      instructions: this.getInstructionsValue() || '',
+      model: modelSelect?.value || '',
+      instructions: this.getInstructionsValue() || '',
       custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
-      other_settings: document.getElementById('agent-additional-settings')?.value || '{}'
+      other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
+      max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null,
+      reasoning_effort: document.getElementById('agent-reasoning-effort')?.value || '',
+      agent_type: selectedAgentType,
+      model_endpoint_id: modelEndpointId,
+      model_id: modelId,
+      model_provider: modelProvider
     };
+
+    if (selectedAgentType === 'aifoundry') {
+      // Foundry required fields
+      formData.azure_openai_gpt_endpoint = document.getElementById('agent-foundry-endpoint')?.value?.trim() || '';
+      formData.azure_openai_gpt_deployment = document.getElementById('agent-foundry-deployment')?.value?.trim() || '';
+      formData.azure_openai_gpt_api_version = document.getElementById('agent-foundry-api-version')?.value?.trim() || '';
+      formData.instructions = this.getInstructionsValue().trim() || this.foundryPlaceholderInstructions;
+
+      // other_settings for foundry
+      let otherSettingsObj = {};
+      try {
+        otherSettingsObj = JSON.parse(formData.other_settings || '{}');
+      } catch (e) {
+        otherSettingsObj = {};
+      }
+      otherSettingsObj = otherSettingsObj || {};
+      const notesVal = document.getElementById('agent-foundry-notes')?.value || '';
+      otherSettingsObj.azure_ai_foundry = {
+        ...(otherSettingsObj.azure_ai_foundry || {}),
+        agent_id: document.getElementById('agent-foundry-agent-id')?.value?.trim() || '',
+        endpoint_id: modelEndpointId || '',
+        ...(notesVal ? { notes: notesVal } : {})
+      };
+      formData.other_settings = JSON.stringify(otherSettingsObj);
+
+      // Foundry agents cannot have actions
+      formData.actions_to_load = [];
+      formData.enable_agent_gpt_apim = false;
+      formData.model_endpoint_id = modelEndpointId;
+      formData.model_id = '';
+      formData.model_provider = 'aifoundry';
+      return formData;
+    }
+
+    if (selectedAgentType === 'new_foundry') {
+      formData.azure_openai_gpt_endpoint = document.getElementById('agent-foundry-endpoint')?.value?.trim() || '';
+      formData.azure_openai_gpt_deployment = document.getElementById('agent-foundry-deployment')?.value?.trim() || '';
+      formData.azure_openai_gpt_api_version = document.getElementById('agent-new-foundry-responses-api-version')?.value?.trim() || '';
+      formData.instructions = this.getInstructionsValue().trim() || this.foundryPlaceholderInstructions;
+
+      let otherSettingsObj = {};
+      try {
+        otherSettingsObj = JSON.parse(formData.other_settings || '{}');
+      } catch (e) {
+        otherSettingsObj = {};
+      }
+      otherSettingsObj = otherSettingsObj || {};
+
+      const notesVal = document.getElementById('agent-foundry-notes')?.value || '';
+      const applicationId = document.getElementById('agent-new-foundry-application-id')?.value?.trim() || '';
+      const applicationName = document.getElementById('agent-new-foundry-application-name')?.value?.trim() || '';
+      const applicationVersion = document.getElementById('agent-new-foundry-application-version')?.value?.trim() || '';
+      const activityApiVersion = document.getElementById('agent-new-foundry-activity-api-version')?.value?.trim() || '';
+
+      otherSettingsObj.new_foundry = {
+        ...(otherSettingsObj.new_foundry || {}),
+        application_id: applicationId,
+        application_name: applicationName,
+        application_version: applicationVersion,
+        endpoint_id: modelEndpointId || '',
+        responses_api_version: formData.azure_openai_gpt_api_version,
+        ...(activityApiVersion ? { activity_api_version: activityApiVersion } : {}),
+        ...(notesVal ? { notes: notesVal } : {}),
+      };
+      formData.other_settings = JSON.stringify(otherSettingsObj);
+
+      formData.actions_to_load = [];
+      formData.enable_agent_gpt_apim = false;
+      formData.model_endpoint_id = modelEndpointId;
+      formData.model_id = '';
+      formData.model_provider = 'new_foundry';
+      return formData;
+    }
     
     // Handle model and deployment configuration
     if (formData.custom_connection) {
@@ -1226,11 +2158,15 @@ export class AgentModalStepper {
         if (gptApiVersion) formData.azure_openai_gpt_api_version = gptApiVersion;
         formData.enable_agent_gpt_apim = false;
       }
+      formData.model_endpoint_id = '';
+      formData.model_id = '';
+      formData.model_provider = '';
     } else {
       // Using global model - need to set at least one deployment field
       // We'll use the selected model as the deployment name for now
       if (formData.model) {
-        formData.azure_openai_gpt_deployment = formData.model;
+        const deploymentName = selectedModelOption?.dataset?.deploymentName || formData.model;
+        formData.azure_openai_gpt_deployment = deploymentName;
       }
     }
     
@@ -1349,6 +2285,100 @@ export class AgentModalStepper {
     // Show success message
     if (window.showToast) {
       window.showToast(`Agent ${this.isEditMode ? 'updated' : 'created'} successfully!`, 'success');
+    }
+  }
+
+  validateTemplateRequirements() {
+    const displayName = document.getElementById('agent-display-name');
+    const description = document.getElementById('agent-description');
+    const instructions = this.getInstructionsValue();
+
+    if (!displayName || !displayName.value.trim()) {
+      this.showError('Please add a display name before submitting a template.');
+      displayName?.focus();
+      return false;
+    }
+
+    if (!description || !description.value.trim()) {
+      this.showError('Please add a description before submitting a template.');
+      description?.focus();
+      return false;
+    }
+
+    if (!instructions.trim()) {
+      this.showError('Instructions are required before submitting a template.');
+      this.refreshInstructionsEditor(true);
+      return false;
+    }
+
+    this.hideError();
+    return true;
+  }
+
+  buildTemplatePayload() {
+    const displayName = document.getElementById('agent-display-name')?.value?.trim() || '';
+    const description = document.getElementById('agent-description')?.value?.trim() || '';
+    const instructions = this.getInstructionsValue() || '';
+    const additionalSettings = document.getElementById('agent-additional-settings')?.value || '';
+
+    return {
+      title: displayName || 'Agent Template',
+      display_name: displayName || 'Agent Template',
+      description,
+      helper_text: description,
+      instructions,
+      additional_settings: additionalSettings,
+      actions_to_load: this.getSelectedActionIds(),
+      source_agent_id: this.originalAgent?.id,
+      source_scope: this.isAdmin ? 'global' : 'personal'
+    };
+  }
+
+  async submitTemplate() {
+    if (!this.canSubmitTemplate()) {
+      showToast('Template submissions are disabled right now.', 'warning');
+      return;
+    }
+
+    if (!this.validateTemplateRequirements()) {
+      return;
+    }
+
+    const button = this.templateSubmitButton;
+    if (!button) {
+      return;
+    }
+
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Submitting...';
+
+    try {
+      const payload = { template: this.buildTemplatePayload() };
+      const response = await fetch('/api/agent-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to submit agent template.');
+      }
+
+      const status = data.template?.status;
+      const successMessage = (this.isAdmin && status === 'approved')
+        ? 'Template published to the gallery!'
+        : 'Template submitted for review.';
+      showToast(successMessage, 'success');
+      this.hideError();
+    } catch (error) {
+      console.error('Template submission failed:', error);
+      this.showError(error.message || 'Failed to submit template.');
+      showToast(error.message || 'Failed to submit template.', 'error');
+    } finally {
+      button.disabled = false;
+      button.innerHTML = originalHtml;
     }
   }
 }

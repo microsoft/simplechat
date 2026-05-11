@@ -16,7 +16,7 @@
                     height="100"
                     class="mb-4 d-light-mode-only">
             {% else %}
-                <img src="{{ url_for('static', filename='images/logo.png') }}"
+                <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}"
                     alt="Logo"
                     height="100"
                     class="mb-4 d-light-mode-only">
@@ -33,16 +33,20 @@
                     height="100"
                     class="mb-4 d-dark-mode-only">
             {% else %}
-                <img src="{{ url_for('static', filename='images/logo.png') }}"
+                <img src="{{ url_for('static', filename='images/logo-darkmode.png') }}"
                     alt="Logo"
                     height="100"
                     class="mb-4 d-dark-mode-only">
             {% endif %}
         {% else %}
-            <img src="{{ url_for('static', filename='images/logo.png') }}"
+            <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}"
                 alt="Logo"
                 height="100"
-                class="mb-4">
+                class="mb-4 d-light-mode-only">
+            <img src="{{ url_for('static', filename='images/logo-darkmode.png') }}"
+                alt="Logo"
+                height="100"
+                class="mb-4 d-dark-mode-only">
         {% endif %}
     {% endif %}
 
@@ -58,8 +62,7 @@
     {% else %}
         {% if session.get('user') %}
             <p class="lead">
-                You are logged in but do not have the required permissions to access this application.
-                Please submit a ticket to request access.
+                {{ app_settings.access_denied_message | nl2br }}
             </p>
         {% else %}
             <div>

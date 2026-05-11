@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UI Test Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "string": {
+      "type": "string",
+      "description": "A string value",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "string__Secret": {
+      "type": "string",
+      "description": "A string value",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "email": {
+      "type": "string",
+      "description": "An email address",
+      "format": "email",
+      "pattern": "^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$",
+      "default": "user@example.com"
+    },
+    "enum": {
+      "type": "string",
+      "enum": ["", "bob", "alice", "eve"],
+      "description": "An enumeration of string values"
+    },
+    "number": {
+      "type": "number",
+      "description": "A numeric value",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50
+    },
+    "integer": {
+      "type": "integer",
+      "description": "An integer value",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 5
+    },
+    "boolean": {
+      "type": "boolean",
+      "description": "A boolean value",
+      "default": false
+    },
+    "object": {
+      "type": "object",
+      "description": "An object with string and number properties",
+      "properties": {
+        "object_string": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "object_number": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": ["object_string"]
+    },
+    "array": {
+      "type": "array",
+      "description": "An array of objects with string and number properties",
+      "items": {
+        "type": "object",
+        "properties": {
+          "array_string": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "array_number": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": ["array_string"]
+      }
+    },
+    "string_array": {
+      "type": "array",
+      "description": "An array of strings",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      }
+    }
+  },
+  "required": ["string", "enum", "string__Secret"],
+  "allOf": [
+    {
+      "if": {
+        "properties": { "boolean": { "const": true } }
+      },
+      "then": {
+        "required": ["number", "integer"]
+      },
+      "else": {
+        "not": {
+          "required": ["number", "integer"]
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

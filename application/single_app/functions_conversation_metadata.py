@@ -41,12 +41,123 @@ def get_user_info_by_id(user_id):
         }
 
 
+def _normalize_scope_id_list(raw_ids):
+    if raw_ids is None:
+        return []
+
+    if not isinstance(raw_ids, list):
+        raw_ids = [raw_ids]
+
+    normalized_ids = []
+    for raw_id in raw_ids:
+        normalized_id = str(raw_id or '').strip()
+        if not normalized_id:
+            continue
+        if normalized_id.lower() in ('none', 'null', 'undefined'):
+            continue
+        if normalized_id not in normalized_ids:
+            normalized_ids.append(normalized_id)
+
+    return normalized_ids
+
+
+def _build_primary_context_from_scope_selection(
+    user_id,
+    document_scope=None,
+    active_group_id=None,
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    active_public_workspace_ids=None,
+):
+    normalized_group_ids = _normalize_scope_id_list(active_group_ids or active_group_id)
+    normalized_public_workspace_ids = _normalize_scope_id_list(active_public_workspace_ids or active_public_workspace_id)
+
+    if document_scope == 'group' and len(normalized_group_ids) == 1:
+        group_id = normalized_group_ids[0]
+        group_info = find_group_by_id(group_id)
+        return {
+            "type": "primary",
+            "scope": "group",
+            "id": group_id,
+            "name": group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
+        }
+
+    if document_scope == 'public' and len(normalized_public_workspace_ids) == 1:
+        workspace_id = normalized_public_workspace_ids[0]
+        workspace_info = find_public_workspace_by_id(workspace_id)
+        return {
+            "type": "primary",
+            "scope": "public",
+            "id": workspace_id,
+            "name": workspace_info.get('name', 'Unknown Workspace') if workspace_info else 'Unknown Workspace'
+        }
+
+    if document_scope == 'personal':
+        user_info = get_user_info_by_id(user_id)
+        return {
+            "type": "primary",
+            "scope": "personal",
+            "id": user_id,
+            "name": user_info.get('name', 'Personal') if user_info else 'Personal'
+        }
+
+    return None
+
+
+def _extract_document_id_from_search_result(doc):
+    """Resolve a stable parent document ID from a search result."""
+    document_id = str(doc.get('document_id') or '').strip()
+    if document_id:
+        return document_id
+
+    chunk_identifier = str(doc.get('id') or '').strip()
+    if not chunk_identifier:
+        return None
+
+    if '_' in chunk_identifier:
+        return '_'.join(chunk_identifier.split('_')[:-1])
+
+    return chunk_identifier
+
+
+def _build_last_grounded_document_refs(document_map):
+    """Build the exact reusable grounded document set for the latest search-backed turn."""
+    grounded_refs = []
+
+    for document_id, doc_info in document_map.items():
+        scope_info = doc_info.get('scope') or {}
+        scope_type = scope_info.get('scope')
+        scope_id = scope_info.get('id')
+        if not document_id or not scope_type or not scope_id:
+            continue
+
+        ref = {
+            'document_id': document_id,
+            'scope': scope_type,
+            'scope_id': scope_id,
+            'file_name': doc_info.get('file_name'),
+            'classification': doc_info.get('classification'),
+        }
+
+        if scope_type == 'group':
+            ref['group_id'] = scope_id
+        elif scope_type == 'public':
+            ref['public_workspace_id'] = scope_id
+        else:
+            ref['user_id'] = scope_id
+
+        grounded_refs.append(ref)
+
+    return grounded_refs
+
+
 def collect_conversation_metadata(user_message, conversation_id, user_id, active_group_id=None, 
                                 document_scope=None, selected_document_id=None, model_deployment=None,
                                 hybrid_search_enabled=False, 
                                 image_gen_enabled=False, selected_documents=None, 
-                                selected_agent=None, search_results=None, web_search_results=None,
-                                conversation_item=None, additional_participants=None):
+                                selected_agent=None, selected_agent_details=None, search_results=None, web_search_results=None,
+                                conversation_item=None, additional_participants=None,
+                                active_group_ids=None, active_public_workspace_id=None, active_public_workspace_ids=None):
     """
     Collect comprehensive metadata for a conversation based on the user's interaction.
     
@@ -65,6 +176,7 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
         search_results: Results from hybrid search
         conversation_item: Existing conversation item to update
         additional_participants: List of additional user IDs to include as participants
+        selected_agent_details: Detailed agent metadata (is_group, group_id, group_name)
         
     Returns:
         dict: Updated conversation metadata
@@ -86,6 +198,25 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
     if 'strict' not in conversation_item:
         conversation_item['strict'] = False
     
+    # Prepare agent-derived group context (used when agent is a group and no documents were used)
+    agent_primary_context = None
+    agent_primary_context_active = False
+    if selected_agent_details and selected_agent_details.get('is_group'):
+        group_id = selected_agent_details.get('group_id')
+        group_name = selected_agent_details.get('group_name')
+
+        if group_id:
+            if not group_name:
+                group_info = find_group_by_id(group_id)
+                if group_info:
+                    group_name = group_info.get('name')
+            agent_primary_context = {
+                "type": "primary",
+                "scope": "group",
+                "id": group_id,
+                "name": group_name or "Unknown Group"
+            }
+
     # Process documents from search results first to determine primary context
     document_map = {}  # Map of document_id -> {scope, chunks, classification}
     workspace_used = None  # Track the first workspace used (becomes primary context)
@@ -95,20 +226,17 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             chunk_id = doc.get('id')
             doc_scope_result = _determine_document_scope(doc, user_id, active_group_id)
             classification = doc.get('document_classification', 'None')
-            
-            if chunk_id:
-                # Extract document ID from chunk ID (assumes format: doc_id_chunkNumber)
-                if '_' in chunk_id:
-                    document_id = '_'.join(chunk_id.split('_')[:-1])  # Remove last part (chunk number)
-                else:
-                    document_id = chunk_id  # Use full ID if no underscore
+            document_id = _extract_document_id_from_search_result(doc)
+
+            if document_id and chunk_id:
                 
                 # Initialize document entry if not exists
                 if document_id not in document_map:
                     document_map[document_id] = {
                         'scope': doc_scope_result,
                         'chunk_ids': [],
-                        'classification': classification
+                        'classification': classification,
+                        'file_name': doc.get('file_name') or doc.get('title') or 'Unknown Document'
                     }
                 
                 # Add chunk ID to this document
@@ -144,19 +272,40 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             "id": scope_id,
             "name": context_name
         }
-    # If no documents were used, we don't set a primary context yet
-    # This allows us to track conversations that only use model knowledge
+    elif not agent_primary_context:
+        primary_context = _build_primary_context_from_scope_selection(
+            user_id=user_id,
+            document_scope=document_scope,
+            active_group_id=active_group_id,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_id,
+            active_public_workspace_ids=active_public_workspace_ids,
+        )
+
+    # If no documents were used, fall back to agent-based primary context
+    if not primary_context and agent_primary_context:
+        primary_context = agent_primary_context
+        agent_primary_context_active = True
     
     # Update or add primary context only if we don't already have one
     existing_primary = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
     if primary_context:
         if existing_primary:
-            # Primary context already exists - check if this is the same workspace
+            # Primary context already exists - determine how to handle the new context
             if (existing_primary.get('scope') == primary_context.get('scope') and 
                 existing_primary.get('id') == primary_context.get('id')):
                 # Same workspace - update existing primary context (e.g., refresh name)
                 existing_primary.update(primary_context)
                 debug_print(f"Updated existing primary context: {existing_primary}")
+            elif agent_primary_context_active:
+                # Promote the group agent context to become the new primary context
+                existing_primary.update({
+                    "scope": primary_context.get('scope'),
+                    "id": primary_context.get('id'),
+                    "name": primary_context.get('name')
+                })
+                debug_print(f"Replaced existing primary context with agent group context: {existing_primary}")
+                primary_context = None
             else:
                 # Different workspace - this should become a secondary context
                 debug_print(f"Primary context already exists ({existing_primary.get('scope')}:{existing_primary.get('id')}), "f"treating new workspace ({primary_context.get('scope')}:{primary_context.get('id')}) as secondary")
@@ -245,11 +394,10 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
         elif existing_primary.get('scope') == 'public':
             conversation_item['chat_type'] = 'public'
         elif existing_primary.get('scope') == 'personal':
-            conversation_item['chat_type'] = 'personal'
+            conversation_item['chat_type'] = 'personal_single_user'
     else:
-        # No documents used - model-only conversation, don't set chat_type
-        # This will result in no badges being shown
-        pass
+        # No documents used - model-only conversation, default to personal_single_user
+        conversation_item['chat_type'] = 'personal_single_user'
     
     # Collect and update tags with proper deduplication
     current_tags = {}
@@ -433,7 +581,33 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             }
             current_tags[semantic_key] = semantic_tag    # Update the tags array
     conversation_item['tags'] = list(current_tags.values())
-    
+
+    if document_map:
+        conversation_item['last_grounded_document_refs'] = _build_last_grounded_document_refs(document_map)
+
+    # --- Scope Lock Logic ---
+    current_scope_locked = conversation_item.get('scope_locked')
+
+    if document_map:
+        # Always update locked_contexts when search results exist (even if unlocked)
+        # This ensures re-locking uses the most up-to-date workspace list
+        locked_set = set()
+        for ctx in conversation_item.get('context', []):
+            if ctx.get('scope') != 'model_knowledge' and ctx.get('type') in ('primary', 'secondary'):
+                locked_set.add((ctx['scope'], ctx.get('id')))
+
+        # Merge with existing locked_contexts
+        for ctx in conversation_item.get('locked_contexts', []):
+            locked_set.add((ctx.get('scope'), ctx.get('id')))
+
+        conversation_item['locked_contexts'] = [
+            {"scope": s, "id": i} for s, i in locked_set if s and i
+        ]
+
+        # Only auto-lock the FIRST time (from null state)
+        if current_scope_locked is None:
+            conversation_item['scope_locked'] = True
+
     return conversation_item
 
 

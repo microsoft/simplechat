@@ -3,8 +3,46 @@
 // Make sure fetch functions are available globally or imported if using modules consistently
 // Assuming fetchUserDocuments and fetchUserPrompts are now globally available via window.* assignments in their respective files
 
+import { initializeTags, setWorkspaceView } from './workspace-tags.js';
+import { initializeTagManagement, showTagManagementModal } from './workspace-tag-management.js';
+
+
+function clearFeatureActionParam() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('feature_action')) {
+        return;
+    }
+
+    url.searchParams.delete('feature_action');
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+
+function handleWorkspaceFeatureAction() {
+    const params = new URLSearchParams(window.location.search);
+    const featureAction = params.get('feature_action') || '';
+
+    if (!featureAction) {
+        return;
+    }
+
+    if (featureAction === 'document_tag_system') {
+        showTagManagementModal();
+    } else if (featureAction === 'workspace_folder_view') {
+        setWorkspaceView('grid');
+    }
+
+    clearFeatureActionParam();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     console.log("Workspace initializing...");
+    
+    // Initialize tags functionality
+    initializeTags();
+    
+    // Initialize tag management workflow
+    initializeTagManagement();
 
     // Function to load data for the currently active tab
     function loadActiveTabData() {
@@ -41,5 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
             loadActiveTabData(); // Load data for the newly shown tab
         });
     });
+
+    handleWorkspaceFeatureAction();
 
 });

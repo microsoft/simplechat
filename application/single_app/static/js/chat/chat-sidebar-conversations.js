@@ -6,12 +6,203 @@ import { showToast } from "./chat-toast.js";
 const sidebarConversationsList = document.getElementById("sidebar-conversations-list");
 const sidebarNewChatBtn = document.getElementById("sidebar-new-chat-btn");
 
+function dispatchSidebarConversationsLoaded(details = {}) {
+  document.dispatchEvent(new CustomEvent('chat:sidebar-conversations-loaded', {
+    detail: details
+  }));
+}
+
 let currentActiveConversationId = null;
+let sidebarShowHiddenConversations = false; // Track if hidden conversations should be shown in sidebar
+let isLoadingSidebarConversations = false; // Prevent concurrent sidebar loads
+let pendingSidebarReload = false; // Track if a reload is pending
+
+function getShortGroupLabel(name) {
+  const normalizedName = (name || '').trim();
+  if (!normalizedName) {
+    return 'group';
+  }
+  return normalizedName.slice(0, 8);
+}
+
+function normalizeSidebarChatType(chatType, context = []) {
+  if (chatType === 'personal') {
+    return 'personal_single_user';
+  }
+
+  if (chatType) {
+    return chatType;
+  }
+
+  const primaryContext = Array.isArray(context)
+    ? context.find(item => item?.type === 'primary')
+    : null;
+
+  if (primaryContext?.scope === 'group') {
+    return 'group-single-user';
+  }
+
+  if (primaryContext?.scope === 'public') {
+    return 'public';
+  }
+
+  return 'personal_single_user';
+}
+
+function applySidebarConversationContextAttributes(sidebarItem, chatType, context = []) {
+  if (!sidebarItem) {
+    return;
+  }
+
+  const normalizedChatType = normalizeSidebarChatType(chatType, context);
+  sidebarItem.setAttribute('data-chat-type', normalizedChatType);
+  sidebarItem.removeAttribute('data-group-name');
+  sidebarItem.removeAttribute('data-group-id');
+  sidebarItem.removeAttribute('data-public-workspace-id');
+
+  if (normalizedChatType.startsWith('group')) {
+    const primaryGroupContext = Array.isArray(context)
+      ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'group')
+      : null;
+
+    if (primaryGroupContext) {
+      sidebarItem.setAttribute('data-group-name', primaryGroupContext.name || 'Group');
+      if (primaryGroupContext.id) {
+        sidebarItem.setAttribute('data-group-id', primaryGroupContext.id);
+      }
+    }
+    return;
+  }
+
+  if (normalizedChatType.startsWith('public')) {
+    const primaryPublicContext = Array.isArray(context)
+      ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'public')
+      : null;
+
+    if (primaryPublicContext) {
+      sidebarItem.setAttribute('data-group-name', primaryPublicContext.name || 'Workspace');
+      if (primaryPublicContext.id) {
+        sidebarItem.setAttribute('data-public-workspace-id', primaryPublicContext.id);
+      }
+    }
+  }
+}
+
+function renderSidebarConversationScopeBadge(sidebarItem, chatType, context = []) {
+  const titleWrapper = sidebarItem?.querySelector('.sidebar-conversation-header');
+  if (!titleWrapper) {
+    return;
+  }
+
+  titleWrapper.querySelectorAll('.sidebar-conversation-group-badge').forEach(badge => badge.remove());
+
+  const normalizedChatType = normalizeSidebarChatType(chatType, context);
+  if (!normalizedChatType.startsWith('group')) {
+    return;
+  }
+
+  const primaryGroupContext = Array.isArray(context)
+    ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'group')
+    : null;
+
+  const badge = document.createElement('span');
+  badge.classList.add('badge', 'bg-info', 'sidebar-conversation-group-badge');
+  badge.textContent = getShortGroupLabel(primaryGroupContext?.name);
+  badge.title = primaryGroupContext?.name
+    ? `Group conversation: ${primaryGroupContext.name}`
+    : 'Group conversation';
+  titleWrapper.appendChild(badge);
+}
+
+function createUnreadDotElement() {
+  const unreadDot = document.createElement('span');
+  unreadDot.classList.add('conversation-unread-dot', 'sidebar-conversation-unread-dot');
+  unreadDot.setAttribute('aria-hidden', 'true');
+  return unreadDot;
+}
+
+function getSidebarConversationDropdownInstance(dropdownBtn) {
+  if (!dropdownBtn || !window.bootstrap || !bootstrap.Dropdown) {
+    return null;
+  }
+
+  return bootstrap.Dropdown.getOrCreateInstance(dropdownBtn, {
+    popperConfig(defaultConfig) {
+      const existingModifiers = Array.isArray(defaultConfig?.modifiers) ? defaultConfig.modifiers : [];
+      const hasFlipModifier = existingModifiers.some(modifier => modifier?.name === 'flip');
+
+      return {
+        ...defaultConfig,
+        strategy: 'fixed',
+        modifiers: hasFlipModifier
+          ? existingModifiers
+          : [
+              ...existingModifiers,
+              {
+                name: 'flip',
+                options: {
+                  fallbackPlacements: ['top-end', 'bottom-end']
+                }
+              }
+            ]
+      };
+    }
+  });
+}
+
+function closeSidebarConversationDropdown(dropdownBtn, dropdownInstance) {
+  if (dropdownInstance) {
+    dropdownInstance.hide();
+    return;
+  }
+
+  if (!dropdownBtn || !window.bootstrap || !bootstrap.Dropdown) {
+    return;
+  }
+
+  const fallbackDropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
+  if (fallbackDropdownInstance) {
+    fallbackDropdownInstance.hide();
+  }
+}
+
+export function setConversationUnreadState(conversationId, hasUnread) {
+  const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
+  if (!sidebarItem) {
+    return;
+  }
+
+  sidebarItem.dataset.hasUnreadAssistantResponse = hasUnread ? 'true' : 'false';
+
+  const titleWrapper = sidebarItem.querySelector('.sidebar-conversation-header');
+  const titleElement = sidebarItem.querySelector('.sidebar-conversation-title');
+  const existingDot = sidebarItem.querySelector('.sidebar-conversation-unread-dot');
+
+  if (!hasUnread) {
+    if (existingDot) {
+      existingDot.remove();
+    }
+    return;
+  }
+
+  if (!existingDot && titleWrapper && titleElement) {
+    titleWrapper.insertBefore(createUnreadDotElement(), titleElement);
+  }
+}
 
 // Load conversations for the sidebar
 export function loadSidebarConversations() {
   if (!sidebarConversationsList) return;
   
+  // If already loading, mark that we need to reload again after current load finishes
+  if (isLoadingSidebarConversations) {
+    console.log('Sidebar load already in progress, marking pending reload...');
+    pendingSidebarReload = true;
+    return;
+  }
+  
+  isLoadingSidebarConversations = true;
+  pendingSidebarReload = false; // Clear any pending reload flag
   sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">Loading conversations...</div>';
 
   fetch("/api/get_conversations")
@@ -20,10 +211,64 @@ export function loadSidebarConversations() {
       sidebarConversationsList.innerHTML = "";
       if (!data.conversations || data.conversations.length === 0) {
         sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">No conversations yet.</div>';
+        dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
+        
+        // Reset loading flag even when no conversations
+        isLoadingSidebarConversations = false;
+        
+        // Check for pending reload even when no conversations
+        if (pendingSidebarReload) {
+          console.log('Pending reload detected (no conversations), reloading sidebar...');
+          setTimeout(() => loadSidebarConversations(), 100);
+        }
         return;
       }
-      data.conversations.forEach(convo => {
+      
+      // Sort conversations: pinned first (by last_updated), then unpinned (by last_updated)
+      const sortedConversations = [...data.conversations].sort((a, b) => {
+        const aPinned = a.is_pinned || false;
+        const bPinned = b.is_pinned || false;
+        
+        // If pin status differs, pinned comes first
+        if (aPinned !== bPinned) {
+          return bPinned ? 1 : -1;
+        }
+        
+        // If same pin status, sort by last_updated (most recent first)
+        const aDate = new Date(a.last_updated);
+        const bDate = new Date(b.last_updated);
+        return bDate - aDate;
+      });
+      
+      // Filter conversations based on show/hide hidden setting
+      let visibleConversations = sortedConversations.filter(convo => {
+        const isHidden = convo.is_hidden || false;
+        // Show hidden conversations if toggle is on OR if we're in selection mode
+        const isSelectionMode = window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive();
+        return !isHidden || sidebarShowHiddenConversations || isSelectionMode;
+      });
+      
+      // Apply quick search filter if active
+      if (window.chatConversations && window.chatConversations.getQuickSearchTerm) {
+        const searchTerm = window.chatConversations.getQuickSearchTerm();
+        if (searchTerm && searchTerm.trim() !== '') {
+          const searchLower = searchTerm.toLowerCase().trim();
+          visibleConversations = visibleConversations.filter(convo => {
+            const titleLower = (convo.title || '').toLowerCase();
+            return titleLower.includes(searchLower);
+          });
+        }
+      }
+      
+      visibleConversations.forEach(convo => {
         sidebarConversationsList.appendChild(createSidebarConversationItem(convo));
+      });
+
+      dispatchSidebarConversationsLoaded({
+        loaded: true,
+        count: data.conversations.length,
+        hasVisibleConversations: visibleConversations.length > 0,
+        isError: false
       });
       
       // Restore selection mode hints if selection mode is active
@@ -38,10 +283,27 @@ export function loadSidebarConversations() {
           });
         }
       }
+      
+      // Reset loading flag
+      isLoadingSidebarConversations = false;
+      
+      // If a reload was requested while we were loading, reload now
+      if (pendingSidebarReload) {
+        console.log('Pending reload detected, reloading sidebar conversations...');
+        setTimeout(() => loadSidebarConversations(), 100); // Small delay to prevent rapid reloads
+      }
     })
     .catch(error => {
       console.error("Error loading sidebar conversations:", error);
       sidebarConversationsList.innerHTML = `<div class="text-center p-2 text-danger small">Error loading conversations: ${error.error || 'Unknown error'}</div>`;
+      dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: true });
+      isLoadingSidebarConversations = false; // Reset flag on error too
+      
+      // If a reload was requested while we were loading, reload now even after error
+      if (pendingSidebarReload) {
+        console.log('Pending reload detected after error, retrying...');
+        setTimeout(() => loadSidebarConversations(), 500); // Longer delay after error
+      }
     });
 }
 
@@ -50,23 +312,84 @@ function createSidebarConversationItem(convo) {
   const convoItem = document.createElement("div");
   convoItem.classList.add("sidebar-conversation-item");
   convoItem.setAttribute("data-conversation-id", convo.id);
+  convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? 'true' : 'false';
+  applySidebarConversationContextAttributes(convoItem, convo.chat_type || '', convo.context || []);
+  
+  const isPinned = convo.is_pinned || false;
+  const isHidden = convo.is_hidden || false;
+  const pinIcon = isPinned ? '<i class="bi bi-pin-angle me-1"></i>' : '';
+  const hiddenIcon = isHidden ? '<i class="bi bi-eye-slash me-1 text-muted"></i>' : '';
   
   convoItem.innerHTML = `
     <div class="d-flex justify-content-between align-items-center">
-      <div class="sidebar-conversation-title flex-grow-1" title="${convo.title} (Double-click to edit)">${convo.title}</div>
+      <div class="sidebar-conversation-title flex-grow-1" title="${convo.title} (Double-click to edit)">${pinIcon}${hiddenIcon}${convo.title}</div>
       <div class="dropdown conversation-dropdown" style="opacity: 0; transition: opacity 0.2s;">
-        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" title="Conversation options">
+        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Conversation options">
           <i class="bi bi-three-dots-vertical"></i>
         </button>
         <ul class="dropdown-menu dropdown-menu-end">
           <li><a class="dropdown-item details-btn" href="#"><i class="bi bi-info-circle me-2"></i>Details</a></li>
+          <li><a class="dropdown-item pin-btn" href="#"><i class="bi bi-pin-angle me-2"></i>${isPinned ? 'Unpin' : 'Pin'}</a></li>
+          <li><a class="dropdown-item hide-btn" href="#"><i class="bi bi-${isHidden ? 'eye' : 'eye-slash'} me-2"></i>${isHidden ? 'Unhide' : 'Hide'}</a></li>
           <li><a class="dropdown-item select-btn" href="#"><i class="bi bi-check-square me-2"></i>Select</a></li>
+          <li><a class="dropdown-item export-btn" href="#"><i class="bi bi-download me-2"></i>Export</a></li>
           <li><a class="dropdown-item edit-btn" href="#"><i class="bi bi-pencil-fill me-2"></i>Edit title</a></li>
           <li><a class="dropdown-item delete-btn text-danger" href="#"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>
         </ul>
       </div>
     </div>
   `;
+
+  const headerRow = convoItem.querySelector(".d-flex.justify-content-between.align-items-center");
+  const dropdownElement = headerRow ? headerRow.querySelector('.conversation-dropdown') : null;
+  const originalTitleElement = headerRow ? headerRow.querySelector('.sidebar-conversation-title') : null;
+
+  if (headerRow && dropdownElement && originalTitleElement) {
+    // Verify the dropdown is actually a child of headerRow before attempting manipulation
+    if (!headerRow.contains(dropdownElement)) {
+      console.error('Dropdown element is not a child of headerRow', { headerRow, dropdownElement });
+      return convoItem;
+    }
+    
+    const titleWrapper = document.createElement('div');
+    titleWrapper.classList.add('sidebar-conversation-header', 'd-flex', 'align-items-center', 'flex-grow-1', 'overflow-hidden', 'gap-2');
+
+    // Remove the original title from headerRow
+    originalTitleElement.remove();
+    
+    // Add styling to title
+    originalTitleElement.classList.add('flex-grow-1', 'text-truncate');
+    originalTitleElement.style.minWidth = '0';
+    
+    // Add title to wrapper
+    titleWrapper.appendChild(originalTitleElement);
+
+    if (convo.has_unread_assistant_response) {
+      titleWrapper.insertBefore(createUnreadDotElement(), originalTitleElement);
+    }
+
+    // Verify dropdown is still a valid child right before insertion
+    try {
+      if (headerRow.contains(dropdownElement) && dropdownElement.parentNode === headerRow) {
+        // Insert the wrapper before the dropdown
+        headerRow.insertBefore(titleWrapper, dropdownElement);
+      } else {
+        // Fallback: just append to headerRow if dropdown reference is invalid
+        console.warn('Dropdown element became invalid, appending wrapper instead', { convo: convo.id });
+        headerRow.appendChild(titleWrapper);
+      }
+    } catch (err) {
+      // Final fallback: append wrapper if insertBefore fails
+      console.error('Error inserting titleWrapper, using appendChild fallback:', err, { convo: convo.id });
+      try {
+        headerRow.appendChild(titleWrapper);
+      } catch (appendErr) {
+        console.error('Critical error: Could not append titleWrapper:', appendErr, { convo: convo.id });
+      }
+    }
+
+    renderSidebarConversationScopeBadge(convoItem, convo.chat_type || '', convo.context || []);
+  }
   
   // Add double-click editing to title
   const titleElement = convoItem.querySelector('.sidebar-conversation-title');
@@ -111,34 +434,135 @@ function createSidebarConversationItem(convo) {
       return;
     }
     
-    // Normal mode: select the conversation
-    setActiveConversation(convo.id);
-    // Call selectConversation from chat-conversations.js through global reference
-    if (window.chatConversations && window.chatConversations.selectConversation) {
-      window.chatConversations.selectConversation(convo.id);
+    // If this conversation is hidden, ensure the main conversation list also shows hidden conversations
+    if (convo.is_hidden && window.chatConversations && window.chatConversations.setShowHiddenConversations) {
+      window.chatConversations.setShowHiddenConversations(true);
+      
+      // Wait a moment for the DOM to update before selecting
+      setTimeout(() => {
+        setActiveConversation(convo.id);
+        if (window.chatConversations && window.chatConversations.selectConversation) {
+          window.chatConversations.selectConversation(convo.id);
+        }
+      }, 50);
+    } else {
+      // Normal mode: select the conversation immediately
+      setActiveConversation(convo.id);
+      // Call selectConversation from chat-conversations.js through global reference
+      if (window.chatConversations && window.chatConversations.selectConversation) {
+        window.chatConversations.selectConversation(convo.id);
+      }
     }
   });
   
   // Add dropdown menu event handlers
+  const detailsBtn = convoItem.querySelector('.details-btn');
+  const pinBtn = convoItem.querySelector('.pin-btn');
+  const hideBtn = convoItem.querySelector('.hide-btn');
   const selectBtn = convoItem.querySelector('.select-btn');
+  const exportBtn = convoItem.querySelector('.export-btn');
   const editBtn = convoItem.querySelector('.edit-btn');
   const deleteBtn = convoItem.querySelector('.delete-btn');
+  const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
+  const dropdownInstance = getSidebarConversationDropdownInstance(dropdownBtn);
+  
+  if (detailsBtn) {
+    detailsBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Close dropdown after action
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
+      // Show conversation details
+      if (window.showConversationDetails) {
+        window.showConversationDetails(convo.id);
+      }
+    });
+  }
+  
+  if (pinBtn) {
+    pinBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Close dropdown after action
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
+      // Toggle pin status
+      try {
+        const response = await fetch(`/api/conversations/${convo.id}/pin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          loadSidebarConversations();
+          if (window.chatConversations && window.chatConversations.loadConversations) {
+            window.chatConversations.loadConversations();
+          }
+          if (window.showToast) {
+            showToast(data.is_pinned ? "Conversation pinned." : "Conversation unpinned.", "success");
+          }
+        }
+      } catch (error) {
+        console.error("Error toggling pin:", error);
+        if (window.showToast) {
+          showToast("Error toggling pin status.", "danger");
+        }
+      }
+    });
+  }
+  
+  if (hideBtn) {
+    hideBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Close dropdown after action
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
+      // Toggle hide status
+      try {
+        const response = await fetch(`/api/conversations/${convo.id}/hide`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          loadSidebarConversations();
+          if (window.chatConversations && window.chatConversations.loadConversations) {
+            window.chatConversations.loadConversations();
+          }
+          if (window.showToast) {
+            showToast(data.is_hidden ? "Conversation hidden." : "Conversation unhidden.", "success");
+          }
+        }
+      } catch (error) {
+        console.error("Error toggling hide:", error);
+        if (window.showToast) {
+          showToast("Error toggling hide status.", "danger");
+        }
+      }
+    });
+  }
   
   if (selectBtn) {
     selectBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle selection mode
       if (window.chatConversations && window.chatConversations.toggleConversationSelection) {
         window.chatConversations.toggleConversationSelection(convo.id);
+      }
+    });
+  }
+  
+  if (exportBtn) {
+    exportBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Close dropdown after action
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
+      // Open export wizard for this single conversation
+      if (window.chatExport && window.chatExport.openExportWizard) {
+        window.chatExport.openExportWizard([convo.id], true);
       }
     });
   }
@@ -148,13 +572,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Enable inline editing for this conversation
       enableSidebarTitleEdit(convo.id);
     });
@@ -165,13 +583,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Delete conversation
       if (window.chatConversations && window.chatConversations.deleteConversation) {
         window.chatConversations.deleteConversation(convo.id);
@@ -180,7 +592,6 @@ function createSidebarConversationItem(convo) {
   }
   
   // Handle dropdown show/hide events for opacity
-  const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
   if (dropdownBtn) {
     dropdownBtn.addEventListener('shown.bs.dropdown', () => {
       const dropdown = convoItem.querySelector('.conversation-dropdown');
@@ -248,6 +659,10 @@ export function setSidebarSelectionMode(isActive) {
   const conversationsToggle = document.getElementById('conversations-toggle');
   const conversationsActions = document.getElementById('conversations-actions');
   const sidebarDeleteBtn = document.getElementById('sidebar-delete-selected-btn');
+  const sidebarPinBtn = document.getElementById('sidebar-pin-selected-btn');
+  const sidebarHideBtn = document.getElementById('sidebar-hide-selected-btn');
+  const sidebarSettingsBtn = document.getElementById('sidebar-conversations-settings-btn');
+  const sidebarSearchBtn = document.getElementById('sidebar-search-btn');
   
   sidebarItems.forEach(item => {
     if (isActive) {
@@ -262,8 +677,16 @@ export function setSidebarSelectionMode(isActive) {
     if (isActive) {
       conversationsToggle.style.color = '#856404';
       conversationsToggle.style.fontWeight = '600';
+      conversationsToggle.classList.add('selection-active');
       conversationsActions.style.display = 'flex !important';
       conversationsActions.style.setProperty('display', 'flex', 'important');
+      // Hide the search and eye buttons in selection mode
+      if (sidebarSettingsBtn) {
+        sidebarSettingsBtn.style.display = 'none';
+      }
+      if (sidebarSearchBtn) {
+        sidebarSearchBtn.style.display = 'none';
+      }
       // Add a selection indicator button
       let indicator = conversationsToggle.querySelector('.selection-indicator');
       if (!indicator) {
@@ -296,10 +719,28 @@ export function setSidebarSelectionMode(isActive) {
     } else {
       conversationsToggle.style.color = '';
       conversationsToggle.style.fontWeight = '';
+      conversationsToggle.classList.remove('selection-active');
       conversationsActions.style.display = 'none !important';
       conversationsActions.style.setProperty('display', 'none', 'important');
       if (sidebarDeleteBtn) {
         sidebarDeleteBtn.style.display = 'none';
+      }
+      if (sidebarPinBtn) {
+        sidebarPinBtn.style.display = 'none';
+      }
+      if (sidebarHideBtn) {
+        sidebarHideBtn.style.display = 'none';
+      }
+      const sidebarExportBtn = document.getElementById('sidebar-export-selected-btn');
+      if (sidebarExportBtn) {
+        sidebarExportBtn.style.display = 'none';
+      }
+      // Show the search and eye buttons again when exiting selection mode
+      if (sidebarSettingsBtn) {
+        sidebarSettingsBtn.style.display = 'inline-block';
+      }
+      if (sidebarSearchBtn) {
+        sidebarSearchBtn.style.display = 'inline-block';
       }
       // Remove selection indicator
       const indicator = conversationsToggle.querySelector('.selection-indicator');
@@ -310,15 +751,42 @@ export function setSidebarSelectionMode(isActive) {
   }
 }
 
-// Update sidebar delete button visibility based on selection count
+// Update sidebar action buttons visibility based on selection count
 export function updateSidebarDeleteButton(selectedCount) {
   const sidebarDeleteBtn = document.getElementById('sidebar-delete-selected-btn');
-  if (sidebarDeleteBtn) {
-    if (selectedCount > 0) {
+  const sidebarPinBtn = document.getElementById('sidebar-pin-selected-btn');
+  const sidebarHideBtn = document.getElementById('sidebar-hide-selected-btn');
+  const sidebarExportBtn = document.getElementById('sidebar-export-selected-btn');
+  
+  if (selectedCount > 0) {
+    if (sidebarDeleteBtn) {
       sidebarDeleteBtn.style.display = 'inline-flex';
       sidebarDeleteBtn.title = `Delete ${selectedCount} selected conversation${selectedCount > 1 ? 's' : ''}`;
-    } else {
+    }
+    if (sidebarPinBtn) {
+      sidebarPinBtn.style.display = 'inline-flex';
+      sidebarPinBtn.title = `Pin ${selectedCount} selected conversation${selectedCount > 1 ? 's' : ''}`;
+    }
+    if (sidebarHideBtn) {
+      sidebarHideBtn.style.display = 'inline-flex';
+      sidebarHideBtn.title = `Hide ${selectedCount} selected conversation${selectedCount > 1 ? 's' : ''}`;
+    }
+    if (sidebarExportBtn) {
+      sidebarExportBtn.style.display = 'inline-flex';
+      sidebarExportBtn.title = `Export ${selectedCount} selected conversation${selectedCount > 1 ? 's' : ''}`;
+    }
+  } else {
+    if (sidebarDeleteBtn) {
       sidebarDeleteBtn.style.display = 'none';
+    }
+    if (sidebarPinBtn) {
+      sidebarPinBtn.style.display = 'none';
+    }
+    if (sidebarHideBtn) {
+      sidebarHideBtn.style.display = 'none';
+    }
+    if (sidebarExportBtn) {
+      sidebarExportBtn.style.display = 'none';
     }
   }
 }
@@ -337,6 +805,22 @@ export function updateSidebarConversationTitle(conversationId, newTitle) {
   // Update conversation header in right pane if this is the currently active conversation
   if (window.chatConversations && window.chatConversations.updateConversationHeader) {
     window.chatConversations.updateConversationHeader(conversationId, newTitle);
+  }
+}
+
+export function applySidebarConversationMetadataUpdate(conversationId, updates = {}) {
+  const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
+  if (!sidebarItem) {
+    return;
+  }
+
+  if (updates.title) {
+    updateSidebarConversationTitle(conversationId, updates.title);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'chat_type') || Array.isArray(updates.context)) {
+    applySidebarConversationContextAttributes(sidebarItem, updates.chat_type || '', updates.context || []);
+    renderSidebarConversationScopeBadge(sidebarItem, updates.chat_type || '', updates.context || []);
   }
 }
 
@@ -482,6 +966,32 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
     
+    // Handle sidebar pin selected button click
+    const sidebarPinBtn = document.getElementById('sidebar-pin-selected-btn');
+    if (sidebarPinBtn) {
+      sidebarPinBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Trigger the main pin selected functionality
+        if (window.chatConversations && window.chatConversations.bulkPinConversations) {
+          window.chatConversations.bulkPinConversations();
+        }
+      });
+    }
+    
+    // Handle sidebar hide selected button click
+    const sidebarHideBtn = document.getElementById('sidebar-hide-selected-btn');
+    if (sidebarHideBtn) {
+      sidebarHideBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Trigger the main hide selected functionality
+        if (window.chatConversations && window.chatConversations.bulkHideConversations) {
+          window.chatConversations.bulkHideConversations();
+        }
+      });
+    }
+    
     // Handle sidebar delete selected button click
     const sidebarDeleteBtn = document.getElementById('sidebar-delete-selected-btn');
     if (sidebarDeleteBtn) {
@@ -494,6 +1004,55 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
     }
+    
+    // Handle sidebar export selected button click
+    const sidebarExportBtn = document.getElementById('sidebar-export-selected-btn');
+    if (sidebarExportBtn) {
+      sidebarExportBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Open export wizard for selected conversations
+        if (window.chatExport && window.chatExport.openExportWizard && window.chatConversations && window.chatConversations.getSelectedConversations) {
+          const selectedIds = window.chatConversations.getSelectedConversations();
+          if (selectedIds && selectedIds.length > 0) {
+            window.chatExport.openExportWizard(Array.from(selectedIds), false);
+          }
+        }
+      });
+    }
+    
+    // Handle sidebar settings button click (toggle show/hide hidden conversations)
+    const sidebarSettingsBtn = document.getElementById('sidebar-conversations-settings-btn');
+    if (sidebarSettingsBtn) {
+      sidebarSettingsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Toggle show hidden conversations
+        sidebarShowHiddenConversations = !sidebarShowHiddenConversations;
+        
+        // Update button appearance based on state
+        const icon = sidebarSettingsBtn.querySelector('i');
+        if (icon) {
+          if (sidebarShowHiddenConversations) {
+            icon.classList.remove('bi-eye');
+            icon.classList.add('bi-eye-fill');
+            sidebarSettingsBtn.classList.remove('text-muted');
+            sidebarSettingsBtn.classList.add('text-primary');
+            sidebarSettingsBtn.title = 'Showing hidden conversations (click to hide)';
+          } else {
+            icon.classList.remove('bi-eye-fill');
+            icon.classList.add('bi-eye');
+            sidebarSettingsBtn.classList.remove('text-primary');
+            sidebarSettingsBtn.classList.add('text-muted');
+            sidebarSettingsBtn.title = 'Show/Hide hidden conversations';
+          }
+        }
+        
+        // Reload conversations to apply filter
+        loadSidebarConversations();
+      });
+    }
   }
 });
 
@@ -504,7 +1063,9 @@ window.chatSidebarConversations = {
   setSidebarSelectionMode,
   updateSidebarDeleteButton,
   updateSidebarConversationTitle,
+  applySidebarConversationMetadataUpdate,
   enableSidebarTitleEdit,
   loadSidebarConversations,
-  setActiveConversation
+  setActiveConversation,
+  setConversationUnreadState
 };

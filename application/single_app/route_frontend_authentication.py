@@ -2,7 +2,8 @@
 
 from unittest import result
 from config import *
-from functions_authentication import _build_msal_app, _load_cache, _save_cache
+from functions_activity_logging import log_user_login, record_user_login_session_activity
+from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, get_requested_oauth_scopes
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -30,20 +31,20 @@ def build_front_door_urls(front_door_url):
 
 def register_route_frontend_authentication(app):
     @app.route('/login')
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     def login():
         # Clear potentially stale cache/user info before starting new login
         session.pop("user", None)
         session.pop("token_cache", None)
+        session.pop("last_activity_epoch", None)
+        clear_requested_oauth_scopes()
 
         # Use helper to build app (cache not strictly needed here, but consistent)
         msal_app = _build_msal_app()
         
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
@@ -71,9 +72,7 @@ def register_route_frontend_authentication(app):
         return redirect(auth_url)
 
     @app.route('/getAToken') # This is your redirect URI path
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     def authorized():
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
@@ -92,7 +91,7 @@ def register_route_frontend_authentication(app):
 
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
@@ -108,9 +107,10 @@ def register_route_frontend_authentication(app):
         
         print(f"Token exchange using redirect_uri: {redirect_uri}")
 
+        requested_scopes = get_requested_oauth_scopes(clear_after_read=True)
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
-            scopes=SCOPE, # Request the same scopes again
+            scopes=requested_scopes,
             redirect_uri=redirect_uri
         )
 
@@ -123,19 +123,29 @@ def register_route_frontend_authentication(app):
         # Store user identity info (claims from ID token)
         debug_print(f" [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
         debug_print(f" [claims] User claims: {result.get('id_token_claims', {})}")
-        debug_print(f" [claims] User token: {result.get('access_token', 'Unknown')}")
 
         session["user"] = result.get("id_token_claims")
+        session["last_activity_epoch"] = int(time.time())
 
         # --- CRITICAL: Save the entire cache (contains tokens) to session ---
         _save_cache(msal_app.token_cache)
 
         print(f"User {session['user'].get('name')} logged in successfully.")
+        
+        # Log the login activity
+        try:
+            user_id = session['user'].get('oid') or session['user'].get('sub')
+            if user_id:
+                log_user_login(user_id, 'azure_ad')
+                record_user_login_session_activity(session)
+        except Exception as e:
+            debug_print(f"Could not log login activity: {e}")
+        
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         debug_print(f"HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
         debug_print(f"front_door_url (db): {settings.get('front_door_url')}")
@@ -158,9 +168,7 @@ def register_route_frontend_authentication(app):
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
     @app.route('/getATokenApi') # This is your redirect URI path
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     def authorized_api():
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
@@ -179,7 +187,7 @@ def register_route_frontend_authentication(app):
 
         # Get settings for redirect URI (same logic as other routes)
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         if settings.get('enable_front_door', False):
             front_door_url = settings.get('front_door_url')
@@ -191,9 +199,10 @@ def register_route_frontend_authentication(app):
         else:
             redirect_uri = url_for('authorized', _external=True, _scheme='https')
 
+        requested_scopes = get_requested_oauth_scopes(clear_after_read=True)
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
-            scopes=SCOPE, # Request the same scopes again
+            scopes=requested_scopes,
             redirect_uri=redirect_uri
         )
 
@@ -204,10 +213,41 @@ def register_route_frontend_authentication(app):
 
         return jsonify(result, 200)
 
+    @app.route('/logout/local')
+    @swagger_route(security=get_auth_security())
+    def local_logout():
+        """
+        Clear the local Flask session and redirect to the configured home destination.
+
+        Args:
+            None.
+
+        Returns:
+            Response: A redirect response to the local or Front Door home URL.
+        Raises:
+            None.
+        """
+        session.clear()
+
+        from functions_settings import get_settings
+        settings = get_settings() or {}
+
+        if settings.get('enable_front_door', False):
+            front_door_url = settings.get('front_door_url')
+            if front_door_url:
+                home_url, _ = build_front_door_urls(front_door_url)
+                logout_uri = home_url
+            elif HOME_REDIRECT_URL:
+                logout_uri = HOME_REDIRECT_URL
+            else:
+                logout_uri = url_for('index')
+        else:
+            logout_uri = url_for('index')
+
+        return redirect(logout_uri)
+
     @app.route('/logout')
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     def logout():
         user_name = session.get("user", {}).get("name", "User")
         # Get the user's email before clearing the session
@@ -218,7 +258,7 @@ def register_route_frontend_authentication(app):
         # MSAL provides a helper for this too, but constructing manually is fine
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
@@ -230,13 +270,13 @@ def register_route_frontend_authentication(app):
                 # Fall back to environment variable if Front Door is enabled but no URL is set
                 logout_uri = HOME_REDIRECT_URL
             else:
-                logout_uri = url_for('index', _external=True, _scheme='https')
+                logout_uri = url_for('index', _external=True)
         else:
-            logout_uri = url_for('index', _external=True, _scheme='https')
+            logout_uri = url_for('index', _external=True)
         
-        print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
-        print(f"Front Door URL: {settings.get('front_door_url')}")
-        print(f"Logout redirect URI: {logout_uri}")
+        debug_print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
+        debug_print(f"Front Door URL: {settings.get('front_door_url')}")
+        debug_print(f"Logout redirect URI: {logout_uri}")
         
         logout_url = (
             f"{AUTHORITY}/oauth2/v2.0/logout"
@@ -246,5 +286,5 @@ def register_route_frontend_authentication(app):
         if user_email:
             logout_url += f"&logout_hint={quote(user_email)}"
         
-        print(f"{user_name} logged out. Redirecting to Azure AD logout.")
+        debug_print(f"{user_name} logged out. Redirecting to Azure AD logout.")
         return redirect(logout_url)

@@ -7,9 +7,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_groups(app):
     @app.route("/my_groups", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -20,18 +18,17 @@ def register_route_frontend_groups(app):
         user = session.get('user', {})
         settings = get_settings()
         require_member_of_create_group = settings.get("require_member_of_create_group", False)
+        enable_group_creation = settings.get("enable_group_creation", True)
         
         # Check if user can create groups
-        can_create_groups = True
-        if require_member_of_create_group:
+        can_create_groups = enable_group_creation  # First check if group creation is enabled system-wide
+        if can_create_groups and require_member_of_create_group:
             can_create_groups = 'roles' in user and 'CreateGroups' in user['roles']
         
         return render_template("my_groups.html", can_create_groups=can_create_groups)
 
     @app.route("/groups/<group_id>", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")

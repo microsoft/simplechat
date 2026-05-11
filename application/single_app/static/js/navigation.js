@@ -1,95 +1,142 @@
-// Top Navigation Functionality
+// navigation.js
 
 /**
- * Navigation-related utilities and event handlers
- * Handles general navigation behavior and interactions
+ * Navigation-related utilities and event handlers.
+ * Handles responsive drawer behavior, dropdown accessibility, and overlay coordination.
  */
 
-// Initialize top navigation functionality
 document.addEventListener('DOMContentLoaded', () => {
-  // Set up any top navigation specific event listeners
-  console.log('Top navigation initialized');
-
-  // Handle responsive navigation behavior
-  handleResponsiveNavigation();
-
-  // Set up dropdown behaviors
-  setupDropdownBehaviors();
+    handleResponsiveNavigation();
+    setupDropdownBehaviors();
+    initializeMobileNavigationDrawers();
+    initializeNavigationOverlayCoordination();
 });
 
-// Handle responsive navigation behavior
-function handleResponsiveNavigation() {
-  // Handle window resize for responsive navigation
-  window.addEventListener('resize', function() {
-    // Close any open mobile menus when resizing to larger screens
-    if (window.innerWidth > 768) {
-      const navbarCollapse = document.querySelector('.navbar-collapse');
-      if (navbarCollapse && navbarCollapse.classList.contains('show')) {
-        // Use Bootstrap's collapse method if available
-        if (typeof bootstrap !== 'undefined' && bootstrap.Collapse) {
-          const collapse = bootstrap.Collapse.getInstance(navbarCollapse);
-          if (collapse) {
-            collapse.hide();
-          }
-        }
-      }
-    }
-  });
+function isChatRailNavigationDrawer(offcanvasElement) {
+    return offcanvasElement?.dataset?.navigationDrawer === 'chat-rail';
 }
 
-// Set up dropdown behaviors
-function setupDropdownBehaviors() {
-  // Handle dropdown menu accessibility
-  document.querySelectorAll('.dropdown-toggle').forEach(dropdown => {
-    dropdown.addEventListener('keydown', function(e) {
-      // Handle keyboard navigation for dropdowns
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        if (typeof bootstrap !== 'undefined' && bootstrap.Dropdown) {
-          const dropdownInstance = bootstrap.Dropdown.getOrCreateInstance(this);
-          dropdownInstance.toggle();
-        }
-      }
-    });
-  });
+function getNavigationOffcanvasElements() {
+    if (typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) {
+        return [];
+    }
 
-  // Close dropdowns when clicking outside
-  document.addEventListener('click', function(e) {
-    if (!e.target.closest('.dropdown')) {
-      document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
+    return Array.from(document.querySelectorAll('[data-navigation-drawer]'));
+}
+
+function hideOffcanvasElement(offcanvasElement) {
+    if (!offcanvasElement || typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) {
+        return;
+    }
+
+    const offcanvasInstance = bootstrap.Offcanvas.getInstance(offcanvasElement);
+    if (offcanvasInstance) {
+        offcanvasInstance.hide();
+    }
+}
+
+function closeOpenDropdowns() {
+    document.querySelectorAll('.dropdown-menu.show').forEach((menu) => {
         if (typeof bootstrap !== 'undefined' && bootstrap.Dropdown) {
-          const dropdownToggle = menu.previousElementSibling;
-          if (dropdownToggle) {
-            const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownToggle);
-            if (dropdownInstance) {
-              dropdownInstance.hide();
+            const dropdownToggle = menu.previousElementSibling;
+            if (dropdownToggle) {
+                const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownToggle);
+                if (dropdownInstance) {
+                    dropdownInstance.hide();
+                }
             }
-          }
         }
-      });
-    }
-  });
+    });
 }
 
-// Utility function to toggle navbar collapse on mobile
+function handleResponsiveNavigation() {
+    window.addEventListener('resize', () => {
+        if (window.innerWidth > 991) {
+            const navbarCollapse = document.querySelector('.navbar-collapse');
+            if (navbarCollapse && navbarCollapse.classList.contains('show') && typeof bootstrap !== 'undefined' && bootstrap.Collapse) {
+                bootstrap.Collapse.getOrCreateInstance(navbarCollapse).hide();
+            }
+
+            getNavigationOffcanvasElements().forEach((offcanvasElement) => {
+                hideOffcanvasElement(offcanvasElement);
+            });
+        }
+    });
+}
+
+function initializeMobileNavigationDrawers() {
+    getNavigationOffcanvasElements().forEach((offcanvasElement) => {
+        if (isChatRailNavigationDrawer(offcanvasElement)) {
+            return;
+        }
+
+        const offcanvasInstance = bootstrap.Offcanvas.getOrCreateInstance(offcanvasElement);
+
+        offcanvasElement.querySelectorAll('a[href]').forEach((link) => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth < 992) {
+                    offcanvasInstance.hide();
+                }
+            });
+        });
+    });
+}
+
+function initializeNavigationOverlayCoordination() {
+    const topNavUserDropdown = document.getElementById('userDropdown');
+    const topNavDropdownContainer = topNavUserDropdown ? topNavUserDropdown.closest('.dropdown') : null;
+
+    if (topNavDropdownContainer && typeof bootstrap !== 'undefined' && bootstrap.Dropdown) {
+        topNavDropdownContainer.addEventListener('show.bs.dropdown', () => {
+            getNavigationOffcanvasElements().forEach((offcanvasElement) => {
+                hideOffcanvasElement(offcanvasElement);
+            });
+        });
+    }
+
+    getNavigationOffcanvasElements().forEach((offcanvasElement) => {
+        offcanvasElement.addEventListener('show.bs.offcanvas', () => {
+            closeOpenDropdowns();
+        });
+    });
+}
+
+function setupDropdownBehaviors() {
+    document.querySelectorAll('.dropdown-toggle').forEach((dropdown) => {
+        dropdown.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                if (typeof bootstrap !== 'undefined' && bootstrap.Dropdown) {
+                    const dropdownInstance = bootstrap.Dropdown.getOrCreateInstance(this);
+                    dropdownInstance.toggle();
+                }
+            }
+        });
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.dropdown')) {
+            closeOpenDropdowns();
+        }
+    });
+}
+
 function toggleNavbarCollapse() {
-  const navbarCollapse = document.querySelector('.navbar-collapse');
-  if (navbarCollapse) {
-    if (typeof bootstrap !== 'undefined' && bootstrap.Collapse) {
-      const collapse = bootstrap.Collapse.getOrCreateInstance(navbarCollapse);
-      collapse.toggle();
-    } else {
-      // Fallback for manual toggle
-      navbarCollapse.classList.toggle('show');
+    const navbarCollapse = document.querySelector('.navbar-collapse');
+    if (navbarCollapse) {
+        if (typeof bootstrap !== 'undefined' && bootstrap.Collapse) {
+            const collapse = bootstrap.Collapse.getOrCreateInstance(navbarCollapse);
+            collapse.toggle();
+        } else {
+            navbarCollapse.classList.toggle('show');
+        }
     }
-  }
 }
 
-// Export functions for use in other modules if needed
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    handleResponsiveNavigation,
-    setupDropdownBehaviors,
-    toggleNavbarCollapse
-  };
+    module.exports = {
+        handleResponsiveNavigation,
+        setupDropdownBehaviors,
+        toggleNavbarCollapse
+    };
 }

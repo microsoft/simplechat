@@ -10,7 +10,7 @@ class QueueStoragePlugin(BasePlugin):
         super().__init__(manifest)
         self.manifest = manifest
         self.endpoint = manifest.get('endpoint')
-        self.queue_name = manifest.get('queue_name')
+        self.queue_name = manifest.get('additional_settings', {}).get('queue_name')
         self.key = manifest.get('auth', {}).get('key')
         self.auth_type = manifest.get('auth', {}).get('type', 'key')
         self._metadata = manifest.get('metadata', {})

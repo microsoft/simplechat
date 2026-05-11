@@ -1,0 +1,275 @@
+openapi: 3.0.1
+info:
+  title: ServiceNow Knowledge Base Search API (Read-Only)
+  description: |
+    ServiceNow Knowledge Management REST API for SEARCHING and READING knowledge articles only.
+    
+    USE THIS SPEC FOR: All users who need to search and view KB articles
+    PERMISSIONS REQUIRED: ServiceNow 'itil' role (standard user access)
+    
+    This spec contains ONLY GET operations - no create, update, or publish capabilities.
+    For knowledge article creation, use sample_now_knowledge_create_spec.yaml
+    For knowledge article publishing, use sample_now_knowledge_publish_spec.yaml
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+
+servers:
+  - url: https://YOUR-INSTANCE.service-now.com
+    description: ServiceNow instance (replace YOUR-INSTANCE with your instance name)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/now/table/kb_knowledge:
+    get:
+      operationId: searchKnowledgeFacets
+      summary: Search knowledge base articles
+      description: |
+        PRIMARY SEARCH FUNCTION: Search ServiceNow knowledge articles.
+        Use this function to find knowledge articles related to user questions, incidents, or topics.
+        Search by keywords in article title, content, or category.
+        Returns published knowledge articles matching the search criteria.
+        
+        ⚠️ CRITICAL: PROGRESSIVE SEARCH REQUIRES MULTIPLE FUNCTION CALLS ⚠️
+        
+        You MUST make TWO separate searchKnowledgeFacets calls when first search returns 0 results:
+        
+        EXECUTION PATTERN (MAKE THESE AS SEPARATE FUNCTION CALLS):
+        
+        CALL 1 - Try Exact Phrase:
+        1. Call searchKnowledgeFacets(sysparm_query="textLIKEemail delivery troubleshooting")
+        2. Check if result count = 0
+        3. If count > 0: Return results, DONE ✓
+        4. If count = 0: Proceed to CALL 2 (do not give up!)
+        
+        CALL 2 - Broad Keyword Fallback:
+        1. Extract primary keyword from phrase (e.g., "email" from "email delivery troubleshooting")
+        2. Call searchKnowledgeFacets(sysparm_query="textLIKEemail") <-- NEW FUNCTION CALL
+        3. Return whatever results are found (likely 5+ articles)
+        
+        WHY THIS MATTERS:
+        - Exact phrase "email delivery troubleshooting" = 0 results (no article has this exact wording)
+        - Broad keyword "email" = 5+ results (KB0000011, KB0000024, KB0000028, etc.)
+        - You MUST make the second function call when first returns 0
+        
+        DO NOT:
+        ❌ Give up after first search returns 0
+        ❌ Say "no articles found" without trying broad keyword
+        ❌ Use complex OR queries in first attempt - keep it simple
+        
+        KEYWORD EXTRACTION:
+        - "email delivery troubleshooting" → primary keyword: "email"
+        - "spam filter blocking" → primary keyword: "spam" 
+        - "network connectivity issues" → primary keyword: "network"
+      parameters:
+        - name: sysparm_query
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Query filter for knowledge articles. Use LIKE operator for text search.
+            
+            PROGRESSIVE SEARCH APPROACH:
+            1. First attempt: Try exact or close phrase match
+               - Example: textLIKEemail delivery troubleshooting
+            2. If no results: Fall back to primary keyword
+               - Example: textLIKEemail
+            3. If still no results: Try related terms
+               - Example: textLIKEmail OR textLIKEmessage
+            
+            Search patterns:
+            - Exact phrase: textLIKEemail delivery troubleshooting
+            - Single keyword: textLIKEemail  
+            - Multiple keywords (OR): textLIKEemail^ORtextLIKEspam
+            - Title search: short_descriptionLIKEemail
+            - Category search: kb_categoryLIKEEmail
+            - Published filter (optional): workflow_state=published^textLIKEemail
+            
+            Remember: If a search returns 0 results, try a simpler/broader term
+          example: "textLIKEemail"
+        
+        - name: sysparm_limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            maximum: 100
+          description: Maximum number of articles to return
+          example: 10
+        
+        - name: sysparm_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated list of fields to return
+          example: "number,short_description,text,kb_category,kb_knowledge_base,sys_view_count,workflow_state"
+        
+        - name: sysparm_display_value
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [true, false, all]
+            default: "false"
+          description: Return display values instead of sys_ids
+          example: "true"
+      
+      responses:
+        '200':
+          description: Knowledge articles retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KnowledgeArticle'
+              example:
+                result:
+                  - number: "KB0000011"
+                    short_description: "How to configure email settings"
+                    text: "Step-by-step guide for configuring email..."
+                    kb_category: "Email"
+                    kb_knowledge_base: "IT Support"
+                    sys_view_count: "145"
+                    workflow_state: "published"
+        '401':
+          description: Unauthorized - Invalid credentials
+
+  /api/now/table/kb_knowledge/{sys_id}:
+    get:
+      operationId: getKnowledgeArticle
+      summary: Get specific knowledge article by sys_id
+      description: Retrieve detailed content of a specific knowledge article
+      parameters:
+        - name: sys_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The sys_id of the knowledge article
+          example: "abc123xyz789"
+        
+        - name: sysparm_display_value
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [true, false, all]
+            default: "true"
+          description: Return display values
+          example: "true"
+      
+      responses:
+        '200':
+          description: Article retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: '#/components/schemas/KnowledgeArticle'
+        
+        '404':
+          description: Article not found
+        '401':
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant.
+
+  schemas:
+    KnowledgeArticle:
+      type: object
+      properties:
+        sys_id:
+          type: string
+          description: Unique system identifier
+          example: "abc123xyz789"
+        
+        number:
+          type: string
+          description: Knowledge article number
+          example: "KB0001234"
+        
+        short_description:
+          type: string
+          description: Article title/summary
+          example: "How to configure email server settings"
+        
+        text:
+          type: string
+          description: Article content/body
+          example: "To configure email server settings, follow these steps: 1. Navigate to..."
+        
+        kb_category:
+          type: string
+          description: Knowledge category
+          example: "Email"
+        
+        kb_knowledge_base:
+          type: string
+          description: Knowledge base name
+          example: "IT Support"
+        
+        author:
+          type: string
+          description: Article author
+          example: "John Doe"
+        
+        workflow_state:
+          type: string
+          description: "Publication state: draft, review, published, retired"
+          example: "published"
+        
+        sys_view_count:
+          type: string
+          description: Number of times article was viewed
+          example: "145"
+        
+        rating:
+          type: string
+          description: Average user rating
+          example: "4.5"
+        
+        sys_created_on:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2025-06-15T10:30:00Z"
+        
+        sys_updated_on:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-01-10T14:22:00Z"
+        
+        valid_to:
+          type: string
+          format: date-time
+          description: Article expiration date
+          example: "2027-12-31T23:59:59Z"
+        
+        related_links:
+          type: string
+          description: Related URLs or references
+          example: "https://support.example.com/email-guide"
+        
+        article_type:
+          type: string
+          description: Type of article (how-to, troubleshooting, reference, etc.)
+          example: "how-to"

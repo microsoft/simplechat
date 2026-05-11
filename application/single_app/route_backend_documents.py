@@ -4,10 +4,113 @@ from config import *
 from functions_authentication import *
 from functions_documents import *
 from functions_settings import *
+from functions_group import get_user_groups
+from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from utils_cache import invalidate_personal_search_cache
+from functions_debug import *
+from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
+import io
 import os
 import requests
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_debug import debug_print
+
+
+def _extract_citation_document_id(chunk, citation_id):
+    document_id = (chunk or {}).get('document_id') if isinstance(chunk, dict) else None
+    if document_id:
+        return str(document_id)
+
+    if citation_id and '_' in citation_id:
+        return citation_id.rsplit('_', 1)[0]
+
+    return citation_id
+
+
+def _try_get_document_json(user_id, document_id, group_id=None, public_workspace_id=None):
+    try:
+        doc_response, status_code = get_document(
+            user_id,
+            document_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+    except Exception:
+        return None
+
+    if status_code != 200:
+        return None
+
+    if isinstance(doc_response, dict):
+        return doc_response
+
+    get_json = getattr(doc_response, 'get_json', None)
+    if callable(get_json):
+        return get_json()
+
+    return None
+
+
+def _find_accessible_citation_document(user_id, document_id, scope_name):
+    if not user_id or not document_id:
+        return None
+
+    settings = get_settings()
+
+    if scope_name == 'personal':
+        if not settings.get('enable_user_workspace', False):
+            return None
+        return _try_get_document_json(user_id, document_id)
+
+    if scope_name == 'group':
+        if not settings.get('enable_group_workspaces', False):
+            return None
+
+        try:
+            user_groups = get_user_groups(user_id)
+        except Exception:
+            return None
+
+        for group in user_groups:
+            group_id = group.get('id')
+            if not group_id:
+                continue
+
+            document_json = _try_get_document_json(
+                user_id,
+                document_id,
+                group_id=group_id,
+            )
+            if document_json:
+                return document_json
+
+        return None
+
+    if scope_name == 'public':
+        if not settings.get('enable_public_workspaces', False):
+            return None
+
+        try:
+            workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+        except Exception:
+            return None
+
+        for workspace_id in workspace_ids:
+            if not workspace_id:
+                continue
+
+            document_json = _try_get_document_json(
+                user_id,
+                document_id,
+                public_workspace_id=workspace_id,
+            )
+            if document_json:
+                return document_json
+
+        return None
+
+    return None
 
 def register_route_backend_documents(app):
     @app.route('/api/get_file_content', methods=['POST'])
@@ -20,15 +123,19 @@ def register_route_backend_documents(app):
         user_id = get_current_user_id()
         conversation_id = data.get('conversation_id')
         file_id = data.get('file_id')
+        
+        debug_print(f"[GET_FILE_CONTENT] Starting - user_id={user_id}, conversation_id={conversation_id}, file_id={file_id}")
 
         if not user_id:
+            debug_print(f"[GET_FILE_CONTENT] ERROR: User not authenticated")
             return jsonify({'error': 'User not authenticated'}), 401
 
         if not conversation_id or not file_id:
+            debug_print(f"[GET_FILE_CONTENT] ERROR: Missing conversation_id or file_id")
             return jsonify({'error': 'Missing conversation_id or id'}), 400
 
         try:
-            _ = cosmos_conversations_container.read_item(
+            conversation_item = cosmos_conversations_container.read_item(
                 item=conversation_id,
                 partition_key=conversation_id
             )
@@ -36,6 +143,9 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'Conversation not found'}), 404
         except Exception as e:
             return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
+
+        if conversation_item.get('user_id') != user_id:
+            return jsonify({'error': 'Forbidden'}), 403
         
         add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Conversation exists, retrieving file content")
         try:
@@ -57,36 +167,103 @@ def register_route_backend_documents(app):
                 add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="File not found in conversation")
                 return jsonify({'error': 'File not found in conversation'}), 404
 
+            debug_print(f"[GET_FILE_CONTENT] Found {len(items)} items for file_id={file_id}")
+            debug_print(f"[GET_FILE_CONTENT] First item structure: {json.dumps(items[0], default=str, indent=2)}")
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="File found, processing content: " + str(items))
             items_sorted = sorted(items, key=lambda x: x.get('chunk_index', 0))
 
             filename = items_sorted[0].get('filename', 'Untitled')
             is_table = items_sorted[0].get('is_table', False)
+            file_content_source = items_sorted[0].get('file_content_source', '')
+            debug_print(f"[GET_FILE_CONTENT] Filename: {filename}, is_table: {is_table}, source: {file_content_source}")
+
+            # Handle blob-stored tabular files (enhanced citations enabled)
+            if file_content_source == 'blob':
+                blob_container = items_sorted[0].get('blob_container', '')
+                blob_path = items_sorted[0].get('blob_path', '')
+                debug_print(f"[GET_FILE_CONTENT] Blob-stored file: container={blob_container}, path={blob_path}")
+
+                if not blob_container or not blob_path:
+                    return jsonify({'error': 'Blob storage reference is incomplete'}), 500
+
+                try:
+                    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+                    if not blob_service_client:
+                        return jsonify({'error': 'Blob storage client not available'}), 500
+
+                    blob_client = blob_service_client.get_blob_client(
+                        container=blob_container,
+                        blob=blob_path
+                    )
+                    stream = blob_client.download_blob()
+                    blob_data = stream.readall()
+
+                    # Convert to CSV using pandas for display
+                    file_ext = os.path.splitext(filename)[1].lower()
+                    if file_ext == '.csv':
+                        import pandas
+                        df = pandas.read_csv(io.BytesIO(blob_data))
+                        combined_content = df.to_csv(index=False)
+                    elif file_ext in ['.xlsx', '.xlsm']:
+                        import pandas
+                        df = pandas.read_excel(io.BytesIO(blob_data), engine='openpyxl')
+                        combined_content = df.to_csv(index=False)
+                    elif file_ext == '.xls':
+                        import pandas
+                        df = pandas.read_excel(io.BytesIO(blob_data), engine='xlrd')
+                        combined_content = df.to_csv(index=False)
+                    else:
+                        combined_content = blob_data.decode('utf-8', errors='replace')
+
+                    debug_print(f"[GET_FILE_CONTENT] Successfully read blob content, length: {len(combined_content)}")
+                    return jsonify({
+                        'file_content': combined_content,
+                        'filename': filename,
+                        'is_table': is_table,
+                        'file_content_source': 'blob'
+                    }), 200
+
+                except Exception as blob_err:
+                    debug_print(f"[GET_FILE_CONTENT] Error reading from blob: {blob_err}")
+                    return jsonify({'error': f'Error reading file from storage: {str(blob_err)}'}), 500
 
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Combining file content from chunks, filename: " + filename + ", is_table: " + str(is_table))
             combined_parts = []
-            for it in items_sorted:
+            for idx, it in enumerate(items_sorted):
                 fc = it.get('file_content', '')
+                debug_print(f"[GET_FILE_CONTENT] Chunk {idx}: file_content type={type(fc).__name__}, len={len(fc) if hasattr(fc, '__len__') else 'N/A'}")
 
                 if isinstance(fc, list):
+                    debug_print(f"[GET_FILE_CONTENT] Processing list of {len(fc)} items")
                     # If file_content is a list of dicts, join their 'content' fields
                     text_chunks = []
-                    for chunk in fc:
-                        text_chunks.append(chunk.get('content', ''))
+                    for chunk_idx, chunk in enumerate(fc):
+                        debug_print(f"[GET_FILE_CONTENT] List item {chunk_idx} type: {type(chunk).__name__}")
+                        if isinstance(chunk, dict):
+                            text_chunks.append(chunk.get('content', ''))
+                        elif isinstance(chunk, str):
+                            text_chunks.append(chunk)
+                        else:
+                            debug_print(f"[GET_FILE_CONTENT] Unexpected chunk type in list: {type(chunk).__name__}")
                     combined_parts.append("\n".join(text_chunks))
                 elif isinstance(fc, str):
+                    debug_print(f"[GET_FILE_CONTENT] Processing string content")
                     # If it's already a string, just append
                     combined_parts.append(fc)
                 else:
                     # If it's neither a list nor a string, handle as needed (e.g., skip or log)
+                    debug_print(f"[GET_FILE_CONTENT] WARNING: Unexpected file_content type: {type(fc).__name__}, value: {fc}")
                     pass
 
             combined_content = "\n".join(combined_parts)
+            debug_print(f"[GET_FILE_CONTENT] Combined content length: {len(combined_content)}")
 
             if not combined_content:
                 add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Combined file content is empty")
+                debug_print(f"[GET_FILE_CONTENT] ERROR: Combined content is empty")
                 return jsonify({'error': 'File content not found'}), 404
 
+            debug_print(f"[GET_FILE_CONTENT] Successfully returning file content")
             return jsonify({
                 'file_content': combined_content,
                 'filename': filename,
@@ -94,6 +271,8 @@ def register_route_backend_documents(app):
             }), 200
 
         except Exception as e:
+            debug_print(f"[GET_FILE_CONTENT] EXCEPTION: {str(e)}")
+            debug_print(f"[GET_FILE_CONTENT] Traceback: {traceback.format_exc()}")
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Error retrieving file content: " + str(e))
             return jsonify({'error': f'Error retrieving file content: {str(e)}'}), 500
     
@@ -101,6 +280,7 @@ def register_route_backend_documents(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @file_upload_required
     @enabled_required("enable_user_workspace")
     def api_user_upload_document():
         user_id = get_current_user_id()
@@ -188,6 +368,28 @@ def register_route_backend_documents(app):
                 )
 
                 processed_docs.append({'document_id': parent_document_id, 'filename': original_filename})
+                
+                # Log document upload activity
+                try:
+                    # Get file size from the original file object before it's processed
+                    file_size = 0
+                    try:
+                        file.seek(0, 2)  # Seek to end
+                        file_size = file.tell()
+                        file.seek(0)  # Reset to beginning
+                    except Exception as ex:
+                        file_size = 0
+                        
+                    log_document_upload(
+                        user_id=user_id,
+                        container_type='personal',
+                        document_id=parent_document_id,
+                        file_size=file_size,
+                        file_type=file_ext
+                    )
+                except Exception as log_error:
+                    # Don't let activity logging errors interrupt upload flow
+                    debug_print(f"Activity logging error for document upload: {log_error}")
 
             except Exception as e:
                 upload_errors.append(f"Failed to queue processing for {original_filename}: {e}")
@@ -198,6 +400,10 @@ def register_route_backend_documents(app):
         # 4) Return immediately to the user with doc IDs and any errors
         response_status = 200 if processed_docs and not upload_errors else 207 # Multi-Status if partial success/errors
         if not processed_docs and upload_errors: response_status = 400 # Bad Request if all failed
+
+        # Invalidate search cache for this user since documents were added
+        if processed_docs:
+            invalidate_personal_search_cache(user_id)
 
         # NOTE: For workspace uploads, we do NOT create conversations or chat messages.
         # Files uploaded to workspaces are for document storage/management, not for immediate chat interaction.
@@ -229,10 +435,19 @@ def register_route_backend_documents(app):
         author_filter = request.args.get('author', default=None, type=str)
         keywords_filter = request.args.get('keywords', default=None, type=str)
         abstract_filter = request.args.get('abstract', default=None, type=str)
+        tags_filter = request.args.get('tags', default=None, type=str)  # Comma-separated tags
+        sort_by = request.args.get('sort_by', default='_ts', type=str)
+        sort_order = request.args.get('sort_order', default='desc', type=str)
 
         # Ensure page and page_size are positive
         if page < 1: page = 1
         if page_size < 1: page_size = 10
+
+        # Validate sort parameters
+        allowed_sort_fields = {'_ts', 'file_name', 'title'}
+        if sort_by not in allowed_sort_fields:
+            sort_by = '_ts'
+        sort_order = sort_order.upper() if sort_order.lower() in ('asc', 'desc') else 'DESC'
         # Limit page size to prevent abuse? (Optional)
         # page_size = min(page_size, 100)
 
@@ -264,8 +479,8 @@ def register_route_backend_documents(app):
         if classification_filter:
             param_name = f"@classification_{param_count}"
             if classification_filter.lower() == 'none':
-                # Filter for documents where classification is null, undefined, or empty string
-                query_conditions.append(f"(NOT IS_DEFINED(c.document_classification) OR c.document_classification = null OR c.document_classification = '')")
+                # Filter for documents where classification is null, undefined, empty string, or the literal "None"
+                query_conditions.append(f"(NOT IS_DEFINED(c.document_classification) OR c.document_classification = null OR c.document_classification = '' OR LOWER(c.document_classification) = 'none')")
                 # No parameter needed for this specific condition
             else:
                 query_conditions.append(f"c.document_classification = {param_name}")
@@ -297,45 +512,44 @@ def register_route_backend_documents(app):
             query_conditions.append(f"CONTAINS(LOWER(c.abstract ?? ''), LOWER({param_name}))")
             query_params.append({"name": param_name, "value": abstract_filter})
             param_count += 1
+        
+        # Tags Filter (comma-separated, AND logic - document must have all specified tags)
+        if tags_filter:
+            from functions_documents import sanitize_tags_for_filter
+            tags_list = sanitize_tags_for_filter(tags_filter)
+
+            if tags_list:
+                # Each tag must exist in the document's tags array
+                for idx, tag in enumerate(tags_list):
+                    param_name = f"@tag_{param_count}_{idx}"
+                    query_conditions.append(f"ARRAY_CONTAINS(c.tags, {param_name})")
+                    query_params.append({"name": param_name, "value": tag})
+                param_count += len(tags_list)
 
         # Combine conditions into the WHERE clause
         where_clause = " AND ".join(query_conditions)
 
-        # --- 3) First query: get total count based on filters ---
-        try:
-            count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            # print(f"DEBUG Count Query: {count_query_str}") # Optional Debugging
-            # print(f"DEBUG Count Params: {query_params}")    # Optional Debugging
-            count_items = list(cosmos_user_documents_container.query_items(
-                query=count_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True # May be needed if user_id is not partition key
-            ))
-            total_count = count_items[0] if count_items else 0
-
-        except Exception as e:
-            print(f"Error executing count query: {e}") # Log the error
-            return jsonify({"error": f"Error counting documents: {str(e)}"}), 500
-
-
-        # --- 4) Second query: fetch the page of data based on filters ---
+        # --- 3) Query matching documents, then collapse to current revisions before paginating ---
         try:
             offset = (page - 1) * page_size
-            # Note: ORDER BY c._ts DESC to show newest first
             data_query_str = f"""
                 SELECT *
                 FROM c
                 WHERE {where_clause}
-                ORDER BY c._ts DESC
-                OFFSET {offset} LIMIT {page_size}
             """
-            # print(f"DEBUG Data Query: {data_query_str}") # Optional Debugging
-            # print(f"DEBUG Data Params: {query_params}")    # Optional Debugging
-            docs = list(cosmos_user_documents_container.query_items(
+            matching_docs = list(cosmos_user_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,
-                enable_cross_partition_query=True # May be needed if user_id is not partition key
+                enable_cross_partition_query=True
             ))
+
+            current_docs = sort_documents(
+                select_current_documents(matching_docs),
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            total_count = len(current_docs)
+            docs = current_docs[offset:offset + page_size]
 
             # Add shared_approval_status and owner_id for each doc
             for doc in docs:
@@ -343,7 +557,6 @@ def register_route_backend_documents(app):
                 if doc.get("user_id") == user_id:
                     doc["shared_approval_status"] = "owner"
                 else:
-                    # Find entry for this user in shared_user_ids
                     status = None
                     for entry in doc.get("shared_user_ids", []):
                         if entry.startswith(f"{user_id},"):
@@ -351,7 +564,7 @@ def register_route_backend_documents(app):
                             break
                     doc["shared_approval_status"] = status or "none"
         except Exception as e:
-            print(f"Error executing data query: {e}") # Log the error
+            debug_print(f"Error executing data query: {e}")
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
 
         
@@ -372,7 +585,7 @@ def register_route_backend_documents(app):
             )
             legacy_count = legacy_docs[0] if legacy_docs else 0
         except Exception as e:
-            print(f"Error executing legacy query: {e}")
+            debug_print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
         return jsonify({
@@ -406,6 +619,9 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json()  # new metadata values from the client
+        
+        # Track which fields were updated
+        updated_fields = {}
 
         # Update allowed fields
         # You can decide which fields can be updated from the client
@@ -415,12 +631,14 @@ def register_route_backend_documents(app):
                 user_id=user_id,
                 title=data['title']
             )
+            updated_fields['title'] = data['title']
         if 'abstract' in data:
             update_document(
                 document_id=document_id,
                 user_id=user_id,
                 abstract=data['abstract']
             )
+            updated_fields['abstract'] = data['abstract']
         if 'keywords' in data:
             # Expect a list or a comma-delimited string
             if isinstance(data['keywords'], list):
@@ -429,25 +647,30 @@ def register_route_backend_documents(app):
                     user_id=user_id,
                     keywords=data['keywords']
                 )
+                updated_fields['keywords'] = data['keywords']
             else:
                 # if client sends a comma-separated string of keywords
+                keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
                 update_document(
                     document_id=document_id,
                     user_id=user_id,
-                    keywords=[kw.strip() for kw in data['keywords'].split(',')]
+                    keywords=keywords_list
                 )
+                updated_fields['keywords'] = keywords_list
         if 'publication_date' in data:
             update_document(
                 document_id=document_id,
                 user_id=user_id,
                 publication_date=data['publication_date']
             )
+            updated_fields['publication_date'] = data['publication_date']
         if 'document_classification' in data:
             update_document(
                 document_id=document_id,
                 user_id=user_id,
                 document_classification=data['document_classification']
             )
+            updated_fields['document_classification'] = data['document_classification']
         # Add authors if you want to allow editing that
         if 'authors' in data:
             # if you want a list, or just store a string
@@ -458,15 +681,72 @@ def register_route_backend_documents(app):
                     user_id=user_id,
                     authors=data['authors']
                 )
+                updated_fields['authors'] = data['authors']
             else:
+                authors_list = [data['authors']]
                 update_document(
                     document_id=document_id,
                     user_id=user_id,
-                    authors=[data['authors']]
+                    authors=authors_list
                 )
+                updated_fields['authors'] = authors_list
+        
+        # Handle tags with validation and chunk propagation
+        if 'tags' in data:
+            from functions_documents import validate_tags, propagate_tags_to_chunks, get_or_create_tag_definition
+            
+            # Validate and normalize tags
+            tags_input = data['tags'] if isinstance(data['tags'], list) else []
+            is_valid, error_msg, normalized_tags = validate_tags(tags_input)
+            
+            if not is_valid:
+                return jsonify({'error': error_msg}), 400
+            
+            # Ensure tag definitions exist for new tags
+            for tag in normalized_tags:
+                get_or_create_tag_definition(user_id, tag, workspace_type='personal')
+            
+            # Update document with normalized tags
+            update_document(
+                document_id=document_id,
+                user_id=user_id,
+                tags=normalized_tags
+            )
+            updated_fields['tags'] = normalized_tags
+            
+            # Propagate tags to all chunks immediately
+            try:
+                propagate_tags_to_chunks(document_id, normalized_tags, user_id)
+            except Exception as propagate_error:
+                debug_print(f"Warning: Failed to propagate tags to chunks: {propagate_error}")
+                # Continue - document tags are updated, chunk sync will be retried later
 
         # Save updates back to Cosmos
         try:
+            # Log the metadata update transaction if any fields were updated
+            if updated_fields:
+                # Get document details for logging
+                doc_response = get_document(user_id, document_id)
+                doc = None
+                if isinstance(doc_response, tuple):
+                    resp, status_code = doc_response
+                    if status_code == 200 and hasattr(resp, 'get_json'):
+                        doc = resp.get_json()
+                elif hasattr(doc_response, 'get_json'):
+                    doc = doc_response.get_json()
+                else:
+                    doc = doc_response
+
+                if doc and isinstance(doc, dict):
+                    log_document_metadata_update_transaction(
+                        user_id=user_id,
+                        document_id=document_id,
+                        workspace_type='personal',
+                        file_name=doc.get('file_name', 'Unknown'),
+                        updated_fields=updated_fields,
+                        file_type=doc.get('file_type')
+                    )
+            
             return jsonify({'message': 'Document metadata updated successfully'}), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -480,11 +760,21 @@ def register_route_backend_documents(app):
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
+
+        delete_mode = request.args.get('delete_mode', 'all_versions')
+        if delete_mode not in {'all_versions', 'current_only'}:
+            return jsonify({'error': 'Invalid delete mode'}), 400
         
         try:
-            delete_document(user_id, document_id)
-            delete_document_chunks(document_id)
-            return jsonify({'message': 'Document deleted successfully'}), 200
+            delete_result = delete_document_revision(user_id, document_id, delete_mode=delete_mode)
+            
+            # Invalidate search cache since document was deleted
+            invalidate_personal_search_cache(user_id)
+            
+            return jsonify({
+                'message': 'Document deleted successfully',
+                **delete_result,
+            }), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
     
@@ -536,53 +826,40 @@ def register_route_backend_documents(app):
         if not citation_id:
             return jsonify({"error": "Missing citation_id"}), 400
 
-        try:
-            search_client_user = CLIENTS['search_client_user']
-            chunk = search_client_user.get_document(key=citation_id)
-            
-            # Check if user owns the document or if document is shared with user
-            chunk_user_id = chunk.get("user_id")
-            chunk_shared_user_ids = chunk.get("shared_user_ids", [])
-            
-            # Allow access if user is owner or in shared_user_ids (prefix match)
-            is_shared = any(
-                entry == user_id or entry.startswith(f"{user_id},")
-                for entry in chunk_shared_user_ids
-            )
-            if chunk_user_id != user_id and not is_shared:
-                return jsonify({"error": "Unauthorized access to citation"}), 403
-
+        def build_citation_response(chunk):
             return jsonify({
                 "cited_text": chunk.get("chunk_text", ""),
                 "file_name": chunk.get("file_name", ""),
                 "page_number": chunk.get("chunk_sequence", 0)
             }), 200
 
+        def get_citation_for_scope(search_client, scope_name):
+            chunk = search_client.get_document(key=citation_id)
+            document_id = _extract_citation_document_id(chunk, citation_id)
+            accessible_document = _find_accessible_citation_document(user_id, document_id, scope_name)
+
+            if not accessible_document:
+                return jsonify({"error": "Unauthorized access to citation"}), 403
+
+            return build_citation_response(chunk)
+
+        try:
+            search_client_user = CLIENTS['search_client_user']
+            return get_citation_for_scope(search_client_user, 'personal')
+
         except ResourceNotFoundError:
             pass
 
         try:
             search_client_group = CLIENTS['search_client_group']
-            group_chunk = search_client_group.get_document(key=citation_id)
-
-            return jsonify({
-                "cited_text": group_chunk.get("chunk_text", ""),
-                "file_name": group_chunk.get("file_name", ""),
-                "page_number": group_chunk.get("chunk_sequence", 0)
-            }), 200
+            return get_citation_for_scope(search_client_group, 'group')
 
         except ResourceNotFoundError:
             pass
         
         try:
             search_client_public = CLIENTS['search_client_public']
-            public_chunk = search_client_public.get_document(key=citation_id)
-
-            return jsonify({
-                "cited_text": public_chunk.get("chunk_text", ""),
-                "file_name": public_chunk.get("file_name", ""),
-                "page_number": public_chunk.get("chunk_sequence", 0)
-            }), 200
+            return get_citation_for_scope(search_client_public, 'public')
         
         except ResourceNotFoundError:
             return jsonify({"error": "Citation not found in user, group, or public docs"}), 404
@@ -603,7 +880,539 @@ def register_route_backend_documents(app):
             "message": f"Upgraded {count} document(s) to the new format."
         }), 200
 
-    # Document Sharing API Endpoints
+    # ============= TAG MANAGEMENT API ENDPOINTS =============
+    
+    @app.route('/api/documents/tags', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_get_workspace_tags():
+        """Get all tags used in personal workspace with document counts"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        from functions_documents import get_workspace_tags
+        
+        try:
+            tags = get_workspace_tags(user_id)
+            return jsonify({'tags': tags}), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/api/documents/tags', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_create_tag():
+        """
+        Create a new tag in the workspace.
+        
+        Request body:
+        {
+            "tag_name": "new-tag",
+            "color": "#3b82f6"  // optional
+        }
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        tag_name = data.get('tag_name')
+        color = data.get('color')
+        
+        if not tag_name:
+            return jsonify({'error': 'tag_name is required'}), 400
+        
+        from functions_documents import normalize_tag, validate_tag_color, validate_tags
+        from functions_settings import get_user_settings, update_user_settings
+        from datetime import datetime, timezone
+        
+        try:
+            # Validate and normalize tag name
+            is_valid, error_msg, normalized_tags = validate_tags([tag_name])
+            if not is_valid:
+                return jsonify({'error': error_msg}), 400
+            
+            normalized_tag = normalized_tags[0]
+            is_valid_color, color_error, normalized_color = validate_tag_color(color, normalized_tag)
+            if not is_valid_color:
+                return jsonify({'error': color_error}), 400
+            
+            # Get existing tag definitions from settings
+            user_settings = get_user_settings(user_id)
+            settings_dict = user_settings.get('settings', {})
+            tag_defs = settings_dict.get('tag_definitions', {})
+            personal_tags = tag_defs.get('personal', {})
+            
+            debug_print(f"[CREATE TAG] Retrieved user_settings keys: {list(user_settings.keys())}")
+            debug_print(f"[CREATE TAG] Retrieved settings_dict keys: {list(settings_dict.keys())}")
+            debug_print(f"[CREATE TAG] Retrieved tag_defs keys: {list(tag_defs.keys())}")
+            debug_print(f"[CREATE TAG] Retrieved personal_tags: {personal_tags}")
+            debug_print(f"[CREATE TAG] Existing personal tag count: {len(personal_tags)}")
+            
+            # Check if tag already exists
+            if normalized_tag in personal_tags:
+                return jsonify({'error': 'Tag already exists'}), 409
+            
+            # Add new tag to existing tags (don't replace)
+            personal_tags[normalized_tag] = {
+                'color': normalized_color,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            debug_print(f"[CREATE TAG] After adding new tag, personal_tags: {personal_tags}")
+            debug_print(f"[CREATE TAG] New personal tag count: {len(personal_tags)}")
+            
+            tag_defs['personal'] = personal_tags
+            
+            debug_print(f"[CREATE TAG] Final tag_defs to save: {tag_defs}")
+            debug_print(f"[CREATE TAG] Calling update_user_settings with: {{'tag_definitions': tag_defs}}")
+            
+            # Only update the tag_definitions field, not the entire settings object
+            update_user_settings(user_id, {'tag_definitions': tag_defs})
+            
+            return jsonify({
+                'message': f'Tag "{normalized_tag}" created successfully',
+                'tag': {
+                    'name': normalized_tag,
+                    'color': normalized_color
+                }
+            }), 201
+            
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/api/documents/bulk-tag', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_bulk_tag_documents():
+        """
+        Apply tag operations to multiple documents.
+        
+        Request body:
+        {
+            "document_ids": ["doc1", "doc2", ...],
+            "action": "add_tags" | "remove_tags" | "set_tags",
+            "tags": ["tag1", "tag2", ...]
+        }
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        document_ids = data.get('document_ids', [])
+        action = data.get('action')
+        tags_input = data.get('tags', [])
+        
+        debug_print(f"[Bulk Tag] Received request: user_id={user_id}, action={action}, tags={tags_input}, doc_count={len(document_ids)}")
+        
+        if not document_ids or not isinstance(document_ids, list):
+            return jsonify({'error': 'document_ids must be a non-empty array'}), 400
+        
+        if action not in ['add_tags', 'remove_tags', 'set_tags']:
+            return jsonify({'error': 'action must be add_tags, remove_tags, or set_tags'}), 400
+        
+        from functions_documents import (
+            validate_tags, get_document, update_document, 
+            propagate_tags_to_chunks, get_or_create_tag_definition
+        )
+        
+        # Validate and normalize tags
+        is_valid, error_msg, normalized_tags = validate_tags(tags_input)
+        if not is_valid:
+            return jsonify({'error': error_msg}), 400
+        
+        # Ensure tag definitions exist for new tags
+        for tag in normalized_tags:
+            get_or_create_tag_definition(user_id, tag, workspace_type='personal')
+        
+        results = {
+            'success': [],
+            'errors': []
+        }
+        
+        try:
+            for doc_id in document_ids:
+                try:
+                    # Query Cosmos DB directly (get_document returns Flask response tuple)
+                    query = """
+                        SELECT TOP 1 *
+                        FROM c
+                        WHERE c.id = @document_id
+                            AND (
+                                c.user_id = @user_id
+                                OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                                OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
+                            )
+                        ORDER BY c.version DESC
+                    """
+                    parameters = [
+                        {"name": "@document_id", "value": doc_id},
+                        {"name": "@user_id", "value": user_id},
+                        {"name": "@user_id_prefix", "value": f"{user_id},"}
+                    ]
+                    
+                    document_results = list(
+                        cosmos_user_documents_container.query_items(
+                            query=query,
+                            parameters=parameters,
+                            enable_cross_partition_query=True
+                        )
+                    )
+                    
+                    if not document_results:
+                        error_msg = 'Document not found or access denied'
+                        debug_print(f"[Bulk Tag] Error for doc {doc_id}: {error_msg}")
+                        results['errors'].append({
+                            'document_id': doc_id,
+                            'error': error_msg
+                        })
+                        continue
+                    
+                    doc = document_results[0]
+                    debug_print(f"[Bulk Tag] Processing doc {doc_id}, current tags: {doc.get('tags', [])}")
+                    
+                    current_tags = doc.get('tags', [])
+                    new_tags = []
+                    
+                    if action == 'add_tags':
+                        # Add new tags to existing (avoid duplicates)
+                        new_tags = list(set(current_tags + normalized_tags))
+                    elif action == 'remove_tags':
+                        # Remove specified tags
+                        new_tags = [t for t in current_tags if t not in normalized_tags]
+                    elif action == 'set_tags':
+                        # Replace all tags
+                        new_tags = normalized_tags
+                    
+                    debug_print(f"[Bulk Tag] New tags for doc {doc_id}: {new_tags}")
+                    
+                    # Update document
+                    update_document(
+                        document_id=doc_id,
+                        user_id=user_id,
+                        tags=new_tags
+                    )
+                    
+                    # Propagate to chunks
+                    try:
+                        propagate_tags_to_chunks(doc_id, new_tags, user_id)
+                    except Exception as propagate_error:
+                        debug_print(f"Warning: Failed to propagate tags for doc {doc_id}: {propagate_error}")
+                    
+                    results['success'].append({
+                        'document_id': doc_id,
+                        'tags': new_tags
+                    })
+                    debug_print(f"[Bulk Tag] Successfully updated doc {doc_id}")
+                    
+                except Exception as doc_error:
+                    error_msg = str(doc_error)
+                    debug_print(f"[Bulk Tag] Exception for doc {doc_id}: {error_msg}")
+                    import traceback
+                    traceback.print_exc()
+                    results['errors'].append({
+                        'document_id': doc_id,
+                        'error': error_msg
+                    })
+            
+            # Invalidate cache
+            if results['success']:
+                invalidate_personal_search_cache(user_id)
+            
+            status_code = 200 if not results['errors'] else 207  # Multi-Status
+            return jsonify(results), status_code
+            
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/api/documents/tags/<tag_name>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_update_tag(tag_name):
+        """
+        Update a tag (rename or change color).
+        
+        Request body:
+        {
+            "new_name": "new-tag-name",  // optional
+            "color": "#3b82f6"            // optional
+        }
+        """
+        debug_print(f"[UPDATE TAG] Starting update for tag: {tag_name}")
+        
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        debug_print(f"[UPDATE TAG] User ID: {user_id}")
+        
+        data = request.get_json()
+        new_name = data.get('new_name')
+        new_color = data.get('color')
+        
+        debug_print(f"[UPDATE TAG] Request data - new_name: {new_name}, new_color: {new_color}")
+        
+        from functions_documents import (
+            normalize_tag, validate_tag_color, validate_tags, get_documents,
+            update_document, propagate_tags_to_chunks
+        )
+        from functions_settings import get_user_settings, update_user_settings
+        from utils_cache import invalidate_personal_search_cache
+        
+        try:
+            debug_print(f"[UPDATE TAG] Normalizing tag name...")
+            normalized_old_tag = normalize_tag(tag_name)
+            debug_print(f"[UPDATE TAG] Normalized old tag: {normalized_old_tag}")
+            
+            # Handle rename
+            if new_name:
+                debug_print(f"[UPDATE TAG] Handling rename operation...")
+                # Validate new name
+                is_valid, error_msg, normalized_new = validate_tags([new_name])
+                if not is_valid:
+                    debug_print(f"[UPDATE TAG] Validation failed: {error_msg}")
+                    return jsonify({'error': error_msg}), 400
+                
+                normalized_new_tag = normalized_new[0]
+                debug_print(f"[UPDATE TAG] Normalized new tag: {normalized_new_tag}")
+                
+                # Query documents directly from Cosmos DB
+                debug_print(f"[UPDATE TAG] Querying documents from database...")
+                
+                query = """
+                    SELECT *
+                    FROM c
+                    WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                """
+                parameters = [{"name": "@user_id", "value": user_id}]
+                
+                documents = list(
+                    cosmos_user_documents_container.query_items(
+                        query=query,
+                        parameters=parameters,
+                        enable_cross_partition_query=True
+                    )
+                )
+                
+                debug_print(f"[UPDATE TAG] Found {len(documents)} total documents")
+                
+                # Get latest version of each document
+                latest_documents = {}
+                for doc in documents:
+                    file_name = doc['file_name']
+                    if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
+                        latest_documents[file_name] = doc
+                
+                all_docs = list(latest_documents.values())
+                debug_print(f"[UPDATE TAG] Processing {len(all_docs)} unique documents")
+                
+                updated_count = 0
+                
+                for doc in all_docs:
+                    if normalized_old_tag in doc.get('tags', []):
+                        # Replace old tag with new tag
+                        current_tags = doc['tags']
+                        new_tags = [normalized_new_tag if t == normalized_old_tag else t for t in current_tags]
+                        
+                        update_document(
+                            document_id=doc['id'],
+                            user_id=user_id,
+                            tags=new_tags
+                        )
+                        
+                        # Propagate to chunks
+                        try:
+                            propagate_tags_to_chunks(doc['id'], new_tags, user_id)
+                        except Exception as propagate_error:
+                            debug_print(f"Warning: Failed to propagate tags for doc {doc['id']}: {propagate_error}")
+                        
+                        updated_count += 1
+                
+                debug_print(f"[UPDATE TAG] Updated {updated_count} documents")
+                
+                # Update tag definition
+                debug_print(f"[UPDATE TAG] Updating tag definition in settings...")
+                user_settings = get_user_settings(user_id)
+                settings_dict = user_settings.get('settings', {})
+                tag_defs = settings_dict.get('tag_definitions', {})
+                personal_tags = tag_defs.get('personal', {})
+                
+                debug_print(f"[UPDATE TAG] Current personal_tags keys: {list(personal_tags.keys())}")
+                
+                if normalized_old_tag in personal_tags:
+                    old_def = personal_tags.pop(normalized_old_tag)
+                    personal_tags[normalized_new_tag] = old_def
+                    debug_print(f"[UPDATE TAG] Renamed tag in definitions")
+                else:
+                    debug_print(f"[UPDATE TAG] WARNING: Old tag not found in personal_tags!")
+                    
+                tag_defs['personal'] = personal_tags
+                debug_print(f"[UPDATE TAG] Calling update_user_settings...")
+                update_user_settings(user_id, {'tag_definitions': tag_defs})
+                
+                # Invalidate cache
+                debug_print(f"[UPDATE TAG] Invalidating search cache...")
+                invalidate_personal_search_cache(user_id)
+                
+                debug_print(f"[UPDATE TAG] Rename completed successfully")
+                return jsonify({
+                    'message': f'Tag renamed from "{normalized_old_tag}" to "{normalized_new_tag}"',
+                    'documents_updated': updated_count
+                }), 200
+            
+            # Handle color change only
+            if new_color:
+                debug_print(f"[UPDATE TAG] Handling color change operation...")
+                is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
+                if not is_valid_color:
+                    return jsonify({'error': color_error}), 400
+
+                user_settings = get_user_settings(user_id)
+                settings_dict = user_settings.get('settings', {})
+                tag_defs = settings_dict.get('tag_definitions', {})
+                personal_tags = tag_defs.get('personal', {})
+                
+                debug_print(f"[UPDATE TAG] Current personal_tags keys: {list(personal_tags.keys())}")
+                debug_print(f"[UPDATE TAG] Looking for tag: {normalized_old_tag}")
+                
+                if normalized_old_tag in personal_tags:
+                    debug_print(f"[UPDATE TAG] Found tag, updating color to: {normalized_color}")
+                    personal_tags[normalized_old_tag]['color'] = normalized_color
+                else:
+                    debug_print(f"[UPDATE TAG] Tag not found, creating new entry with color: {normalized_color}")
+                    from datetime import datetime, timezone
+                    personal_tags[normalized_old_tag] = {
+                        'color': normalized_color,
+                        'created_at': datetime.now(timezone.utc).isoformat()
+                    }
+                
+                tag_defs['personal'] = personal_tags
+                debug_print(f"[UPDATE TAG] Final tag_defs to save: {tag_defs}")
+                debug_print(f"[UPDATE TAG] Calling update_user_settings...")
+                update_user_settings(user_id, {'tag_definitions': tag_defs})
+                
+                debug_print(f"[UPDATE TAG] Color change completed successfully")
+                return jsonify({
+                    'message': f'Tag color updated for "{normalized_old_tag}"',
+                    'tag': {
+                        'name': normalized_old_tag,
+                        'color': normalized_color
+                    }
+                }), 200
+            
+            debug_print(f"[UPDATE TAG] No updates specified!")
+            return jsonify({'error': 'No updates specified'}), 400
+            
+        except Exception as e:
+            debug_print(f"[UPDATE TAG] ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/api/documents/tags/<tag_name>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_delete_tag(tag_name):
+        """Delete a tag from all documents in workspace"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        from functions_documents import (
+            normalize_tag, update_document, 
+            propagate_tags_to_chunks
+        )
+        from functions_settings import get_user_settings, update_user_settings
+        
+        try:
+            normalized_tag = normalize_tag(tag_name)
+            
+            # Query documents directly from Cosmos DB
+            debug_print(f"[DELETE TAG] Querying documents from database...")
+            
+            query = """
+                SELECT *
+                FROM c
+                WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+            """
+            parameters = [{"name": "@user_id", "value": user_id}]
+            
+            documents = list(
+                cosmos_user_documents_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                )
+            )
+            
+            debug_print(f"[DELETE TAG] Found {len(documents)} total documents")
+            
+            # Get latest version of each document
+            latest_documents = {}
+            for doc in documents:
+                file_name = doc['file_name']
+                if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
+                    latest_documents[file_name] = doc
+            
+            all_docs = list(latest_documents.values())
+            debug_print(f"[DELETE TAG] Processing {len(all_docs)} unique documents")
+            
+            updated_count = 0
+            
+            for doc in all_docs:
+                if normalized_tag in doc.get('tags', []):
+                    # Remove tag
+                    new_tags = [t for t in doc['tags'] if t != normalized_tag]
+                    
+                    update_document(
+                        document_id=doc['id'],
+                        user_id=user_id,
+                        tags=new_tags
+                    )
+                    
+                    # Propagate to chunks
+                    try:
+                        propagate_tags_to_chunks(doc['id'], new_tags, user_id)
+                    except Exception as propagate_error:
+                        debug_print(f"Warning: Failed to propagate tags for doc {doc['id']}: {propagate_error}")
+                    
+                    updated_count += 1
+            
+            # Remove tag definition
+            user_settings = get_user_settings(user_id)
+            settings_dict = user_settings.get('settings', {})
+            tag_defs = settings_dict.get('tag_definitions', {})
+            personal_tags = tag_defs.get('personal', {})
+            
+            if normalized_tag in personal_tags:
+                personal_tags.pop(normalized_tag)
+                tag_defs['personal'] = personal_tags
+                update_user_settings(user_id, {'tag_definitions': tag_defs})
+            
+            # Invalidate cache
+            if updated_count > 0:
+                invalidate_personal_search_cache(user_id)
+            
+            return jsonify({
+                'message': f'Tag "{normalized_tag}" deleted from {updated_count} document(s)'
+            }), 200
+            
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    # ============= DOCUMENT SHARING API ENDPOINTS =============
     @app.route('/api/documents/<document_id>/share', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -630,6 +1439,9 @@ def register_route_backend_documents(app):
             # Share the document
             success = share_document_with_user(document_id, user_id, target_user_id)
             if success:
+                # Invalidate cache for both owner and target user
+                invalidate_personal_search_cache(user_id)
+                invalidate_personal_search_cache(target_user_id)
                 return jsonify({'message': 'Document shared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to share document'}), 500
@@ -663,6 +1475,9 @@ def register_route_backend_documents(app):
             # Unshare the document
             success = unshare_document_from_user(document_id, user_id, target_user_id)
             if success:
+                # Invalidate cache for both owner and target user
+                invalidate_personal_search_cache(user_id)
+                invalidate_personal_search_cache(target_user_id)
                 return jsonify({'message': 'Document unshared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to unshare document'}), 500
@@ -706,7 +1521,7 @@ def register_route_backend_documents(app):
                         approval_status = entry.get('approval_status', 'unknown')
                         try:
                             # Get user details from Microsoft Graph
-                            graph_url = f"https://graph.microsoft.com/v1.0/users/{oid}"
+                            graph_url = get_graph_endpoint(f"/users/{oid}")
                             response = requests.get(graph_url, headers=headers)
                             
                             if response.status_code == 200:
@@ -726,7 +1541,7 @@ def register_route_backend_documents(app):
                                     'email': ''
                                 })
                         except Exception as e:
-                            print(f"Error fetching user details for {oid}: {e}")
+                            debug_print(f"Error fetching user details for {oid}: {e}")
                             shared_users.append({
                                 'id': oid,
                                 'approval_status': approval_status,
@@ -781,12 +1596,14 @@ def register_route_backend_documents(app):
             # Remove user from shared_user_ids (pass user_id as both requester and target for self-removal)
             success = unshare_document_from_user(document_id, user_id, user_id)
             if success:
+                # Invalidate cache for user who removed themselves
+                invalidate_personal_search_cache(user_id)
                 return jsonify({'message': 'Successfully removed from shared document'}), 200
             else:
                 return jsonify({'error': 'Failed to remove from shared document'}), 500
     
         except Exception as e:
-            print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
+            debug_print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
             return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500
 
     @app.route('/api/documents/<document_id>/approve-share', methods=['POST'])
@@ -838,9 +1655,14 @@ def register_route_backend_documents(app):
                                     shared_user_ids=new_shared_user_ids
                                 )
                             except Exception as chunk_e:
-                                print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
+                                debug_print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
                 except Exception as e:
-                    print(f"Warning: Failed to update chunks for document {document_id}: {e}")
+                    debug_print(f"Warning: Failed to update chunks for document {document_id}: {e}")
+            
+            # Invalidate cache for user who approved (their search results changed)
+            if updated:
+                invalidate_personal_search_cache(user_id)
+            
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
         except Exception as e:
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500

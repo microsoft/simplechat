@@ -1,8 +1,11 @@
 # functions_group.py
 
 from config import *
+import functions_authentication
+import functions_settings
 from functions_authentication import *
 from functions_settings import *
+from typing import Iterable
 
 
 def create_group(name, description):
@@ -180,10 +183,20 @@ def get_or_create_bookstack_group():
 
 def update_active_group_for_user(group_id):
     user_id = get_current_user_id()
+def update_active_group_for_user(group_id, user_id=None):
+    if not user_id:
+        user_id = functions_authentication.get_current_user_id()
+
+    assert_group_role(
+        user_id,
+        group_id,
+        allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+    )
+
     new_settings = {
         "activeGroupOid": group_id
     }
-    update_user_settings(user_id, new_settings)
+    functions_settings.update_user_settings(user_id, new_settings)
 
 def get_user_role_in_group(group_doc, user_id):
     """Determine the user's role in the given group doc."""
@@ -202,6 +215,37 @@ def get_user_role_in_group(group_doc, user_id):
                 return "User"
 
     return None
+
+
+def require_active_group(
+    user_id: str,
+    allowed_roles: Iterable[str] = ("Owner", "Admin", "DocumentManager", "User"),
+) -> str:
+    """Return the active group id for a user after validating current membership."""
+    settings = functions_settings.get_user_settings(user_id)
+    active_group_id = settings.get("settings", {}).get("activeGroupOid")
+    if not active_group_id:
+        raise ValueError("No active group selected")
+
+    assert_group_role(user_id, active_group_id, allowed_roles=allowed_roles)
+    return active_group_id
+
+
+def assert_group_role(user_id: str, group_id: str, allowed_roles: Iterable[str] = ("Owner", "Admin")) -> str:
+    """Ensure the user holds one of the allowed roles for the group."""
+    group_doc = find_group_by_id(group_id)
+    if not group_doc:
+        raise LookupError("Group not found")
+
+    role = get_user_role_in_group(group_doc, user_id)
+    if not role:
+        raise PermissionError("User is not a member of this group")
+
+    allowed = {r.lower() for r in allowed_roles}
+    if role.lower() not in allowed:
+        raise PermissionError("Insufficient permissions for this group")
+
+    return role
 
 
 def map_group_list_for_frontend(groups, current_user_id):
@@ -239,3 +283,108 @@ def is_user_in_group(group_doc, user_id):
         if u["userId"] == user_id:
             return True
     return False
+
+
+def check_group_status_allows_operation(group_doc, operation_type):
+    """
+    Check if the group's status allows the specified operation.
+    
+    Args:
+        group_doc: The group document from Cosmos DB
+        operation_type: One of 'upload', 'delete', 'chat', 'view'
+    
+    Returns:
+        tuple: (allowed: bool, reason: str)
+    
+    Status definitions:
+        - active: All operations allowed
+        - locked: Read-only mode (view and chat only, no modifications)
+        - upload_disabled: No new uploads, but deletions and chat allowed
+        - inactive: No operations allowed except admin viewing
+    """
+    if not group_doc:
+        return False, "Group not found"
+    
+    status = group_doc.get('status', 'active')  # Default to 'active' if not set
+    
+    # Define what each status allows
+    status_permissions = {
+        'active': {
+            'upload': True,
+            'delete': True,
+            'chat': True,
+            'view': True
+        },
+        'locked': {
+            'upload': False,
+            'delete': False,
+            'chat': True,
+            'view': True
+        },
+        'upload_disabled': {
+            'upload': False,
+            'delete': True,
+            'chat': True,
+            'view': True
+        },
+        'inactive': {
+            'upload': False,
+            'delete': False,
+            'chat': False,
+            'view': False
+        }
+    }
+    
+    # Get permissions for current status
+    permissions = status_permissions.get(status, status_permissions['active'])
+    
+    # Check if operation is allowed
+    allowed = permissions.get(operation_type, False)
+    
+    # Generate helpful reason message if not allowed
+    if not allowed:
+        reasons = {
+            'locked': {
+                'upload': 'This group is locked (read-only mode). Document uploads are disabled.',
+                'delete': 'This group is locked (read-only mode). Document deletions are disabled.'
+            },
+            'upload_disabled': {
+                'upload': 'Document uploads are disabled for this group.'
+            },
+            'inactive': {
+                'upload': 'This group is inactive. All operations are disabled.',
+                'delete': 'This group is inactive. All operations are disabled.',
+                'chat': 'This group is inactive. All operations are disabled.',
+                'view': 'This group is inactive. Access is restricted to administrators.'
+            }
+        }
+        
+        reason = reasons.get(status, {}).get(operation_type, 
+                                             f'This operation is not allowed when group status is "{status}".')
+        return False, reason
+    
+    return True, ""
+
+
+def get_group_model_endpoints(group_id: str):
+    """Return the model endpoint list stored on a group document."""
+    group_doc = find_group_by_id(group_id)
+    if not group_doc:
+        return []
+    endpoints = group_doc.get("model_endpoints")
+    if isinstance(endpoints, list):
+        return endpoints
+    return []
+
+
+def update_group_model_endpoints(group_id: str, endpoints):
+    """Persist the model endpoints list onto the group document."""
+    group_doc = find_group_by_id(group_id)
+    if not group_doc:
+        raise ValueError("Group not found")
+    if not isinstance(endpoints, list):
+        raise ValueError("model_endpoints must be a list")
+    group_doc["model_endpoints"] = endpoints
+    group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+    cosmos_groups_container.upsert_item(group_doc)
+    return group_doc

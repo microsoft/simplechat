@@ -1,17 +1,25 @@
+
 # functions_personal_agents.py
 
 """
 Personal Agents Management
 
-This module handles all operations related to personal agents stored in the 
+This module handles all operations related to personal agents stored in the
 personal_agents container with user_id partitioning.
 """
 
+
+# Imports (grouped after docstring)
 import uuid
 from datetime import datetime
 from azure.cosmos import exceptions
 from flask import current_app
 import logging
+from config import cosmos_personal_agents_container
+from functions_settings import get_settings, get_user_settings, update_user_settings
+from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_agent_payload import sanitize_agent_payload
+from functions_debug import debug_print
 
 def get_personal_agents(user_id):
     """
@@ -24,8 +32,6 @@ def get_personal_agents(user_id):
         list: List of agent dictionaries
     """
     try:
-        from config import cosmos_personal_agents_container
-        
         query = "SELECT * FROM c WHERE c.user_id = @user_id"
         parameters = [{"name": "@user_id", "value": user_id}]
         
@@ -35,18 +41,29 @@ def get_personal_agents(user_id):
             partition_key=user_id
         ))
         
-        # Remove Cosmos metadata for cleaner response
+        # Remove Cosmos metadata for cleaner response and retrieve secrets from Key Vault
         cleaned_agents = []
         for agent in agents:
             cleaned_agent = {k: v for k, v in agent.items() if not k.startswith('_')}
+            cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user")
+            if cleaned_agent.get('max_completion_tokens') is None:
+                cleaned_agent['max_completion_tokens'] = -1
+            cleaned_agent.setdefault('is_global', False)
+            cleaned_agent.setdefault('is_group', False)
+            cleaned_agent.setdefault('agent_type', 'local')
+            cleaned_agent.setdefault('model_endpoint_id', '')
+            cleaned_agent.setdefault('model_id', '')
+            cleaned_agent.setdefault('model_provider', '')
+            # Remove empty reasoning_effort to prevent validation errors
+            if cleaned_agent.get('reasoning_effort') == '':
+                cleaned_agent.pop('reasoning_effort', None)
             cleaned_agents.append(cleaned_agent)
-            
         return cleaned_agents
         
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as e:
-        current_app.logger.error(f"Error fetching personal agents for user {user_id}: {e}")
+        debug_print(f"Error fetching personal agents for user {user_id}: {e}")
         return []
 
 def get_personal_agent(user_id, agent_id):
@@ -61,24 +78,35 @@ def get_personal_agent(user_id, agent_id):
         dict: Agent dictionary or None if not found
     """
     try:
-        from config import cosmos_personal_agents_container
-        
         agent = cosmos_personal_agents_container.read_item(
             item=agent_id,
             partition_key=user_id
         )
         
-        # Remove Cosmos metadata
+        # Remove Cosmos metadata and retrieve secrets from Key Vault
         cleaned_agent = {k: v for k, v in agent.items() if not k.startswith('_')}
+        cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', agent_id), scope="user")
+        # Ensure max_completion_tokens field exists
+        if cleaned_agent.get('max_completion_tokens') is None:
+            cleaned_agent['max_completion_tokens'] = -1
+        cleaned_agent.setdefault('is_global', False)
+        cleaned_agent.setdefault('is_group', False)
+        cleaned_agent.setdefault('agent_type', 'local')
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
+        # Remove empty reasoning_effort to prevent validation errors
+        if cleaned_agent.get('reasoning_effort') == '':
+            cleaned_agent.pop('reasoning_effort', None)
         return cleaned_agent
-        
     except exceptions.CosmosResourceNotFoundError:
+        debug_print(f"Agent {agent_id} not found for user {user_id}")
         return None
     except Exception as e:
-        current_app.logger.error(f"Error fetching agent {agent_id} for user {user_id}: {e}")
+        debug_print(f"Error fetching agent {agent_id} for user {user_id}: {e}")
         return None
 
-def save_personal_agent(user_id, agent_data):
+def save_personal_agent(user_id, agent_data, actor_user_id=None):
     """
     Save or update a personal agent.
     
@@ -90,39 +118,96 @@ def save_personal_agent(user_id, agent_data):
         dict: Saved agent data with ID
     """
     try:
-        from config import cosmos_personal_agents_container
-        
-        # Ensure required fields
-        if 'id' not in agent_data:
-            agent_data['id'] = str(f"{user_id}_{agent_data.get('name', 'default')}")
-            
-        agent_data['user_id'] = user_id
-        agent_data['last_updated'] = datetime.utcnow().isoformat()
+        modifying_user_id = actor_user_id or user_id
+        cleaned_agent = sanitize_agent_payload(agent_data)
+        for field in ['name', 'display_name', 'description', 'instructions']:
+            cleaned_agent.setdefault(field, '')
+        for field in [
+            'azure_openai_gpt_endpoint',
+            'azure_openai_gpt_key',
+            'azure_openai_gpt_deployment',
+            'azure_openai_gpt_api_version',
+            'azure_agent_apim_gpt_endpoint',
+            'azure_agent_apim_gpt_subscription_key',
+            'azure_agent_apim_gpt_deployment',
+            'azure_agent_apim_gpt_api_version'
+        ]:
+            cleaned_agent.setdefault(field, '')
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
+        if 'id' not in cleaned_agent:
+            cleaned_agent['id'] = str(f"{user_id}_{cleaned_agent.get('name', 'default')}")
+
+        # Check if this is a new agent or an update to preserve created_by/created_at
+        existing_agent = None
+        try:
+            existing_agent = cosmos_personal_agents_container.read_item(
+                item=cleaned_agent['id'],
+                partition_key=user_id
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            pass
+        except Exception:
+            pass
+
+        now = datetime.utcnow().isoformat()
+        if existing_agent:
+            # Preserve original creation tracking
+            cleaned_agent['created_by'] = existing_agent.get('created_by', user_id)
+            cleaned_agent['created_at'] = existing_agent.get('created_at', now)
+        else:
+            # New agent
+            cleaned_agent['created_by'] = user_id
+            cleaned_agent['created_at'] = now
+        cleaned_agent['modified_by'] = modifying_user_id
+        cleaned_agent['modified_at'] = now
+
+        cleaned_agent['user_id'] = user_id
+        cleaned_agent['last_updated'] = now
+        cleaned_agent['is_global'] = False
+        cleaned_agent['is_group'] = False
         
         # Validate required fields
         required_fields = ['name', 'display_name', 'description', 'instructions']
         for field in required_fields:
-            if field not in agent_data:
-                agent_data[field] = ''
-                
+            if field not in cleaned_agent:
+                cleaned_agent[field] = ''
+
         # Set defaults for optional fields
-        agent_data.setdefault('azure_openai_gpt_deployment', '')
-        agent_data.setdefault('azure_openai_gpt_api_version', '')
-        agent_data.setdefault('azure_agent_apim_gpt_deployment', '')
-        agent_data.setdefault('azure_agent_apim_gpt_api_version', '')
-        agent_data.setdefault('enable_agent_gpt_apim', False)
-        agent_data.setdefault('actions_to_load', [])
-        agent_data.setdefault('other_settings', {})
-        agent_data.setdefault('is_global', False)
-        
-        result = cosmos_personal_agents_container.upsert_item(body=agent_data)
-        
+        cleaned_agent.setdefault('azure_openai_gpt_deployment', '')
+        cleaned_agent.setdefault('azure_openai_gpt_api_version', '')
+        cleaned_agent.setdefault('azure_agent_apim_gpt_deployment', '')
+        cleaned_agent.setdefault('azure_agent_apim_gpt_api_version', '')
+        cleaned_agent.setdefault('enable_agent_gpt_apim', False)
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
+        cleaned_agent.setdefault('reasoning_effort', '')
+        cleaned_agent.setdefault('actions_to_load', [])
+        cleaned_agent.setdefault('other_settings', {})
+
+        # Remove empty reasoning_effort to avoid schema validation errors
+        if cleaned_agent.get('reasoning_effort') == '':
+            cleaned_agent.pop('reasoning_effort', None)
+        cleaned_agent['is_global'] = False
+        cleaned_agent['is_group'] = False
+        cleaned_agent.setdefault('agent_type', 'local')
+
+        # Store sensitive keys in Key Vault if enabled
+        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user")
+        if cleaned_agent.get('max_completion_tokens') is None:
+            cleaned_agent['max_completion_tokens'] = -1
+        result = cosmos_personal_agents_container.upsert_item(body=cleaned_agent)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
+        cleaned_result.setdefault('is_global', False)
+        cleaned_result.setdefault('is_group', False)
+        cleaned_result.setdefault('agent_type', 'local')
         return cleaned_result
         
     except Exception as e:
-        current_app.logger.error(f"Error saving agent for user {user_id}: {e}")
+        debug_print(f"Error saving agent for user {user_id}: {e}")
         raise
 
 def delete_personal_agent(user_id, agent_id):
@@ -137,8 +222,6 @@ def delete_personal_agent(user_id, agent_id):
         bool: True if deleted, False if not found
     """
     try:
-        from config import cosmos_personal_agents_container
-        
         # Try to find the agent first to get the correct ID
         # Check if agent_id is actually a name and we need to find the real ID
         agent = get_personal_agent(user_id, agent_id)
@@ -146,20 +229,20 @@ def delete_personal_agent(user_id, agent_id):
             # Try to find by name if direct ID lookup failed
             agents = get_personal_agents(user_id)
             agent = next((a for a in agents if a['name'] == agent_id), None)
-            
         if not agent:
             return False
-            
+        # Delete secrets from Key Vault if present
+        keyvault_agent_delete_helper(agent, agent.get('id', agent_id), scope="user")
         cosmos_personal_agents_container.delete_item(
             item=agent['id'],
             partition_key=user_id
         )
         return True
-        
     except exceptions.CosmosResourceNotFoundError:
+        debug_print(f"Agent {agent_id} not found for user {user_id}")
         return False
     except Exception as e:
-        current_app.logger.error(f"Error deleting agent {agent_id} for user {user_id}: {e}")
+        debug_print(f"Error deleting agent {agent_id} for user {user_id}: {e}")
         raise
 
 def ensure_migration_complete(user_id):
@@ -174,8 +257,6 @@ def ensure_migration_complete(user_id):
         int: Number of agents migrated (0 if already migrated)
     """
     try:
-        from functions_settings import get_user_settings, update_user_settings
-        
         user_settings = get_user_settings(user_id)
         agents = user_settings.get('settings', {}).get('agents', [])
         
@@ -192,13 +273,13 @@ def ensure_migration_complete(user_id):
                 settings_to_update = user_settings.get('settings', {})
                 settings_to_update['agents'] = []  # Set to empty array instead of removing
                 update_user_settings(user_id, settings_to_update)
-                current_app.logger.info(f"Cleaned up legacy agent data for user {user_id} (already migrated)")
+                debug_print(f"Cleaned up legacy agent data for user {user_id} (already migrated)")
                 return 0
         
         return 0
         
     except Exception as e:
-        current_app.logger.error(f"Error ensuring agent migration complete for user {user_id}: {e}")
+        debug_print(f"Error ensuring agent migration complete for user {user_id}: {e}")
         return 0
 
 def migrate_agents_from_user_settings(user_id):
@@ -212,93 +293,32 @@ def migrate_agents_from_user_settings(user_id):
         int: Number of agents migrated
     """
     try:
-        from functions_settings import get_user_settings, update_user_settings
-        
         user_settings = get_user_settings(user_id)
         agents = user_settings.get('settings', {}).get('agents', [])
-        
         # Get existing personal agents to avoid duplicates
         existing_personal_agents = get_personal_agents(user_id)
         existing_agent_names = {agent['name'] for agent in existing_personal_agents}
-        
         migrated_count = 0
         for agent in agents:
             try:
                 # Skip if agent already exists in personal container
                 if agent.get('name') in existing_agent_names:
-                    current_app.logger.info(f"Skipping migration of agent '{agent.get('name')}' - already exists")
+                    debug_print(f"Skipping migration of agent '{agent.get('name')}' - already exists")
                     continue
-                
                 # Ensure agent has an ID
                 if 'id' not in agent:
                     agent['id'] = str(uuid.uuid4())
-                    
                 save_personal_agent(user_id, agent)
                 migrated_count += 1
-                
             except Exception as e:
-                current_app.logger.error(f"Error migrating agent {agent.get('name', 'unknown')} for user {user_id}: {e}")
-                
+                debug_print(f"Error migrating agent {agent.get('name', 'unknown')} for user {user_id}: {e}")
         # Always remove agents from user settings after processing (even if no new ones migrated)
         settings_to_update = user_settings.get('settings', {})
         settings_to_update['agents'] = []  # Set to empty array instead of removing
         update_user_settings(user_id, settings_to_update)
-            
-        current_app.logger.info(f"Migrated {migrated_count} new agents for user {user_id}, cleaned up legacy data")
+        debug_print(f"Migrated {migrated_count} new agents for user {user_id}, cleaned up legacy data")
         return migrated_count
-        
     except Exception as e:
-        current_app.logger.error(f"Error during agent migration for user {user_id}: {e}")
+        debug_print(f"Error during agent migration for user {user_id}: {e}")
         return 0
 
-def get_selected_agent(user_id):
-    """
-    Get the user's selected agent preference.
-    
-    Args:
-        user_id (str): The user's unique identifier
-        
-    Returns:
-        dict: Selected agent info or None
-    """
-    try:
-        from functions_settings import get_user_settings
-        
-        user_settings = get_user_settings(user_id)
-        selected_agent = user_settings.get('settings', {}).get('selected_agent')
-        
-        return selected_agent
-        
-    except Exception as e:
-        current_app.logger.error(f"Error getting selected agent for user {user_id}: {e}")
-        return None
-
-def set_selected_agent(user_id, agent_name, is_global=False):
-    """
-    Set the user's selected agent preference.
-    
-    Args:
-        user_id (str): The user's unique identifier
-        agent_name (str): Name of the selected agent
-        is_global (bool): Whether the agent is global or personal
-        
-    Returns:
-        bool: True if successful
-    """
-    try:
-        from functions_settings import get_user_settings, update_user_settings
-        
-        user_settings = get_user_settings(user_id)
-        settings_to_update = user_settings.get('settings', {})
-        
-        settings_to_update['selected_agent'] = {
-            'name': agent_name,
-            'is_global': is_global
-        }
-        
-        update_user_settings(user_id, settings_to_update)
-        return True
-        
-    except Exception as e:
-        current_app.logger.error(f"Error setting selected agent for user {user_id}: {e}")
-        return False

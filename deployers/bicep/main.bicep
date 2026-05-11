@@ -1,578 +1,745 @@
-/*
-===============================================================================
-  File:        main.bicep
-  Description: BICEP deployment script for Azure resources related to a simple chat application.
-  Author:      Microsoft Federal
-  Created:     2025-May-15
-  Version:     <v1.0.0>
-===============================================================================
+targetScope = 'subscription'
 
-  Notes:
-    - Currently supports Azure US Government only.
-    - Is extensible to Azure Commercial with minor adjustments.
+@minLength(1)
+@description('''The Azure region where resources will be deployed.  
+- Region must align to the target cloud environment''')
+param location string
 
-  Disclaimer:
-    - This script is provided as-is and is not officially supported by Microsoft.
-    - It is intended for educational purposes and may require modifications to fit specific use cases.
-    - Ensure you have the necessary permissions and configurations in your Azure environment before deploying.
-
-=============================================================================== 
-*/
-
-
-/* PARAMETERS
-=============================================================================== */
-@description('Specifies the Azure environment platform.')
+@description('''The target Azure Cloud environment.
+- Accepted values are: AzureCloud, AzureUSGovernment, public, usgovernment, custom
+- Default is based on the ARM cloud name''')
 @allowed([
-  'AzureCloud'
-  'AzureUSGovernment'
+  'AzureCloud'        // public, keep allowed values for backwards compatibility
+  'AzureUSGovernment' // usgovernment
+  'public'             
+  'usgovernment'       
+  'custom'
 ])
-param azurePlatform string = 'AzureUSGovernment'
+param cloudEnvironment string = az.environment().name == 'AzureCloud' ? 'public' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom')
+// SimpleChat expects public, usgovernment or custom
+var scCloudEnvironment = cloudEnvironment == 'AzureCloud' ? 'public' : (cloudEnvironment == 'AzureUSGovernment' ? 'usgovernment' : cloudEnvironment)
 
-@description('Tenant ID where the resources are deployed and for App Registration.')
-param tenantId string = subscription().tenantId
-
-@minLength(1)
-@maxLength(90)
-@description('Primary Azure region for deployments.')
-param location string = resourceGroup().location
-
+@description('''The name of the application to be deployed.  
+- Name may only contain letters and numbers
+- Between 3 and 12 characters in length 
+- No spaces or special characters''')
 @minLength(3)
-@maxLength(24)
-@description('A persons name for tagging resources. e.g. John Doe or johndoe@domain.com')
-param resourceOwnerId string
+@maxLength(12)
+param appName string
 
-@minLength(3)
-@maxLength(3)
-@allowed([
-  'sbx'
-  'dev'
-  'tst'
-  'uat'
-  'prd'
-])
-@description('Environment identifier (e.g. sbx, dev, tst, uat, prd).')
-param environment string = 'sbx'
+@description('''The dev/qa/prod environment or as named in your environment. This will be used to create resource group names and tags.
+- Must be between 2 and 10 characters in length
+- No spaces or special characters''')
+@minLength(2)
+@maxLength(10)
+param environment string
 
 @minLength(1)
-@maxLength(8)
-@description('A short base name (1-8 alphanumeric characters) for your organization or project (e.g., contoso1, projectx2). Used to construct resource names.')
-param baseName string
+@maxLength(64)
+@description('Name of the AZD environment')
+param azdEnvironmentName string
 
-@minLength(5)
-@maxLength(50)
-@description('Name of the existing Azure Container Registry (ACR). e.g. contosoacr1')
-param acrName string
+@description('''The name of the container image to deploy to the web app.
+- should be in the format <repository>:<tag>''')
+param imageName string = 'simplechat:latest'
 
-@minLength(1)
-@maxLength(90)
-@description('Name of the existing Resource Group housing Azure Container Registry (ACR).')
-param acrResourceGroupName string
+@description('''Azure AD Application Client ID for enterprise authentication.
+- Should be the client ID of the registered Azure AD application''')
+param enterpriseAppClientId string
 
-@description('Full image name and tag from ACR (e.g., simple-chat:2025-05-15_7).')
-param imageName string
+@description('''Azure AD Application Service Principal Id for the enterprise application.
+- Should be the Service Principal ID of the registered Azure AD application''')
+param enterpriseAppServicePrincipalId string
 
-@description('Flag to determine if an existing Azure OpenAI instance should be used.')
-param useExistingOpenAiInstance bool = true
-
-@description('Name of the existing Azure OpenAI resource. Required if useExistingOpenAiInstance is true.')
-param existingAzureOpenAiResourceName string = ''
-
-@description('Resource group name of the existing Azure OpenAI resource. Required if useExistingOpenAiInstance is true.')
-param existingAzureOpenAiResourceGroupName string = ''
-
-// --- Entra App Registration Parameters (MUST BE CREATED MANUALLY FIRST) ---
-@description('Client ID (Application ID) of the pre-created Entra App Registration.')
-param appRegistrationClientId string
-
-@description('A client secret from the pre-created Entra App Registration.')
+@description('''Azure AD Application Client Secret for enterprise authentication.
+- Required if enableEnterpriseApp is true
+- Should be created in Azure AD App Registration and passed via environment variable
+- Will be stored securely in Azure Key Vault during deployment''')
 @secure()
-param appRegistrationClientSecret string
+param enterpriseAppClientSecret string
 
-// Optional: Object ID of the Service Principal for the App Registration if RBAC needs to be assigned to it.
-// If the app registration was just created, its SP might take a few minutes to replicate.
-@description('Object ID of the Service Principal for the App Registration (used for RBAC, e.g., to OpenAI). Obtain via "az ad sp show --id <appRegistrationClientId> --query id -o tsv"')
-param appRegistrationSpObjectId string = ''
-
-// --- SKU Parameters (as in PowerShell script) ---
-@description('SKU for the App Service Plan.')
-param appServicePlanSku string = 'P1V3' // For Linux, ensure this SKU is available.
-
+//----------------
+// configurations
+@description('''Authentication type for resources that support Managed Identity or Key authentication.
+- Key: Use access keys for authentication (application keys will be stored in Key Vault)
+- managed_identity: Use Managed Identity for authentication''')
 @allowed([
-  'Standard_LRS'
-  'Standard_GRS'
-  'Standard_ZRS'
-  'Premium_LRS'
+  'key'
+  'managed_identity'
 ])
-@description('SKU for the Storage Account.')
-param storageSku string = 'Standard_LRS'
+param authenticationType string
 
-@description('SKU for the Key Vault.')
-param keyVaultSku string = 'standard' // or 'premium'
+@description('''Configure permissions (based on authenticationType) for the deployed web application to access required resources.
+''')
+param configureApplicationPermissions bool
 
-@description('SKU for the Log Analytics Workspace.')
-param logAnalyticsSku string = 'PerGB2018'
+@description('Optional object containing additional tags to apply to all resources.')
+param specialTags object = {}
 
-@description('SKU for Azure Cognitive Services (OpenAI, Document Intelligence).')
-param cognitiveServicesSku string = 'S0'
+@description('''Enable diagnostic logging for resources deployed in the resource group. 
+- All content will be sent to the deployed Log Analytics workspace
+- Default is false''')
+param enableDiagLogging bool
 
-@description('SKU for Azure AI Search service.')
-param searchSku string = 'basic'
+@description('''Enable private endpoints and virtual network integration for deployed resources. 
+- Default is false''')
+param enablePrivateNetworking bool
 
-@description('The UTC date and time when the deployment was started.')
-param createdDateTime string = utcNow('yyyy-MM-dd HH:mm:ss')
+@description('''Optional existing virtual network resource ID to reuse when private networking is enabled.
+- May reference a virtual network in the same or another resource group or subscription
+- Leave blank to create a new virtual network''')
+param existingVirtualNetworkId string = ''
 
+@description('''Optional existing subnet resource ID to use for App Service VNet integration.
+- May reference a subnet in the same or another resource group or subscription
+- Required when reusing an existing virtual network because subnets are not created in external virtual networks''')
+param existingAppServiceSubnetId string = ''
 
-/* VARIABLES
-=============================================================================== */
-var tags = {
-  Environment: environment
-  Owner: resourceOwnerId
-  CreatedDateTime: createdDateTime
-  Project: 'SimpleChat'
-}
+@description('''Optional existing subnet resource ID to use for private endpoints.
+- May reference a subnet in the same or another resource group or subscription
+- Required when reusing an existing virtual network because subnets are not created in external virtual networks''')
+param existingPrivateEndpointSubnetId string = ''
 
-var clientSecretSettingName = 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
-var openIdIssuerUrl = 'https://login.microsoftonline${azurePlatform == 'AzureUSGovernment' ? '.us' : '.com'}/${tenantId}/v2.0'
+@description('''Optional per-zone private DNS configuration for private networking.
+- Leave empty to create all private DNS zones locally and create VNet links automatically
+- For each supported key, provide:
+  - zoneResourceId: Optional existing private DNS zone resource ID to reuse
+  - createVNetLink: Optional bool, defaults to true. Set to false if the customer manages the VNet link separately
+- Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites''')
+param privateDnsZoneConfigs object = {}
 
-var docIntelEndpointSuffix = azurePlatform == 'AzureUSGovernment' ? '.cognitiveservices.azure.us' : '.cognitiveservices.azure.com'
-var azureSearchEndpointSuffix = azurePlatform == 'AzureUSGovernment' ? '.search.azure.us' : '.search.windows.net'
+@description('''Optional existing Azure OpenAI or Azure AI Foundry OpenAI-compatible endpoint.
+- Leave blank to deploy a new Azure OpenAI resource
+- Public Azure AI Foundry project endpoints are supported for application configuration, but do not support private endpoint automation''')
+param existingOpenAIEndpoint string = ''
 
+@description('''Optional Video Indexer ARM API version override for custom cloud deployments.
+- Leave blank to use the cloud default
+- Public defaults to 2025-04-01
+- Azure Government defaults to 2024-01-01''')
+param customVideoIndexerArmApiVersion string = ''
 
-// --- Naming Conventions (simplified from PowerShell functions) ---
-var resourceNamePrefix = toLower('${baseName}-${environment}')
-var uniqueStringForGlobals = uniqueString(resourceGroup().id, baseName, environment) // For globally unique names
-var logAnalyticsName = '${resourceNamePrefix}-la'
-var appInsightsName = '${resourceNamePrefix}-ai'
-var keyVaultName = 'kv${uniqueStringForGlobals}' // KV names are globally unique
-var storageAccountName = toLower('${replace(baseName, '-', '')}${environment}sa${substring(uniqueStringForGlobals, 0, 5)}') // Strict naming: 3-24 chars, lowercase alphanumeric
-var managedIdentityName = '${resourceNamePrefix}-id'
-var appServicePlanName = '${resourceNamePrefix}-asp'
-var appServiceName = '${resourceNamePrefix}-app-${uniqueStringForGlobals}' // App Service names are globally unique for hostname
-var cosmosDbName = '${resourceNamePrefix}-cosmos-${uniqueStringForGlobals}' // Cosmos DB names are globally unique
-var openAIName = useExistingOpenAiInstance ? existingAzureOpenAiResourceName : '${resourceNamePrefix}-oai'
-var docIntelName = '${resourceNamePrefix}-docintel'
-var searchServiceName = '${resourceNamePrefix}-search-${uniqueStringForGlobals}' // Search names are globally unique
-var acrLoginServer = '${acrName}${azurePlatform == 'AzureUSGovernment' ? '.azurecr.us' : '.azurecr.io'}'
-var appServiceDefaultHostName = '${appServiceName}${azurePlatform == 'AzureUSGovernment' ? '.azurewebsites.us' : '.azurewebsites.net'}'
-var cosmosDbEndpointSuffix = azurePlatform == 'AzureUSGovernment' ? '.documents.azure.us' : '.documents.azure.com'
-var openAIEndpointSuffix = azurePlatform == 'AzureUSGovernment' ? '.openai.azure.us' : '.openai.azure.com'
-var azureEndpointNameForAppSetting = azurePlatform == 'AzureUSGovernment' ? 'usgovernment' : 'azurecloud'
-//var graphEndpoint = azurePlatform == 'AzureUSGovernment' ? 'https://graph.microsoft.us' : 'https://graph.microsoft.com'
-var appServiceRedirectUri1 = 'https://${appServiceDefaultHostName}/.auth/login/aad/callback'
-var appServiceRedirectUri2 = 'https://${appServiceDefaultHostName}/getAToken'
-var appServiceLogoutUrl = 'https://${appServiceDefaultHostName}/logout'
-var dockerRegistryUrl = '${acrLoginServer}${azurePlatform == 'AzureUSGovernment' ? '/${imageName}' : ':${imageName}'}'
+@description('''Optional Video Indexer endpoint override for custom cloud deployments.
+- Leave blank to use the public endpoint default''')
+param customVideoIndexerEndpoint string = ''
 
-/* RESOURCES
-=============================================================================== */
+@description('''Optional existing Azure OpenAI resource name.
+- Provide this when reusing a standard Azure OpenAI resource and you want managed identity permissions or private endpoint integration configured automatically''')
+param existingOpenAIResourceName string = ''
 
-// --- Log Analytics Workspace ---
-resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
-  name: logAnalyticsName
-  location: location
-  tags: tags
-  properties: {
-    sku: {
-      name: logAnalyticsSku
-    }
-    retentionInDays: 30
+@description('''Optional resource group for an existing Azure OpenAI resource.
+- Used when reusing a standard Azure OpenAI resource across resource groups or subscriptions''')
+param existingOpenAIResourceGroup string = ''
+
+@description('''Optional subscription ID for an existing Azure OpenAI resource.
+- Used when reusing a standard Azure OpenAI resource across subscriptions''')
+param existingOpenAISubscriptionId string = ''
+
+@description('''Azure OpenAI deployment type used for the default GPT and embedding model deployments.
+- Azure Commercial options: Standard, DatazoneStandard, GlobalStandard
+- Azure Government default model deployments use Standard regardless of this selection
+- Ignored when you provide custom gptModels or embeddingModels arrays''')
+@allowed([
+  'Standard'
+  'DatazoneStandard'
+  'GlobalStandard'
+])
+param openAIDeploymentType string
+
+// --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+@description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
+param customBlobStorageSuffix string = 'blob.${az.environment().suffixes.storage}'
+@description('Custom Graph API URL, e.g. https://graph.microsoft.us')
+param customGraphUrl string? // az.environment().graph is legacy AD, do not use
+@description('Custom Identity URL, e.g. https://login.microsoftonline.us/')
+param customIdentityUrl string = az.environment().authentication.loginEndpoint
+@description('Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net')
+param customResourceManagerUrl string = az.environment().resourceManager
+@description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
+param customCognitiveServicesScope string = 'https://cognitiveservices.azure.com/.default'
+@description('Custom search resource URL for token audience, e.g. https://search.azure.us')
+param customSearchResourceUrl string = 'https://search.azure.com'
+
+@description('''Array of GPT model names to deploy to the OpenAI resource.''')
+param gptModels array = []
+
+@description('''Array of embedding model names to deploy to the OpenAI resource.''')
+param embeddingModels array = []
+
+//----------------
+// allowed IP addresses for resources
+@description('''Comma separated list of IP addresses or ranges to allow access to resources when private networking is enabled.
+Leave blank if not using private networking.
+- Format for single IP: 'x.x.x.x'
+- Format for range: 'x.x.x.x/y'
+- Example:  1.2.3.4, 2.3.4.5/32
+''')
+param allowedIpAddresses string = ''
+var allowedIpAddressesSplit = empty(allowedIpAddresses) ? [] : split(allowedIpAddresses!, ',')
+var allowedIpAddressesArray = [for ip in allowedIpAddressesSplit: trim(ip)]
+//----------------
+
+// optional services
+
+@description('''Enable deployment of Content Safety service and related resources.
+- Default is false''')
+param deployContentSafety bool
+
+@description('''Enable deployment of Azure Cache for Redis and related resources.
+- Default is false''')
+param deployRedisCache bool
+
+@description('''Enable deployment of Azure Speech service and related resources.
+- Default is false''')
+param deploySpeechService bool
+
+@description('''Enable deployment of Azure Video Indexer service and related resources.
+- Default is false''')
+param deployVideoIndexerService bool
+
+//=========================================================
+// variable declarations for the main deployment 
+//=========================================================
+var rgName = '${appName}-${environment}-rg'
+var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
+var tags = union(requiredTags, specialTags)
+var isPublicCloud = scCloudEnvironment == 'public'
+var isUsGovernmentCloud = scCloudEnvironment == 'usgovernment'
+var acrCloudSuffix = isPublicCloud ? '.azurecr.io' : '.azurecr.us'
+var acrName = toLower('${appName}${environment}acr')
+var containerRegistry = '${acrName}${acrCloudSuffix}'
+var containerImageName = '${containerRegistry}/${imageName}'
+var vNetName = '${appName}-${environment}-vnet'
+var normalizedLocation = toLower(replace(location, ' ', ''))
+var resolvedOpenAIDeploymentType = isUsGovernmentCloud ? 'Standard' : openAIDeploymentType
+var defaultGptModels = [
+  {
+    modelName: 'gpt-4o'
+    modelVersion: isUsGovernmentCloud ? '2024-05-13' : '2024-11-20'
+    skuName: resolvedOpenAIDeploymentType
+    skuCapacity: 100
   }
-}
-
-// --- Application Insights ---
-resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
-  name: appInsightsName
-  location: location // App Insights location might differ based on LA workspace region, check best practice
-  tags: tags
-  kind: 'web'
-  properties: {
-    Application_Type: 'web'
-    WorkspaceResourceId: logAnalyticsWorkspace.id
-    publicNetworkAccessForIngestion: 'Enabled'
-    publicNetworkAccessForQuery: 'Enabled'
-  }
-}
-
-// --- Key Vault ---
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: keyVaultName
-  location: location
-  tags: tags
-  properties: {
-    sku: {
-      family: 'A'
-      name: keyVaultSku
-    }
-    tenantId: tenantId
-    enableRbacAuthorization: true // Recommended. Script has logic to fallback to access policies.
-    // enableSoftDelete: true // Default is true
-    // softDeleteRetentionInDays: 90 // Default
-    // enablePurgeProtection: false // Consider enabling for prod
-    networkAcls: {
-      defaultAction: 'Allow' // Or 'Deny' with bypass options and virtualNetworkRules
-      bypass: 'AzureServices'
-    }
-  }
-}
-
-// --- Storage Account ---
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: storageAccountName
-  location: location
-  tags: tags
-  sku: {
-    name: storageSku
-  }
-  kind: 'StorageV2'
-  properties: {
-    accessTier: 'Hot'
-    allowBlobPublicAccess: false
-    minimumTlsVersion: 'TLS1_2'
-    supportsHttpsTrafficOnly: true
-    networkAcls: {
-      bypass: 'AzureServices'
-      defaultAction: 'Deny' // More secure default
-    }
-  }
-}
-
-// --- User-Assigned Managed Identity ---
-resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: managedIdentityName
-  location: location
-  tags: tags
-}
-
-// --- App Service Plan (Linux) ---
-resource appServicePlan 'Microsoft.Web/serverfarms@2022-09-01' = {
-  name: appServicePlanName
-  location: location
-  tags: tags
-  sku: {
-    name: appServicePlanSku
-    tier: split(appServicePlanSku, 'V')[0] // e.g., P1 from P1V3, B from B1. Adjust if SKU naming is different.
-    // size: appServicePlanSku // Some SKUs like 'B1', 'S1' use 'size' directly. 'P1V3' is complex.
-    // family: // e.g. 'P', 'B'
-    // capacity: // For elastic premium or specific plans
-  }
-  kind: 'linux' // As per script --is-linux
-  properties: {
-    reserved: true // Required for Linux plans
-  }
-}
-
-// --- App Service (Web App for Containers) ---
-resource appService 'Microsoft.Web/sites@2022-09-01' = {
-  name: appServiceName
-  location: location
-  tags: tags
-  kind: 'app,linux,container'
-  identity: {
-    type: 'SystemAssigned, UserAssigned'
-    userAssignedIdentities: {
-      '${managedIdentity.id}': {}
-    }
-  }
-  properties: {
-    serverFarmId: appServicePlan.id
-    httpsOnly: true
-    siteConfig: {
-      linuxFxVersion: 'DOCKER|${dockerRegistryUrl}'
-      alwaysOn: appServicePlan.sku.tier != 'Free' && appServicePlan.sku.tier != 'Shared' && appServicePlan.sku.tier != 'Basic' // Example, P1V3 should be true
-      ftpsState: 'FtpsOnly'
-      minTlsVersion: '1.2'
-      acrUseManagedIdentityCreds: true
-      acrUserManagedIdentityID: managedIdentity.properties.clientId // Client ID of the UAMI
-    }
-  }
-}
-
-resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
-  name: 'appsettings'
-  parent: appService
-  properties: {
-    APPINSIGHTS_INSTRUMENTATIONKEY: applicationInsights.properties.InstrumentationKey
-    APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString
-    AZURE_ENDPOINT: azureEndpointNameForAppSetting
-    SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
-    AZURE_COSMOS_AUTHENTICATION_TYPE: 'key'
-    AZURE_COSMOS_ENDPOINT: 'https://${cosmosDbName}${cosmosDbEndpointSuffix}'
-    AZURE_COSMOS_KEY: cosmosDb.listKeys().primaryMasterKey
-    TENANT_ID: tenantId
-    CLIENT_ID: appRegistrationClientId
-    SECRET_KEY: appRegistrationClientSecret
-    MICROSOFT_PROVIDER_AUTHENTICATION_SECRET: appRegistrationClientSecret
-    WEBSITE_AUTH_AAD_ALLOWED_TENANTS: tenantId
-    DOCKER_REGISTRY_SERVER_URL: 'https://${acrLoginServer}'
-    DOCKER_REGISTRY_SERVER_PASSWORD: ''
-    DOCKER_REGISTRY_SERVER_USERNAME: ''
-    AZURE_OPENAI_ENDPOINT: useExistingOpenAiInstance ? 'https://${existingAzureOpenAiResourceName}${openAIEndpointSuffix}' : 'https://${openAIName}${openAIEndpointSuffix}'
-    AZURE_DOCUMENTINTELLIGENCE_ENDPOINT: 'https://${docIntelName}${docIntelEndpointSuffix}/'
-    AZURE_SEARCH_SERVICE_ENDPOINT: 'https://${searchServiceName}${azureSearchEndpointSuffix}/'
-    AZURE_KEY_VAULT_ENDPOINT: keyVault.properties.vaultUri
-  }
-}
-
-resource authSettingsV2 'Microsoft.Web/sites/config@2024-04-01' = {
-  name: 'authsettingsV2'
-  parent: appService // Link to the parent web app
-  properties: {
-    globalValidation: {
-      requireAuthentication: true // Redirect unauthenticated requests to login
-      unauthenticatedClientAction: 'RedirectToLoginPage' // Action for unauthenticated clients
-      redirectToProvider: 'AzureActiveDirectory' // Default provider to redirect to
-    }
-    httpSettings: {
-      forwardProxy: {
-        convention: 'Standard' // or 'NoProxy'
-      }
-    }
-    identityProviders: {
-      azureActiveDirectory: {
-        enabled: true
-        registration: {
-          clientId: appRegistrationClientId
-          clientSecretSettingName: clientSecretSettingName // App setting name for client secret
-          openIdIssuer: openIdIssuerUrl
-        }
-        login: {
-          disableWWWAuthenticate: false
-        }
-        validation: {
-          allowedAudiences: [
-            'api://${appRegistrationClientId}' // Replace with your application's client ID or other allowed audiences
-            //'https://${appServiceName}${azurePlatform == 'AzureUSGovernment' ? '.azurewebsites.us' : '.azurewebsites.net'}'
-          ]
-        }
-      }
-    }
-    login: {
-      tokenStore: {
-        enabled: true // Enable token store to persist tokens
-      }
-    }
-    platform: {
-      enabled: true // Enable App Service Authentication/Authorization
-      runtimeVersion: '~1' // Or a specific runtime version
-    }
-  }
-}
-
-
-// --- Azure Cosmos DB account ---
-resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
-  name: cosmosDbName
-  location: location
-  tags: tags
-  kind: 'GlobalDocumentDB' // SQL API
-  properties: {
-    consistencyPolicy: {
-      defaultConsistencyLevel: 'Session'
-    }
-    databaseAccountOfferType: 'Standard'
-    locations: [
+]
+var defaultEmbeddingModels = isUsGovernmentCloud
+  ? [
       {
-        locationName: location
-        failoverPriority: 0
+        modelName: normalizedLocation == 'usgovvirginia' ? 'text-embedding-ada-002' : 'text-embedding-3-small'
+        modelVersion: normalizedLocation == 'usgovvirginia' ? '2' : '1'
+        skuName: resolvedOpenAIDeploymentType
+        skuCapacity: 100
       }
     ]
-    enableMultipleWriteLocations: false
-    enableBurstCapacity: true
-    // enableServerless: false // If using provisioned throughput with autoscale
-    // capabilities: [ { name: 'EnableServerless' } ] // if serverless
-    // The script mentions 'enable-prpp-autoscale True' - this is usually for child resources (db/container)
-    // For account level, burst capacity is the closest. Autoscale is set on database or container.
-  }
-}
+  : [
+      {
+        modelName: 'text-embedding-3-small'
+        modelVersion: '1'
+        skuName: resolvedOpenAIDeploymentType
+        skuCapacity: 100
+      }
+    ]
+var resolvedGptModels = empty(gptModels) ? defaultGptModels : gptModels
+var resolvedEmbeddingModels = empty(embeddingModels) ? defaultEmbeddingModels : embeddingModels
+var resolvedVideoIndexerArmApiVersion = scCloudEnvironment == 'usgovernment'
+  ? '2024-01-01'
+  : (scCloudEnvironment == 'custom' && !empty(customVideoIndexerArmApiVersion) ? customVideoIndexerArmApiVersion : '2025-04-01')
+var resolvedVideoIndexerEndpoint = scCloudEnvironment == 'usgovernment'
+  ? 'https://api.videoindexer.ai.azure.us'
+  : (scCloudEnvironment == 'custom' && !empty(customVideoIndexerEndpoint) ? customVideoIndexerEndpoint : 'https://api.videoindexer.ai')
+var videoIndexerSupportsOpenAiIntegration = resolvedVideoIndexerArmApiVersion == '2025-04-01'
+var videoIndexerSupportsPrivateEndpoints = resolvedVideoIndexerArmApiVersion == '2025-04-01'
+var hasExistingAppServiceSubnetId = !empty(existingAppServiceSubnetId)
+var hasExistingPrivateEndpointSubnetId = !empty(existingPrivateEndpointSubnetId)
+var inferredVirtualNetworkId = hasExistingAppServiceSubnetId ? split(existingAppServiceSubnetId, '/subnets/')[0] : (hasExistingPrivateEndpointSubnetId ? split(existingPrivateEndpointSubnetId, '/subnets/')[0] : '')
+var resolvedExistingVirtualNetworkId = !empty(existingVirtualNetworkId) ? existingVirtualNetworkId : inferredVirtualNetworkId
+var useExistingVirtualNetwork = enablePrivateNetworking && (!empty(resolvedExistingVirtualNetworkId) || hasExistingAppServiceSubnetId || hasExistingPrivateEndpointSubnetId)
+var allowedIpsForCosmos = union(['0.0.0.0'], allowedIpAddressesArray)
+var cosmosDbIpRules = [for ip in allowedIpsForCosmos: {
+  ipAddressOrRange: ip
+}]
+var acrIpRules = [for ip in allowedIpAddressesArray: {
+  action: 'Allow'
+  value: ip
+}]
+#disable-next-line BCP318 // value can't be null when a new virtual network is created
+var resolvedVirtualNetworkId = enablePrivateNetworking ? (useExistingVirtualNetwork ? resolvedExistingVirtualNetworkId : virtualNetwork.outputs.vNetId) : ''
+#disable-next-line BCP318 // value can't be null when a new virtual network is created
+var resolvedAppServiceSubnetId = enablePrivateNetworking ? (useExistingVirtualNetwork ? existingAppServiceSubnetId : virtualNetwork.outputs.appServiceSubnetId) : ''
+#disable-next-line BCP318 // value can't be null when a new virtual network is created
+var resolvedPrivateEndpointSubnetId = enablePrivateNetworking ? (useExistingVirtualNetwork ? existingPrivateEndpointSubnetId : virtualNetwork.outputs.privateNetworkSubnetId) : ''
 
-// --- Azure OpenAI Service (Cognitive Services Account) ---
-resource cognitiveServicesOpenAI 'Microsoft.CognitiveServices/accounts@2023-05-01' = if (!useExistingOpenAiInstance) {
-  name: openAIName
+//=========================================================
+// Resource group deployment
+//=========================================================
+resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
+  name: rgName
   location: location
   tags: tags
-  kind: 'OpenAI'
-  sku: {
-    name: cognitiveServicesSku
-  }
-  properties: {
-    customSubDomainName: openAIName // Required for OpenAI kind
-    publicNetworkAccess: 'Enabled'
+}
+
+//=========================================================
+// Create Virtual Network if private networking is enabled
+//=========================================================
+module virtualNetwork 'modules/virtualNetwork.bicep' = if (enablePrivateNetworking && !useExistingVirtualNetwork) {
+  scope: rg
+  name: 'virtualNetwork'
+  params: {
+    location: location
+    vNetName: vNetName
+    addressSpaces: ['10.0.0.0/21']
+    subnetConfigs: [
+      {
+        name: 'AppServiceIntegration' // this subnet name must be present for app service vnet integration
+        addressPrefix: '10.0.0.0/24'
+        enablePrivateEndpointNetworkPolicies: true
+        enablePrivateLinkServiceNetworkPolicies: true
+      }
+      {
+        name: 'PrivateEndpoints' // this subnet name must be present if private endpoints are to be used
+        addressPrefix: '10.0.2.0/24'
+        enablePrivateEndpointNetworkPolicies: true
+        enablePrivateLinkServiceNetworkPolicies: true
+      }
+    ]
+    tags: tags
   }
 }
 
-// --- Document Intelligence Service (Cognitive Services Account) ---
-resource cognitiveServicesDocIntel 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
-  name: docIntelName
-  location: location
-  tags: tags
-  kind: 'FormRecognizer' // Kind for Document Intelligence
-  sku: {
-    name: cognitiveServicesSku
-  }
-  properties: {
-    customSubDomainName: docIntelName //docIntel_SubDomainName // this throws an error: The content for this response was already consumed
-    publicNetworkAccess: 'Enabled'
-  }
-}
-
-// --- Azure AI Search Service ---
-resource searchService 'Microsoft.Search/searchServices@2023-11-01' = {
-  name: searchServiceName
-  location: location
-  tags: tags
-  sku: {
-    name: searchSku // e.g., 'basic', 'standard'
-  }
-  properties: {
-    replicaCount: (searchSku == 'free' || searchSku == 'basic') ? 1 : 1 // Basic allows 1, Free has fixed. Standard can be >1
-    partitionCount: (searchSku == 'free' || searchSku == 'basic') ? 1 : 1 // Basic allows 1, Free has fixed. Standard can be >1
-    publicNetworkAccess: 'enabled' // As per script
-    hostingMode: 'default'
+//=========================================================
+// Create log analytics workspace 
+//=========================================================
+module logAnalytics 'modules/logAnalyticsWorkspace.bicep' = {
+  name: 'logAnalytics'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
   }
 }
 
-// ============================= ROLE ASSIGNMENTS (RBAC) =============================
-// Built-in Role Definition IDs (GUIDs are stable and preferred for RBAC in Bicep)
-var roles = {
-  keyVaultSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'
-  keyVaultSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c1ادrole9' // Typo in original guid portion
-  cognitiveServicesUser: 'a97b65f3-24c7-4388-baec-2e87135dc908'
-  cognitiveServicesContributor: '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68'
-  cognitiveServicesOpenAIUser: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
-  cognitiveServicesOpenAIContributor: 'a001fd3d-188f-4b5d-821b-7da978bf7442'
-  contributor: 'b24988ac-6180-42a0-ab88-20f7382dd24c' // General Contributor
-  storageBlobDataContributor: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-  acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-}
-
-// --- User-Assigned MI to Key Vault (if KV RBAC is enabled) ---
-resource uamiToKeyVaultAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(managedIdentity.id, keyVault.id, roles.keyVaultSecretsUser)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.keyVaultSecretsUser)
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Create application insights
+//=========================================================
+module applicationInsights 'modules/applicationInsights.bicep' = {
+  name: 'applicationInsights'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
   }
 }
 
-// --- User-Assigned MI to OpenAI ---
-resource existingOpenAI 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = if (useExistingOpenAiInstance) {
-  name: existingAzureOpenAiResourceName
-  scope: resourceGroup(existingAzureOpenAiResourceGroupName)
-}
-
-resource uamiToOpenAIAccess_User 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(managedIdentity.id, useExistingOpenAiInstance ? existingOpenAI.id : cognitiveServicesOpenAI.id, roles.cognitiveServicesOpenAIUser)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIUser)
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Create key vault
+//=========================================================
+module keyVault 'modules/keyVault.bicep' = {
+  name: 'keyVault'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
   }
 }
 
-resource uamiToOpenAIAccess_Contributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(managedIdentity.id, useExistingOpenAiInstance ? existingOpenAI.id : cognitiveServicesOpenAI.id, roles.cognitiveServicesOpenAIContributor)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIContributor)
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Store enterprise app client secret in key vault
+//=========================================================
+module storeEnterpriseAppSecret 'modules/keyVault-Secrets.bicep' = if (!empty(enterpriseAppClientSecret)) {
+  name: 'storeEnterpriseAppSecret'
+  scope: rg
+  params: {
+    keyVaultName: keyVault.outputs.keyVaultName
+    secretName: 'enterprise-app-client-secret'
+    secretValue: enterpriseAppClientSecret
   }
 }
 
-// --- User-Assigned MI to Cosmos DB (Contributor as per script) ---
-// Note: For data plane, Cosmos DB SQL Role-Based Access Control is preferred if AAD auth type is used.
-// The script uses 'key' auth type for app, so this Contributor might be for management plane tasks by MI.
-resource uamiToCosmosDbAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(managedIdentity.id, cosmosDb.id, roles.contributor)
-  scope: cosmosDb
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.contributor)
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Create CosmosDB resource
+//=========================================================
+module cosmosDB 'modules/cosmosDb.bicep' = {
+  name: 'cosmosDB'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    enablePrivateNetworking: enablePrivateNetworking
+    allowedIpAddresses: cosmosDbIpRules
   }
 }
 
-// --- User-Assigned MI to Storage Account ---
-resource uamiToStorageAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(managedIdentity.id, storageAccount.id, roles.storageBlobDataContributor)
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.storageBlobDataContributor)
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Create Azure Container Registry
+//=========================================================
+module acr 'modules/azureContainerRegistry.bicep' = {
+  name: 'azureContainerRegistry'
+  scope: rg
+  params: {
+    location: location
+    acrName: acrName
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    enablePrivateNetworking: enablePrivateNetworking
+    allowedIpAddresses: acrIpRules
   }
 }
 
-// --- App Service System-Assigned MI to OpenAI ---
-resource appSvcSmiToOpenAIAccess_User 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(appService.id, 'smi-openai-user', useExistingOpenAiInstance ? existingAzureOpenAiResourceName : cognitiveServicesOpenAI.id)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIUser)
-    principalId: appService.identity.principalId // System-Assigned MI Principal ID
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Create Search Service resource
+//=========================================================
+module searchService 'modules/search.bicep' = {
+  name: 'searchService'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
-// --- App Service System-Assigned MI to Storage ---
-resource appSvcSmiToStorageAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(appService.id, 'smi-storage', storageAccount.id)
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.storageBlobDataContributor)
-    principalId: appService.identity.principalId // System-Assigned MI Principal ID
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Create Document Intelligence resource
+//=========================================================
+module docIntel 'modules/documentIntelligence.bicep' = {
+  name: 'docIntel'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
-// --- App Registration Service Principal to OpenAI (if SP ObjectId is provided) ---
-resource appRegSpToOpenAIAccess_User 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(appRegistrationSpObjectId)) {
-  name: guid(appRegistrationSpObjectId, 'appreg-sp-openai-user', useExistingOpenAiInstance ? existingAzureOpenAiResourceName : cognitiveServicesOpenAI.id)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIUser)
-    principalId: appRegistrationSpObjectId
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Create storage account
+//=========================================================
+module storageAccount 'modules/storageAccount.bicep' = {
+  name: 'storageAccount'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
-resource appRegSpToOpenAIAccess_Contributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(appRegistrationSpObjectId)) {
-  name: guid(appRegistrationSpObjectId, 'appreg-sp-openai-contrib', useExistingOpenAiInstance ? existingAzureOpenAiResourceName : cognitiveServicesOpenAI.id)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIContributor)
-    principalId: appRegistrationSpObjectId
-    principalType: 'ServicePrincipal'
+//=========================================================
+// Create - OpenAI Service
+//=========================================================
+module openAI 'modules/openAI.bicep' = {
+  name: 'openAI'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    existingOpenAIEndpoint: existingOpenAIEndpoint
+    existingOpenAIResourceName: existingOpenAIResourceName
+    existingOpenAIResourceGroup: existingOpenAIResourceGroup
+    existingOpenAISubscriptionId: existingOpenAISubscriptionId
+    gptModels: resolvedGptModels
+    embeddingModels: resolvedEmbeddingModels
+
+    enablePrivateNetworking: enablePrivateNetworking
+  }
+}
+
+//=========================================================
+// Create App Service Plan
+//=========================================================
+module appServicePlan 'modules/appServicePlan.bicep' = {
+  name: 'appServicePlan'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+  }
+}
+
+//=========================================================
+// Create App Service (Web App for Containers)
+//=========================================================
+module appService 'modules/appService.bicep' = {
+  name: 'appService'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    acrName: acr.outputs.acrName
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    appServicePlanId: appServicePlan.outputs.appServicePlanId
+    containerImageName: containerImageName
+    azurePlatform: scCloudEnvironment
+    cosmosDbName: cosmosDB.outputs.cosmosDbName
+    searchServiceName: searchService.outputs.searchServiceName
+    openAiServiceName: openAI.outputs.openAIName
+    openAiEndpoint: openAI.outputs.openAIEndpoint
+    openAiResourceGroupName: openAI.outputs.openAIResourceGroup
+    documentIntelligenceServiceName: docIntel.outputs.documentIntelligenceServiceName
+    appInsightsName: applicationInsights.outputs.appInsightsName
+    enterpriseAppClientId: enterpriseAppClientId
+    enterpriseAppClientSecret: enterpriseAppClientSecret
+    authenticationType: authenticationType
+    keyVaultUri: keyVault.outputs.keyVaultUri
+
+    enablePrivateNetworking: enablePrivateNetworking
+    appServiceSubnetId: resolvedAppServiceSubnetId
+
+    // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+    customBlobStorageSuffix: customBlobStorageSuffix
+    customGraphUrl: customGraphUrl
+    customIdentityUrl: customIdentityUrl
+    customResourceManagerUrl: customResourceManagerUrl
+    customCognitiveServicesScope: customCognitiveServicesScope
+    customSearchResourceUrl: customSearchResourceUrl
+    customVideoIndexerEndpoint: resolvedVideoIndexerEndpoint
+  }
+}
+
+//=========================================================
+// configure optional services
+//=========================================================
+
+//=========================================================
+// Create Optional Resource - Content Safety
+//=========================================================
+module contentSafety 'modules/contentSafety.bicep' = if (deployContentSafety) {
+  name: 'contentSafety'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    enablePrivateNetworking: enablePrivateNetworking
+  }
+}
+
+//=========================================================
+// Create Optional Resource - Redis Cache
+//=========================================================
+module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
+  name: 'redisCache'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    //enablePrivateNetworking: enablePrivateNetworking
+  }
+}
+
+//=========================================================
+// Create Optional Resource - Speech Service
+//=========================================================
+module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
+  name: 'speechService'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    enablePrivateNetworking: enablePrivateNetworking
+  }
+}
+
+//=========================================================
+// Create Optional Resource - Video Indexer Service
+//=========================================================
+module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexerService) {
+  name: 'videoIndexerService'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    storageAccount: storageAccount.outputs.name
+    openAiServiceName: openAI.outputs.openAIName
+    videoIndexerArmApiVersion: resolvedVideoIndexerArmApiVersion
+
+    enablePrivateNetworking: enablePrivateNetworking
+  }
+}
+
+//=========================================================
+// configure permissions for managed identity to access resources
+//=========================================================
+module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationPermissions) {
+  name: 'setPermissions'
+  scope: rg
+  params: {
+
+    webAppName: appService.outputs.name
+    authenticationType: authenticationType
+    enterpriseAppServicePrincipalId: enterpriseAppServicePrincipalId
+    keyVaultName: keyVault.outputs.keyVaultName
+    cosmosDBName: cosmosDB.outputs.cosmosDbName
+    acrName: acr.outputs.acrName
+    openAIName: openAI.outputs.openAIName
+    openAIResourceGroupName: openAI.outputs.openAIResourceGroup
+    openAISubscriptionId: openAI.outputs.openAISubscriptionId
+    docIntelName: docIntel.outputs.documentIntelligenceServiceName
+    storageAccountName: storageAccount.outputs.name
+    searchServiceName: searchService.outputs.searchServiceName
+
+    #disable-next-line BCP318 // expect one value to be null
+    speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    redisCacheName: deployRedisCache ? redisCache.outputs.redisCacheName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
+  }
+}
+
+//=========================================================
+// configure private networking
+//=========================================================
+module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNetworking) {
+  name: 'privateNetworking'
+  scope: rg
+  params: {
+
+    virtualNetworkId: resolvedVirtualNetworkId
+    privateEndpointSubnetId: resolvedPrivateEndpointSubnetId
+    privateDnsZoneConfigs: privateDnsZoneConfigs
+
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+
+    keyVaultName: keyVault.outputs.keyVaultName
+    cosmosDBName: cosmosDB.outputs.cosmosDbName
+    acrName: acr.outputs.acrName
+    searchServiceName: searchService.outputs.searchServiceName
+    docIntelName: docIntel.outputs.documentIntelligenceServiceName
+    storageAccountName: storageAccount.outputs.name
+    openAIName: openAI.outputs.openAIName
+    openAIResourceGroupName: openAI.outputs.openAIResourceGroup
+    openAISubscriptionId: openAI.outputs.openAISubscriptionId
+    webAppName: appService.outputs.name
+    
+    #disable-next-line BCP318 // expect one value to be null
+    contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    videoIndexerSupportsPrivateEndpoints: videoIndexerSupportsPrivateEndpoints
   }
 }
 
 
-/* OUTPUTS
-=============================================================================== */
-output tenantId string = tenantId
-output existingAzureOpenAiResourceName string = existingAzureOpenAiResourceName
-output existingAzureOpenAiResourceGroupName string = existingAzureOpenAiResourceGroupName
-output cognitiveServicesSku string = cognitiveServicesSku
-output acrResourceGroupName string = acrResourceGroupName
-output appServiceName string = appService.name
-output appServiceHostName string = appService.properties.defaultHostName
-output appServicePrincipalId string = appService.identity.principalId
-output userAssignedIdentityPrincipalId string = managedIdentity.properties.principalId
-output keyVaultName string = keyVault.name
-output keyVaultUri string = keyVault.properties.vaultUri
-output storageAccountName string = storageAccount.name
-output cosmosDbName string = cosmosDb.name
-output cosmosDbEndpoint string = cosmosDb.properties.documentEndpoint
-@description('Redirect URI 1 for manual App Registration configuration.')
-output appRegistrationRedirectUri1 string = appServiceRedirectUri1
-@description('Redirect URI 2 for manual App Registration configuration.')
-output appRegistrationRedirectUri2 string = appServiceRedirectUri2
-@description('Logout URL for manual App Registration configuration.')
-output appRegistrationLogoutUrl string = appServiceLogoutUrl
-output azureOpenAiEndpoint string = useExistingOpenAiInstance ? 'https://${existingAzureOpenAiResourceName}${openAIEndpointSuffix}' : 'https://${openAIName}${openAIEndpointSuffix}'
-output documentIntelligenceEndpoint string = cognitiveServicesDocIntel.properties.endpoint
-output searchServiceEndpoint string = 'https://${searchServiceName}.search.windows.net/' // Suffix may vary by platform
+//=========================================================
+// output values
+//=========================================================
+
+
+// output values required for postprovision script in azure.yaml
+output var_acrName string = toLower('${appName}${environment}acr')
+output var_authenticationType string = toLower(authenticationType)
+output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
+output var_configureApplication bool = configureApplicationPermissions
+#disable-next-line BCP318 // expect one value to be null
+output var_contentSafetyEndpoint string = deployContentSafety ? contentSafety.outputs.contentSafetyEndpoint : ''
+output var_cosmosDb_accountName string = cosmosDB.outputs.cosmosDbName
+output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
+output var_deploymentLocation string = rg.location
+output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint
+output var_keyVaultName string = keyVault.outputs.keyVaultName
+output var_keyVaultUri string = keyVault.outputs.keyVaultUri
+output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
+output var_openAIGPTModels array = resolvedGptModels
+output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
+output var_openAIEmbeddingModels array = resolvedEmbeddingModels
+output var_openAISubscriptionId string = openAI.outputs.openAISubscriptionId
+#disable-next-line BCP318 // expect one value to be null
+output var_redisCacheHostName string = deployRedisCache ? redisCache.outputs.redisCacheHostName : ''
+output var_rgName string = rgName
+output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
+#disable-next-line BCP318 // expect one value to be null
+output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''
+output var_subscriptionId string = subscription().subscriptionId
+output var_videoIndexerArmApiVersion string = resolvedVideoIndexerArmApiVersion
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
+output var_videoIndexerEndpoint string = resolvedVideoIndexerEndpoint
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+
+// output values required for predeploy script in azure.yaml
+output var_containerRegistry string = containerRegistry
+output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
+//output var_imageTag string = split(imageName, ':')[1]
+output var_imageTag string = contains(imageName, ':')
+  ? split(imageName, ':')[1]
+  : 'latest'
+
+output var_webService string = appService.outputs.name
+
+// output values required for postup script in azure.yaml
+output var_enablePrivateNetworking bool = enablePrivateNetworking
+

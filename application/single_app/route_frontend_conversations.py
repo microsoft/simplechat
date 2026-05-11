@@ -3,13 +3,32 @@
 from config import *
 from functions_authentication import *
 from functions_debug import debug_print
+from functions_chat import sort_messages_by_thread
+from functions_message_artifacts import (
+    build_message_artifact_payload_map,
+    filter_assistant_artifact_items,
+)
 from swagger_wrapper import swagger_route, get_auth_security
+
+
+def _authorize_frontend_personal_conversation_access(user_id, conversation_id):
+    """Load a personal conversation and ensure the caller owns it."""
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError(f"Conversation {conversation_id} not found") from exc
+
+    if conversation_item.get('user_id') != user_id:
+        raise PermissionError('Forbidden')
+
+    return conversation_item
 
 def register_route_frontend_conversations(app):
     @app.route('/conversations')
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def conversations():
@@ -30,9 +49,7 @@ def register_route_frontend_conversations(app):
         return render_template('conversations.html', conversations=items)
 
     @app.route('/conversation/<conversation_id>', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def view_conversation(conversation_id):
@@ -40,12 +57,11 @@ def register_route_frontend_conversations(app):
         if not user_id:
             return redirect(url_for('login'))
         try:
-            conversation_item = cosmos_conversations_container.read_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
-        except Exception:
+            _authorize_frontend_personal_conversation_access(user_id, conversation_id)
+        except LookupError:
             return "Conversation not found", 404
+        except PermissionError:
+            return "Forbidden", 403
 
         message_query = f"""
             SELECT * FROM c
@@ -56,12 +72,11 @@ def register_route_frontend_conversations(app):
             query=message_query,
             partition_key=conversation_id
         ))
+        messages = filter_assistant_artifact_items(messages)
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
     @app.route('/conversation/<conversation_id>/messages', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_conversation_messages(conversation_id):
@@ -70,9 +85,11 @@ def register_route_frontend_conversations(app):
             return jsonify({'error': 'User not authenticated'}), 401
         
         try:
-            _ = cosmos_conversations_container.read_item(conversation_id, conversation_id)
-        except CosmosResourceNotFoundError:
+            _authorize_frontend_personal_conversation_access(user_id, conversation_id)
+        except LookupError:
             return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
         
         msg_query = f"""
             SELECT * FROM c
@@ -83,10 +100,48 @@ def register_route_frontend_conversations(app):
             query=msg_query,
             partition_key=conversation_id
         ))
+        all_items = filter_assistant_artifact_items(all_items)
 
-        debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items")
+        debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items (before filtering)")
+        
+        # Filter for active_thread = True OR active_thread is not defined (backwards compatibility)
+        filtered_items = []
+        for item in all_items:
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            active = thread_info.get('active_thread')
+            
+            # Include if: active_thread is True, OR active_thread is not defined, OR active_thread is None
+            if active is True or active is None or 'active_thread' not in thread_info:
+                filtered_items.append(item)
+                debug_print(f"Frontend endpoint - ✅ Including: id={item.get('id')}, role={item.get('role')}, active={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+            else:
+                debug_print(f"Frontend endpoint - ❌ Excluding: id={item.get('id')}, role={item.get('role')}, active={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+        
+        all_items = filtered_items
+        debug_print(f"Frontend endpoint - After filtering: {len(all_items)} items remaining")
+
+        # Log thread info BEFORE sorting
+        debug_print(f"Frontend endpoint - BEFORE SORT:")
+        for item in all_items:
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            thread_id = thread_info.get('thread_id', 'NO_THREAD_ID')
+            prev_thread_id = thread_info.get('previous_thread_id', 'NO_PREV')
+            timestamp = item.get('timestamp', 'NO_TIMESTAMP')
+            attempt = thread_info.get('thread_attempt', 'N/A')
+            debug_print(f"  {item.get('id')}: thread_id={thread_id}, prev={prev_thread_id}, attempt={attempt}, timestamp={timestamp}")
+
+        # Sort messages using threading logic
+        all_items = sort_messages_by_thread(all_items)
+        
+        # Log thread info AFTER sorting
+        debug_print(f"Frontend endpoint - AFTER SORT:")
         for i, item in enumerate(all_items):
-            debug_print(f"Frontend endpoint - Item {i}: id={item.get('id')}, role={item.get('role')}")
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            thread_id = thread_info.get('thread_id', 'NO_THREAD_ID')
+            prev_thread_id = thread_info.get('previous_thread_id', 'NO_PREV')
+            timestamp = item.get('timestamp', 'NO_TIMESTAMP')
+            attempt = thread_info.get('thread_attempt', 'N/A')
+            debug_print(f"  {i+1}. {item.get('id')}: thread_id={thread_id}, prev={prev_thread_id}, attempt={attempt}, timestamp={timestamp}")
 
         # Process messages and reassemble chunked images
         messages = []
@@ -158,10 +213,44 @@ def register_route_frontend_conversations(app):
 
         return jsonify({'messages': messages})
 
+    @app.route('/api/conversation/<conversation_id>/agent-citation/<artifact_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_agent_citation_artifact(conversation_id, artifact_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+
+        if conversation.get('user_id') != user_id:
+            return jsonify({'error': 'Unauthorized access to conversation'}), 403
+
+        conversation_messages = list(cosmos_messages_container.query_items(
+            query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+            parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+            partition_key=conversation_id,
+        ))
+        artifact_payload_map = build_message_artifact_payload_map(conversation_messages)
+        artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
+        if not isinstance(artifact_payload, dict):
+            return jsonify({'error': 'Agent citation artifact not found'}), 404
+
+        citation = artifact_payload.get('citation')
+        if citation is None:
+            return jsonify({'error': 'Agent citation payload not found'}), 404
+
+        return jsonify({'citation': citation})
+
     @app.route('/api/message/<message_id>/metadata', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_message_metadata(message_id):
@@ -198,9 +287,18 @@ def register_route_frontend_conversations(app):
                 except CosmosResourceNotFoundError:
                     return jsonify({'error': 'Conversation not found'}), 404
             
-            # Return the metadata from the message
-            metadata = message.get('metadata', {})
-            return jsonify(metadata)
+            # Return appropriate data based on message role
+            # User messages: return metadata object only (has user_info, button_states, etc.)
+            # Other messages: return full document (has id, role, augmented, etc. at top level)
+            message_role = message.get('role', '')
+            
+            if message_role == 'user':
+                # User messages - return nested metadata object
+                metadata = message.get('metadata', {})
+                return jsonify(metadata)
+            else:
+                # Assistant, image, file messages - return full document
+                return jsonify(message)
             
         except Exception as e:
             print(f"Error fetching message metadata: {str(e)}")

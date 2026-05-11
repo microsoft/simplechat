@@ -1,34 +1,579 @@
-# functions_documents.py
+# functions_documents.py that has some changes I need to merge into Development
 
+import re
+import traceback
 from config import *
 from functions_content import *
 from functions_settings import *
 from functions_search import *
 from functions_logging import *
 from functions_authentication import *
-from functions_group import get_or_create_bookstack_group
-from azure.storage.blob import BlobServiceClient
-from azure.identity import DefaultAzureCredential
-import tempfile
-import uuid
-import shutil
-import re
-
-def sanitize_search_key(key):
-    """
-    Sanitize a string to be a valid Azure AI Search document key.
-    Keys can only contain letters, digits, underscore (_), dash (-), or equal sign (=).
-    Replace periods and other invalid characters with underscores.
-    """
-    # Replace periods and other invalid characters with underscores
-    sanitized = re.sub(r'[^a-zA-Z0-9_\-=]', '_', key)
-    return sanitized
+from functions_debug import *
+import azure.cognitiveservices.speech as speechsdk
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:
         allowed_extensions = ALLOWED_EXTENSIONS
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
+
+ARCHIVED_SCOPE_PREFIX = "__archived__::"
+CURRENT_ALIAS_BLOB_PATH_MODE = "current_alias"
+ARCHIVED_REVISION_BLOB_PATH_MODE = "archived_revision"
+TAG_COLOR_PATTERN = re.compile(r'^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
+
+
+def _get_blob_container_name(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return storage_account_public_documents_container_name
+    if group_id is not None:
+        return storage_account_group_documents_container_name
+    return storage_account_user_documents_container_name
+
+
+def _get_document_scope_id(document_item=None, user_id=None, group_id=None, public_workspace_id=None):
+    if public_workspace_id is None and document_item is not None:
+        public_workspace_id = document_item.get("public_workspace_id")
+    if group_id is None and document_item is not None:
+        group_id = document_item.get("group_id")
+    if user_id is None and document_item is not None:
+        user_id = document_item.get("user_id")
+
+    return public_workspace_id or group_id or user_id
+
+
+def build_current_blob_path(blob_filename, user_id=None, group_id=None, public_workspace_id=None):
+    scope_id = _get_document_scope_id(
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not scope_id or not blob_filename:
+        return None
+
+    return f"{scope_id}/{blob_filename}"
+
+
+def build_archived_blob_path(document_item):
+    scope_id = _get_document_scope_id(document_item=document_item)
+    revision_family_id = document_item.get("revision_family_id") or document_item.get("id")
+    document_id = document_item.get("id")
+    file_name = document_item.get("file_name")
+
+    if not scope_id or not revision_family_id or not document_id or not file_name:
+        return None
+
+    return f"{scope_id}/{revision_family_id}/{document_id}/{file_name}"
+
+
+def get_document_blob_storage_info(document_item, user_id=None, group_id=None, public_workspace_id=None, prefer_archived=False):
+    if not document_item:
+        return None, None
+
+    container_name = document_item.get("blob_container") or _get_blob_container_name(
+        group_id=group_id or document_item.get("group_id"),
+        public_workspace_id=public_workspace_id or document_item.get("public_workspace_id"),
+    )
+
+    archived_blob_path = document_item.get("archived_blob_path")
+    blob_path = document_item.get("blob_path")
+
+    if prefer_archived and archived_blob_path:
+        return container_name, archived_blob_path
+
+    if blob_path:
+        return container_name, blob_path
+
+    if document_item.get("blob_path_mode") == ARCHIVED_REVISION_BLOB_PATH_MODE and archived_blob_path:
+        return container_name, archived_blob_path
+
+    return container_name, build_current_blob_path(
+        document_item.get("file_name"),
+        user_id=user_id or document_item.get("user_id"),
+        group_id=group_id or document_item.get("group_id"),
+        public_workspace_id=public_workspace_id or document_item.get("public_workspace_id"),
+    )
+
+
+def _has_persisted_blob_reference(document_item):
+    if not document_item:
+        return False
+
+    if document_item.get("blob_path"):
+        return True
+
+    return (
+        document_item.get("blob_path_mode") == ARCHIVED_REVISION_BLOB_PATH_MODE
+        and bool(document_item.get("archived_blob_path"))
+    )
+
+
+def _normalize_document_enhanced_citations(document_item):
+    if not document_item:
+        return document_item
+
+    document_item["enhanced_citations"] = _has_persisted_blob_reference(document_item)
+    return document_item
+
+
+def get_document_blob_delete_targets(document_item, user_id=None, group_id=None, public_workspace_id=None):
+    targets = []
+    seen = set()
+
+    container_name, primary_blob_path = get_document_blob_storage_info(
+        document_item,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    for blob_path in [primary_blob_path, document_item.get("archived_blob_path")]:
+        if not container_name or not blob_path:
+            continue
+
+        key = (container_name, blob_path)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        targets.append(key)
+
+    return targets
+
+
+def _get_blob_service_client():
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        raise Exception("Blob service client not available or not configured.")
+    return blob_service_client
+
+
+def _blob_exists(container_name, blob_path):
+    if not container_name or not blob_path:
+        return False
+
+    blob_service_client = _get_blob_service_client()
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+    return blob_client.exists()
+
+
+def _copy_blob_to_blob(source_container_name, source_blob_path, destination_container_name, destination_blob_path, overwrite=False):
+    if not source_container_name or not source_blob_path:
+        raise ValueError("Source blob reference is required")
+    if not destination_container_name or not destination_blob_path:
+        raise ValueError("Destination blob reference is required")
+    if source_container_name == destination_container_name and source_blob_path == destination_blob_path:
+        return destination_blob_path
+
+    blob_service_client = _get_blob_service_client()
+    source_blob_client = blob_service_client.get_blob_client(container=source_container_name, blob=source_blob_path)
+    destination_blob_client = blob_service_client.get_blob_client(container=destination_container_name, blob=destination_blob_path)
+
+    if destination_blob_client.exists() and not overwrite:
+        return destination_blob_path
+    if not source_blob_client.exists():
+        raise FileNotFoundError(f"Source blob not found: {source_container_name}/{source_blob_path}")
+
+    properties = source_blob_client.get_blob_properties()
+    source_metadata = dict(properties.metadata) if properties.metadata else None
+    temp_file_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_file_path = temp_file.name
+            download_stream = source_blob_client.download_blob()
+            for chunk in download_stream.chunks():
+                temp_file.write(chunk)
+
+        with open(temp_file_path, "rb") as temp_file_handle:
+            destination_blob_client.upload_blob(
+                temp_file_handle,
+                overwrite=overwrite,
+                metadata=source_metadata,
+            )
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+    return destination_blob_path
+
+
+def _archive_previous_document_blob(previous_document, user_id=None, group_id=None, public_workspace_id=None):
+    if not previous_document:
+        return None
+
+    container_name, current_blob_path = get_document_blob_storage_info(
+        previous_document,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    archived_blob_path = previous_document.get("archived_blob_path") or build_archived_blob_path(previous_document)
+
+    if not container_name or not archived_blob_path:
+        return None
+
+    archived_available = False
+
+    if archived_blob_path == current_blob_path:
+        archived_available = _blob_exists(container_name, archived_blob_path)
+    elif _blob_exists(container_name, archived_blob_path):
+        archived_available = True
+    elif current_blob_path and _blob_exists(container_name, current_blob_path):
+        _copy_blob_to_blob(
+            container_name,
+            current_blob_path,
+            container_name,
+            archived_blob_path,
+            overwrite=False,
+        )
+        archived_available = True
+
+    if not archived_available:
+        print(
+            f"Warning: Could not archive prior revision blob for document {previous_document.get('id')}"
+        )
+        return None
+
+    previous_document["blob_container"] = container_name
+    previous_document["blob_path"] = archived_blob_path
+    previous_document["archived_blob_path"] = archived_blob_path
+    previous_document["blob_path_mode"] = ARCHIVED_REVISION_BLOB_PATH_MODE
+    return archived_blob_path
+
+
+def _promote_document_blob_to_current_alias(promoted_document, user_id=None, group_id=None, public_workspace_id=None):
+    if not promoted_document:
+        return None
+
+    container_name = promoted_document.get("blob_container") or _get_blob_container_name(
+        group_id=group_id or promoted_document.get("group_id"),
+        public_workspace_id=public_workspace_id or promoted_document.get("public_workspace_id"),
+    )
+    current_blob_path = build_current_blob_path(
+        promoted_document.get("file_name"),
+        user_id=user_id or promoted_document.get("user_id"),
+        group_id=group_id or promoted_document.get("group_id"),
+        public_workspace_id=public_workspace_id or promoted_document.get("public_workspace_id"),
+    )
+    source_blob_path = promoted_document.get("archived_blob_path") or promoted_document.get("blob_path")
+
+    if not container_name or not current_blob_path:
+        return None
+
+    if source_blob_path and source_blob_path != current_blob_path and _blob_exists(container_name, source_blob_path):
+        _copy_blob_to_blob(
+            container_name,
+            source_blob_path,
+            container_name,
+            current_blob_path,
+            overwrite=True,
+        )
+        if not promoted_document.get("archived_blob_path"):
+            promoted_document["archived_blob_path"] = source_blob_path
+
+    promoted_document["blob_container"] = container_name
+    promoted_document["blob_path"] = current_blob_path
+    promoted_document["blob_path_mode"] = CURRENT_ALIAS_BLOB_PATH_MODE
+    return current_blob_path
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _get_documents_container(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return cosmos_public_documents_container
+    if group_id is not None:
+        return cosmos_group_documents_container
+    return cosmos_user_documents_container
+
+
+def _get_search_client(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return CLIENTS["search_client_public"]
+    if group_id is not None:
+        return CLIENTS["search_client_group"]
+    return CLIENTS["search_client_user"]
+
+
+def _get_document_family_key(document_item):
+    revision_family_id = document_item.get("revision_family_id")
+    if revision_family_id:
+        return revision_family_id
+
+    scope_value = (
+        document_item.get("public_workspace_id")
+        or document_item.get("group_id")
+        or document_item.get("user_id")
+        or "unknown"
+    )
+    file_name = document_item.get("file_name", "")
+    return f"legacy::{scope_value}::{file_name}"
+
+
+def _document_revision_sort_key(document_item):
+    return (
+        _safe_int(document_item.get("version")),
+        str(document_item.get("upload_date") or ""),
+        _safe_int(document_item.get("_ts")),
+    )
+
+
+def _choose_current_document(family_documents):
+    explicitly_current = [doc for doc in family_documents if doc.get("is_current_version") is True]
+    candidate_pool = explicitly_current if explicitly_current else family_documents
+    return max(candidate_pool, key=_document_revision_sort_key)
+
+
+def select_current_documents(documents):
+    families = {}
+
+    for document_item in documents or []:
+        family_key = _get_document_family_key(document_item)
+        families.setdefault(family_key, []).append(document_item)
+
+    current_documents = []
+    for family_documents in families.values():
+        current_documents.append(
+            _normalize_document_enhanced_citations(_choose_current_document(family_documents))
+        )
+
+    return current_documents
+
+
+def sort_documents(documents, sort_by="_ts", sort_order="DESC"):
+    reverse = str(sort_order).lower() != "asc"
+
+    def sort_key(document_item):
+        value = document_item.get(sort_by)
+        if sort_by == "_ts":
+            return _safe_int(value)
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.lower()
+        if isinstance(value, (int, float)):
+            return value
+        return str(value).lower()
+
+    return sorted(documents or [], key=sort_key, reverse=reverse)
+
+
+def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None):
+    cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+
+    if public_workspace_id is not None:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.public_workspace_id = @public_workspace_id
+        """
+        parameters = [
+            {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif group_id is not None:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.group_id = @group_id
+                OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                OR EXISTS(SELECT VALUE s FROM s IN c.shared_group_ids WHERE STARTSWITH(s, @group_id_prefix))
+        """
+        parameters = [
+            {"name": "@group_id", "value": group_id},
+            {"name": "@group_id_prefix", "value": f"{group_id},"}
+        ]
+    else:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.user_id = @user_id
+                OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
+        """
+        parameters = [
+            {"name": "@user_id", "value": user_id},
+            {"name": "@user_id_prefix", "value": f"{user_id},"}
+        ]
+
+    return list(
+        cosmos_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+
+
+def _build_archived_scope_value(scope_value):
+    return f"{ARCHIVED_SCOPE_PREFIX}{scope_value}"
+
+
+def set_document_chunk_visibility(document_item, active=True):
+    document_id = document_item.get("id")
+    group_id = document_item.get("group_id")
+    public_workspace_id = document_item.get("public_workspace_id")
+    user_id = document_item.get("user_id")
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    if not document_id:
+        return 0
+
+    search_client = _get_search_client(group_id=group_id, public_workspace_id=public_workspace_id)
+    chunk_results = list(
+        search_client.search(
+            search_text="*",
+            filter=f"document_id eq '{document_id}'",
+        )
+    )
+
+    if not chunk_results:
+        return 0
+
+    documents_to_update = []
+    for chunk_item in chunk_results:
+        if is_public_workspace:
+            chunk_item["public_workspace_id"] = public_workspace_id if active else _build_archived_scope_value(public_workspace_id)
+        elif is_group:
+            chunk_item["group_id"] = group_id if active else _build_archived_scope_value(group_id)
+            chunk_item["shared_group_ids"] = document_item.get("shared_group_ids", []) if active else []
+        else:
+            chunk_item["user_id"] = user_id if active else _build_archived_scope_value(user_id)
+            chunk_item["shared_user_ids"] = document_item.get("shared_user_ids", []) if active else []
+
+        documents_to_update.append(chunk_item)
+
+    search_client.upload_documents(documents=documents_to_update)
+    return len(documents_to_update)
+
+
+def normalize_document_revision_families(user_id, group_id=None, public_workspace_id=None, document_items=None):
+    documents = document_items if document_items is not None else _query_accessible_documents(
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+    families = {}
+    changes_made = False
+
+    for document_item in documents:
+        family_key = _get_document_family_key(document_item)
+        families.setdefault(family_key, []).append(document_item)
+
+    for family_documents in families.values():
+        if len(family_documents) <= 1:
+            continue
+
+        current_document = _choose_current_document(family_documents)
+        revision_family_id = current_document.get("revision_family_id") or current_document.get("id")
+
+        for document_item in family_documents:
+            expected_current = document_item.get("id") == current_document.get("id")
+            update_occurred = False
+
+            if document_item.get("revision_family_id") != revision_family_id:
+                document_item["revision_family_id"] = revision_family_id
+                update_occurred = True
+
+            if document_item.get("is_current_version") != expected_current:
+                document_item["is_current_version"] = expected_current
+                update_occurred = True
+
+            if expected_current:
+                if document_item.get("search_visibility_state") == "archived":
+                    set_document_chunk_visibility(document_item, active=True)
+                    document_item["search_visibility_state"] = "active"
+                    update_occurred = True
+                elif document_item.get("search_visibility_state") != "active":
+                    document_item["search_visibility_state"] = "active"
+                    update_occurred = True
+            else:
+                if document_item.get("search_visibility_state") != "archived":
+                    set_document_chunk_visibility(document_item, active=False)
+                    document_item["search_visibility_state"] = "archived"
+                    update_occurred = True
+
+            if update_occurred:
+                cosmos_container.upsert_item(document_item)
+                changes_made = True
+
+    return changes_made
+
+
+def _get_document_family_items_from_document(document_item, user_id, group_id=None, public_workspace_id=None):
+    cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+    file_name = document_item.get("file_name")
+
+    if public_workspace_id is not None:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.file_name = @file_name
+                AND c.public_workspace_id = @public_workspace_id
+        """
+        parameters = [
+            {"name": "@file_name", "value": file_name},
+            {"name": "@public_workspace_id", "value": public_workspace_id},
+        ]
+    elif group_id is not None:
+        owner_group_id = document_item.get("group_id") or group_id
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.file_name = @file_name
+                AND c.group_id = @group_id
+        """
+        parameters = [
+            {"name": "@file_name", "value": file_name},
+            {"name": "@group_id", "value": owner_group_id},
+        ]
+    else:
+        owner_user_id = document_item.get("user_id") or user_id
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.file_name = @file_name
+                AND c.user_id = @owner_user_id
+        """
+        parameters = [
+            {"name": "@file_name", "value": file_name},
+            {"name": "@owner_user_id", "value": owner_user_id},
+        ]
+
+    return list(
+        cosmos_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+
+
+def _build_carried_forward_metadata(document_item, is_group=False):
+    carried_forward = {
+        "title": document_item.get("title"),
+        "abstract": document_item.get("abstract"),
+        "keywords": document_item.get("keywords"),
+        "publication_date": document_item.get("publication_date"),
+        "authors": ensure_list(document_item.get("authors")),
+        "document_classification": document_item.get("document_classification", "None"),
+        "tags": document_item.get("tags", []),
+    }
+
+    if is_group:
+        carried_forward["shared_group_ids"] = document_item.get("shared_group_ids", [])
+    else:
+        carried_forward["shared_user_ids"] = document_item.get("shared_user_ids", [])
+
+    return carried_forward
     
 def create_document(file_name, user_id, document_id, num_file_chunks, status, group_id=None, public_workspace_id=None):
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -78,14 +623,56 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
         ]
 
     try:
-        existing_document = list(
+        existing_documents = list(
             cosmos_container.query_items(
                 query=query,
                 parameters=parameters,
                 enable_cross_partition_query=True
             )
         )
-        version = existing_document[0]['version'] + 1 if existing_document else 1
+        existing_documents = sorted(existing_documents, key=_document_revision_sort_key, reverse=True)
+
+        latest_existing_document = existing_documents[0] if existing_documents else None
+        revision_family_id = latest_existing_document.get('revision_family_id') if latest_existing_document else None
+        revision_family_id = revision_family_id or (latest_existing_document.get('id') if latest_existing_document else document_id)
+        version = (_safe_int(latest_existing_document.get('version')) + 1) if latest_existing_document else 1
+
+        if latest_existing_document:
+            carried_forward = _build_carried_forward_metadata(
+                latest_existing_document,
+                is_group=is_group,
+            )
+        else:
+            carried_forward = {
+                'title': None,
+                'abstract': None,
+                'keywords': None,
+                'publication_date': None,
+                'authors': [],
+                'document_classification': 'None',
+                'tags': [],
+                'shared_group_ids': [] if is_group else None,
+                'shared_user_ids': [] if not is_group else None,
+            }
+
+        for existing_document in existing_documents:
+            update_existing_document = False
+
+            if existing_document.get('revision_family_id') != revision_family_id:
+                existing_document['revision_family_id'] = revision_family_id
+                update_existing_document = True
+
+            if existing_document.get('is_current_version') is not False:
+                existing_document['is_current_version'] = False
+                update_existing_document = True
+
+            if existing_document.get('search_visibility_state') != 'archived':
+                set_document_chunk_visibility(existing_document, active=False)
+                existing_document['search_visibility_state'] = 'archived'
+                update_existing_document = True
+
+            if update_existing_document:
+                cosmos_container.upsert_item(existing_document)
         
         if is_public_workspace:
             document_metadata = {
@@ -98,12 +685,26 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "upload_date": current_time,
                 "last_updated": current_time,
                 "version": version,
+                "revision_family_id": revision_family_id,
+                "is_current_version": True,
+                "search_visibility_state": "active",
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "None",
+                "document_classification": carried_forward.get("document_classification", "None"),
+                "enhanced_citations": False,
                 "type": "document_metadata",
                 "public_workspace_id": public_workspace_id,
-                "user_id": user_id
+                "user_id": user_id,
+                "blob_container": _get_blob_container_name(public_workspace_id=public_workspace_id),
+                "blob_path": None,
+                "archived_blob_path": None,
+                "blob_path_mode": None,
+                "title": carried_forward.get("title"),
+                "abstract": carried_forward.get("abstract"),
+                "keywords": carried_forward.get("keywords"),
+                "publication_date": carried_forward.get("publication_date"),
+                "authors": ensure_list(carried_forward.get("authors")),
+                "tags": carried_forward.get("tags", [])
             }
         elif is_group:
             document_metadata = {
@@ -116,12 +717,26 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "upload_date": current_time,
                 "last_updated": current_time,
                 "version": version,
+                "revision_family_id": revision_family_id,
+                "is_current_version": True,
+                "search_visibility_state": "active",
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "None",
+                "document_classification": carried_forward.get("document_classification", "None"),
+                "enhanced_citations": False,
                 "type": "document_metadata",
                 "group_id": group_id,
-                "shared_group_ids": []
+                "blob_container": _get_blob_container_name(group_id=group_id),
+                "blob_path": None,
+                "archived_blob_path": None,
+                "blob_path_mode": None,
+                "shared_group_ids": carried_forward.get("shared_group_ids", []),
+                "title": carried_forward.get("title"),
+                "abstract": carried_forward.get("abstract"),
+                "keywords": carried_forward.get("keywords"),
+                "publication_date": carried_forward.get("publication_date"),
+                "authors": ensure_list(carried_forward.get("authors")),
+                "tags": carried_forward.get("tags", [])
             }
         else:
             document_metadata = {
@@ -134,12 +749,28 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "upload_date": current_time,
                 "last_updated": current_time,
                 "version": version,
+                "revision_family_id": revision_family_id,
+                "is_current_version": True,
+                "search_visibility_state": "active",
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "None",
+                "document_classification": carried_forward.get("document_classification", "None"),
+                "enhanced_citations": False,
                 "type": "document_metadata",
                 "user_id": user_id,
-                "shared_user_ids": []
+                "blob_container": _get_blob_container_name(),
+                "blob_path": None,
+                "archived_blob_path": None,
+                "blob_path_mode": None,
+                "shared_user_ids": carried_forward.get("shared_user_ids", []),
+                "embedding_tokens": 0,
+                "embedding_model_deployment_name": None,
+                "title": carried_forward.get("title"),
+                "abstract": carried_forward.get("abstract"),
+                "keywords": carried_forward.get("keywords"),
+                "publication_date": carried_forward.get("publication_date"),
+                "authors": ensure_list(carried_forward.get("authors")),
+                "tags": carried_forward.get("tags", [])
             }
 
         cosmos_container.upsert_item(document_metadata)
@@ -220,7 +851,7 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
             user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
             content=f"Document metadata retrieved: {document_items}."
         )
-        return document_items[0] if document_items else None
+        return _normalize_document_enhanced_citations(document_items[0]) if document_items else None
 
     except Exception as e:
         print(f"Error retrieving document metadata: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
@@ -237,6 +868,8 @@ def save_video_chunk(
 ):
     """
     Saves one 30-second video chunk to the search index, with separate fields for transcript and OCR.
+    Video Indexer insights (keywords, labels, topics, audio effects, emotions, sentiments) are 
+    already appended to page_text_content for searchability.
     The chunk_id is built from document_id and the integer second offset to ensure a valid key.
     """
     from functions_debug import debug_print
@@ -257,7 +890,14 @@ def save_video_chunk(
         # 1) generate embedding on the transcript text
         try:
             debug_print(f"[VIDEO CHUNK] Generating embedding for transcript text")
-            embedding = generate_embedding(page_text_content)
+            result = generate_embedding(page_text_content)
+            
+            # Handle both tuple (new) and single value (backward compatibility)
+            if isinstance(result, tuple):
+                embedding, _ = result  # Ignore token_usage for now
+            else:
+                embedding = result
+                
             debug_print(f"[VIDEO CHUNK] Embedding generated successfully")
             print(f"[VideoChunk] EMBEDDING OK for {document_id}@{start_time}", flush=True)
         except Exception as e:
@@ -289,6 +929,7 @@ def save_video_chunk(
                 "chunk_sequence":       seconds,
                 "upload_date":          current_time,
                 "version":              version,
+                "document_tags":        meta.get('tags', []) if meta else []
             }
 
             if is_group:
@@ -392,7 +1033,7 @@ def process_video_document(
     
     debug_print(f"[VIDEO INDEXER] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
 
-    # Validate required settings
+    # Validate required settings for managed identity authentication
     required_settings = {
         "video_indexer_endpoint": vi_ep,
         "video_indexer_location": vi_loc,
@@ -401,6 +1042,8 @@ def process_video_document(
         "video_indexer_subscription_id": settings.get("video_indexer_subscription_id"),
         "video_indexer_account_name": settings.get("video_indexer_account_name")
     }
+    
+    debug_print(f"[VIDEO INDEXER] Managed identity authentication requires: endpoint, location, account_id, resource_group, subscription_id, account_name")
     
     missing_settings = [key for key, value in required_settings.items() if not value]
     if missing_settings:
@@ -424,14 +1067,24 @@ def process_video_document(
     # 2) Upload video to Indexer
     try:
         url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos"
-        params = {"accessToken": token, "name": original_filename}
+        
+        # Use the access token in the URL parameters
+        headers = {}
+        # Request comprehensive indexing including audio transcript
+        params = {
+            "accessToken": token, 
+            "name": original_filename,
+            "indexingPreset": "Default",  # Includes video + audio insights
+            "streamingPreset": "NoStreaming"
+        }
+        debug_print(f"[VIDEO INDEXER] Using managed identity access token authentication")
         
         debug_print(f"[VIDEO INDEXER] Upload URL: {url}")
         debug_print(f"[VIDEO INDEXER] Upload params: {params}")
         debug_print(f"[VIDEO INDEXER] Starting file upload for: {original_filename}")
         
         with open(temp_file_path, "rb") as f:
-            resp = requests.post(url, params=params, files={"file": f})
+            resp = requests.post(url, params=params, headers=headers, files={"file": f})
         
         debug_print(f"[VIDEO INDEXER] Upload response status: {resp.status_code}")
         
@@ -480,10 +1133,14 @@ def process_video_document(
         return 0
 
     # 3) Poll until ready
+    # Don't use includeInsights parameter - it filters what's returned. We want everything.
     index_url = (
         f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
-        f"?accessToken={token}&includeInsights=Transcript&includeStreamingUrls=false"
+        f"?accessToken={token}"
     )
+    poll_headers = {}
+    debug_print(f"[VIDEO INDEXER] Using managed identity access token for polling")
+    debug_print(f"[VIDEO INDEXER] Requesting full insights (no filtering)")
     
     debug_print(f"[VIDEO INDEXER] Index polling URL: {index_url}")
     debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID: {vid}")
@@ -496,7 +1153,7 @@ def process_video_document(
         debug_print(f"[VIDEO INDEXER] Polling attempt {poll_count}/{max_polls}")
         
         try:
-            r = requests.get(index_url)
+            r = requests.get(index_url, headers=poll_headers)
             debug_print(f"[VIDEO INDEXER] Poll response status: {r.status_code}")
             
             if r.status_code in (401, 404):
@@ -559,14 +1216,137 @@ def process_video_document(
 
     # 4) Extract transcript & OCR
     debug_print(f"[VIDEO INDEXER] Starting insights extraction for video ID: {vid}")
+    debug_print(f"[VIDEO INDEXER] Extracting insights from completed video")
     
     insights = info.get("insights", {})
+    if not insights:
+        debug_print(f"[VIDEO INDEXER] ERROR: No insights object in response")
+        debug_print(f"[VIDEO INDEXER] Response info keys: {list(info.keys())}")
+        return 0
+    
+    # Get video duration from insights (primary) or info (fallback)
+    video_duration = insights.get("duration") or info.get("duration", "00:00:00")
+    video_duration_seconds = to_seconds(video_duration) if video_duration else 0
+    debug_print(f"[VIDEO INDEXER] Video duration: {video_duration} ({video_duration_seconds} seconds)")
+    
+    # Log raw insights JSON for complete visibility (debug only)
+    import json
+    print(f"\n[VIDEO] ===== RAW INSIGHTS JSON =====", flush=True)
+    try:
+        insights_json = json.dumps(insights, indent=2, ensure_ascii=False)
+        # Truncate if too long (show first 10000 chars)
+        if len(insights_json) > 10000:
+            print(f"{insights_json[:10000]}\n... (truncated, total length: {len(insights_json)} chars)", flush=True)
+        else:
+            print(insights_json, flush=True)
+    except Exception as e:
+        print(f"[VIDEO] Could not serialize insights to JSON: {e}", flush=True)
+    print(f"[VIDEO] ===== END RAW INSIGHTS =====\n", flush=True)
+    
+    debug_print(f"[VIDEO INDEXER] Insights keys available: {list(insights.keys())}")
+    print(f"[VIDEO] Available insight types: {', '.join(list(insights.keys())[:15])}...", flush=True)
+    
+    # Debug: Show sample structures for all insight types
+    print(f"\n[VIDEO] ===== SAMPLE DATA STRUCTURES =====", flush=True)
+    
+    transcript_data = insights.get("transcript", [])
+    if transcript_data:
+        print(f"[VIDEO] TRANSCRIPT sample: {transcript_data[0]}", flush=True)
+    
+    ocr_data = insights.get("ocr", [])
+    if ocr_data:
+        print(f"[VIDEO] OCR sample: {ocr_data[0]}", flush=True)
+    
+    keywords_data_debug = insights.get("keywords", [])
+    if keywords_data_debug:
+        print(f"[VIDEO] KEYWORDS sample: {keywords_data_debug[0]}", flush=True)
+    
+    labels_data_debug = insights.get("labels", [])
+    if labels_data_debug:
+        debug_print(f"[VIDEO INDEXER] LABELS sample: {labels_data_debug[0]}")
+    
+    topics_data_debug = insights.get("topics", [])
+    if topics_data_debug:
+        debug_print(f"[VIDEO INDEXER] TOPICS sample: {topics_data_debug[0]}")
+    
+    audio_effects_data_debug = insights.get("audioEffects", [])
+    if audio_effects_data_debug:
+        debug_print(f"[VIDEO INDEXER] AUDIO_EFFECTS sample: {audio_effects_data_debug[0]}")
+    
+    emotions_data_debug = insights.get("emotions", [])
+    if emotions_data_debug:
+        debug_print(f"[VIDEO INDEXER] EMOTIONS sample: {emotions_data_debug[0]}")
+    
+    sentiments_data_debug = insights.get("sentiments", [])
+    if sentiments_data_debug:
+        debug_print(f"[VIDEO INDEXER] SENTIMENTS sample: {sentiments_data_debug[0]}")
+    
+    scenes_data_debug = insights.get("scenes", [])
+    if scenes_data_debug:
+        debug_print(f"[VIDEO INDEXER] SCENES sample: {scenes_data_debug[0]}")
+    
+    shots_data_debug = insights.get("shots", [])
+    if shots_data_debug:
+        debug_print(f"[VIDEO INDEXER] SHOTS sample: {shots_data_debug[0]}")
+    
+    faces_data_debug = insights.get("faces", [])
+    if faces_data_debug:
+        debug_print(f"[VIDEO INDEXER] FACES sample: {faces_data_debug[0]}")
+    
+    namedLocations_data_debug = insights.get("namedLocations", [])
+    if namedLocations_data_debug:
+        debug_print(f"[VIDEO INDEXER] NAMED_LOCATIONS sample: {namedLocations_data_debug[0]}")
+    
+    # Check for other potential label sources
+    brands_data_debug = insights.get("brands", [])
+    if brands_data_debug:
+        debug_print(f"[VIDEO INDEXER] BRANDS sample: {brands_data_debug[0]}")
+    
+    visualContentModeration_debug = insights.get("visualContentModeration", [])
+    if visualContentModeration_debug:
+        debug_print(f"[VIDEO INDEXER] VISUAL_MODERATION sample: {visualContentModeration_debug[0]}")
+    
+    # Show total counts for all available insights
+    print(f"[VIDEO] COUNTS:", flush=True)
+    for key in insights.keys():
+        value = insights.get(key, [])
+        if isinstance(value, list):
+            print(f"  {key}: {len(value)} items", flush=True)
+    
+    print(f"[VIDEO] ===== END SAMPLE DATA =====\n", flush=True)
+    
     transcript = insights.get("transcript", [])
     ocr_blocks = insights.get("ocr", [])
+    keywords_data = insights.get("keywords", [])
+    labels_data = insights.get("labels", [])
+    topics_data = insights.get("topics", [])
+    audio_effects_data = insights.get("audioEffects", [])
+    emotions_data = insights.get("emotions", [])
+    sentiments_data = insights.get("sentiments", [])
+    named_people_data = insights.get("namedPeople", [])
+    named_locations_data = insights.get("namedLocations", [])
+    speakers_data = insights.get("speakers", [])
+    detected_objects_data = insights.get("detectedObjects", [])
     
     debug_print(f"[VIDEO INDEXER] Transcript segments found: {len(transcript)}")
     debug_print(f"[VIDEO INDEXER] OCR blocks found: {len(ocr_blocks)}")
+    debug_print(f"[VIDEO INDEXER] Keywords found: {len(keywords_data)}")
+    debug_print(f"[VIDEO INDEXER] Labels found: {len(labels_data)}")
+    debug_print(f"[VIDEO INDEXER] Topics found: {len(topics_data)}")
+    debug_print(f"[VIDEO INDEXER] Audio effects found: {len(audio_effects_data)}")
+    debug_print(f"[VIDEO INDEXER] Emotions found: {len(emotions_data)}")
+    debug_print(f"[VIDEO INDEXER] Sentiments found: {len(sentiments_data)}")
+    debug_print(f"[VIDEO INDEXER] Named people found: {len(named_people_data)}")
+    debug_print(f"[VIDEO INDEXER] Named locations found: {len(named_locations_data)}")
+    debug_print(f"[VIDEO INDEXER] Speakers found: {len(speakers_data)}")
+    debug_print(f"[VIDEO INDEXER] Detected objects found: {len(detected_objects_data)}")
+    debug_print(f"[VIDEO INDEXER] Insights extracted - Transcript: {len(transcript)}, OCR: {len(ocr_blocks)}, Keywords: {len(keywords_data)}, Labels: {len(labels_data)}, Topics: {len(topics_data)}, Audio: {len(audio_effects_data)}, Emotions: {len(emotions_data)}, Sentiments: {len(sentiments_data)}, People: {len(named_people_data)}, Locations: {len(named_locations_data)}, Objects: {len(detected_objects_data)}")
+    
+    if len(transcript) == 0:
+        debug_print(f"[VIDEO INDEXER] WARNING: No transcript data available")
+        debug_print(f"[VIDEO INDEXER] Available insights keys: {list(insights.keys())}")
 
+    # Build context lists for transcript and OCR
     speech_context = [
         {"text": seg["text"].strip(), "start": inst["start"]}
         for seg in transcript if seg.get("text", "").strip()
@@ -577,45 +1357,368 @@ def process_video_document(
         for block in ocr_blocks if block.get("text", "").strip()
         for inst in block.get("instances", [])
     ]
+    
+    # Build context lists for additional insights
+    keywords_context = [
+        {"text": kw.get("name", ""), "start": inst["start"]}
+        for kw in keywords_data if kw.get("name", "").strip()
+        for inst in kw.get("instances", [])
+    ]
+    labels_context = [
+        {"text": label.get("name", ""), "start": inst["start"]}
+        for label in labels_data if label.get("name", "").strip()
+        for inst in label.get("instances", [])
+    ]
+    topics_context = [
+        {"text": topic.get("name", ""), "start": inst["start"]}
+        for topic in topics_data if topic.get("name", "").strip()
+        for inst in topic.get("instances", [])
+    ]
+    audio_effects_context = [
+        {"text": ae.get("audioEffectType", ""), "start": inst["start"]}
+        for ae in audio_effects_data if ae.get("audioEffectType", "").strip()
+        for inst in ae.get("instances", [])
+    ]
+    emotions_context = [
+        {"text": emotion.get("type", ""), "start": inst["start"]}
+        for emotion in emotions_data if emotion.get("type", "").strip()
+        for inst in emotion.get("instances", [])
+    ]
+    sentiments_context = [
+        {"text": sentiment.get("sentimentType", ""), "start": inst["start"]}
+        for sentiment in sentiments_data if sentiment.get("sentimentType", "").strip()
+        for inst in sentiment.get("instances", [])
+    ]
+    named_people_context = [
+        {"text": person.get("name", ""), "start": inst["start"]}
+        for person in named_people_data if person.get("name", "").strip()
+        for inst in person.get("instances", [])
+    ]
+    named_locations_context = [
+        {"text": location.get("name", ""), "start": inst["start"]}
+        for location in named_locations_data if location.get("name", "").strip()
+        for inst in location.get("instances", [])
+    ]
+    detected_objects_context = [
+        {"text": obj.get("type", ""), "start": inst["start"]}
+        for obj in detected_objects_data if obj.get("type", "").strip()
+        for inst in obj.get("instances", [])
+    ]
 
     debug_print(f"[VIDEO INDEXER] Speech context items: {len(speech_context)}")
     debug_print(f"[VIDEO INDEXER] OCR context items: {len(ocr_context)}")
+    debug_print(f"[VIDEO INDEXER] Keywords context items: {len(keywords_context)}")
+    debug_print(f"[VIDEO INDEXER] Labels context items: {len(labels_context)}")
+    debug_print(f"[VIDEO INDEXER] Topics context items: {len(topics_context)}")
+    debug_print(f"[VIDEO INDEXER] Audio effects context items: {len(audio_effects_context)}")
+    debug_print(f"[VIDEO INDEXER] Emotions context items: {len(emotions_context)}")
+    debug_print(f"[VIDEO INDEXER] Sentiments context items: {len(sentiments_context)}")
+    debug_print(f"[VIDEO INDEXER] Named people context items: {len(named_people_context)}")
+    debug_print(f"[VIDEO INDEXER] Named locations context items: {len(named_locations_context)}")
+    debug_print(f"[VIDEO INDEXER] Detected objects context items: {len(detected_objects_context)}")
+    debug_print(f"[VIDEO INDEXER] Context built - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}, People: {len(named_people_context)}, Locations: {len(named_locations_context)}, Objects: {len(detected_objects_context)}")
+    
+    if len(speech_context) > 0:
+        debug_print(f"[VIDEO INDEXER] First speech item: {speech_context[0]}")
 
+    # Sort all contexts by timestamp
     speech_context.sort(key=lambda x: to_seconds(x["start"]))
     ocr_context.sort(key=lambda x: to_seconds(x["start"]))
+    keywords_context.sort(key=lambda x: to_seconds(x["start"]))
+    labels_context.sort(key=lambda x: to_seconds(x["start"]))
+    topics_context.sort(key=lambda x: to_seconds(x["start"]))
+    audio_effects_context.sort(key=lambda x: to_seconds(x["start"]))
+    emotions_context.sort(key=lambda x: to_seconds(x["start"]))
+    sentiments_context.sort(key=lambda x: to_seconds(x["start"]))
+    named_people_context.sort(key=lambda x: to_seconds(x["start"]))
+    named_locations_context.sort(key=lambda x: to_seconds(x["start"]))
+    detected_objects_context.sort(key=lambda x: to_seconds(x["start"]))
 
     debug_print(f"[VIDEO INDEXER] Starting 30-second chunk processing")
+    debug_print(f"[VIDEO INDEXER] Starting time-based chunk processing - Video duration: {video_duration_seconds}s")
+    debug_print(f"[VIDEO INDEXER] Available insights - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}")
+    
+    # Check if we have any content at all
+    total_insights = len(speech_context) + len(ocr_context) + len(keywords_context) + len(labels_context) + len(topics_context) + len(audio_effects_context) + len(emotions_context) + len(sentiments_context) + len(named_people_context) + len(named_locations_context) + len(detected_objects_context)
+    
+    if total_insights == 0 and video_duration_seconds == 0:
+        debug_print(f"[VIDEO INDEXER] ERROR: No insights and no duration information available")
+        update_callback(status="VIDEO: no data available")
+        return 0
+    
+    # Use video duration to create time-based chunks, even without speech
+    if video_duration_seconds == 0:
+        debug_print(f"[VIDEO INDEXER] WARNING: No video duration available, estimating from insights")
+        # Estimate duration from the latest timestamp in any insight
+        max_timestamp = 0
+        for context_list in [speech_context, ocr_context, keywords_context, labels_context, topics_context, audio_effects_context, emotions_context, sentiments_context, named_people_context, named_locations_context, detected_objects_context]:
+            if context_list:
+                max_ts = max(to_seconds(item["start"]) for item in context_list)
+                max_timestamp = max(max_timestamp, max_ts)
+        video_duration_seconds = max_timestamp + 30  # Add buffer
+        debug_print(f"[VIDEO INDEXER] Estimated duration: {video_duration_seconds}s")
+    
+    # Create chunks based on time intervals (30 seconds each)
+    num_chunks = int(video_duration_seconds / 30) + (1 if video_duration_seconds % 30 > 0 else 0)
+    debug_print(f"[VIDEO INDEXER] Will create {num_chunks} time-based chunks")
     
     total = 0
     idx_s = 0
     n_s = len(speech_context)
     idx_o = 0
     n_o = len(ocr_context)
+    idx_kw = 0
+    n_kw = len(keywords_context)
+    idx_lbl = 0
+    n_lbl = len(labels_context)
+    idx_top = 0
+    n_top = len(topics_context)
+    idx_ae = 0
+    n_ae = len(audio_effects_context)
+    idx_emo = 0
+    n_emo = len(emotions_context)
+    idx_sent = 0
+    n_sent = len(sentiments_context)
+    idx_people = 0
+    n_people = len(named_people_context)
+    idx_locations = 0
+    n_locations = len(named_locations_context)
+    idx_objects = 0
+    n_objects = len(detected_objects_context)
+    
+    # Process chunks in 30-second intervals based on video duration
+    for chunk_num in range(num_chunks):
+        window_start = chunk_num * 30.0
+        window_end = min((chunk_num + 1) * 30.0, video_duration_seconds)
+        
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} window: {window_start}s to {window_end}s")
 
-    while idx_s < n_s:
-        window_start = to_seconds(speech_context[idx_s]["start"])
-        window_end = window_start + 30.0
-
+        # Collect speech for this time window
         speech_lines = []
-        while idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) <= window_end:
-            speech_lines.append(speech_context[idx_s]["text"])
+        while idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) < window_end:
+            if to_seconds(speech_context[idx_s]["start"]) >= window_start:
+                speech_lines.append(speech_context[idx_s]["text"])
             idx_s += 1
+            if idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) >= window_end:
+                break
+        
+        # Reset idx_s if we went past window_end
+        while idx_s > 0 and idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) >= window_end:
+            idx_s -= 1
+        if idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) < window_end:
+            idx_s += 1
+        
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} speech lines collected: {len(speech_lines)}")
 
+        # Collect OCR for this time window
         ocr_lines = []
-        while idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) <= window_end:
-            ocr_lines.append(ocr_context[idx_o]["text"])
+        while idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) < window_end:
+            if to_seconds(ocr_context[idx_o]["start"]) >= window_start:
+                ocr_lines.append(ocr_context[idx_o]["text"])
             idx_o += 1
+            if idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) >= window_end:
+                break
+        
+        while idx_o > 0 and idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) >= window_end:
+            idx_o -= 1
+        if idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) < window_end:
+            idx_o += 1
+        
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} OCR lines collected: {len(ocr_lines)}")
+        
+        # Collect keywords for this time window
+        chunk_keywords = []
+        while idx_kw < n_kw and to_seconds(keywords_context[idx_kw]["start"]) < window_end:
+            if to_seconds(keywords_context[idx_kw]["start"]) >= window_start:
+                chunk_keywords.append(keywords_context[idx_kw]["text"])
+            idx_kw += 1
+            if idx_kw < n_kw and to_seconds(keywords_context[idx_kw]["start"]) >= window_end:
+                break
+        while idx_kw > 0 and idx_kw < n_kw and to_seconds(keywords_context[idx_kw]["start"]) >= window_end:
+            idx_kw -= 1
+        if idx_kw < n_kw and to_seconds(keywords_context[idx_kw]["start"]) < window_end:
+            idx_kw += 1
+        
+        # Collect labels for this time window
+        chunk_labels = []
+        while idx_lbl < n_lbl and to_seconds(labels_context[idx_lbl]["start"]) < window_end:
+            if to_seconds(labels_context[idx_lbl]["start"]) >= window_start:
+                chunk_labels.append(labels_context[idx_lbl]["text"])
+            idx_lbl += 1
+            if idx_lbl < n_lbl and to_seconds(labels_context[idx_lbl]["start"]) >= window_end:
+                break
+        while idx_lbl > 0 and idx_lbl < n_lbl and to_seconds(labels_context[idx_lbl]["start"]) >= window_end:
+            idx_lbl -= 1
+        if idx_lbl < n_lbl and to_seconds(labels_context[idx_lbl]["start"]) < window_end:
+            idx_lbl += 1
+        
+        # Collect topics for this time window
+        chunk_topics = []
+        while idx_top < n_top and to_seconds(topics_context[idx_top]["start"]) < window_end:
+            if to_seconds(topics_context[idx_top]["start"]) >= window_start:
+                chunk_topics.append(topics_context[idx_top]["text"])
+            idx_top += 1
+            if idx_top < n_top and to_seconds(topics_context[idx_top]["start"]) >= window_end:
+                break
+        while idx_top > 0 and idx_top < n_top and to_seconds(topics_context[idx_top]["start"]) >= window_end:
+            idx_top -= 1
+        if idx_top < n_top and to_seconds(topics_context[idx_top]["start"]) < window_end:
+            idx_top += 1
+        
+        # Collect audio effects for this time window
+        chunk_audio_effects = []
+        while idx_ae < n_ae and to_seconds(audio_effects_context[idx_ae]["start"]) < window_end:
+            if to_seconds(audio_effects_context[idx_ae]["start"]) >= window_start:
+                chunk_audio_effects.append(audio_effects_context[idx_ae]["text"])
+            idx_ae += 1
+            if idx_ae < n_ae and to_seconds(audio_effects_context[idx_ae]["start"]) >= window_end:
+                break
+        while idx_ae > 0 and idx_ae < n_ae and to_seconds(audio_effects_context[idx_ae]["start"]) >= window_end:
+            idx_ae -= 1
+        if idx_ae < n_ae and to_seconds(audio_effects_context[idx_ae]["start"]) < window_end:
+            idx_ae += 1
+        
+        # Collect emotions for this time window
+        chunk_emotions = []
+        while idx_emo < n_emo and to_seconds(emotions_context[idx_emo]["start"]) < window_end:
+            if to_seconds(emotions_context[idx_emo]["start"]) >= window_start:
+                chunk_emotions.append(emotions_context[idx_emo]["text"])
+            idx_emo += 1
+            if idx_emo < n_emo and to_seconds(emotions_context[idx_emo]["start"]) >= window_end:
+                break
+        while idx_emo > 0 and idx_emo < n_emo and to_seconds(emotions_context[idx_emo]["start"]) >= window_end:
+            idx_emo -= 1
+        if idx_emo < n_emo and to_seconds(emotions_context[idx_emo]["start"]) < window_end:
+            idx_emo += 1
+        
+        # Collect sentiments for this time window
+        chunk_sentiments = []
+        while idx_sent < n_sent and to_seconds(sentiments_context[idx_sent]["start"]) < window_end:
+            if to_seconds(sentiments_context[idx_sent]["start"]) >= window_start:
+                chunk_sentiments.append(sentiments_context[idx_sent]["text"])
+            idx_sent += 1
+            if idx_sent < n_sent and to_seconds(sentiments_context[idx_sent]["start"]) >= window_end:
+                break
+        while idx_sent > 0 and idx_sent < n_sent and to_seconds(sentiments_context[idx_sent]["start"]) >= window_end:
+            idx_sent -= 1
+        if idx_sent < n_sent and to_seconds(sentiments_context[idx_sent]["start"]) < window_end:
+            idx_sent += 1
+        
+        # Collect named people for this time window
+        chunk_people = []
+        while idx_people < n_people and to_seconds(named_people_context[idx_people]["start"]) < window_end:
+            if to_seconds(named_people_context[idx_people]["start"]) >= window_start:
+                chunk_people.append(named_people_context[idx_people]["text"])
+            idx_people += 1
+            if idx_people < n_people and to_seconds(named_people_context[idx_people]["start"]) >= window_end:
+                break
+        while idx_people > 0 and idx_people < n_people and to_seconds(named_people_context[idx_people]["start"]) >= window_end:
+            idx_people -= 1
+        if idx_people < n_people and to_seconds(named_people_context[idx_people]["start"]) < window_end:
+            idx_people += 1
+        
+        # Collect named locations for this time window
+        chunk_locations = []
+        while idx_locations < n_locations and to_seconds(named_locations_context[idx_locations]["start"]) < window_end:
+            if to_seconds(named_locations_context[idx_locations]["start"]) >= window_start:
+                chunk_locations.append(named_locations_context[idx_locations]["text"])
+            idx_locations += 1
+            if idx_locations < n_locations and to_seconds(named_locations_context[idx_locations]["start"]) >= window_end:
+                break
+        while idx_locations > 0 and idx_locations < n_locations and to_seconds(named_locations_context[idx_locations]["start"]) >= window_end:
+            idx_locations -= 1
+        if idx_locations < n_locations and to_seconds(named_locations_context[idx_locations]["start"]) < window_end:
+            idx_locations += 1
+        
+        # Collect detected objects for this time window
+        chunk_objects = []
+        while idx_objects < n_objects and to_seconds(detected_objects_context[idx_objects]["start"]) < window_end:
+            if to_seconds(detected_objects_context[idx_objects]["start"]) >= window_start:
+                chunk_objects.append(detected_objects_context[idx_objects]["text"])
+            idx_objects += 1
+            if idx_objects < n_objects and to_seconds(detected_objects_context[idx_objects]["start"]) >= window_end:
+                break
+        while idx_objects > 0 and idx_objects < n_objects and to_seconds(detected_objects_context[idx_objects]["start"]) >= window_end:
+            idx_objects -= 1
+        if idx_objects < n_objects and to_seconds(detected_objects_context[idx_objects]["start"]) < window_end:
+            idx_objects += 1
 
-        start_ts = speech_context[total]["start"]
+        # Format timestamp as HH:MM:SS
+        hours = int(window_start // 3600)
+        minutes = int((window_start % 3600) // 60)
+        seconds = int(window_start % 60)
+        start_ts = f"{hours:02d}:{minutes:02d}:{seconds:02d}.000"
+        
         chunk_text = " ".join(speech_lines).strip()
         ocr_text = " ".join(ocr_lines).strip()
-
-        debug_print(f"[VIDEO INDEXER] Processing chunk {total + 1} at timestamp {start_ts}")
-        debug_print(f"[VIDEO INDEXER] Chunk text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
         
-        update_callback(current_file_chunk=total+1, status=f"VIDEO: saving chunk @ {start_ts}")
+        # Build enhanced chunk text with insights appended
+        if chunk_text:
+            # Has speech - append insights to it
+            insight_parts = []
+            if chunk_keywords:
+                insight_parts.append(f"Keywords: {', '.join(chunk_keywords)}")
+            if chunk_labels:
+                insight_parts.append(f"Visual elements: {', '.join(chunk_labels)}")
+            if chunk_topics:
+                insight_parts.append(f"Topics: {', '.join(chunk_topics)}")
+            if chunk_audio_effects:
+                insight_parts.append(f"Audio: {', '.join(chunk_audio_effects)}")
+            if chunk_emotions:
+                insight_parts.append(f"Emotions: {', '.join(chunk_emotions)}")
+            if chunk_sentiments:
+                insight_parts.append(f"Sentiment: {', '.join(chunk_sentiments)}")
+            if chunk_people:
+                insight_parts.append(f"People: {', '.join(chunk_people)}")
+            if chunk_locations:
+                insight_parts.append(f"Locations: {', '.join(chunk_locations)}")
+            if chunk_objects:
+                insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
+            
+            if insight_parts:
+                chunk_text = f"{chunk_text}\n\n{' | '.join(insight_parts)}"
+                debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} enhanced with {len(insight_parts)} insight types")
+        else:
+            # No speech - build chunk text from other insights
+            insight_parts = []
+            if ocr_text:
+                insight_parts.append(f"Visual text: {ocr_text}")
+            if chunk_keywords:
+                insight_parts.append(f"Keywords: {', '.join(chunk_keywords)}")
+            if chunk_labels:
+                insight_parts.append(f"Visual elements: {', '.join(chunk_labels)}")
+            if chunk_topics:
+                insight_parts.append(f"Topics: {', '.join(chunk_topics)}")
+            if chunk_audio_effects:
+                insight_parts.append(f"Audio: {', '.join(chunk_audio_effects)}")
+            if chunk_emotions:
+                insight_parts.append(f"Emotions: {', '.join(chunk_emotions)}")
+            if chunk_sentiments:
+                insight_parts.append(f"Sentiment: {', '.join(chunk_sentiments)}")
+            if chunk_people:
+                insight_parts.append(f"People: {', '.join(chunk_people)}")
+            if chunk_locations:
+                insight_parts.append(f"Locations: {', '.join(chunk_locations)}")
+            if chunk_objects:
+                insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
+            
+            chunk_text = ". ".join(insight_parts) if insight_parts else "[No content detected]"
+            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
+
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} insights - Keywords: {len(chunk_keywords)}, Labels: {len(chunk_labels)}, Topics: {len(chunk_topics)}, Audio: {len(chunk_audio_effects)}, Emotions: {len(chunk_emotions)}, Sentiments: {len(chunk_sentiments)}, People: {len(chunk_people)}, Locations: {len(chunk_locations)}, Objects: {len(chunk_objects)}")
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1}: timestamp={start_ts}, text_len={len(chunk_text)}, ocr_len={len(ocr_text)}, insights={len(chunk_keywords)}kw/{len(chunk_labels)}lbl/{len(chunk_topics)}top")
+        
+        # Skip truly empty chunks (no content at all)
+        if chunk_text == "[No content detected]" and not any([chunk_keywords, chunk_labels, chunk_topics, chunk_audio_effects, chunk_emotions, chunk_sentiments, chunk_people, chunk_locations, chunk_objects]):
+            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} is completely empty, skipping")
+            continue
+        
+        update_callback(current_file_chunk=chunk_num+1, status=f"VIDEO: saving chunk @ {start_ts}")
         
         try:
+            debug_print(f"[VIDEO INDEXER] Calling save_video_chunk for chunk {chunk_num + 1}")
             save_video_chunk(
                 page_text_content=chunk_text,
                 ocr_chunk_text=ocr_text,
@@ -625,12 +1728,13 @@ def process_video_document(
                 document_id=document_id,
                 group_id=group_id
             )
-            debug_print(f"[VIDEO INDEXER] Chunk {total + 1} saved successfully")
+            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} saved successfully")
+            total += 1
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Failed to save chunk {total + 1}: {str(e)}")
-            print(f"[VIDEO] CHUNK SAVE ERROR for chunk {total + 1}: {e}", flush=True)
-            
-        total += 1
+            debug_print(f"[VIDEO INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
+            debug_print(f"[VIDEO INDEXER] Chunk save traceback: {traceback.format_exc()}")
+    
+    debug_print(f"[VIDEO INDEXER] Chunk processing complete - Total chunks saved: {total}")
 
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
@@ -885,7 +1989,7 @@ def update_document(**kwargs):
                     continue # Skip direct assignment if increment was used
                 existing_document[key] = value
                 update_occurred = True
-                if key in ['title', 'authors', 'file_name', 'document_classification']:
+                if key in ['title', 'authors', 'file_name', 'document_classification', 'tags']:
                     updated_fields_requiring_chunk_sync.add(key)
                 # Propagate shared_group_ids to group chunks if changed
                 if is_group and key == 'shared_group_ids':
@@ -934,11 +2038,13 @@ def update_document(**kwargs):
                         chunk_updates['title'] = existing_document.get('title')
                     if 'authors' in updated_fields_requiring_chunk_sync:
                          # Ensure authors is a list for the chunk metadata if needed
-                        chunk_updates['author'] = existing_document.get('authors')
+                        chunk_updates['author'] = ensure_list(existing_document.get('authors'))
                     if 'file_name' in updated_fields_requiring_chunk_sync:
                         chunk_updates['file_name'] = existing_document.get('file_name')
                     if 'document_classification' in updated_fields_requiring_chunk_sync:
                         chunk_updates['document_classification'] = existing_document.get('document_classification')
+                    if 'tags' in updated_fields_requiring_chunk_sync:
+                        chunk_updates['document_tags'] = existing_document.get('tags', [])
 
                     if chunk_updates: # Only call update if there's something to change
                         # Build the call parameters
@@ -1088,7 +2194,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     try:
         #status = f"Generating embedding for page {page_number}"
         #update_document(document_id=document_id, user_id=user_id, status=status)
-        embedding = generate_embedding(page_text_content)
+        embedding, token_usage = generate_embedding(page_text_content)
     except Exception as e:
         print(f"Error generating embedding for page {page_number} of document {document_id}: {e}")
         raise
@@ -1100,15 +2206,50 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         chunk_id = f"{sanitized_doc_id}_{page_number}"
         chunk_keywords = []
         chunk_summary = ""
-        author = []
-        title = ""
+        author = ensure_list(metadata.get('authors')) if metadata else []
+        title = metadata.get('title', '') if metadata else ''
+        document_classification = metadata.get('document_classification', 'None') if metadata else 'None'
+        
+        # Check if this document has vision analysis and append it to chunk_text
+        vision_analysis = metadata.get('vision_analysis')
+        enhanced_chunk_text = page_text_content
+        
+        if vision_analysis:
+            debug_print(f"[SAVE_CHUNKS] Document {document_id} has vision analysis, appending to chunk_text")
+            # Format vision analysis as structured text for better searchability
+            vision_text_parts = []
+            vision_text_parts.append("\n\n=== AI Vision Analysis ===")
+            vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
+            
+            if vision_analysis.get('description'):
+                vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
+            
+            if vision_analysis.get('objects'):
+                objects_list = vision_analysis['objects']
+                if isinstance(objects_list, list):
+                    vision_text_parts.append(f"\nObjects Detected: {', '.join(objects_list)}")
+                else:
+                    vision_text_parts.append(f"\nObjects Detected: {objects_list}")
+            
+            if vision_analysis.get('text'):
+                vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
+            
+            if vision_analysis.get('analysis'):
+                vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
+            
+            vision_text = "\n".join(vision_text_parts)
+            enhanced_chunk_text = page_text_content + vision_text
+            
+            debug_print(f"[SAVE_CHUNKS] Enhanced chunk_text length: {len(enhanced_chunk_text)} (original: {len(page_text_content)}, vision: {len(vision_text)})")
+        else:
+            debug_print(f"[SAVE_CHUNKS] No vision analysis found for document {document_id}")
 
         if is_public_workspace:
             chunk_document = {
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": page_text_content,
+                "chunk_text": enhanced_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -1116,7 +2257,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "None",
+                "document_classification": document_classification,
+                "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -1129,7 +2271,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": page_text_content,
+                "chunk_text": enhanced_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -1137,7 +2279,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "None",
+                "document_classification": document_classification,
+                "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -1152,7 +2295,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": page_text_content,
+                "chunk_text": enhanced_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -1160,7 +2303,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "None",
+                "document_classification": document_classification,
+                "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -1188,6 +2332,296 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     except Exception as e:
         print(f"Error uploading chunk document for document {document_id}: {e}")
         raise
+    
+    # Return token usage information for accumulation
+    return token_usage
+
+def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_workspace_id=None):
+    """
+    Save multiple chunks at once using batch embedding and batch AI Search upload.
+    Significantly faster than calling save_chunks() per chunk.
+
+    Args:
+        chunks_data: list of dicts with keys: page_text_content, page_number, file_name
+        user_id: The user ID
+        document_id: The document ID
+        group_id: Optional group ID for group documents
+        public_workspace_id: Optional public workspace ID for public documents
+
+    Returns:
+        dict with 'total_tokens', 'prompt_tokens', 'model_deployment_name'
+    """
+    from functions_content import generate_embeddings_batch
+
+    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    # Retrieve metadata once for all chunks
+    try:
+        if is_public_workspace:
+            metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                public_workspace_id=public_workspace_id
+            )
+        elif is_group:
+            metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=group_id
+            )
+        else:
+            metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id
+            )
+
+        if not metadata:
+            raise ValueError(f"No metadata found for document {document_id}")
+
+        version = metadata.get("version") if metadata.get("version") else 1
+    except Exception as e:
+        log_event(f"[save_chunks_batch] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
+        raise
+
+    # Generate all embeddings in batches
+    texts = [c['page_text_content'] for c in chunks_data]
+    try:
+        embedding_results = generate_embeddings_batch(texts)
+    except Exception as e:
+        log_event(f"[save_chunks_batch] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
+        raise
+
+    # Check for vision analysis once
+    vision_analysis = metadata.get('vision_analysis')
+    vision_text = ""
+    if vision_analysis:
+        vision_text_parts = []
+        vision_text_parts.append("\n\n=== AI Vision Analysis ===")
+        vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
+        if vision_analysis.get('description'):
+            vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
+        if vision_analysis.get('objects'):
+            objects_list = vision_analysis['objects']
+            if isinstance(objects_list, list):
+                vision_text_parts.append(f"\nObjects Detected: {', '.join(objects_list)}")
+            else:
+                vision_text_parts.append(f"\nObjects Detected: {objects_list}")
+        if vision_analysis.get('text'):
+            vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
+        if vision_analysis.get('analysis'):
+            vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
+        vision_text = "\n".join(vision_text_parts)
+
+    # Build all chunk documents
+    chunk_documents = []
+    total_token_usage = {'total_tokens': 0, 'prompt_tokens': 0, 'model_deployment_name': None}
+
+    for idx, chunk_info in enumerate(chunks_data):
+        embedding, token_usage = embedding_results[idx]
+        page_number = chunk_info['page_number']
+        file_name = chunk_info['file_name']
+        page_text_content = chunk_info['page_text_content']
+
+        if token_usage:
+            total_token_usage['total_tokens'] += token_usage.get('total_tokens', 0)
+            total_token_usage['prompt_tokens'] += token_usage.get('prompt_tokens', 0)
+            if not total_token_usage['model_deployment_name']:
+                total_token_usage['model_deployment_name'] = token_usage.get('model_deployment_name')
+
+        chunk_id = f"{document_id}_{page_number}"
+        enhanced_chunk_text = page_text_content + vision_text if vision_text else page_text_content
+
+        if is_public_workspace:
+            chunk_document = {
+                "id": chunk_id,
+                "document_id": document_id,
+                "chunk_id": str(page_number),
+                "chunk_text": enhanced_chunk_text,
+                "embedding": embedding,
+                "file_name": file_name,
+                "chunk_keywords": [],
+                "chunk_summary": "",
+                "page_number": page_number,
+                "author": [],
+                "title": "",
+                "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
+                "chunk_sequence": page_number,
+                "upload_date": current_time,
+                "version": version,
+                "public_workspace_id": public_workspace_id
+            }
+        elif is_group:
+            shared_group_ids = metadata.get('shared_group_ids', []) if metadata else []
+            chunk_document = {
+                "id": chunk_id,
+                "document_id": document_id,
+                "chunk_id": str(page_number),
+                "chunk_text": enhanced_chunk_text,
+                "embedding": embedding,
+                "file_name": file_name,
+                "chunk_keywords": [],
+                "chunk_summary": "",
+                "page_number": page_number,
+                "author": [],
+                "title": "",
+                "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
+                "chunk_sequence": page_number,
+                "upload_date": current_time,
+                "version": version,
+                "group_id": group_id,
+                "shared_group_ids": shared_group_ids
+            }
+        else:
+            shared_user_ids = metadata.get('shared_user_ids', []) if metadata else []
+            chunk_document = {
+                "id": chunk_id,
+                "document_id": document_id,
+                "chunk_id": str(page_number),
+                "chunk_text": enhanced_chunk_text,
+                "embedding": embedding,
+                "file_name": file_name,
+                "chunk_keywords": [],
+                "chunk_summary": "",
+                "page_number": page_number,
+                "author": [],
+                "title": "",
+                "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
+                "chunk_sequence": page_number,
+                "upload_date": current_time,
+                "version": version,
+                "user_id": user_id,
+                "shared_user_ids": shared_user_ids
+            }
+
+        chunk_documents.append(chunk_document)
+
+    # Batch upload to AI Search
+    try:
+        if is_public_workspace:
+            search_client = CLIENTS["search_client_public"]
+        elif is_group:
+            search_client = CLIENTS["search_client_group"]
+        else:
+            search_client = CLIENTS["search_client_user"]
+
+        # Upload in sub-batches of 32 to avoid request size limits
+        upload_batch_size = 32
+        for i in range(0, len(chunk_documents), upload_batch_size):
+            sub_batch = chunk_documents[i:i + upload_batch_size]
+            search_client.upload_documents(documents=sub_batch)
+
+    except Exception as e:
+        log_event(f"[save_chunks_batch] Error uploading batch to AI Search for document {document_id}: {e}", level=logging.ERROR)
+        raise
+
+    return total_token_usage
+
+def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
+    """
+    Retrieve keywords and abstract from a document for creating metadata citations.
+    Used to enhance search results with additional context from document metadata.
+    
+    Args:
+        document_id: The document's unique identifier
+        user_id: User ID (for personal documents)
+        group_id: Group ID (for group documents) 
+        public_workspace_id: Public workspace ID (for public documents)
+        
+    Returns:
+        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+    
+    # Determine the correct container
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
+
+    try:
+        # Read the document directly by ID
+        document_item = cosmos_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Extract keywords and abstract
+        keywords = document_item.get('keywords', [])
+        abstract = document_item.get('abstract', '')
+        
+        # Return only if we have actual content
+        if keywords or abstract:
+            return {
+                'keywords': keywords if keywords else [],
+                'abstract': abstract if abstract else '',
+                'file_name': document_item.get('file_name', 'Unknown')
+            }
+        
+        return None
+        
+    except Exception as e:
+        # Document not found or error reading - return None silently
+        # This is expected for documents without metadata
+        return None
+
+def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
+    """
+    Retrieve keywords and abstract from a document for creating metadata citations.
+    Used to enhance search results with additional context from document metadata.
+    
+    Args:
+        document_id: The document's unique identifier
+        user_id: User ID (for personal documents)
+        group_id: Group ID (for group documents) 
+        public_workspace_id: Public workspace ID (for public documents)
+        
+    Returns:
+        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+    
+    # Determine the correct container
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
+
+    try:
+        # Read the document directly by ID
+        document_item = cosmos_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Extract keywords and abstract
+        keywords = document_item.get('keywords', [])
+        abstract = document_item.get('abstract', '')
+        
+        # Return only if we have actual content
+        if keywords or abstract:
+            return {
+                'keywords': keywords if keywords else [],
+                'abstract': abstract if abstract else '',
+                'file_name': document_item.get('file_name', 'Unknown')
+            }
+        
+        return None
+        
+    except Exception as e:
+        # Document not found or error reading - return None silently
+        # This is expected for documents without metadata
+        return None
 
 def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None):
     is_group = group_id is not None
@@ -1269,6 +2703,7 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
             'author',
             'title',
             'document_classification',
+            'document_tags',
             'shared_user_ids'
         ]
         
@@ -1278,7 +2713,10 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
             
         for field in updatable_fields:
             if field in kwargs:
-                chunk_item[field] = kwargs[field]
+                if field == 'author':
+                    chunk_item[field] = ensure_list(kwargs[field])
+                else:
+                    chunk_item[field] = kwargs[field]
 
         search_client.upload_documents(documents=[chunk_item])
 
@@ -1337,62 +2775,14 @@ def chunk_pdf(input_pdf_path: str, max_pages: int = 500) -> list:
     return chunks
 
 def get_documents(user_id, group_id=None, public_workspace_id=None):
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # Choose the correct cosmos_container and query parameters
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    if is_public_workspace:
-        query = """
-            SELECT TOP 1 * 
-            FROM c
-            WHERE c.public_workspace_id = @public_workspace_id
-        """
-        parameters = [
-            {"name": "@public_workspace_id", "value": public_workspace_id}
-        ]
-    elif is_group:
-        query = """
-            SELECT *
-            FROM c
-            WHERE c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
-        """
-        parameters = [
-            {"name": "@group_id", "value": group_id}
-        ]
-    else:
-        query = """
-            SELECT *
-            FROM c
-            WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
-        """
-        parameters = [
-            {"name": "@user_id", "value": user_id}
-        ]
-    
     try:       
-        documents = list(
-            cosmos_container.query_items(
-                query=query,
-                parameters=parameters, 
-                enable_cross_partition_query=True
-            )
+        documents = _query_accessible_documents(
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
         )
-
-        latest_documents = {}
-
-        for doc in documents:
-            file_name = doc['file_name']
-            if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
-                latest_documents[file_name] = doc
-                
-        return jsonify({"documents": list(latest_documents.values())}), 200
+        current_documents = sort_documents(select_current_documents(documents))
+        return jsonify({"documents": current_documents}), 200
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
 
@@ -1462,74 +2852,25 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
         if not document_results:
             return jsonify({'error': 'Document not found or access denied'}), 404
 
-        return jsonify(document_results[0]), 200
+        return jsonify(_normalize_document_enhanced_citations(document_results[0])), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500
 
 def get_latest_version(document_id, user_id, group_id=None, public_workspace_id=None):
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # Choose the correct cosmos_container and query parameters
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    if is_public_workspace:
-        query = """
-            SELECT TOP 1 * 
-            FROM c
-            WHERE c.id = @document_id 
-                AND c.public_workspace_id = @public_workspace_id
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@public_workspace_id", "value": public_workspace_id}
-        ]
-    elif is_group:
-        query = """
-            SELECT c.version
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@group_id", "value": group_id}
-        ]
-    else:
-        query = """
-            SELECT c.version
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@user_id", "value": user_id}
-        ]
-
     try:
-        results = list(
-            cosmos_container.query_items(
-                query=query, 
-                parameters=parameters, 
-                enable_cross_partition_query=True
-            )
+        target_document = _get_documents_container(
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        ).read_item(item=document_id, partition_key=document_id)
+        family_documents = _get_document_family_items_from_document(
+            target_document,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
         )
-
-        if results:
-            return results[0]['version']
-        else:
-            return None
-
+        current_document = _choose_current_document(family_documents)
+        return current_document.get('version') if current_document else None
     except Exception as e:
         return None
 
@@ -1599,56 +2940,42 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
         if not document_results:
             return jsonify({'error': 'Document version not found'}), 404
 
-        return jsonify(document_results[0]), 200
+        return jsonify(_normalize_document_enhanced_citations(document_results[0])), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
 
-def delete_from_blob_storage(document_id, user_id, file_name, group_id=None, public_workspace_id=None):
+def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_workspace_id=None):
     """Delete a document from Azure Blob Storage."""
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-    
-    if is_public_workspace:
-        storage_account_container_name = storage_account_public_documents_container_name
-    elif is_group:
-        storage_account_container_name = storage_account_group_documents_container_name
-    else:
-        storage_account_container_name = storage_account_user_documents_container_name
-    
+
     # Check if enhanced citations are enabled and blob client is available
     settings = get_settings()
     enable_enhanced_citations = settings.get("enable_enhanced_citations", False)
-    
+
     if not enable_enhanced_citations:
         return  # No need to proceed if enhanced citations are disabled
-    
+
     try:
-        # Construct the blob path using the same format as in upload_to_blob
-        blob_path = f"{group_id}/{file_name}" if is_group else f"{user_id}/{file_name}"
-        
-        # Get the blob client
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
         if not blob_service_client:
-            print(f"Warning: Enhanced citations enabled but blob service client not configured.")
+            print("Warning: Enhanced citations enabled but blob service client not configured.")
             return
-            
-        # Get container client
-        container_client = blob_service_client.get_container_client(storage_account_container_name)
-        if not container_client:
-            print(f"Warning: Could not get container client for {storage_account_container_name}")
-            return
-            
-        # Get blob client
-        blob_client = container_client.get_blob_client(blob_path)
-        
-        # Delete the blob if it exists
-        if blob_client.exists():
-            blob_client.delete_blob()
-            print(f"Successfully deleted blob at {blob_path}")
-        else:
-            print(f"No blob found at {blob_path} to delete")
-            
+
+        delete_targets = get_document_blob_delete_targets(
+            document_item,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+
+        for container_name, blob_path in delete_targets:
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+            if blob_client.exists():
+                blob_client.delete_blob()
+                print(f"Successfully deleted blob at {container_name}/{blob_path}")
+            else:
+                print(f"No blob found at {container_name}/{blob_path} to delete")
+
     except Exception as e:
         print(f"Error deleting document from blob storage: {str(e)}")
         # Don't raise the exception, as we want the Cosmos DB deletion to proceed
@@ -1675,6 +3002,39 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             item=document_id,
             partition_key=document_id
         )
+        
+        # Log document deletion transaction before deletion
+        try:
+            from functions_activity_logging import log_document_deletion_transaction
+            
+            # Determine workspace type
+            if public_workspace_id:
+                workspace_type = 'public'
+            elif group_id:
+                workspace_type = 'group'
+            else:
+                workspace_type = 'personal'
+            
+            # Extract file extension from filename
+            file_name = document_item.get('file_name', '')
+            file_ext = os.path.splitext(file_name)[-1].lower() if file_name else None
+            
+            # Log the deletion transaction with document metadata
+            log_document_deletion_transaction(
+                user_id=user_id,
+                document_id=document_id,
+                workspace_type=workspace_type,
+                file_name=file_name,
+                file_type=file_ext,
+                page_count=document_item.get('number_of_pages'),
+                version=document_item.get('version'),
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+                document_metadata=document_item  # Store full metadata
+            )
+        except Exception as log_error:
+            print(f"⚠️  Warning: Failed to log document deletion transaction: {log_error}")
+            # Don't fail the deletion if logging fails
 
         if is_public_workspace:
             if document_item.get('public_workspace_id') != public_workspace_id:
@@ -1688,63 +3048,14 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             if document_item.get('user_id') != user_id:
                 raise Exception("Unauthorized access to document - only document owner can delete")
             
-        # Get the file name from the document to use for blob deletion
-        file_name = document_item.get('file_name')
-        file_ext = os.path.splitext(file_name)[1].lower() if file_name else None
-
-        # First try to delete video from Video Indexer if applicable
-        if file_ext in ('.mp4', '.mov', '.avi', '.mkv', '.flv'):
-            debug_print(f"[VIDEO INDEXER DELETE] Video file detected, attempting Video Indexer deletion for document: {document_id}")
-            try:
-                settings = get_settings()
-                vi_ep = settings.get("video_indexer_endpoint")
-                vi_loc = settings.get("video_indexer_location")
-                vi_acc = settings.get("video_indexer_account_id")
-                
-                debug_print(f"[VIDEO INDEXER DELETE] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
-                
-                if not all([vi_ep, vi_loc, vi_acc]):
-                    debug_print(f"[VIDEO INDEXER DELETE] Missing video indexer configuration, skipping deletion")
-                    print("Missing video indexer configuration; skipping Video Indexer deletion.")
-                else:
-                    debug_print(f"[VIDEO INDEXER DELETE] Acquiring authentication token")
-                    token = get_video_indexer_account_token(settings)
-                    debug_print(f"[VIDEO INDEXER DELETE] Token acquired successfully")
-                    
-                    # You need to store the video ID in the document metadata when uploading
-                    video_id = document_item.get("video_indexer_id")
-                    debug_print(f"[VIDEO INDEXER DELETE] Video ID from document metadata: {video_id}")
-                    
-                    if video_id:
-                        delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
-                        debug_print(f"[VIDEO INDEXER DELETE] Delete URL: {delete_url}")
-                        
-                        resp = requests.delete(delete_url, timeout=60)
-                        debug_print(f"[VIDEO INDEXER DELETE] Delete response status: {resp.status_code}")
-                        
-                        if resp.status_code != 200:
-                            debug_print(f"[VIDEO INDEXER DELETE] Delete response text: {resp.text}")
-                            
-                        resp.raise_for_status()
-                        debug_print(f"[VIDEO INDEXER DELETE] Successfully deleted video ID: {video_id}")
-                        print(f"Deleted video from Video Indexer: {video_id}")
-                    else:
-                        debug_print(f"[VIDEO INDEXER DELETE] No video_indexer_id found in document metadata")
-                        print("No video_indexer_id found in document metadata; skipping Video Indexer deletion.")
-            except requests.exceptions.RequestException as e:
-                debug_print(f"[VIDEO INDEXER DELETE] Request error: {str(e)}")
-                if hasattr(e, 'response') and e.response is not None:
-                    debug_print(f"[VIDEO INDEXER DELETE] Error response status: {e.response.status_code}")
-                    debug_print(f"[VIDEO INDEXER DELETE] Error response text: {e.response.text}")
-                print(f"Error deleting video from Video Indexer: {e}")
-            except Exception as e:
-                debug_print(f"[VIDEO INDEXER DELETE] Unexpected error: {str(e)}")
-                print(f"Error deleting video from Video Indexer: {e}")
-
-        # Second try to delete from blob storage
+        # Delete from blob storage
         try:
-            if file_name:
-                delete_from_blob_storage(document_id, user_id, file_name, group_id, public_workspace_id)
+            delete_from_blob_storage(
+                document_item,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
         except Exception as blob_error:
             # Log the error but continue with Cosmos DB deletion
             print(f"Error deleting from blob storage (continuing with document deletion): {str(blob_error)}")
@@ -1759,6 +3070,81 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
         raise Exception("Document not found")
     except Exception as e:
         raise
+
+
+def delete_document_revision(user_id, document_id, delete_mode="all_versions", group_id=None, public_workspace_id=None):
+    if delete_mode not in {"all_versions", "current_only"}:
+        raise ValueError("Unsupported delete mode")
+
+    cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+    target_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+
+    family_documents = _get_document_family_items_from_document(
+        target_document,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    current_document = _choose_current_document(family_documents)
+    target_is_current = current_document and current_document.get('id') == document_id
+
+    if delete_mode == "all_versions":
+        deleted_document_ids = []
+        for family_document in family_documents:
+            delete_document(
+                user_id=user_id,
+                document_id=family_document['id'],
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            delete_document_chunks(
+                document_id=family_document['id'],
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            deleted_document_ids.append(family_document['id'])
+
+        return {
+            'deleted_mode': 'all_versions',
+            'deleted_document_ids': deleted_document_ids,
+            'promoted_document_id': None,
+        }
+
+    delete_document(
+        user_id=user_id,
+        document_id=document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    delete_document_chunks(
+        document_id=document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    promoted_document_id = None
+    if target_is_current:
+        remaining_documents = [doc for doc in family_documents if doc.get('id') != document_id]
+        if remaining_documents:
+            promoted_document = _choose_current_document(remaining_documents)
+            promoted_document['revision_family_id'] = target_document.get('revision_family_id') or promoted_document.get('revision_family_id') or promoted_document.get('id')
+            promoted_document['is_current_version'] = True
+            promoted_document['search_visibility_state'] = 'active'
+            _promote_document_blob_to_current_alias(
+                promoted_document,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            set_document_chunk_visibility(promoted_document, active=True)
+            cosmos_container.upsert_item(promoted_document)
+            promoted_document_id = promoted_document.get('id')
+
+    return {
+        'deleted_mode': 'current_only',
+        'deleted_document_ids': [document_id],
+        'promoted_document_id': promoted_document_id,
+    }
 
 def delete_document_chunks(document_id, group_id=None, public_workspace_id=None):
     """Delete document chunks from Azure Cognitive Search index."""
@@ -1805,66 +3191,26 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
     )
 
 def get_document_versions(user_id, document_id, group_id=None, public_workspace_id=None):
-    """ Get all versions of a document for a user."""
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    if is_public_workspace:
-        query = """
-            SELECT c.id, c.file_name, c.version, c.upload_date
-            FROM c
-            WHERE c.id = @document_id 
-                AND c.public_workspace_id = @public_workspace_id
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@public_workspace_id", "value": public_workspace_id}
-        ]
-    elif is_group:
-        query = """
-            SELECT c.id, c.file_name, c.version, c.upload_date
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@group_id", "value": group_id}
-        ]
-    else:
-        query = """
-            SELECT c.id, c.file_name, c.version, c.upload_date
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@user_id", "value": user_id}
-        ]
-
     try:
-        versions_results = list(
-            cosmos_container.query_items(
-                query=query, 
-                parameters=parameters, 
-                enable_cross_partition_query=True
-            )
+        cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+        target_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+        family_documents = _get_document_family_items_from_document(
+            target_document,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
         )
-
-        if not versions_results:
-            return []
-        return versions_results
+        sorted_family = sorted(family_documents, key=_document_revision_sort_key, reverse=True)
+        return [
+            {
+                'id': doc.get('id'),
+                'file_name': doc.get('file_name'),
+                'version': doc.get('version'),
+                'upload_date': doc.get('upload_date'),
+                'is_current_version': doc.get('id') == _choose_current_document(family_documents).get('id'),
+            }
+            for doc in sorted_family
+        ]
 
     except Exception as e:
         return []
@@ -1886,7 +3232,7 @@ def detect_doc_type(document_id, user_id=None):
             pass
         else:
             return "personal", doc_item['user_id']
-    except:
+    except Exception as ex:
         pass
 
     try:
@@ -1895,7 +3241,7 @@ def detect_doc_type(document_id, user_id=None):
             partition_key=document_id
         )
         return "group", group_doc_item['group_id']
-    except:
+    except Exception as ex:
         pass
 
     try:
@@ -1904,7 +3250,7 @@ def detect_doc_type(document_id, user_id=None):
             partition_key=document_id
         )
         return "public", public_doc_item['public_workspace_id']
-    except:
+    except Exception as ex:
         pass
 
     return None
@@ -1969,7 +3315,7 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
             "document_id": document_id,
             "user_id": user_id,
             "title": metadata.get('title'),
-            "authors": metadata.get('authors'),
+            "authors": ensure_list(metadata.get('authors')),
             "abstract": metadata.get('abstract'),
             "keywords": metadata.get('keywords'),
             "publication_date": metadata.get('publication_date'),
@@ -2493,22 +3839,33 @@ def clean_json_codeFence(response_content: str) -> str:
 
 def ensure_list(value, delimiters=r"[;,]"):
     """
-    Ensures the provided value is returned as a list of strings.
-    - If `value` is already a list, it is returned as-is.
-    - If `value` is a string, it is split on the given delimiters
-      (default: commas and semicolons).
-    - Otherwise, return an empty list.
+    Ensures the provided value is returned as a list of non-empty strings.
+    - If `value` is a list/tuple/set, items are normalized one by one.
+    - If `value` is a string, it is split on the given delimiters.
+    - If `value` is any other scalar, it is coerced to a single string item.
+    - Null and blank items are removed.
     """
-    if isinstance(value, list):
-        return value
-    elif isinstance(value, str):
-        # Split on the given delimiters (commas, semicolons, etc.)
-        items = re.split(delimiters, value)
-        # Strip whitespace and remove empty strings
-        items = [item.strip() for item in items if item.strip()]
-        return items
-    else:
+    if value is None:
         return []
+
+    if isinstance(value, str):
+        raw_items = re.split(delimiters, value)
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+
+    items = []
+    for raw_item in raw_items:
+        if raw_item is None:
+            continue
+
+        normalized_item = raw_item if isinstance(raw_item, str) else str(raw_item)
+        normalized_item = normalized_item.strip()
+        if normalized_item:
+            items.append(normalized_item)
+
+    return items
 
 def is_effectively_empty(value):
     """
@@ -2536,30 +3893,326 @@ def estimate_word_count(text):
         return 0
     return len(text.split())
 
+def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
+    """
+    Analyze image using GPT-4 Vision or similar multimodal model.
+    
+    Args:
+        image_path: Path to image file
+        user_id: User ID for logging
+        document_id: Document ID for tracking
+        settings: Application settings
+        
+    Returns:
+        dict: {
+            'description': 'AI-generated image description',
+            'objects': ['list', 'of', 'detected', 'objects'],
+            'text': 'any text visible in image',
+            'analysis': 'detailed analysis'
+        } or None if vision analysis is disabled or fails
+    """
+    debug_print(f"[VISION_ANALYSIS_V2] Function entry - document_id: {document_id}, user_id: {user_id}")
+
+        
+    try:
+        # Convert image to base64
+        with open(image_path, 'rb') as img_file:
+            image_bytes = img_file.read()
+            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        image_size = len(image_bytes)
+        base64_size = len(base64_image)
+        debug_print(f"[VISION_ANALYSIS] Image conversion for {document_id}:")
+        debug_print(f"  Image path: {image_path}")
+        debug_print(f"  Original size: {image_size:,} bytes ({image_size / 1024 / 1024:.2f} MB)")
+        debug_print(f"  Base64 size: {base64_size:,} characters")
+        
+        # Determine image mime type
+        mime_type = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
+        debug_print(f"  MIME type: {mime_type}")
+        
+        # Get vision model settings
+        vision_model = settings.get('multimodal_vision_model', 'gpt-4o')
+        debug_print(f"[VISION_ANALYSIS] Vision model selected: {vision_model}")
+        
+        if not vision_model:
+            print(f"Warning: Multi-modal vision enabled but no model selected")
+            return None
+        
+        # Initialize client (reuse GPT configuration)
+        enable_gpt_apim = settings.get('enable_gpt_apim', False)
+        debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
+        
+        if enable_gpt_apim:
+            api_version = settings.get('azure_apim_gpt_api_version')
+            endpoint = settings.get('azure_apim_gpt_endpoint')
+            debug_print(f"[VISION_ANALYSIS] APIM Configuration:")
+            debug_print(f"  Endpoint: {endpoint}")
+            debug_print(f"  API Version: {api_version}")
+            
+            gpt_client = AzureOpenAI(
+                api_version=api_version,
+                azure_endpoint=endpoint,
+                api_key=settings.get('azure_apim_gpt_subscription_key')
+            )
+        else:
+            # Use managed identity or key
+            auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+            api_version = settings.get('azure_openai_gpt_api_version')
+            endpoint = settings.get('azure_openai_gpt_endpoint')
+            
+            debug_print(f"[VISION_ANALYSIS] Direct Azure OpenAI Configuration:")
+            debug_print(f"  Endpoint: {endpoint}")
+            debug_print(f"  API Version: {api_version}")
+            debug_print(f"  Auth Type: {auth_type}")
+            
+            if auth_type == 'managed_identity':
+                token_provider = get_bearer_token_provider(
+                    DefaultAzureCredential(), 
+                    cognitive_services_scope
+                )
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    azure_ad_token_provider=token_provider
+                )
+            else:
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    api_key=settings.get('azure_openai_gpt_key')
+                )
+        
+        # Create vision prompt
+        print(f"Analyzing image with vision model: {vision_model}")
+        
+        # Determine which token parameter to use based on model type
+        # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+        vision_model_lower = vision_model.lower()
+        
+        debug_print(f"[VISION_ANALYSIS] Building API request parameters:")
+        debug_print(f"  Model (lowercase): {vision_model_lower}")
+        
+        # Check which parameter will be used
+        uses_completion_tokens = ('o1' in vision_model_lower or 'o3' in vision_model_lower or 'gpt-5' in vision_model_lower)
+        debug_print(f"  Uses max_completion_tokens: {uses_completion_tokens}")
+        debug_print(f"  Detection: o1={('o1' in vision_model_lower)}, o3={('o3' in vision_model_lower)}, gpt-5={('gpt-5' in vision_model_lower)}")
+        
+        # Build prompt - GPT-5/reasoning models need explicit JSON instruction when using response_format
+        if uses_completion_tokens:
+            prompt_text = """Analyze this image and respond in JSON format with the following structure:
+{
+  "description": "A detailed description of what you see in the image",
+  "objects": ["list", "of", "objects", "people", "or", "notable", "elements"],
+  "text": "Any visible text extracted from the image (OCR)",
+  "analysis": "Contextual analysis, insights, or interpretation"
+}
+
+Ensure your entire response is valid JSON. Include all four keys even if some are empty strings or empty arrays."""
+        else:
+            prompt_text = """Analyze this image and provide:
+1. A detailed description of what you see
+2. List any objects, people, or notable elements
+3. Extract any visible text (OCR)
+4. Provide contextual analysis or insights
+
+Format your response as JSON with these keys:
+{
+  "description": "...",
+  "objects": ["...", "..."],
+  "text": "...",
+  "analysis": "..."
+}"""
+        
+        api_params = {
+            "model": vision_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt_text
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ About to send request to Azure OpenAI with {vision_model}")
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ Using parameter: {'max_completion_tokens' if uses_completion_tokens else 'max_tokens'} = 1000")
+        debug_print(f"[VISION_ANALYSIS] Sending request to Azure OpenAI...")
+        debug_print(f"  Message content types: text + image_url")
+        debug_print(f"  Image data URL prefix: data:{mime_type};base64,... ({base64_size} chars)")
+        
+        response = gpt_client.chat.completions.create(**api_params)
+        
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ Response received successfully from {vision_model}")
+        
+        debug_print(f"[VISION_ANALYSIS] Response received from {vision_model}")
+        debug_print(f"  Response ID: {response.id if hasattr(response, 'id') else 'N/A'}")
+        debug_print(f"  Model used: {response.model if hasattr(response, 'model') else 'N/A'}")
+        if hasattr(response, 'usage'):
+            debug_print(f"  Token usage: prompt={response.usage.prompt_tokens if hasattr(response.usage, 'prompt_tokens') else 'N/A'}, completion={response.usage.completion_tokens if hasattr(response.usage, 'completion_tokens') else 'N/A'}, total={response.usage.total_tokens if hasattr(response.usage, 'total_tokens') else 'N/A'}")
+        
+        # Debug the response structure to understand why content might be empty
+        debug_print(f"[VISION_ANALYSIS] Response object inspection:")
+        debug_print(f"  Response type: {type(response)}")
+        debug_print(f"  Has choices: {hasattr(response, 'choices')}")
+        if hasattr(response, 'choices') and len(response.choices) > 0:
+            debug_print(f"  Number of choices: {len(response.choices)}")
+            debug_print(f"  First choice type: {type(response.choices[0])}")
+            debug_print(f"  Has message: {hasattr(response.choices[0], 'message')}")
+            if hasattr(response.choices[0], 'message'):
+                debug_print(f"  Message type: {type(response.choices[0].message)}")
+                debug_print(f"  Message content type: {type(response.choices[0].message.content)}")
+                debug_print(f"  Message content is None: {response.choices[0].message.content is None}")
+                # Check for refusal
+                if hasattr(response.choices[0].message, 'refusal'):
+                    debug_print(f"  Message refusal: {response.choices[0].message.refusal}")
+                # Check finish reason
+                if hasattr(response.choices[0], 'finish_reason'):
+                    debug_print(f"  Finish reason: {response.choices[0].finish_reason}")
+        
+        # Parse response
+        content = response.choices[0].message.content
+        
+        # Handle None content
+        if content is None:
+            print(f"[VISION_ANALYSIS_V2] ⚠️ Response content is None!")
+            debug_print(f"[VISION_ANALYSIS] ⚠️ Content is None - checking for refusal or error")
+            if hasattr(response.choices[0].message, 'refusal') and response.choices[0].message.refusal:
+                error_msg = f"Model refused to respond: {response.choices[0].message.refusal}"
+            else:
+                error_msg = "Model returned empty content with no refusal message"
+            
+            return {
+                'description': error_msg,
+                'error': error_msg,
+                'model': vision_model,
+                'parse_failed': True
+            }
+        
+        # Additional debugging for empty string case
+        print(f"[VISION_ANALYSIS_V2] ⚡ Content length: {len(content)}, repr: {repr(content[:200])}")
+        debug_print(f"[VISION_ANALYSIS] Raw response received:")
+        debug_print(f"  Length: {len(content)} characters")
+        debug_print(f"  Content repr: {repr(content)}")
+        debug_print(f"  First 500 chars: {content[:500]}...")
+        debug_print(f"  Last 100 chars: ...{content[-100:] if len(content) > 100 else content}")
+        
+        # Check if response looks like JSON
+        is_json_like = content.strip().startswith('{') or content.strip().startswith('[')
+        has_code_fence = '```' in content
+        debug_print(f"  Starts with JSON bracket: {is_json_like}")
+        debug_print(f"  Contains code fence: {has_code_fence}")
+        
+        # Try to parse as JSON, fallback to raw text
+        try:
+            # Clean up potential markdown code fences
+            debug_print(f"[VISION_ANALYSIS] Attempting to clean JSON code fences...")
+            content_cleaned = clean_json_codeFence(content)
+            debug_print(f"  Cleaned length: {len(content_cleaned)} characters")
+            debug_print(f"  Cleaned first 200 chars: {content_cleaned[:200]}...")
+            
+            debug_print(f"[VISION_ANALYSIS] Attempting to parse as JSON...")
+            vision_analysis = json.loads(content_cleaned)
+            debug_print(f"[VISION_ANALYSIS] ✅ Successfully parsed JSON response!")
+            debug_print(f"  JSON keys: {list(vision_analysis.keys())}")
+            
+        except Exception as parse_error:
+            debug_print(f"[VISION_ANALYSIS] ❌ JSON parsing failed!")
+            debug_print(f"  Error type: {type(parse_error).__name__}")
+            debug_print(f"  Error message: {str(parse_error)}")
+            debug_print(f"  Content that failed to parse (first 1000 chars): {content[:1000]}")
+            print(f"Vision response not valid JSON, using raw text")
+            
+            vision_analysis = {
+                'description': content,
+                'raw_response': content,
+                'parse_error': str(parse_error),
+                'parse_failed': True
+            }
+            debug_print(f"[VISION_ANALYSIS] Created fallback structure with raw response")
+        
+        # Add model info to analysis
+        vision_analysis['model'] = vision_model
+        
+        debug_print(f"[VISION_ANALYSIS] Final analysis structure for {document_id}:")
+        debug_print(f"  Model: {vision_model}")
+        debug_print(f"  Has 'description': {'description' in vision_analysis}")
+        debug_print(f"  Has 'objects': {'objects' in vision_analysis}")
+        debug_print(f"  Has 'text': {'text' in vision_analysis}")
+        debug_print(f"  Has 'analysis': {'analysis' in vision_analysis}")
+        
+        if 'description' in vision_analysis:
+            desc = vision_analysis['description']
+            debug_print(f"  Description length: {len(desc)} chars")
+            debug_print(f"  Description preview: {desc[:200]}...")
+        
+        if 'objects' in vision_analysis:
+            objs = vision_analysis['objects']
+            debug_print(f"  Objects count: {len(objs) if isinstance(objs, list) else 'not a list'}")
+            debug_print(f"  Objects: {objs}")
+        
+        if 'text' in vision_analysis:
+            txt = vision_analysis['text']
+            debug_print(f"  Text length: {len(txt) if txt else 0} chars")
+            debug_print(f"  Text preview: {txt[:100] if txt else 'None'}...")
+        
+        print(f"Vision analysis completed for document: {document_id}")
+        return vision_analysis
+        
+    except Exception as e:
+        print(f"Error in vision analysis for {document_id}: {str(e)}")
+        traceback.print_exc()
+        return None
+
 def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None):
     """Uploads the file to Azure Blob Storage."""
 
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-    
-    if is_public_workspace:
-        storage_account_container_name = storage_account_public_documents_container_name
-    elif is_group:
-        storage_account_container_name = storage_account_group_documents_container_name
-    else:
-        storage_account_container_name = storage_account_user_documents_container_name
-
     try:
-        if is_public_workspace:
-            blob_path = f"{public_workspace_id}/{blob_filename}"
-        elif is_group:
-            blob_path = f"{group_id}/{blob_filename}"
-        else:
-            blob_path = f"{user_id}/{blob_filename}"
+        cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+        current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+        storage_account_container_name = current_document.get("blob_container") or _get_blob_container_name(
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        blob_path = build_current_blob_path(
+            blob_filename,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
 
-        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-        if not blob_service_client:
-            raise Exception("Blob service client not available or not configured.")
+        previous_family_documents = [
+            family_document
+            for family_document in _get_document_family_items_from_document(
+                current_document,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            if family_document.get("id") != document_id
+        ]
+        previous_document = max(previous_family_documents, key=_document_revision_sort_key) if previous_family_documents else None
+        if previous_document:
+            archived_blob_path = _archive_previous_document_blob(
+                previous_document,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            if archived_blob_path:
+                cosmos_container.upsert_item(previous_document)
+
+        blob_service_client = _get_blob_service_client()
 
         blob_client = blob_service_client.get_blob_client(
             container=storage_account_container_name,
@@ -2568,8 +4221,8 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
 
         metadata = {
             "document_id": str(document_id),
-            "group_id": str(group_id) if is_group else None,
-            "user_id": str(user_id) if not is_group else None
+            "group_id": str(group_id) if group_id is not None else None,
+            "user_id": str(user_id) if group_id is None else None
         }
 
         metadata = {k: v for k, v in metadata.items() if v is not None}
@@ -2578,6 +4231,14 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
 
         with open(temp_file_path, "rb") as f:
             blob_client.upload_blob(f, overwrite=True, metadata=metadata)
+
+        current_document["blob_container"] = storage_account_container_name
+        current_document["blob_path"] = blob_path
+        current_document["blob_path_mode"] = CURRENT_ALIAS_BLOB_PATH_MODE
+        current_document["enhanced_citations"] = True
+        if current_document.get("archived_blob_path") is None:
+            current_document["archived_blob_path"] = None
+        cosmos_container.upsert_item(current_document)
 
         print(f"Successfully uploaded {blob_filename} to blob storage at {blob_path}")
         return blob_path
@@ -2593,7 +4254,10 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
 
     update_callback(status="Processing TXT file...")
     total_chunks_saved = 0
-    target_words_per_chunk = 400
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = chunk_config.get('txt', {}).get('value', 400)
 
     if enable_enhanced_citations:
         args = {
@@ -2643,13 +4307,751 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
                 elif is_group:
                     args["group_id"] = group_id
 
-                save_chunks(**args)
+                token_usage = save_chunks(**args)
                 total_chunks_saved += 1
+                
+                # Accumulate embedding tokens
+                if token_usage:
+                    total_embedding_tokens += token_usage.get('total_tokens', 0)
+                    if not embedding_model_name:
+                        embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing TXT file {original_filename}: {e}")
 
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing XML file...")
+    total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    # Character-based chunking for XML structure preservation
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('xml', {}).get('value', 4000)
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_group:
+            args["group_id"] = group_id
+        elif is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read XML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading XML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with XML-aware separators
+        # This preserves XML structure better than simple word splitting
+        xml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=0,
+            length_function=len,
+            separators=["\n\n", "\n", ">", " ", ""],  # XML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the XML content
+        final_chunks = xml_splitter.split_text(xml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            token_usage = save_chunks(**args)
+            total_chunks_saved += 1
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing XML file {original_filename}: {e}")
+
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes YAML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing YAML file...")
+    total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    # Character-based chunking for YAML structure preservation
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('yaml', {}).get('value', 4000)
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read YAML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                yaml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading YAML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with YAML-aware separators
+        # This preserves YAML structure better than simple word splitting
+        yaml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=0,
+            length_function=len,
+            separators=["\n\n", "\n", "- ", " ", ""],  # YAML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the YAML content
+        final_chunks = yaml_splitter.split_text(yaml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty YAML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            token_usage = save_chunks(**args)
+            total_chunks_saved += 1
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during YAML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing YAML file {original_filename}: {e}")
+
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+def process_log(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes LOG files using line-based chunking to maintain log record integrity."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing LOG file...")
+    total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = chunk_config.get('log', {}).get('value', 1000)  # Word-based chunking for better semantic grouping
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        with open(temp_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Split by lines to maintain log record integrity
+        lines = content.splitlines(keepends=True)  # Keep line endings
+        
+        if not lines:
+            raise Exception(f"LOG file {original_filename} is empty")
+
+        # Chunk by accumulating lines until reaching target word count
+        final_chunks = []
+        current_chunk_lines = []
+        current_chunk_word_count = 0
+
+        for line in lines:
+            line_word_count = len(line.split())
+            
+            # If adding this line exceeds target AND we already have content
+            if current_chunk_word_count + line_word_count > target_words_per_chunk and current_chunk_lines:
+                # Finalize current chunk
+                final_chunks.append("".join(current_chunk_lines))
+                # Start new chunk with current line
+                current_chunk_lines = [line]
+                current_chunk_word_count = line_word_count
+            else:
+                # Add line to current chunk
+                current_chunk_lines.append(line)
+                current_chunk_word_count += line_word_count
+
+        # Add the last remaining chunk if it has content
+        if current_chunk_lines:
+            final_chunks.append("".join(current_chunk_lines))
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                token_usage = save_chunks(**args)
+                total_chunks_saved += 1
+                
+                # Accumulate embedding tokens
+                if token_usage:
+                    total_embedding_tokens += token_usage.get('total_tokens', 0)
+                    if not embedding_model_name:
+                        embedding_model_name = token_usage.get('model_deployment_name')
+
+    except Exception as e:
+        raise Exception(f"Failed processing LOG file {original_filename}: {e}")
+
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+def process_doc(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """
+    Processes legacy .doc files via OLE piece tables and .docm files via docx2txt.
+    Note: .docx files still use Document Intelligence for better formatting preservation.
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
+    total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
+    file_ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
+    target_words_per_chunk = chunk_config.get(file_ext, {}).get('value', 400)
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        try:
+            text_content = extract_word_text(temp_file_path, f'.{file_ext}')
+        except Exception as e:
+            raise Exception(f"Error extracting text from {original_filename}: {e}")
+
+        if not text_content or not text_content.strip():
+            raise Exception(f"No text content extracted from {original_filename}")
+
+        # Split into words for chunking
+        words = text_content.split()
+        if not words:
+            raise Exception(f"No text content found in {original_filename}")
+
+        # Create chunks of target_words_per_chunk words
+        final_chunks = []
+        for i in range(0, len(words), target_words_per_chunk):
+            chunk_words = words[i:i + target_words_per_chunk]
+            chunk_text = " ".join(chunk_words)
+            final_chunks.append(chunk_text)
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                token_usage = save_chunks(**args)
+                total_chunks_saved += 1
+                
+                # Accumulate embedding tokens
+                if token_usage:
+                    total_embedding_tokens += token_usage.get('total_tokens', 0)
+                    if not embedding_model_name:
+                        embedding_model_name = token_usage.get('model_deployment_name')
+
+    except Exception as e:
+        raise Exception(f"Failed processing {original_filename}: {e}")
+
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing XML file...")
+    total_chunks_saved = 0
+    # Character-based chunking for XML structure preservation, capped by embedding context
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('xml', {}).get('value', 4000)
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_group:
+            args["group_id"] = group_id
+        elif is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read XML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading XML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with XML-aware separators
+        # This preserves XML structure better than simple word splitting
+        xml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=0,
+            length_function=len,
+            separators=["\n\n", "\n", ">", " ", ""],  # XML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the XML content
+        final_chunks = xml_splitter.split_text(xml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            save_chunks(**args)
+            total_chunks_saved += 1
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing XML file {original_filename}: {e}")
+
     return total_chunks_saved
+
+def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes YAML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing YAML file...")
+    total_chunks_saved = 0
+    # Character-based chunking for YAML structure preservation, capped by embedding context
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('yaml', {}).get('value', 4000)
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read YAML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                yaml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading YAML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with YAML-aware separators
+        # This preserves YAML structure better than simple word splitting
+        yaml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=0,
+            length_function=len,
+            separators=["\n\n", "\n", "- ", " ", ""],  # YAML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the YAML content
+        final_chunks = yaml_splitter.split_text(yaml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty YAML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            save_chunks(**args)
+            total_chunks_saved += 1
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during YAML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing YAML file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_log(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes LOG files using line-based chunking to maintain log record integrity."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing LOG file...")
+    total_chunks_saved = 0
+    target_words_per_chunk = 1000  # Word-based chunking for better semantic grouping
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        with open(temp_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Split by lines to maintain log record integrity
+        lines = content.splitlines(keepends=True)  # Keep line endings
+        
+        if not lines:
+            raise Exception(f"LOG file {original_filename} is empty")
+
+        # Chunk by accumulating lines until reaching target word count
+        final_chunks = []
+        current_chunk_lines = []
+        current_chunk_word_count = 0
+
+        for line in lines:
+            line_word_count = len(line.split())
+            
+            # If adding this line exceeds target AND we already have content
+            if current_chunk_word_count + line_word_count > target_words_per_chunk and current_chunk_lines:
+                # Finalize current chunk
+                final_chunks.append("".join(current_chunk_lines))
+                # Start new chunk with current line
+                current_chunk_lines = [line]
+                current_chunk_word_count = line_word_count
+            else:
+                # Add line to current chunk
+                current_chunk_lines.append(line)
+                current_chunk_word_count += line_word_count
+
+        # Add the last remaining chunk if it has content
+        if current_chunk_lines:
+            final_chunks.append("".join(current_chunk_lines))
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                save_chunks(**args)
+                total_chunks_saved += 1
+
+    except Exception as e:
+        raise Exception(f"Failed processing LOG file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_doc(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """
+    Processes legacy .doc files via OLE piece tables and .docm files via docx2txt.
+    Note: .docx files still use Document Intelligence for better formatting preservation.
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
+    total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
+    file_ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
+    target_words_per_chunk = chunk_config.get(file_ext, {}).get('value', 400)
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        try:
+            text_content = extract_word_text(temp_file_path, f'.{file_ext}')
+        except Exception as e:
+            raise Exception(f"Error extracting text from {original_filename}: {e}")
+
+        if not text_content or not text_content.strip():
+            raise Exception(f"No text content extracted from {original_filename}")
+
+        # Split into words for chunking
+        words = text_content.split()
+        if not words:
+            raise Exception(f"No text content found in {original_filename}")
+
+        # Create chunks of target_words_per_chunk words
+        final_chunks = []
+        for i in range(0, len(words), target_words_per_chunk):
+            chunk_words = words[i:i + target_words_per_chunk]
+            chunk_text = " ".join(chunk_words)
+            final_chunks.append(chunk_text)
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                token_usage = save_chunks(**args)
+                total_chunks_saved += 1
+
+                if token_usage:
+                    total_embedding_tokens += token_usage.get('total_tokens', 0)
+                    if not embedding_model_name:
+                        embedding_model_name = token_usage.get('model_deployment_name')
+
+    except Exception as e:
+        raise Exception(f"Failed processing {original_filename}: {e}")
+
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes HTML files."""
@@ -2658,8 +5060,11 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
 
     update_callback(status="Processing HTML file...")
     total_chunks_saved = 0
-    target_chunk_words = 1200 # Target size based on requirement
-    min_chunk_words = 600 # Minimum size based on requirement
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
+    target_chunk_words = chunk_config.get('html', {}).get('value', 1200) # Target size based on requirement
+    min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
 
     if enable_enhanced_citations:
         args = {
@@ -2735,8 +5140,14 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
             elif is_group:
                 args["group_id"] = group_id
 
-            save_chunks(**args)
+            token_usage = save_chunks(**args)
             total_chunks_saved += 1
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         # Catch potential BeautifulSoup errors too
@@ -2771,7 +5182,7 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
             print(f"Warning: Error extracting final metadata for HTML document {document_id}: {str(e)}")
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_md(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes Markdown files."""
@@ -2780,8 +5191,11 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
 
     update_callback(status="Processing Markdown file...")
     total_chunks_saved = 0
-    target_chunk_words = 1200 # Target size based on requirement
-    min_chunk_words = 600 # Minimum size based on requirement
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
+    target_chunk_words = chunk_config.get('md', {}).get('value', 1200) # Target size based on requirement
+    min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
 
     if enable_enhanced_citations:
         args = {
@@ -2864,8 +5278,14 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
             elif is_group:
                 args["group_id"] = group_id
 
-            save_chunks(**args)
+            token_usage = save_chunks(**args)
             total_chunks_saved += 1
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing Markdown file {original_filename}: {e}")
@@ -2899,7 +5319,7 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
             print(f"Warning: Error extracting final metadata for Markdown document {document_id}: {str(e)}")
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_json(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes JSON files using RecursiveJsonSplitter."""
@@ -2908,8 +5328,11 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
 
     update_callback(status="Processing JSON file...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
     # Reflects character count limit for the splitter
-    max_chunk_size_chars = 4000 # As per original requirement
+    max_chunk_size_chars = chunk_config.get('json', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -2981,8 +5404,14 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
             elif is_group:
                 args["group_id"] = group_id
 
-            save_chunks(**args)
+            token_usage = save_chunks(**args)
             total_chunks_saved += 1 # Increment only when a chunk is actually saved
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
 
         # Final update with the actual number of chunks saved
         if total_chunks_saved != initial_chunk_count:
@@ -3028,7 +5457,174 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
     # Return the count of chunks actually saved
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+TABULAR_SCHEMA_SUMMARY_MAX_SHEETS = 8
+TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS = 12
+TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS = 3
+TABULAR_SCHEMA_SUMMARY_MAX_CELL_CHARS = 60
+
+
+def _compact_tabular_schema_value(value, max_chars=TABULAR_SCHEMA_SUMMARY_MAX_CELL_CHARS):
+    text = "" if value is None else str(value)
+    text = " ".join(text.split())
+
+    if len(text) <= max_chars:
+        return text
+
+    return f"{text[:max_chars - 3]}..."
+
+
+def _compact_tabular_columns(columns, max_columns=TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS):
+    normalized_columns = [
+        _compact_tabular_schema_value(column, max_chars=80) or "(blank)"
+        for column in columns
+    ]
+    visible_columns = normalized_columns[:max_columns]
+    omitted_count = max(len(normalized_columns) - max_columns, 0)
+
+    if omitted_count:
+        visible_columns.append(f"... +{omitted_count} more columns")
+
+    return visible_columns
+
+
+def _build_compact_tabular_preview(df_preview):
+    if df_preview is None or df_preview.empty:
+        return "[No preview rows available]"
+
+    preview_df = df_preview.iloc[
+        :TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS,
+        :TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS,
+    ].copy()
+    preview_df.columns = [
+        _compact_tabular_schema_value(column, max_chars=80) or "(blank)"
+        for column in preview_df.columns
+    ]
+
+    for column in preview_df.columns:
+        preview_df[column] = preview_df[column].map(
+            lambda value: _compact_tabular_schema_value(value)
+        )
+
+    preview_text = preview_df.to_string(index=False)
+    omitted_column_count = max(len(df_preview.columns) - TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS, 0)
+    if omitted_column_count:
+        preview_text += (
+            f"\n[Preview truncated to the first {TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS} columns; "
+            f"{omitted_column_count} additional columns omitted.]"
+        )
+
+    return preview_text
+
+
+def _build_minimal_tabular_summary(temp_file_path, original_filename, file_ext):
+    plugin_note = "This file is stored in blob storage for detailed analysis via the Tabular Processing plugin."
+
+    if file_ext == '.csv':
+        column_summary = "Column discovery unavailable"
+        try:
+            header_df = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str, nrows=0)
+            compact_columns = _compact_tabular_columns(header_df.columns.tolist())
+            if compact_columns:
+                column_summary = ", ".join(compact_columns)
+        except Exception:
+            pass
+
+        return (
+            f"Tabular data file: {original_filename}\n"
+            f"Columns: {column_summary}\n"
+            f"{plugin_note}"
+        )
+
+    if file_ext in ('.xlsx', '.xls', '.xlsm'):
+        sheet_summary = "Sheet discovery unavailable"
+        try:
+            engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
+            excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
+            visible_sheets = [
+                _compact_tabular_schema_value(sheet_name, max_chars=80)
+                for sheet_name in excel_file.sheet_names[:TABULAR_SCHEMA_SUMMARY_MAX_SHEETS]
+            ]
+            omitted_sheet_count = max(len(excel_file.sheet_names) - TABULAR_SCHEMA_SUMMARY_MAX_SHEETS, 0)
+
+            if visible_sheets:
+                sheet_summary = ", ".join(visible_sheets)
+                if omitted_sheet_count:
+                    sheet_summary += f", ... +{omitted_sheet_count} more sheets"
+        except Exception:
+            pass
+
+        return (
+            f"Tabular workbook: {original_filename}\n"
+            f"Sheets: {sheet_summary}\n"
+            f"{plugin_note}"
+        )
+
+    return (
+        f"Tabular file: {original_filename}\n"
+        f"{plugin_note}"
+    )
+
+
+def _build_tabular_schema_summary(temp_file_path, original_filename, file_ext):
+    plugin_note = "This file is available for detailed analysis via the Tabular Processing plugin."
+
+    if file_ext == '.csv':
+        df_preview = pandas.read_csv(
+            temp_file_path,
+            keep_default_na=False,
+            dtype=str,
+            nrows=TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS,
+        )
+        compact_columns = _compact_tabular_columns(df_preview.columns.tolist())
+        preview_rows = _build_compact_tabular_preview(df_preview)
+
+        return (
+            f"Tabular data file: {original_filename}\n"
+            f"Columns ({len(df_preview.columns)}): {', '.join(compact_columns) if compact_columns else 'None'}\n"
+            f"Preview (first {min(len(df_preview), TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS)} rows):\n{preview_rows}\n\n"
+            f"{plugin_note}"
+        )
+
+    if file_ext in ('.xlsx', '.xls', '.xlsm'):
+        engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
+        excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
+        visible_sheet_names = excel_file.sheet_names[:TABULAR_SCHEMA_SUMMARY_MAX_SHEETS]
+        omitted_sheet_count = max(len(excel_file.sheet_names) - TABULAR_SCHEMA_SUMMARY_MAX_SHEETS, 0)
+        workbook_sections = []
+
+        for sheet_name in visible_sheet_names:
+            df_preview = excel_file.parse(
+                sheet_name,
+                keep_default_na=False,
+                dtype=str,
+                nrows=TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS,
+            )
+            compact_columns = _compact_tabular_columns(df_preview.columns.tolist())
+            preview_rows = _build_compact_tabular_preview(df_preview)
+            workbook_sections.append(
+                f"Sheet: {_compact_tabular_schema_value(sheet_name, max_chars=80)}\n"
+                f"Columns ({len(df_preview.columns)}): {', '.join(compact_columns) if compact_columns else 'None'}\n"
+                f"Preview (first {min(len(df_preview), TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS)} rows):\n{preview_rows}"
+            )
+
+        sheet_summary = ", ".join(
+            _compact_tabular_schema_value(sheet_name, max_chars=80)
+            for sheet_name in visible_sheet_names
+        )
+        if omitted_sheet_count:
+            sheet_summary += f", ... +{omitted_sheet_count} more sheets"
+
+        return (
+            f"Tabular workbook: {original_filename}\n"
+            f"Sheets ({len(excel_file.sheet_names)}): {sheet_summary if sheet_summary else 'None'}\n\n"
+            + "\n\n".join(workbook_sections)
+            + f"\n\n{plugin_note}"
+        )
+
+    raise ValueError(f"Unsupported tabular file type: {file_ext}")
+
 
 def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None, public_workspace_id=None):
     """Chunks a pandas DataFrame from a CSV or Excel sheet."""
@@ -3036,7 +5632,12 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     is_public_workspace = public_workspace_id is not None
 
     total_chunks_saved = 0
-    target_chunk_size_chars = 800 # Requirement: "800 size chunk" (assuming characters)
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
+    _, ext = os.path.splitext(file_name.lower())
+    config_key = 'csv' if ext == '.csv' else 'excel'
+    target_chunk_size_chars = chunk_config.get(config_key, {}).get('value', 800) # Requirement: "800 size chunk" (assuming characters)
 
     if df.empty:
         print(f"Skipping empty sheet/file: {file_name}")
@@ -3082,33 +5683,32 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     # Consider accumulating page count in the caller if needed.
     update_callback(number_of_pages=num_chunks_final)
 
-    # Save chunks, prepending the header to each
+    # Save chunks, prepending the header to each — use batch processing for speed
+    all_chunks = []
     for idx, chunk_rows_content in enumerate(final_chunks_content, start=1):
-        # Prepend header - header length does not count towards chunk size limit
         chunk_with_header = header_string + chunk_rows_content
-
-        update_callback(
-            current_file_chunk=idx,
-            status=f"Saving chunk {idx}/{num_chunks_final} from {file_name}..."
-        )
-
-        args = {
+        all_chunks.append({
             "page_text_content": chunk_with_header,
             "page_number": idx,
-            "file_name": file_name,
-            "user_id": user_id,
-            "document_id": document_id
-        }
+            "file_name": file_name
+        })
 
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
+    if all_chunks:
+        update_callback(
+            current_file_chunk=1,
+            status=f"Batch processing {num_chunks_final} chunks from {file_name}..."
+        )
 
-        save_chunks(**args)
-        total_chunks_saved += 1
+        batch_token_usage = save_chunks_batch(
+            all_chunks, user_id, document_id,
+            group_id=group_id, public_workspace_id=public_workspace_id
+        )
+        total_chunks_saved = len(all_chunks)
+        if batch_token_usage:
+            total_embedding_tokens = batch_token_usage.get('total_tokens', 0)
+            embedding_model_name = batch_token_usage.get('model_deployment_name')
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_tabular(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes CSV, XLSX, or XLS files using pandas."""
@@ -3117,6 +5717,8 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
     update_callback(status=f"Processing Tabular file ({file_ext})...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
 
     # Upload the original file once if enhanced citations are enabled
     if enable_enhanced_citations:
@@ -3134,55 +5736,89 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             args["group_id"] = group_id
 
         upload_to_blob(**args)
+        update_callback(enhanced_citations=True, status=f"Enhanced citations enabled for {file_ext}")
 
-    try:
-        if file_ext == '.csv':
-            # Process CSV
-             # Read CSV, attempt to infer header, keep data as string initially
-            df = pandas.read_csv(
-                temp_file_path, 
-                keep_default_na=False, 
-                dtype=str
+    # When enhanced citations is on, index a single schema summary chunk
+    # instead of row-by-row chunking. The tabular processing plugin handles analysis.
+    if enable_enhanced_citations:
+        save_args = {
+            "page_number": 1,
+            "file_name": original_filename,
+            "user_id": user_id,
+            "document_id": document_id,
+        }
+        if is_public_workspace:
+            save_args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            save_args["group_id"] = group_id
+
+        try:
+            schema_summary = _build_tabular_schema_summary(
+                temp_file_path,
+                original_filename,
+                file_ext,
             )
-            args = {
-                "df": df,
-                "document_id": document_id,
-                "user_id": user_id,
-                "file_name": original_filename,
-                "update_callback": update_callback
-            }
-
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
-
-            total_chunks_saved = process_single_tabular_sheet(**args)
-
-        elif file_ext in ('.xlsx', '.xls'):
-            # Process Excel (potentially multiple sheets)
-            excel_file = pandas.ExcelFile(
-                temp_file_path, 
-                engine='openpyxl' if file_ext == '.xlsx' else 'xlrd'
+            update_callback(number_of_pages=1, status=f"Indexing schema summary for {original_filename}...")
+        except Exception as schema_error:
+            log_event(
+                f"[process_tabular] Error building bounded schema summary for {original_filename}; using compact fallback summary: {schema_error}",
+                level=logging.WARNING,
             )
-            sheet_names = excel_file.sheet_names
-            base_name, ext = os.path.splitext(original_filename)
+            schema_summary = _build_minimal_tabular_summary(
+                temp_file_path,
+                original_filename,
+                file_ext,
+            )
+            update_callback(number_of_pages=1, status=f"Indexing compact schema summary for {original_filename}...")
 
-            accumulated_total_chunks = 0
-            for sheet_name in sheet_names:
-                update_callback(status=f"Processing sheet '{sheet_name}'...")
-                # Read specific sheet, get values (not formulas), keep data as string
-                # Note: pandas typically reads values, not formulas by default.
-                df = excel_file.parse(sheet_name, keep_default_na=False, dtype=str)
+        try:
+            save_args["page_text_content"] = schema_summary
+            token_usage = save_chunks(**save_args)
+        except Exception as schema_index_error:
+            minimal_summary = _build_minimal_tabular_summary(
+                temp_file_path,
+                original_filename,
+                file_ext,
+            )
 
-                # Create effective filename for this sheet
-                effective_filename = f"{base_name}-{sheet_name}{ext}" if len(sheet_names) > 1 else original_filename
+            if minimal_summary == schema_summary:
+                raise Exception(
+                    f"Failed indexing enhanced tabular schema summary for {original_filename}: {schema_index_error}"
+                ) from schema_index_error
 
+            log_event(
+                f"[process_tabular] Retrying compact schema summary for {original_filename} after schema summary indexing error: {schema_index_error}",
+                level=logging.WARNING,
+            )
+            update_callback(number_of_pages=1, status=f"Retrying compact schema summary for {original_filename}...")
+
+            try:
+                save_args["page_text_content"] = minimal_summary
+                token_usage = save_chunks(**save_args)
+            except Exception as minimal_summary_error:
+                raise Exception(
+                    f"Failed indexing enhanced tabular summary for {original_filename}: {minimal_summary_error}"
+                ) from minimal_summary_error
+
+        total_chunks_saved = 1
+        if token_usage:
+            total_embedding_tokens = token_usage.get('total_tokens', 0)
+            embedding_model_name = token_usage.get('model_deployment_name')
+
+    # Only do row-by-row chunking when enhanced citations is disabled.
+    if total_chunks_saved == 0 and not enable_enhanced_citations:
+        try:
+            if file_ext == '.csv':
+                df = pandas.read_csv(
+                    temp_file_path,
+                    keep_default_na=False,
+                    dtype=str
+                )
                 args = {
                     "df": df,
                     "document_id": document_id,
                     "user_id": user_id,
-                    "file_name": effective_filename,
+                    "file_name": original_filename,
                     "update_callback": update_callback
                 }
 
@@ -3191,20 +5827,61 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 elif is_group:
                     args["group_id"] = group_id
 
-                chunks_from_sheet = process_single_tabular_sheet(**args)
+                result = process_single_tabular_sheet(**args)
+                if isinstance(result, tuple) and len(result) == 3:
+                    chunks, tokens, model = result
+                    total_chunks_saved = chunks
+                    total_embedding_tokens += tokens
+                    if not embedding_model_name:
+                        embedding_model_name = model
+                else:
+                    total_chunks_saved = result
 
-                accumulated_total_chunks += chunks_from_sheet
+            elif file_ext in ('.xlsx', '.xls', '.xlsm'):
+                excel_file = pandas.ExcelFile(
+                    temp_file_path,
+                    engine='openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
+                )
+                sheet_names = excel_file.sheet_names
+                base_name, ext = os.path.splitext(original_filename)
 
-            total_chunks_saved = accumulated_total_chunks # Total across all sheets
+                accumulated_total_chunks = 0
+                for sheet_name in sheet_names:
+                    update_callback(status=f"Processing sheet '{sheet_name}'...")
+                    df = excel_file.parse(sheet_name, keep_default_na=False, dtype=str)
+                    effective_filename = f"{base_name}-{sheet_name}{ext}" if len(sheet_names) > 1 else original_filename
 
+                    args = {
+                        "df": df,
+                        "document_id": document_id,
+                        "user_id": user_id,
+                        "file_name": effective_filename,
+                        "update_callback": update_callback
+                    }
 
-    except pandas.errors.EmptyDataError:
-        print(f"Warning: Tabular file or sheet is empty: {original_filename}")
-        update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
-    except Exception as e:
-        raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
+                    if is_public_workspace:
+                        args["public_workspace_id"] = public_workspace_id
+                    elif is_group:
+                        args["group_id"] = group_id
 
-    # Extract metadata if enabled and chunks were processed
+                    result = process_single_tabular_sheet(**args)
+                    if isinstance(result, tuple) and len(result) == 3:
+                        chunks, tokens, model = result
+                        accumulated_total_chunks += chunks
+                        total_embedding_tokens += tokens
+                        if not embedding_model_name:
+                            embedding_model_name = model
+                    else:
+                        accumulated_total_chunks += result
+
+                total_chunks_saved = accumulated_total_chunks
+
+        except pandas.errors.EmptyDataError:
+            log_event(f"[process_tabular] Warning: Tabular file or sheet is empty: {original_filename}", level=logging.WARNING)
+            update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
+        except Exception as e:
+            raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
+
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
     if enable_extract_meta_data and total_chunks_saved > 0:
@@ -3221,7 +5898,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 args["group_id"] = group_id
 
             document_metadata = extract_document_metadata(**args)
-            
+
             if document_metadata:
                 update_fields = {k: v for k, v in document_metadata.items() if v is not None and v != ""}
                 if update_fields:
@@ -3232,13 +5909,17 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
         except Exception as e:
             print(f"Warning: Error extracting final metadata for Tabular document {document_id}: {str(e)}")
             update_callback(status=f"Processing complete (metadata extraction warning)")
-            
-    return total_chunks_saved
+
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes documents supported by Azure Document Intelligence (PDF, Word, PPT, Image)."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
+    
+    # --- Token tracking initialization ---
+    total_embedding_tokens = 0
+    embedding_model_name = None
     
     # --- Extracted Metadata logic ---
     doc_title, doc_author, doc_subject, doc_keywords = '', '', None, None
@@ -3246,9 +5927,11 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     page_count = 0 # For PDF pre-check
 
     is_pdf = file_ext == '.pdf'
-    is_word = file_ext in ('.docx', '.doc')
+    is_word = file_ext in ('.docx', '.doc', '.docm')
+    is_legacy_doc = file_ext == '.doc'
     is_ppt = file_ext in ('.pptx', '.ppt')
-    is_image = file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif')
+    is_legacy_ppt = file_ext == '.ppt'
+    is_image = file_ext in tuple('.' + ext for ext in IMAGE_EXTENSIONS)
 
     try:
         if is_pdf:
@@ -3256,9 +5939,11 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             doc_authors_list = parse_authors(doc_author)
             page_count = get_pdf_page_count(temp_file_path)
         elif is_word:
-            doc_title, doc_author = extract_docx_metadata(temp_file_path)
+            doc_title, doc_author = extract_word_metadata(temp_file_path, file_ext)
             doc_authors_list = parse_authors(doc_author)
-        # PPT and Image metadata extraction might be added here if needed/possible
+        elif is_ppt:
+            doc_title, doc_author, doc_subject, doc_keywords = extract_presentation_metadata(temp_file_path, file_ext)
+            doc_authors_list = parse_authors(doc_author)
 
         update_fields = {'status': "Extracted initial metadata"}
         if doc_title: update_fields['title'] = doc_title
@@ -3274,6 +5959,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
     # --- DI Processing Logic ---
     settings = get_settings() # Assuming get_settings is accessible
+    chunk_config = get_chunk_size_config(settings)
     di_limit_bytes = 500 * 1024 * 1024
     di_page_limit = 2000
     file_size = os.path.getsize(temp_file_path)
@@ -3334,41 +6020,133 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
             upload_to_blob(**args)
 
-        # Send chunk to Azure DI
-        update_callback(status=f"Sending {chunk_effective_filename} to Azure Document Intelligence...")
         di_extracted_pages = []
-        try:
-            di_extracted_pages = extract_content_with_azure_di(chunk_path)
-            num_di_pages = len(di_extracted_pages)
-            conceptual_pages = num_di_pages if not is_image else 1 # Image is one conceptual item
+        if is_legacy_doc:
+            update_callback(status=f"Extracting legacy Word content from {chunk_effective_filename}...")
+            try:
+                extracted_text = extract_word_text(chunk_path, file_ext)
+                if extracted_text and extracted_text.strip():
+                    di_extracted_pages = [{
+                        "page_number": 1,
+                        "content": extracted_text,
+                    }]
+                    update_callback(number_of_pages=1, status=f"Extracted legacy Word content from {chunk_effective_filename}.")
+                else:
+                    print(f"Warning: Legacy Word extractor returned no content for {chunk_effective_filename}.")
+                    update_callback(number_of_pages=0, status=f"Legacy Word extractor found no content in {chunk_effective_filename}.")
+            except Exception as e:
+                raise Exception(f"Error extracting content from {chunk_effective_filename} with the legacy Word extractor: {str(e)}")
+        elif is_legacy_ppt:
+            update_callback(status=f"Extracting legacy PowerPoint content from {chunk_effective_filename}...")
+            try:
+                di_extracted_pages = extract_legacy_ppt_pages(chunk_path)
+                total_slides = len(di_extracted_pages)
+                update_callback(number_of_pages=total_slides, status=f"Extracted legacy PowerPoint content from {chunk_effective_filename}.")
+            except Exception as e:
+                raise Exception(f"Error extracting content from {chunk_effective_filename} with the legacy PowerPoint extractor: {str(e)}")
+        else:
+            # Send chunk to Azure DI
+            update_callback(status=f"Sending {chunk_effective_filename} to Azure Document Intelligence...")
+            try:
+                di_extracted_pages = extract_content_with_azure_di(chunk_path)
+                num_di_pages = len(di_extracted_pages)
+                conceptual_pages = num_di_pages if not is_image else 1 # Image is one conceptual item
 
-            if not di_extracted_pages and not is_image:
-                print(f"Warning: Azure DI returned no content pages for {chunk_effective_filename}.")
-                status_msg = f"Azure DI found no content in {chunk_effective_filename}."
-                # Update page count to 0 if nothing found, otherwise keep previous estimate or conceptual count
-                update_callback(number_of_pages=0 if idx == num_file_chunks else conceptual_pages, status=status_msg)
-            elif not di_extracted_pages and is_image:
-                print(f"Info: Azure DI processed image {chunk_effective_filename}, but extracted no text.")
-                update_callback(number_of_pages=conceptual_pages, status=f"Processed image {chunk_effective_filename} (no text found).")
-            else:
-                 update_callback(number_of_pages=conceptual_pages, status=f"Received {num_di_pages} content page(s)/slide(s) from Azure DI for {chunk_effective_filename}.")
+                if not di_extracted_pages and not is_image:
+                    print(f"Warning: Azure DI returned no content pages for {chunk_effective_filename}.")
+                    status_msg = f"Azure DI found no content in {chunk_effective_filename}."
+                    # Update page count to 0 if nothing found, otherwise keep previous estimate or conceptual count
+                    update_callback(number_of_pages=0 if idx == num_file_chunks else conceptual_pages, status=status_msg)
+                elif not di_extracted_pages and is_image:
+                    print(f"Info: Azure DI processed image {chunk_effective_filename}, but extracted no text.")
+                    update_callback(number_of_pages=conceptual_pages, status=f"Processed image {chunk_effective_filename} (no text found).")
+                else:
+                     update_callback(number_of_pages=conceptual_pages, status=f"Received {num_di_pages} content page(s)/slide(s) from Azure DI for {chunk_effective_filename}.")
 
-        except Exception as e:
-            raise Exception(f"Error extracting content from {chunk_effective_filename} with Azure DI: {str(e)}")
+            except Exception as e:
+                raise Exception(f"Error extracting content from {chunk_effective_filename} with Azure DI: {str(e)}")
+
+        # --- Multi-Modal Vision Analysis (for images only) - Must happen BEFORE save_chunks ---
+        if is_image and enable_enhanced_citations and idx == 1:  # Only run once for first chunk
+            enable_multimodal_vision = settings.get('enable_multimodal_vision', False)
+            if enable_multimodal_vision:
+                try:
+                    update_callback(status="Performing AI vision analysis...")
+                    
+                    vision_analysis = analyze_image_with_vision_model(
+                        chunk_path,
+                        user_id,
+                        document_id,
+                        settings
+                    )
+                    
+                    if vision_analysis:
+                        print(f"Vision analysis completed for image: {chunk_effective_filename}")
+                        
+                        # Update document with vision analysis results BEFORE saving chunks
+                        # This allows save_chunks() to append vision data to chunk_text for AI Search
+                        update_fields = {
+                            'vision_analysis': vision_analysis,
+                            'vision_description': vision_analysis.get('description', ''),
+                            'vision_objects': vision_analysis.get('objects', []),
+                            'vision_extracted_text': vision_analysis.get('text', ''),
+                            'status': "AI vision analysis completed"
+                        }
+                        update_callback(**update_fields)
+                        print(f"Vision analysis saved to document metadata and will be appended to chunk_text for AI Search indexing")
+                    else:
+                        print(f"Vision analysis returned no results for: {chunk_effective_filename}")
+                        update_callback(status="Vision analysis completed (no results)")
+                        
+                except Exception as e:
+                    print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
+                    traceback.print_exc()
+                    # Don't fail the whole process, just update status
+                    update_callback(status=f"Processing continues (vision analysis warning)")
 
         # Content Chunking Strategy (Word needs specific handling)
         final_chunks_to_save = []
         if is_word:
             update_callback(status=f"Chunking Word content from {chunk_effective_filename}...")
             try:
-                final_chunks_to_save = chunk_word_file_into_pages(di_pages=di_extracted_pages)
+                word_key = 'docx' if file_ext == '.docx' else 'doc'
+                target_word_chunk = chunk_config.get(word_key, {}).get('value', WORD_CHUNK_SIZE)
+                final_chunks_to_save = chunk_word_file_into_pages(
+                    di_pages=di_extracted_pages,
+                    chunk_size=target_word_chunk
+                )
                 num_final_chunks = len(final_chunks_to_save)
                 # Update number_of_pages again for Word to reflect final chunk count
                 update_callback(number_of_pages=num_final_chunks, status=f"Created {num_final_chunks} content chunks for {chunk_effective_filename}.")
             except Exception as e:
                  raise Exception(f"Error chunking Word content for {chunk_effective_filename}: {str(e)}")
         elif is_pdf or is_ppt:
-            final_chunks_to_save = di_extracted_pages # Use DI pages/slides directly
+            target_key = 'pdf' if is_pdf else 'pptx'
+            try:
+                target_size = int(chunk_config.get(target_key, {}).get('value', 1))
+            except Exception:
+                target_size = 1
+            target_size = max(1, target_size)
+
+            if target_size == 1:
+                final_chunks_to_save = di_extracted_pages # Use DI pages/slides directly
+            else:
+                final_chunks_to_save = []
+                for start in range(0, len(di_extracted_pages), target_size):
+                    slice_pages = di_extracted_pages[start:start + target_size]
+                    combined_content = "\n\n".join([page.get('content', '') or '' for page in slice_pages]).strip()
+                    if not combined_content:
+                        continue
+                    first_page_number = slice_pages[0].get('page_number', start + 1)
+                    final_chunks_to_save.append({
+                        "page_number": first_page_number,
+                        "content": combined_content
+                    })
+
+                update_callback(
+                    number_of_pages=len(final_chunks_to_save),
+                    status=f"Grouped {len(final_chunks_to_save)} chunk(s) for {chunk_effective_filename} using {target_size} page(s)/slide(s) per chunk."
+                )
         elif is_image:
             if di_extracted_pages:
                  if 'page_number' not in di_extracted_pages[0]: di_extracted_pages[0]['page_number'] = 1
@@ -3423,7 +6201,13 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     elif is_group:
                         args["group_id"] = group_id
 
-                    save_chunks(**args)
+                    token_usage = save_chunks(**args)
+                    
+                    # Accumulate embedding tokens
+                    if token_usage:
+                        total_embedding_tokens += token_usage.get('total_tokens', 0)
+                        if not embedding_model_name:
+                            embedding_model_name = token_usage.get('model_deployment_name')
 
                     total_final_chunks_processed += 1
                 print(f"Saved {num_final_chunks} content chunk(s) from {chunk_effective_filename}.")
@@ -3464,10 +6248,13 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                  update_callback(status="Final metadata extraction yielded no new info")
         except Exception as e:
             print(f"Warning: Error extracting final metadata for {document_id}: {str(e)}")
-            # Don't fail the whole process, just update status
+            # Don't fail the whole proc, total_embedding_tokens, embedding_model_nameess, just update status
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
-    return total_final_chunks_processed
+    # Note: Vision analysis now happens BEFORE save_chunks (moved earlier in the flow)
+    # This ensures vision_analysis is available in metadata when chunks are being saved
+
+    return total_final_chunks_processed, total_embedding_tokens, embedding_model_name
 
 def _get_content_type(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
@@ -3512,8 +6299,54 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
     if not chunks:
         print(f"[Error] No WAV chunks produced for '{input_path}'.")
         raise RuntimeError(f"No chunks produced by ffmpeg for file '{input_path}'")
-    print(f"[Debug] Produced {len(chunks)} WAV chunks: {chunks}")
+    print(f"Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
+
+# Azure Speech SDK helper to get speech config with fresh token
+def _get_speech_config(settings, endpoint: str, locale: str):
+    """Get speech config with fresh token"""
+    if settings.get("speech_service_authentication_type") == "managed_identity":
+        credential = DefaultAzureCredential()
+        token = credential.get_token(cognitive_services_scope)
+        speech_config = speechsdk.SpeechConfig(endpoint=endpoint)
+
+        # Set the authorization token AFTER creating the config
+        speech_config.authorization_token = token.token
+    else:
+        key = settings.get("speech_service_key", "")
+        speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
+
+    speech_config.speech_recognition_language = locale
+    print(f"[Debug] Speech config obtained successfully", flush=True)
+    return speech_config
+
+
+def get_speech_synthesis_config(settings, endpoint: str, location: str):
+    """Get speech synthesis config for either key or managed identity auth."""
+    auth_type = settings.get("speech_service_authentication_type")
+
+    if auth_type == "managed_identity":
+        resource_id = (settings.get("speech_service_resource_id") or "").strip()
+        if not location:
+            raise ValueError("Speech service location is required for text-to-speech with managed identity.")
+        if not resource_id:
+            raise ValueError("Speech service resource ID is required for text-to-speech with managed identity.")
+
+        credential = DefaultAzureCredential()
+        token = credential.get_token(cognitive_services_scope)
+        authorization_token = f"aad#{resource_id}#{token.token}"
+        speech_config = speechsdk.SpeechConfig(auth_token=authorization_token, region=location)
+    else:
+        key = (settings.get("speech_service_key") or "").strip()
+        if not endpoint:
+            raise ValueError("Speech service endpoint is required for text-to-speech.")
+        if not key:
+            raise ValueError("Speech service key is required for text-to-speech when using key authentication.")
+
+        speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
+
+    print(f"[Debug] Speech synthesis config obtained successfully", flush=True)
+    return speech_config
 
 def process_audio_document(
     document_id: str,
@@ -3543,7 +6376,7 @@ def process_audio_document(
 
     # 1) size guard
     file_size = os.path.getsize(temp_file_path)
-    print(f"[Debug] File size: {file_size} bytes")
+    print(f"File size: {file_size} bytes")
     if file_size > 300 * 1024 * 1024:
         raise ValueError("Audio exceeds 300 MB limit.")
 
@@ -3554,47 +6387,196 @@ def process_audio_document(
     # 3) transcribe each WAV chunk
     settings = get_settings()
     endpoint = settings.get("speech_service_endpoint", "").rstrip('/')
-    key = settings.get("speech_service_key", "")
     locale = settings.get("speech_service_locale", "en-US")
-    url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
 
     all_phrases: List[str] = []
-    for idx, chunk_path in enumerate(chunk_paths, start=1):
-        update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
-        print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
 
-        with open(chunk_path, 'rb') as audio_f:
-            files = {
-                'audio': (os.path.basename(chunk_path), audio_f, 'audio/wav'),
-                'definition': (None, json.dumps({'locales':[locale]}), 'application/json')
-            }
-            headers = {'Ocp-Apim-Subscription-Key': key}
-            resp = requests.post(url, headers=headers, files=files)
-        try:
-            resp.raise_for_status()
-        except Exception as e:
-            print(f"[Error] HTTP error for {chunk_path}: {e}")
-            raise
+    # Fast Transcription API not yet available in sovereign clouds, so use SDK
+    if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+        for idx, chunk_path in enumerate(chunk_paths, start=1):
+            print(f"[Debug] Transcribing chunk {idx}: {chunk_path}")
 
-        result = resp.json()
-        phrases = result.get('combinedPhrases', [])
-        print(f"[Debug] Received {len(phrases)} phrases")
-        all_phrases += [p.get('text','').strip() for p in phrases if p.get('text')]
+            # Get fresh config (tokens expire after ~1 hour)
+            try:
+                speech_config = _get_speech_config(settings, endpoint, locale)
+            except Exception as e:
+                print(f"[Error] Failed to get speech config for chunk {idx}: {e}")
+                raise RuntimeError(f"Speech configuration failed for chunk {idx}: {e}")
+
+            try:
+                audio_config = speechsdk.AudioConfig(filename=chunk_path)
+            except Exception as e:
+                print(f"[Error] Failed to load audio file {chunk_path}: {e}")
+                raise RuntimeError(f"Audio file loading failed: {e}")
+
+            try:
+                speech_recognizer = speechsdk.SpeechRecognizer(
+                    speech_config=speech_config,
+                    audio_config=audio_config
+                )
+            except Exception as e:
+                print(f"[Error] Failed to create speech recognizer for chunk {idx}: {e}")
+                raise RuntimeError(f"Speech recognizer creation failed: {e}")
+
+            # Use continuous recognition instead of recognize_once
+            all_results = []
+            done = False
+            error_occurred = False
+            error_message = None
+            
+            def stop_cb(evt):
+                nonlocal done
+                print(f"[Debug] Session stopped for chunk {idx}")
+                done = True
+            
+            def recognized_cb(evt):
+                try:
+                    if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                        all_results.append(evt.result.text)
+                        print(f"[Debug] Recognized: {evt.result.text}")
+                    elif evt.result.reason == speechsdk.ResultReason.NoMatch:
+                        print(f"[Debug] No speech recognized in segment")
+                except Exception as e:
+                    print(f"[Error] Error in recognized callback: {e}")
+                    # Don't fail on individual recognition errors
+            
+            def canceled_cb(evt):
+                nonlocal done, error_occurred, error_message
+                print(f"[Debug] Recognition canceled for chunk {idx}: {evt.cancellation_details.reason}")
+                
+                if evt.cancellation_details.reason == speechsdk.CancellationReason.Error:
+                    error_occurred = True
+                    error_message = evt.cancellation_details.error_details
+                    print(f"[Error] Recognition error: {error_message}")
+                elif evt.cancellation_details.reason == speechsdk.CancellationReason.EndOfStream:
+                    print(f"[Debug] End of audio stream reached")
+                
+                done = True
+            
+            try:
+                # Connect callbacks
+                speech_recognizer.recognized.connect(recognized_cb)
+                speech_recognizer.session_stopped.connect(stop_cb)
+                speech_recognizer.canceled.connect(canceled_cb)
+                
+                # Start continuous recognition
+                print(f"[Debug] Starting continuous recognition for chunk {idx}")
+                speech_recognizer.start_continuous_recognition()
+                
+                # Wait for completion with timeout
+                import time
+                timeout_seconds = 600  # 10 minutes max per chunk
+                start_time = time.time()
+                
+                while not done:
+                    if time.time() - start_time > timeout_seconds:
+                        print(f"[Error] Recognition timeout for chunk {idx}")
+                        error_occurred = True
+                        error_message = f"Recognition timed out after {timeout_seconds} seconds"
+                        break
+                    time.sleep(0.5)
+                
+                # Stop recognition
+                try:
+                    speech_recognizer.stop_continuous_recognition()
+                    print(f"[Debug] Stopped continuous recognition for chunk {idx}")
+                except Exception as e:
+                    print(f"[Warning] Error stopping recognition for chunk {idx}: {e}")
+                    # Continue even if stop fails
+                
+                # Check for errors after completion
+                if error_occurred:
+                    raise RuntimeError(f"Recognition failed for chunk {idx}: {error_message}")
+                
+                # Add all recognized phrases to the overall list
+                if all_results:
+                    all_phrases.extend(all_results)
+                    print(f"[Debug] Total phrases from chunk {idx}: {len(all_results)}")
+                else:
+                    print(f"[Warning] No speech recognized in {chunk_path}")
+                    # Continue to next chunk - empty result is not necessarily an error
+                    
+            except RuntimeError as e:
+                # Re-raise runtime errors (these are our custom errors)
+                raise
+            except Exception as e:
+                print(f"[Error] Unexpected error during recognition for chunk {idx}: {e}")
+                raise RuntimeError(f"Recognition failed unexpectedly for chunk {idx}: {e}")
+            finally:
+                # Cleanup: disconnect callbacks and dispose recognizer
+                try:
+                    speech_recognizer.recognized.disconnect_all()
+                    speech_recognizer.session_stopped.disconnect_all()
+                    speech_recognizer.canceled.disconnect_all()
+                except Exception as e:
+                    print(f"[Warning] Error disconnecting callbacks for chunk {idx}: {e}")
+
+            # # Get fresh config (tokens expire after ~1 hour)
+            # speech_config = _get_speech_config(settings, endpoint, locale)
+
+            # audio_config = speechsdk.AudioConfig(filename=chunk_path)
+            # speech_recognizer = speechsdk.SpeechRecognizer(
+            #     speech_config=speech_config,
+            #     audio_config=audio_config
+            # )
+
+            # result = speech_recognizer.recognize_once()
+            # if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+            #     print(f"[Debug] Recognized: {result.text}")
+            #     all_phrases.append(result.text)
+            # elif result.reason == speechsdk.ResultReason.NoMatch:
+            #     print(f"[Warning] No speech in {chunk_path}")
+            # elif result.reason == speechsdk.ResultReason.Canceled:
+            #     print(f"[Error] {result.cancellation_details.reason}: {result.cancellation_details.error_details}")
+            #     raise RuntimeError(f"Transcription canceled for {chunk_path}: {result.cancellation_details.error_details}")
+
+    else:
+        # Use the fast-transcription API if not in sovereign or custom cloud
+        url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
+        for idx, chunk_path in enumerate(chunk_paths, start=1):
+            update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
+            print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
+
+            with open(chunk_path, 'rb') as audio_f:
+                files = {
+                    'audio': (os.path.basename(chunk_path), audio_f, 'audio/wav'),
+                    'definition': (None, json.dumps({'locales':[locale]}), 'application/json')
+                }
+                if settings.get("speech_service_authentication_type") == "managed_identity":
+                    credential = DefaultAzureCredential()
+                    token = credential.get_token(cognitive_services_scope)
+                    headers = {'Authorization': f'Bearer {token.token}'}
+                else:
+                    key = settings.get("speech_service_key", "")
+                    headers = {'Ocp-Apim-Subscription-Key': key}
+                
+                resp = requests.post(url, headers=headers, files=files)
+            try:
+                resp.raise_for_status()
+            except Exception as e:
+                print(f"[Error] HTTP error for {chunk_path}: {e}")
+                raise
+
+            result = resp.json()
+            phrases = result.get('combinedPhrases', [])
+            print(f"[Debug] Received {len(phrases)} phrases")
+            all_phrases += [p.get('text','').strip() for p in phrases if p.get('text')]
 
     # 4) cleanup WAV chunks
     for p in chunk_paths:
         try:
             os.remove(p)
-            print(f"[Debug] Removed chunk: {p}")
+            print(f"Removed chunk: {p}")
         except Exception as e:
             print(f"[Warning] Could not remove chunk {p}: {e}")
 
     # 5) stitch and save transcript chunks
     full_text = ' '.join(all_phrases).strip()
     words = full_text.split()
-    chunk_size = 400
+    chunk_settings = get_chunk_size_config(settings)
+    chunk_size = chunk_settings.get('transcript', {}).get('value', 400)
     total_pages = max(1, math.ceil(len(words) / chunk_size))
-    print(f"[Debug] Creating {total_pages} transcript pages")
+    print(f"Creating {total_pages} transcript pages")
 
     for i in range(total_pages):
         page_text = ' '.join(words[i*chunk_size:(i+1)*chunk_size])
@@ -3655,8 +6637,12 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False) # Used by DI flow
     max_file_size_bytes = settings.get('max_file_size_mb', 16) * 1024 * 1024
 
-    video_extensions = ('.mp4', '.mov', '.avi', '.mkv', '.flv')
-    audio_extensions = ('.mp3', '.wav', '.ogg', '.aac', '.flac', '.m4a')
+    # Get allowed extensions from config.py to determine which processing function to call
+    tabular_extensions = tuple('.' + ext for ext in TABULAR_EXTENSIONS)
+    image_extensions = tuple('.' + ext for ext in IMAGE_EXTENSIONS)
+    di_supported_extensions = tuple('.' + ext for ext in DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS)
+    video_extensions = tuple('.' + ext for ext in VIDEO_EXTENSIONS)
+    audio_extensions = tuple('.' + ext for ext in AUDIO_EXTENSIONS)
 
     # --- Define update_document callback wrapper ---
     # This makes it easier to pass the update function to helpers without repeating args
@@ -3676,6 +6662,8 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
 
 
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     file_ext = '' # Initialize
 
     try:
@@ -3697,8 +6685,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         update_doc_callback(status=f"Processing file {original_filename}, type: {file_ext}")
 
         # --- 1. Dispatch to appropriate handler based on file type ---
-        di_supported_extensions = ('.pdf', '.docx', '.doc', '.pptx', '.ppt', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif')
-        tabular_extensions = ('.csv', '.xlsx', '.xls')
+        # Note: .doc uses the shared document pipeline with OLE extraction, while .docm stays on the direct Word-text path.
 
         is_group = group_id is not None
 
@@ -3707,7 +6694,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             "user_id": user_id,
             "temp_file_path": temp_file_path,
             "original_filename": original_filename,
-            "file_ext": file_ext if file_ext in tabular_extensions or file_ext in di_supported_extensions else None,
+            "file_ext": file_ext if file_ext in tabular_extensions or file_ext in di_supported_extensions or file_ext == '.doc' else None,
             "enable_enhanced_citations": enable_enhanced_citations,
             "update_callback": update_doc_callback
         }
@@ -3718,15 +6705,60 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             args["group_id"] = group_id
 
         if file_ext == '.txt':
-            total_chunks_saved = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
+            # Handle tuple return (chunks, tokens, model_name)
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
+        elif file_ext == '.xml':
+            result = process_xml(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
+        elif file_ext in ('.yaml', '.yml'):
+            result = process_yaml(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
+        elif file_ext == '.log':
+            result = process_log(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
+        elif file_ext == '.docm':
+            result = process_doc(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext == '.html':
-            total_chunks_saved = process_html(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_html(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext == '.md':
-            total_chunks_saved = process_md(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_md(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext == '.json':
-            total_chunks_saved = process_json(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_json(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext in tabular_extensions:
-            total_chunks_saved = process_tabular(**args)
+            result = process_tabular(**args)
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext in video_extensions:
             total_chunks_saved = process_video_document(
                 document_id=document_id,
@@ -3747,8 +6779,13 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 group_id=group_id,
                 public_workspace_id=public_workspace_id
             )
-        elif file_ext in di_supported_extensions:
-            total_chunks_saved = process_di_document(**args)
+        elif file_ext in di_supported_extensions or file_ext == '.doc':
+            result = process_di_document(**args)
+            # Handle tuple return (chunks, tokens, model_name)
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         else:
             raise ValueError(f"Unsupported file type for processing: {file_ext}")
 
@@ -3757,7 +6794,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         final_status = "Processing complete"
         if total_chunks_saved == 0:
              # Provide more specific status if no chunks were saved
-             if file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif'):
+             if file_ext in image_extensions:
                  final_status = "Processing complete - no text found in image"
              elif file_ext in tabular_extensions:
                  final_status = "Processing complete - no data rows found or file empty"
@@ -3767,14 +6804,201 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         # Final update uses the total chunks saved across all steps/sheets
         # For DI types, number_of_pages might have been updated during DI processing,
         # but let's ensure the final update reflects the *saved* chunk count accurately.
-        update_doc_callback(
-             number_of_pages=total_chunks_saved, # Final count of SAVED chunks
-             status=final_status,
-             percentage_complete=100,
-             current_file_chunk=None # Clear current chunk tracking
-         )
+        # Also update embedding token tracking data
+        final_update_args = {
+             "number_of_pages": total_chunks_saved, # Final count of SAVED chunks
+             "status": final_status,
+             "percentage_complete": 100,
+             "current_file_chunk": None # Clear current chunk tracking
+        }
+        
+        # Add embedding token data if available
+        if total_embedding_tokens > 0:
+            final_update_args["embedding_tokens"] = total_embedding_tokens
+        if embedding_model_name:
+            final_update_args["embedding_model_deployment_name"] = embedding_model_name
+            
+        update_doc_callback(**final_update_args)
 
-        print(f"Document {document_id} ({original_filename}) processed successfully with {total_chunks_saved} chunks saved.")
+        print(f"Document {document_id} ({original_filename}) processed successfully with {total_chunks_saved} chunks saved and {total_embedding_tokens} embedding tokens used.")
+        
+        # Log document creation transaction to activity_logs container
+        try:
+            from functions_activity_logging import log_document_creation_transaction, log_token_usage
+            
+            # Retrieve final document metadata to capture all extracted fields
+            doc_metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id
+            )
+            
+            # Determine workspace type
+            if public_workspace_id:
+                workspace_type = 'public'
+            elif group_id:
+                workspace_type = 'group'
+            else:
+                workspace_type = 'personal'
+            
+            # Log the transaction with all available metadata
+            log_document_creation_transaction(
+                user_id=user_id,
+                document_id=document_id,
+                workspace_type=workspace_type,
+                file_name=original_filename,
+                file_type=file_ext,
+                file_size=file_size,
+                page_count=total_chunks_saved,
+                embedding_tokens=total_embedding_tokens,
+                embedding_model=embedding_model_name,
+                version=doc_metadata.get('version') if doc_metadata else None,
+                author=(
+                    doc_metadata.get('author')
+                    or ', '.join(ensure_list(doc_metadata.get('authors')))
+                    or None
+                ) if doc_metadata else None,
+                title=doc_metadata.get('title') if doc_metadata else None,
+                subject=doc_metadata.get('subject') if doc_metadata else None,
+                publication_date=doc_metadata.get('publication_date') if doc_metadata else None,
+                keywords=doc_metadata.get('keywords') if doc_metadata else None,
+                abstract=doc_metadata.get('abstract') if doc_metadata else None,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+                additional_metadata={
+                    'status': final_status,
+                    'upload_date': doc_metadata.get('upload_date') if doc_metadata else None,
+                    'document_classification': doc_metadata.get('document_classification') if doc_metadata else None
+                }
+            )
+            
+            # Log embedding token usage separately for easy reporting
+            if total_embedding_tokens > 0 and embedding_model_name:
+                log_token_usage(
+                    user_id=user_id,
+                    token_type='embedding',
+                    total_tokens=total_embedding_tokens,
+                    model=embedding_model_name,
+                    workspace_type=workspace_type,
+                    document_id=document_id,
+                    file_name=original_filename,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    additional_context={
+                        'file_type': file_ext,
+                        'page_count': total_chunks_saved
+                    }
+                )
+            
+            # Mark document as logged to activity logs to prevent duplicate migration
+            try:
+                # All document containers use /id as partition key
+                if public_workspace_id:
+                    doc_container = cosmos_public_documents_container
+                elif group_id:
+                    doc_container = cosmos_group_documents_container
+                else:
+                    doc_container = cosmos_user_documents_container
+                
+                # All document containers use document_id (/id) as partition key
+                partition_key = document_id
+                
+                # Read, update, and upsert the document with the flag
+                doc_record = doc_container.read_item(item=document_id, partition_key=partition_key)
+                doc_record['added_to_activity_log'] = True
+                doc_container.upsert_item(doc_record)
+                print(f"✅ Set added_to_activity_log flag for document {document_id}")
+                
+            except Exception as flag_error:
+                print(f"⚠️  Warning: Failed to set added_to_activity_log flag: {flag_error}")
+                # Don't fail if flag setting fails
+                
+        except Exception as log_error:
+            print(f"Error logging document creation transaction: {log_error}")
+            # Don't fail the entire process if logging fails
+        
+        # Create notification for document processing completion
+        try:
+            from functions_notifications import create_notification, create_group_notification, create_public_workspace_notification
+            
+            notification_title = f"Document ready: {original_filename}"
+            notification_message = f"Your document has been processed successfully with {total_chunks_saved} chunks."
+            
+            # Determine workspace type and create appropriate notification
+            if public_workspace_id:
+                # Notification for all public workspace members
+                create_public_workspace_notification(
+                    public_workspace_id=public_workspace_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=notification_message,
+                    link_url='/public_directory',
+                    link_context={
+                        'workspace_type': 'public',
+                        'public_workspace_id': public_workspace_id,
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved
+                    }
+                )
+                print(f"📢 Created notification for public workspace {public_workspace_id}")
+                
+            elif group_id:
+                # Notification for all group members - get group name
+                from functions_group import find_group_by_id
+                group = find_group_by_id(group_id)
+                group_name = group.get('name', 'Unknown Group') if group else 'Unknown Group'
+                
+                create_group_notification(
+                    group_id=group_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=f"Document uploaded to {group_name} has been processed successfully with {total_chunks_saved} chunks.",
+                    link_url='/group_workspaces',
+                    link_context={
+                        'workspace_type': 'group',
+                        'group_id': group_id,
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved,
+                        'group_name': group_name,
+                        'group_id': group_id
+                    }
+                )
+                print(f"📢 Created notification for group {group_id} ({group_name})")
+                
+            else:
+                # Personal notification for the uploader
+                create_notification(
+                    user_id=user_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=notification_message,
+                    link_url='/workspace',
+                    link_context={
+                        'workspace_type': 'personal',
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved
+                    }
+                )
+                print(f"📢 Created notification for user {user_id}")
+                
+        except Exception as notif_error:
+            print(f"⚠️  Warning: Failed to create notification: {notif_error}")
+            # Don't fail the entire process if notification creation fails
+            print(f"⚠️  Warning: Failed to log document creation transaction: {log_error}")
+            # Don't fail the document processing if logging fails
 
     except Exception as e:
         error_msg = f"Processing failed: {str(e)}"
@@ -4421,3 +7645,481 @@ def process_bookstack_documents_background(user_id, group_id=None, public_worksp
     print(f"BookStack sync complete. Processed {processed_count} blob(s).")
     return processed_count
         
+# ============= TAG MANAGEMENT FUNCTIONS =============
+
+def normalize_tag(tag):
+    """
+    Normalize a tag by trimming whitespace and converting to lowercase.
+    Returns normalized tag string.
+    """
+    if not isinstance(tag, str):
+        return ""
+    return tag.strip().lower()
+
+
+def validate_tags(tags):
+    """
+    Validate an array of tags.
+    Returns (is_valid, error_message, normalized_tags)
+    
+    Rules:
+    - Max 50 characters per tag
+    - Alphanumeric + hyphens/underscores only
+    - No empty tags
+    - Case-insensitive uniqueness
+    """
+    if not isinstance(tags, list):
+        return False, "Tags must be an array", []
+    
+    normalized = []
+    seen = set()
+    
+    for tag in tags:
+        if not isinstance(tag, str):
+            return False, "All tags must be strings", []
+        
+        normalized_tag = normalize_tag(tag)
+        
+        if not normalized_tag:
+            continue  # Skip empty tags
+        
+        if len(normalized_tag) > 50:
+            return False, f"Tag '{normalized_tag}' exceeds 50 characters", []
+        
+        # Check alphanumeric + hyphens/underscores
+        import re
+        if not re.match(r'^[a-z0-9_-]+$', normalized_tag):
+            return False, f"Tag '{normalized_tag}' contains invalid characters (only alphanumeric, hyphens, and underscores allowed)", []
+        
+        # Check for duplicates
+        if normalized_tag in seen:
+            continue  # Skip duplicate
+        
+        seen.add(normalized_tag)
+        normalized.append(normalized_tag)
+    
+    return True, None, normalized
+
+
+def sanitize_tags_for_filter(raw_tags):
+    """
+    Sanitize and validate tags for use in filter/query operations.
+    Silently skips invalid tags since they can never match stored tags.
+
+    Args:
+        raw_tags: Either a comma-separated string or a list of strings
+    Returns:
+        List of valid, normalized tag strings matching ^[a-z0-9_-]+$
+    """
+    import re
+
+    if isinstance(raw_tags, str):
+        candidates = [t.strip() for t in raw_tags.split(',') if t.strip()]
+    elif isinstance(raw_tags, list):
+        candidates = [t for t in raw_tags if isinstance(t, str)]
+    else:
+        return []
+
+    valid_tags = []
+    seen = set()
+
+    for tag in candidates:
+        normalized = normalize_tag(tag)
+        if not normalized:
+            continue
+        if not re.match(r'^[a-z0-9_-]+$', normalized):
+            continue
+        if len(normalized) > 50:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        valid_tags.append(normalized)
+
+    return valid_tags
+
+
+def normalize_tag_color(color):
+    """
+    Normalize a tag color to a canonical 6-digit lowercase hex code.
+    Returns None for invalid values.
+    """
+    if not isinstance(color, str):
+        return None
+
+    normalized_color = color.strip()
+    if not normalized_color:
+        return None
+
+    if not TAG_COLOR_PATTERN.fullmatch(normalized_color):
+        return None
+
+    if not normalized_color.startswith('#'):
+        normalized_color = f'#{normalized_color}'
+
+    if len(normalized_color) == 4:
+        normalized_color = '#' + ''.join(component * 2 for component in normalized_color[1:])
+
+    return normalized_color.lower()
+
+
+def get_safe_tag_color(color, tag_name):
+    """
+    Return a normalized tag color or the deterministic default for the tag.
+    """
+    normalized_color = normalize_tag_color(color)
+    if normalized_color:
+        return normalized_color
+
+    safe_tag_name = normalize_tag(tag_name) or str(tag_name or '')
+    return get_default_tag_color(safe_tag_name)
+
+
+def validate_tag_color(color, tag_name):
+    """
+    Validate a requested tag color.
+    Returns (is_valid, error_message, normalized_color).
+    Missing colors resolve to the deterministic default for the tag.
+    """
+    if color is None:
+        return True, None, get_safe_tag_color(None, tag_name)
+
+    normalized_color = normalize_tag_color(color)
+    if not normalized_color:
+        return False, 'Tag color must be a valid 3- or 6-digit hex color', None
+
+    return True, None, normalized_color
+
+
+def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
+    """
+    Get all unique tags used in a workspace with document counts.
+    Returns: [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
+    """
+    from functions_settings import get_user_settings
+    
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+    
+    # Choose the correct container
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+        partition_key = public_workspace_id
+        workspace_type = 'public'
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+        partition_key = group_id
+        workspace_type = 'group'
+    else:
+        cosmos_container = cosmos_user_documents_container
+        partition_key = user_id
+        workspace_type = 'personal'
+    
+    try:
+        # Query documents with enough metadata to collapse revisions to the current version.
+        if is_public_workspace:
+            query = """
+                SELECT c.id, c.file_name, c.version, c._ts, c.upload_date, c.tags, c.revision_family_id, c.is_current_version
+                FROM c
+                WHERE c.public_workspace_id = @partition_key
+                    AND IS_DEFINED(c.tags)
+                    AND ARRAY_LENGTH(c.tags) > 0
+            """
+        elif is_group:
+            query = """
+                SELECT c.id, c.file_name, c.version, c._ts, c.upload_date, c.tags, c.revision_family_id, c.is_current_version, c.group_id
+                FROM c
+                WHERE c.group_id = @partition_key
+                    AND IS_DEFINED(c.tags)
+                    AND ARRAY_LENGTH(c.tags) > 0
+            """
+        else:
+            query = """
+                SELECT c.id, c.file_name, c.version, c._ts, c.upload_date, c.tags, c.revision_family_id, c.is_current_version, c.user_id
+                FROM c
+                WHERE c.user_id = @partition_key
+                    AND IS_DEFINED(c.tags)
+                    AND ARRAY_LENGTH(c.tags) > 0
+            """
+        
+        parameters = [{"name": "@partition_key", "value": partition_key}]
+        
+        documents = list(
+            cosmos_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            )
+        )
+        
+        documents = select_current_documents(documents)
+
+        # Count tag occurrences on current revisions only.
+        tag_counts = {}
+        for doc in documents:
+            for tag in doc.get('tags', []):
+                normalized_tag = normalize_tag(tag)
+                if normalized_tag:
+                    tag_counts[normalized_tag] = tag_counts.get(normalized_tag, 0) + 1
+        
+        # Get tag definitions (colors) from the appropriate source
+        if is_public_workspace:
+            # Read from public workspace record (shared across all users)
+            from functions_public_workspaces import find_public_workspace_by_id
+            ws_doc = find_public_workspace_by_id(public_workspace_id)
+            workspace_tag_defs = (ws_doc or {}).get('tag_definitions', {})
+        elif is_group:
+            # Read from group record (shared across all group members)
+            from functions_group import find_group_by_id
+            group_doc = find_group_by_id(group_id)
+            workspace_tag_defs = (group_doc or {}).get('tag_definitions', {})
+        else:
+            # Personal: read from user settings
+            user_settings = get_user_settings(user_id)
+            settings_dict = user_settings.get('settings', {})
+            tag_definitions = settings_dict.get('tag_definitions', {})
+            workspace_tag_defs = tag_definitions.get('personal', {})
+
+        # Build result with colors from used tags
+        results = []
+        for tag_name, count in tag_counts.items():
+            tag_def = workspace_tag_defs.get(tag_name, {})
+            results.append({
+                'name': tag_name,
+                'count': count,
+                'color': get_safe_tag_color(tag_def.get('color'), tag_name)
+            })
+        
+        # Add defined tags that haven't been used yet (count = 0)
+        for tag_name, tag_def in workspace_tag_defs.items():
+            if tag_name not in tag_counts:
+                results.append({
+                    'name': tag_name,
+                    'count': 0,
+                    'color': get_safe_tag_color(tag_def.get('color'), tag_name)
+                })
+
+        # Sort by count descending, then name ascending
+        results.sort(key=lambda x: (-x['count'], x['name']))
+        
+        return results
+        
+    except Exception as e:
+        print(f"Error getting workspace tags: {e}")
+        return []
+
+
+def get_default_tag_color(tag_name):
+    """
+    Generate a consistent color for a tag based on its name.
+    Uses a predefined color palette and hashes the tag name.
+    """
+    color_palette = [
+        '#3b82f6',  # blue
+        '#10b981',  # green
+        '#f59e0b',  # amber
+        '#ef4444',  # red
+        '#8b5cf6',  # purple
+        '#ec4899',  # pink
+        '#06b6d4',  # cyan
+        '#84cc16',  # lime
+        '#f97316',  # orange
+        '#6366f1',  # indigo
+    ]
+    
+    # Simple hash function to pick color consistently
+    hash_val = sum(ord(c) for c in tag_name)
+    color_index = hash_val % len(color_palette)
+    return color_palette[color_index]
+
+
+def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', color=None, group_id=None, public_workspace_id=None):
+    """
+    Get or create a tag definition.
+    For personal: stored in user settings.
+    For group: stored on the group Cosmos record.
+    For public: stored on the public workspace Cosmos record.
+
+    Args:
+        user_id: User ID
+        tag_name: Normalized tag name
+        workspace_type: 'personal', 'group', or 'public'
+        color: Optional hex color code
+        group_id: Group ID (required when workspace_type='group')
+        public_workspace_id: Public workspace ID (required when workspace_type='public')
+
+    Returns:
+        Tag definition dict with color
+    """
+    from datetime import datetime, timezone
+
+    safe_color = get_safe_tag_color(color, tag_name)
+
+    if workspace_type == 'group' and group_id:
+        from functions_group import find_group_by_id
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            return {'color': safe_color}
+        tag_defs = group_doc.get('tag_definitions', {})
+        if tag_name not in tag_defs:
+            tag_defs[tag_name] = {
+                'color': safe_color,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            group_doc['tag_definitions'] = tag_defs
+            cosmos_groups_container.upsert_item(group_doc)
+        stored_tag_def = dict(tag_defs[tag_name])
+        stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
+        return stored_tag_def
+    elif workspace_type == 'public' and public_workspace_id:
+        from functions_public_workspaces import find_public_workspace_by_id
+        ws_doc = find_public_workspace_by_id(public_workspace_id)
+        if not ws_doc:
+            return {'color': safe_color}
+        tag_defs = ws_doc.get('tag_definitions', {})
+        if tag_name not in tag_defs:
+            tag_defs[tag_name] = {
+                'color': safe_color,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            ws_doc['tag_definitions'] = tag_defs
+            cosmos_public_workspaces_container.upsert_item(ws_doc)
+        stored_tag_def = dict(tag_defs[tag_name])
+        stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
+        return stored_tag_def
+    else:
+        # Personal: store in user settings
+        from functions_settings import get_user_settings, update_user_settings
+
+        user_settings = get_user_settings(user_id)
+        settings_dict = user_settings.get('settings', {})
+        tag_definitions = settings_dict.get('tag_definitions', {})
+
+        if 'personal' not in tag_definitions:
+            tag_definitions['personal'] = {}
+
+        workspace_tags = tag_definitions['personal']
+
+        if tag_name not in workspace_tags:
+            workspace_tags[tag_name] = {
+                'color': safe_color,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            update_user_settings(user_id, {'tag_definitions': tag_definitions})
+
+        stored_tag_def = dict(workspace_tags[tag_name])
+        stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
+        return stored_tag_def
+
+
+def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, public_workspace_id=None):
+    """
+    Update blob metadata with document tags when enhanced citations is enabled.
+    Tags are stored as a comma-separated string in blob metadata.
+
+    Args:
+        document_id: Document ID
+        tags: Array of normalized tag names
+        user_id: User ID
+        group_id: Optional group ID
+        public_workspace_id: Optional public workspace ID
+    """
+    try:
+        settings = get_settings()
+        if not settings.get('enable_enhanced_citations', False):
+            return
+
+        is_group = group_id is not None
+        is_public_workspace = public_workspace_id is not None
+
+        # Read document from Cosmos DB to get file_name
+        if is_public_workspace:
+            cosmos_container = cosmos_public_documents_container
+        elif is_group:
+            cosmos_container = cosmos_group_documents_container
+        else:
+            cosmos_container = cosmos_user_documents_container
+
+        doc_item = cosmos_container.read_item(document_id, partition_key=document_id)
+        storage_account_container_name, blob_path = get_document_blob_storage_info(
+            doc_item,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        if not blob_path:
+            print(f"Warning: No blob path found for document {document_id}, skipping blob metadata update")
+            return
+
+        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+        if not blob_service_client:
+            print(f"Warning: Blob service client not available, skipping blob metadata update")
+            return
+
+        blob_client = blob_service_client.get_blob_client(
+            container=storage_account_container_name,
+            blob=blob_path
+        )
+
+        if not blob_client.exists():
+            print(f"Warning: Blob not found at {blob_path}, skipping metadata update")
+            return
+
+        # Get existing metadata and update with tags
+        properties = blob_client.get_blob_properties()
+        existing_metadata = dict(properties.metadata) if properties.metadata else {}
+        existing_metadata['document_tags'] = ','.join(tags) if tags else ''
+        blob_client.set_blob_metadata(metadata=existing_metadata)
+
+        print(f"Successfully updated blob metadata tags for document {document_id} at {blob_path}")
+
+    except Exception as e:
+        print(f"Warning: Failed to update blob metadata tags for document {document_id}: {e}")
+        # Non-fatal — tag propagation to chunks is the primary operation
+
+
+def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_workspace_id=None):
+    """
+    Update all chunks for a document with new tags.
+    This is called immediately after tag updates.
+    
+    Args:
+        document_id: Document ID
+        tags: Array of normalized tag names
+        user_id: User ID
+        group_id: Optional group ID
+        public_workspace_id: Optional public workspace ID
+    """
+    try:
+        # Get all chunks for this document
+        chunks = get_all_chunks(document_id, user_id, group_id, public_workspace_id)
+        
+        if not chunks:
+            print(f"No chunks found for document {document_id}")
+            return
+        
+        # Update each chunk with new tags
+        chunk_count = 0
+        for chunk in chunks:
+            try:
+                update_chunk_metadata(
+                    chunk_id=chunk['id'],
+                    user_id=user_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    document_id=document_id,
+                    document_tags=tags
+                )
+                chunk_count += 1
+            except Exception as chunk_error:
+                print(f"Error updating chunk {chunk['id']} with tags: {chunk_error}")
+                # Continue with other chunks
+
+        print(f"Successfully propagated tags to {chunk_count} chunks for document {document_id}")
+
+        # Also update blob metadata with tags if enhanced citations is enabled
+        propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id, public_workspace_id)
+
+    except Exception as e:
+        print(f"Error propagating tags to chunks for document {document_id}: {e}")
+        raise

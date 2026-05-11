@@ -1,0 +1,27 @@
+source "https://rubygems.org"
+
+# GitHub Pages compatible gems
+gem "github-pages", group: :jekyll_plugins
+
+# Ruby 3+ compatibility
+gem "webrick", "~> 1.8"
+gem "json", ">= 2.19.2"
+
+# Security override for transitive GitHub Pages/Jekyll dependency
+gem "addressable", ">= 2.9.0"
+
+# Jekyll plugins for enhanced functionality
+group :jekyll_plugins do
+  gem "jekyll-feed"
+  gem "jekyll-seo-tag"
+  gem "jekyll-sitemap"
+  gem "jekyll-relative-links"
+  gem "jekyll-optional-front-matter"
+  gem "jekyll-readme-index"
+  gem "jekyll-titles-from-headings"
+end
+
+# Development dependencies
+group :development do
+  gem "jekyll-livereload"
+end

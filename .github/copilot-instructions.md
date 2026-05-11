@@ -1,3 +1,7 @@
+---
+applyTo: '**'
+---
+
 # REPO SPECIFIC INSTRUCTIONS
 
 ---

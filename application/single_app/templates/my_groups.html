@@ -16,15 +16,17 @@
     /* Example Column Widths */
     #my-groups-table th:nth-child(1), /* Name */
     #my-groups-table td:nth-child(1) {
-        width: 40%;
+        width: 30%;
         overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
     }
     #my-groups-table th:nth-child(2), /* Role */
-    #my-groups-table td:nth-child(2) { width: 15%; }
-    #my-groups-table th:nth-child(3), /* Active Workspace */
-    #my-groups-table td:nth-child(3) { width: 20%; text-align: center; }
-    #my-groups-table th:nth-child(4), /* Actions */
-    #my-groups-table td:nth-child(4) { width: 15%; text-align: center; }
+    #my-groups-table td:nth-child(2) { width: 12%; }
+    #my-groups-table th:nth-child(3), /* Status */
+    #my-groups-table td:nth-child(3) { width: 15%; text-align: center; }
+    #my-groups-table th:nth-child(4), /* Active Workspace */
+    #my-groups-table td:nth-child(4) { width: 18%; text-align: center; }
+    #my-groups-table th:nth-child(5), /* Actions */
+    #my-groups-table td:nth-child(5) { width: 15%; text-align: center; }
 
     #my-groups-table td {
         vertical-align: middle;
@@ -76,6 +78,7 @@
           <tr>
             <th>Name</th>
             <th>Your Role</th>
+            <th>Status</th>
             <th>Active Workspace</th>
             <th>Actions</th>
           </tr>
@@ -83,7 +86,7 @@
         <tbody>
           <!-- Populated by JS -->
           <tr class="table-loading-row">
-              <td colspan="4">
+              <td colspan="5">
                   <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
                   Loading your groups...
               </td>
@@ -239,10 +242,10 @@
         if (groups.length > 0) {
           groups.forEach(group => renderGroupRow(group));
         } else if (currentSearchQuery) {
-           tableBody.html('<tr><td colspan="4" class="text-center p-4 text-muted">No groups found matching your search.</td></tr>');
+           tableBody.html('<tr><td colspan="5" class="text-center p-4 text-muted">No groups found matching your search.</td></tr>');
         } else {
            tableBody.html(`
-                <tr><td colspan="4" class="text-center p-4 text-muted">
+                <tr><td colspan="5" class="text-center p-4 text-muted">
                     You are not a member of any group. You can create one or find one to join.
                 </td></tr>
             `);
@@ -252,7 +255,7 @@
       .fail(function(jqXHR, textStatus, errorThrown) {
         console.error("Error fetching your groups:", textStatus, errorThrown);
         const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-        tableBody.html(`<tr><td colspan="4" class="text-center text-danger p-4">Error loading groups: ${escapeHtml(errorMsg)}</td></tr>`);
+        tableBody.html(`<tr><td colspan="5" class="text-center text-danger p-4">Error loading groups: ${escapeHtml(errorMsg)}</td></tr>`);
         renderPaginationControls(1, pageSize, 0);
       });
   }
@@ -262,6 +265,30 @@
 
     row.append($("<td></td>").attr('title', group.name).text(group.name));
     row.append($("<td></td>").text(group.userRole || "User"));
+
+    // Status Badge
+    const statusCell = $("<td class='text-center'></td>");
+    const status = group.status || 'active';
+    let badgeClass = 'bg-success';
+    let badgeText = 'Active';
+    let badgeIcon = 'bi-check-circle-fill';
+    
+    if (status === 'locked') {
+      badgeClass = 'bg-warning text-dark';
+      badgeText = 'Locked';
+      badgeIcon = 'bi-lock-fill';
+    } else if (status === 'upload_disabled') {
+      badgeClass = 'bg-info text-dark';
+      badgeText = 'Upload Disabled';
+      badgeIcon = 'bi-cloud-slash-fill';
+    } else if (status === 'inactive') {
+      badgeClass = 'bg-danger';
+      badgeText = 'Inactive';
+      badgeIcon = 'bi-exclamation-triangle-fill';
+    }
+    
+    statusCell.append(`<span class="badge ${badgeClass}"><i class="bi ${badgeIcon} me-1"></i>${badgeText}</span>`);
+    row.append(statusCell);
 
     // Active Workspace Button
     const activeCell = $("<td class='text-center'></td>");

@@ -33,7 +33,11 @@ let simplemde = null; // Declare outside to be accessible
 // Initialize SimpleMDE
 if (promptContentEl && typeof SimpleMDE !== 'undefined') {
     try {
-        simplemde = new SimpleMDE({ element: promptContentEl, spellChecker: false });
+        simplemde = new SimpleMDE({ 
+            element: promptContentEl, 
+            spellChecker: false,
+            autoDownloadFontAwesome: false // Prevent CSP violation
+        });
     } catch (e) { console.error("Failed to initialize SimpleMDE:", e); }
 } else if (!promptContentEl) { console.warn("Prompt content textarea not found, SimpleMDE not initialized."); }
 else if (typeof SimpleMDE === 'undefined') { console.warn("SimpleMDE library not loaded."); }

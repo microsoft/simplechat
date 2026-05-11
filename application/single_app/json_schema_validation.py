@@ -3,9 +3,29 @@
 import os
 import json
 from functools import lru_cache
-from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validator
+from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validator, RefResolver
 
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
+
+PLUGIN_STORAGE_MANAGED_FIELDS = {
+    '_attachments',
+    '_etag',
+    '_rid',
+    '_self',
+    '_ts',
+    'created_at',
+    'created_by',
+    'group_id',
+    'id',
+    'is_global',
+    'is_group',
+    'last_updated',
+    'modified_at',
+    'modified_by',
+    'scope',
+    'updated_at',
+    'user_id',
+}
 
 @lru_cache(maxsize=8)
 def load_schema(schema_name):
@@ -16,7 +36,10 @@ def load_schema(schema_name):
 
 def validate_agent(agent):
     schema = load_schema('agent.schema.json')
-    validator = Draft7Validator(schema['definitions']['Agent'])
+    if schema.get("$ref") and schema.get("definitions"):
+        validator = Draft7Validator(schema, resolver=RefResolver.from_schema(schema))
+    else:
+        validator = Draft7Validator(schema)
     errors = sorted(validator.iter_errors(agent), key=lambda e: e.path)
     if errors:
         return '; '.join([e.message for e in errors])
@@ -30,20 +53,21 @@ def validate_plugin(plugin):
     plugin_copy = plugin.copy()
     plugin_type = plugin_copy.get('type', '')
     
-    # Remove Cosmos DB system fields that are not part of the plugin schema
-    cosmos_fields = ['_attachments', '_etag', '_rid', '_self', '_ts', 'created_at', 'updated_at', 'id', 'user_id', 'last_updated']
-    for field in cosmos_fields:
-        if field in plugin_copy:
-            del plugin_copy[field]
+    # Remove storage-managed fields that appear on persisted plugin documents but are not part of the schema.
+    for field in PLUGIN_STORAGE_MANAGED_FIELDS:
+        plugin_copy.pop(field, None)
     
     if plugin_type in ['sql_schema', 'sql_query'] and not plugin_copy.get('endpoint'):
         plugin_copy['endpoint'] = f'sql://{plugin_type}'
     
     # First run schema validation
-    validator = Draft7Validator(schema['definitions']['Plugin'])
+    if schema.get("$ref") and schema.get("definitions"):
+        validator = Draft7Validator(schema, resolver=RefResolver.from_schema(schema))
+    else:
+        validator = Draft7Validator(schema)
     errors = sorted(validator.iter_errors(plugin_copy), key=lambda e: e.path)
     if errors:
-        return '; '.join([e.message for e in errors])
+        return '; '.join([f"{plugin.get('name', '<Unknown>')}: {e.message}" for e in errors])
     
     # Additional business logic validation
     # For non-SQL plugins, endpoint must not be empty

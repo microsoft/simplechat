@@ -35,6 +35,7 @@
   <script id="prism-theme-js" src="/static/js/prism-original.js"></script>
   <!-- Your custom CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/simplemde-overrides.css') }}" />
   <!-- Navigation and Sidebar CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/navigation.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}" />
@@ -47,15 +48,15 @@
   <style>
     /* Add this: if banner is present, increase padding-top */
     #classification-banner + nav.navbar.fixed-top {
-      top: 40px; /* Height of the banner */
+      top: var(--classification-banner-height, 40px);
     }
     #classification-banner {
-      height: 40px;
-      line-height: 40px;
+      height: var(--classification-banner-height, 40px);
+      line-height: var(--classification-banner-height, 40px);
     }
     /* Adjust body padding if banner is present */
     body.has-classification-banner {
-      padding-top: 96px; /* 56px navbar + 40px banner */
+      padding-top: calc(var(--top-nav-height, 56px) + var(--classification-banner-height, 40px));
     }
 
     .main-content {
@@ -63,8 +64,17 @@
     }
     /* Sidebar padding for main content when sidebar is enabled */
     .sidebar-padding {
-      padding-left: 260px;
       padding-top: 0 !important;
+    }
+
+    body:not(.sidebar-nav-enabled) .sidebar-padding {
+      padding-left: var(--sidebar-width, 260px);
+    }
+
+    @media (max-width: 991.98px) {
+      body:not(.sidebar-nav-enabled) .sidebar-padding {
+        padding-left: 0;
+      }
     }
 
     .modal-body {
@@ -137,8 +147,49 @@
       margin-bottom: 10px;
     }
 
+    /* SimpleMDE uses Font Awesome class names, but the app does not ship that font. */
+    .editor-toolbar a.fa-bold:before,
+    .editor-toolbar a.fa-italic:before,
+    .editor-toolbar a.fa-strikethrough:before,
+    .editor-toolbar a.fa-header:before,
+    .editor-toolbar a.fa-code:before,
+    .editor-toolbar a.fa-quote-left:before,
+    .editor-toolbar a.fa-list-ul:before,
+    .editor-toolbar a.fa-list-ol:before,
+    .editor-toolbar a.fa-eraser:before,
+    .editor-toolbar a.fa-link:before,
+    .editor-toolbar a.fa-picture-o:before,
+    .editor-toolbar a.fa-table:before,
+    .editor-toolbar a.fa-minus:before,
+    .editor-toolbar a.fa-eye:before,
+    .editor-toolbar a.fa-columns:before,
+    .editor-toolbar a.fa-arrows-alt:before,
+    .editor-toolbar a.fa-question-circle:before {
+      font-family: var(--bs-font-sans-serif, Arial, sans-serif);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .editor-toolbar a.fa-bold:before { content: "B"; }
+    .editor-toolbar a.fa-italic:before { content: "I"; font-style: italic; }
+    .editor-toolbar a.fa-strikethrough:before { content: "S"; text-decoration: line-through; }
+    .editor-toolbar a.fa-header:before { content: "#"; }
+    .editor-toolbar a.fa-code:before { content: "</>"; font-size: 11px; }
+    .editor-toolbar a.fa-quote-left:before { content: "\201C"; }
+    .editor-toolbar a.fa-list-ul:before { content: "\2022"; }
+    .editor-toolbar a.fa-list-ol:before { content: "1."; }
+    .editor-toolbar a.fa-eraser:before { content: "\232B"; }
+    .editor-toolbar a.fa-link:before { content: "\2197"; }
+    .editor-toolbar a.fa-picture-o:before { content: "\25A3"; }
+    .editor-toolbar a.fa-table:before { content: "\25A6"; }
+    .editor-toolbar a.fa-minus:before { content: "\2014"; }
+    .editor-toolbar a.fa-eye:before { content: "P"; }
+    .editor-toolbar a.fa-columns:before { content: "\2194"; }
+    .editor-toolbar a.fa-arrows-alt:before { content: "\2922"; }
+    .editor-toolbar a.fa-question-circle:before { content: "?"; }
+
     .chat-container {
-      max-height: calc(100vh - 56px);
+      max-height: calc(100vh - var(--top-nav-height, 66px));
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -212,22 +263,24 @@
   {% block head %}{% endblock %}
 </head>
 
-<body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}">
+{% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
+{% set is_sidebar_layout = nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %}
+{% set is_chat_page = request.endpoint == 'chats' %}
+<body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}{% if is_chat_page %} chat-shell-page{% endif %}{% if is_chat_page and not is_sidebar_layout %} chat-top-nav-shell{% endif %}">
   {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
     <div id="classification-banner"
-         style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: #fff; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: 40px; font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
+         style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: {{ app_settings.classification_banner_text_color or '#ffffff' }}; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: 40px; font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
       {{ app_settings.classification_banner_text }}
     </div>
   {% endif %}
   <!-- Navigation Bar -->
   {% set left_sidebar_enabled = false %}
-  {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
-  {% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %}
+  {% if is_sidebar_layout %}
     {% include "_sidebar_nav.html" %}
     {% set left_sidebar_enabled = true %}
   {% else %}
     {% include "_top_nav.html" %}
-    {% if request.endpoint == 'chats' %}
+    {% if is_chat_page %}
       {% include "_sidebar_short_nav.html" %}
       {% set left_sidebar_enabled = true %}
     {% endif %}
@@ -286,7 +339,20 @@
 
   <!-- App settings for JS -->
   <script>
+    window.userContext = {{ {
+      'id': session.get('user', {}).get('oid'),
+      'displayName': session.get('user', {}).get('name'),
+      'email': session.get('user', {}).get('preferred_username'),
+      'roles': session.get('user', {}).get('roles', [])
+    } | tojson | safe }};
+    window.currentUserIsAdmin = Array.isArray(window.userContext?.roles)
+      ? window.userContext.roles.includes('Admin')
+      : false;
+    if (!window.current_user_id && window.userContext?.id) {
+      window.current_user_id = window.userContext.id;
+    }
     const appSettings = {{ app_settings|tojson|safe }};
+    window.appSettings = appSettings;
   </script>
 
   <!-- Prism.js syntax highlighting script -->
@@ -334,9 +400,86 @@
   <!-- Navigation and Sidebar JavaScript -->
   <script src="{{ url_for('static', filename='js/navigation.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/sidebar-resize.js') }}"></script>
   <!-- Profile Image JavaScript -->
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
+  <!-- Notifications JavaScript (for badge polling on all pages) -->
+  <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+  {% if session.get('user') %}
+  <script>
+    window.idleLogoutConfig = {{ {
+      'enabled': idle_timeout_enabled | default(false),
+      'timeoutMinutes': idle_timeout_minutes | default(30) | int,
+      'warningMinutes': idle_warning_minutes | default(28) | int,
+      'heartbeatUrl': url_for('session_heartbeat'),
+      'localLogoutUrl': url_for('local_logout'),
+      'fullSsoLogoutUrl': url_for('logout')
+    } | tojson | safe }};
+  </script>
+  <script src="{{ url_for('static', filename='js/idle-logout-warning.js') }}"></script>
+  {% endif %}
+  <!-- User Agreement JavaScript (for file upload prompts) -->
+  {% if app_settings.enable_user_agreement %}
+  <script src="{{ url_for('static', filename='js/user-agreement.js') }}"></script>
+  {% endif %}
   {% block scripts %}{% endblock %}
+
+  {% if session.get('user') %}
+  <div class="modal fade" id="idleTimeoutWarningModal" tabindex="-1" aria-labelledby="idleTimeoutWarningModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title" id="idleTimeoutWarningModalLabel">
+            <i class="bi bi-clock me-2" aria-hidden="true"></i>Session Expiring Soon
+          </h5>
+        </div>
+        <div class="modal-body">
+          <p class="mb-2">{{ app_settings.idle_warning_message | default("You've been inactive for a while.") }}</p>
+          <p class="mb-0">You will be signed out in <strong><span id="idleTimeoutCountdown" aria-live="polite" aria-atomic="true">60</span> seconds</strong> unless you continue your session.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" id="idleLogoutNowButton">Logout now</button>
+          <button type="button" class="btn btn-primary" id="idleStaySignedInButton">Stay signed in</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- User Agreement Upload Modal (shown before file uploads when enabled) -->
+  {% if app_settings.enable_user_agreement %}
+  <div class="modal fade" id="userAgreementUploadModal" tabindex="-1" aria-labelledby="userAgreementUploadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title" id="userAgreementUploadModalLabel">
+            <i class="bi bi-file-earmark-check me-2"></i>User Agreement Required
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            Please read and accept the following agreement before uploading files:
+          </p>
+          <div id="userAgreementUploadContent" class="border rounded p-3 mb-3 bg-light"
+               style="max-height: 300px; overflow-y: auto;">
+            <!-- Rendered Markdown content will be inserted here -->
+          </div>
+          <div id="userAgreementUploadDailyCheck" class="text-muted small" style="display: none;">
+            <i class="bi bi-info-circle me-1"></i>
+            Your acceptance will be remembered for today.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="userAgreementUploadCancelBtn" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="userAgreementUploadAcceptBtn">
+            <i class="bi bi-check-lg me-1"></i>Accept & Upload
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </body>
 
 </html>

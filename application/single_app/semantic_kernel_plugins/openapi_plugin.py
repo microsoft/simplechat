@@ -892,46 +892,53 @@ class OpenApiPlugin(BasePlugin):
                     api_key = self.auth.get("key", "")
                     debug_print(f"Key auth - api_key: {api_key[:10]}...")
                     
-                    # Check OpenAPI spec for security schemes
+                    # Check OpenAPI spec for security schemes (OpenAPI 3.0+) or securityDefinitions (OpenAPI 2.0/Swagger)
+                    security_schemes = None
+                    
+                    # Try OpenAPI 3.0+ format first
                     if self.openapi and "components" in self.openapi and "securitySchemes" in self.openapi["components"]:
                         security_schemes = self.openapi["components"]["securitySchemes"]
-                        debug_print(f"Found security schemes: {list(security_schemes.keys())}")
-                        
-                        # Look for apiKey scheme (query parameter)
-                        if "apiKey" in security_schemes:
-                            scheme = security_schemes["apiKey"]
-                            debug_print(f"Found apiKey scheme: {scheme}")
+                        debug_print(f"Found OpenAPI 3.0 security schemes: {list(security_schemes.keys())}")
+                    # Fall back to OpenAPI 2.0/Swagger format
+                    elif self.openapi and "securityDefinitions" in self.openapi:
+                        security_schemes = self.openapi["securityDefinitions"]
+                        debug_print(f"Found OpenAPI 2.0 securityDefinitions: {list(security_schemes.keys())}")
+                    
+                    if security_schemes:
+                        # Look for any apiKey scheme with type=apiKey and in=query
+                        auth_applied = False
+                        for scheme_name, scheme in security_schemes.items():
                             if scheme.get("type") == "apiKey" and scheme.get("in") == "query":
-                                key_name = scheme.get("name", "api-key")
+                                key_name = scheme.get("name", "api_key")
                                 query_params[key_name] = api_key
-                                debug_print(f"Added query parameter auth: {key_name}={api_key[:10]}...")
+                                debug_print(f"Added query parameter auth from '{scheme_name}': {key_name}={api_key[:10]}...")
                                 logging.info(f"[OpenAPI Plugin] Using query parameter auth: {key_name}")
-                        
-                        # Look for headerApiKey scheme as fallback
-                        elif "headerApiKey" in security_schemes:
-                            scheme = security_schemes["headerApiKey"]
-                            debug_print(f"Found headerApiKey scheme: {scheme}")
-                            if scheme.get("type") == "apiKey" and scheme.get("in") == "header":
+                                auth_applied = True
+                                break
+                            elif scheme.get("type") == "apiKey" and scheme.get("in") == "header":
                                 key_name = scheme.get("name", "x-api-key")
                                 headers[key_name] = api_key
-                                debug_print(f"Added header auth: {key_name}={api_key[:10]}...")
+                                debug_print(f"Added header auth from '{scheme_name}': {key_name}={api_key[:10]}...")
                                 logging.info(f"[OpenAPI Plugin] Using header auth: {key_name}")
-                        else:
+                                auth_applied = True
+                                break
+                        
+                        if not auth_applied:
                             debug_print(f"No matching security scheme found!")
                             # Fallback if no security schemes found
-                            if api_key and not any(k in query_params for k in ["api-key", "apikey"]) and not any(k.lower() in [h.lower() for h in headers.keys()] for k in ["x-api-key", "api-key"]):
-                                # Default to query parameter
-                                query_params["api-key"] = api_key
-                                debug_print(f"Using fallback query parameter auth: api-key={api_key[:10]}...")
-                                logging.info(f"[OpenAPI Plugin] Using fallback query parameter auth: api-key")
+                            if api_key and not any(k in query_params for k in ["api-key", "api_key", "apikey"]) and not any(k.lower() in [h.lower() for h in headers.keys()] for k in ["x-api-key", "api-key"]):
+                                # Default to query parameter with underscore
+                                query_params["api_key"] = api_key
+                                debug_print(f"Using fallback query parameter auth: api_key={api_key[:10]}...")
+                                logging.info(f"[OpenAPI Plugin] Using fallback query parameter auth: api_key")
                     else:
                         debug_print(f"No security schemes found in OpenAPI spec")
                         # Fallback if no security schemes found
-                        if api_key and not any(k in query_params for k in ["api-key", "apikey"]) and not any(k.lower() in [h.lower() for h in headers.keys()] for k in ["x-api-key", "api-key"]):
-                            # Default to query parameter
-                            query_params["api-key"] = api_key
-                            debug_print(f"Using fallback query parameter auth: api-key={api_key[:10]}...")
-                            logging.info(f"[OpenAPI Plugin] Using fallback query parameter auth: api-key")
+                        if api_key and not any(k in query_params for k in ["api-key", "api_key", "apikey"]) and not any(k.lower() in [h.lower() for h in headers.keys()] for k in ["x-api-key", "api-key"]):
+                            # Default to query parameter with underscore
+                            query_params["api_key"] = api_key
+                            debug_print(f"Using fallback query parameter auth: api_key={api_key[:10]}...")
+                            logging.info(f"[OpenAPI Plugin] Using fallback query parameter auth: api_key")
                 elif auth_type == "bearer":
                     token = self.auth.get("token", "")
                     headers["Authorization"] = f"Bearer {token}"

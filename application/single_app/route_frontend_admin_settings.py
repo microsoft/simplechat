@@ -3,14 +3,39 @@
 from config import *
 from functions_documents import *
 from functions_authentication import *
+from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
+from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from admin_settings_int_utils import safe_int_with_source
+from support_menu_config import (
+    get_support_latest_feature_catalog,
+    get_support_latest_feature_release_groups,
+    get_support_latest_feature_release_groups_for_settings,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
+
+ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
 
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
+def open_allowed_uploaded_image(file_bytes, filename):
+    img = Image.open(BytesIO(file_bytes), formats=list(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS))
+    img.load()
+
+    detected_format = (img.format or '').upper()
+    if detected_format not in ALLOWED_PIL_IMAGE_UPLOAD_FORMATS:
+        raise ValueError(
+            f"Unsupported image format for {filename}. Allowed formats: {', '.join(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS)}"
+        )
+
+    return img, detected_format
 
 def register_route_frontend_admin_settings(app):
     @app.route('/admin/settings', methods=['GET', 'POST'])
@@ -19,7 +44,8 @@ def register_route_frontend_admin_settings(app):
     @admin_required
     def admin_settings():
         settings = get_settings()
-
+        admin_user = session.get('user', {})
+        admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
         # --- Refined Default Checks (Good Practice) ---
         # Ensure models have default structure if missing/empty in DB
         if 'gpt_model' not in settings or not isinstance(settings.get('gpt_model'), dict) or 'selected' not in settings.get('gpt_model', {}):
@@ -28,6 +54,30 @@ def register_route_frontend_admin_settings(app):
             settings['embedding_model'] = {'selected': [], 'all': []}
         if 'image_gen_model' not in settings or not isinstance(settings.get('image_gen_model'), dict) or 'selected' not in settings.get('image_gen_model', {}):
             settings['image_gen_model'] = {'selected': [], 'all': []}
+        if 'enable_multi_model_endpoints' not in settings:
+            settings['enable_multi_model_endpoints'] = False
+        if 'model_endpoints' not in settings or not isinstance(settings.get('model_endpoints'), list):
+            settings['model_endpoints'] = []
+        if 'default_model_selection' not in settings or not isinstance(settings.get('default_model_selection'), dict):
+            settings['default_model_selection'] = {
+                'endpoint_id': '',
+                'model_id': '',
+                'provider': ''
+            }
+        if 'multi_endpoint_migrated_at' not in settings:
+            settings['multi_endpoint_migrated_at'] = None
+        if 'multi_endpoint_migration_notice' not in settings or not isinstance(settings.get('multi_endpoint_migration_notice'), dict):
+            settings['multi_endpoint_migration_notice'] = {
+                'enabled': False,
+                'message': '',
+                'created_at': None
+            }
+
+        normalized_endpoints, endpoints_changed = normalize_model_endpoints(settings.get('model_endpoints', []))
+        if endpoints_changed:
+            update_settings({'model_endpoints': normalized_endpoints})
+        settings['model_endpoints'] = normalized_endpoints
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
@@ -36,6 +86,8 @@ def register_route_frontend_admin_settings(app):
             settings['require_member_of_create_public_workspace'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
             settings['require_member_of_safety_violation_admin'] = False
+        if 'require_member_of_control_center_admin' not in settings:
+            settings['require_member_of_control_center_admin'] = False
         if 'require_member_of_feedback_admin' not in settings:
             settings['require_member_of_feedback_admin'] = False
         # --- End NEW Default Checks ---
@@ -63,6 +115,26 @@ def register_route_frontend_admin_settings(app):
                 {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
                 {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
             ]
+        if 'enable_support_menu' not in settings:
+            settings['enable_support_menu'] = False
+        if 'support_menu_name' not in settings:
+            settings['support_menu_name'] = 'Support'
+        if 'enable_support_send_feedback' not in settings:
+            settings['enable_support_send_feedback'] = True
+        if 'support_feedback_recipient_email' not in settings:
+            settings['support_feedback_recipient_email'] = ''
+        if 'enable_support_latest_features' not in settings:
+            settings['enable_support_latest_features'] = True
+        if 'enable_support_latest_feature_documentation_links' not in settings:
+            settings['enable_support_latest_feature_documentation_links'] = False
+        settings['support_latest_features_visibility'] = normalize_support_latest_features_visibility(
+            settings.get('support_latest_features_visibility', {})
+        )
+        settings['support_latest_features_has_visible_items'] = has_visible_support_latest_features(settings)
+        settings['support_feedback_recipient_configured'] = bool(
+            str(settings.get('support_feedback_recipient_email') or '').strip()
+        )
+
         # --- End Refined Default Checks ---
 
         if 'enable_appinsights_global_logging' not in settings:
@@ -75,10 +147,29 @@ def register_route_frontend_admin_settings(app):
             settings['per_user_semantic_kernel'] = False
         if 'enable_semantic_kernel' not in settings:
             settings['enable_semantic_kernel'] = False
+
+        if 'web_search_consent_accepted' not in settings:
+            settings['web_search_consent_accepted'] = False
         
         # --- Add default for swagger documentation ---
         if 'enable_swagger' not in settings:
             settings['enable_swagger'] = True  # Default enabled for development/testing
+        if 'enable_external_healthcheck' not in settings:
+            settings['enable_external_healthcheck'] = False
+        if 'enable_no_auth_external_healthcheck' not in settings:
+            settings['enable_no_auth_external_healthcheck'] = False
+        if 'release_notifications_registered' not in settings:
+            settings['release_notifications_registered'] = False
+        if 'release_notifications_name' not in settings:
+            settings['release_notifications_name'] = ''
+        if 'release_notifications_email' not in settings:
+            settings['release_notifications_email'] = ''
+        if 'release_notifications_org' not in settings:
+            settings['release_notifications_org'] = ''
+        if 'release_notifications_registered_at' not in settings:
+            settings['release_notifications_registered_at'] = ''
+        if 'release_notifications_updated_at' not in settings:
+            settings['release_notifications_updated_at'] = ''
         if 'enable_time_plugin' not in settings:
             settings['enable_time_plugin'] = False
         if 'enable_http_plugin' not in settings:
@@ -91,6 +182,7 @@ def register_route_frontend_admin_settings(app):
             settings['enable_text_plugin'] = False
         if 'enable_fact_memory_plugin' not in settings:
             settings['enable_fact_memory_plugin'] = False
+        settings['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings)
         if 'enable_default_embedding_model_plugin' not in settings:
             settings['enable_default_embedding_model_plugin'] = False
         if 'enable_multi_agent_orchestration' not in settings:
@@ -132,18 +224,27 @@ def register_route_frontend_admin_settings(app):
                     'name': 'default_agent',
                     'is_global': True
                 }
+                log_event("Error retrieving global agents for default selection.", level=logging.ERROR)
+                debug_print("Error retrieving global agents for default selection.")
+                
         if 'allow_user_agents' not in settings:
             settings['allow_user_agents'] = False
-        if 'allow_user_custom_agent_endpoints' not in settings:
-            settings['allow_user_custom_agent_endpoints'] = False
+        if 'allow_user_custom_endpoints' not in settings:
+            settings['allow_user_custom_endpoints'] = settings.get('allow_user_custom_agent_endpoints', False)
         if 'allow_user_plugins' not in settings:
             settings['allow_user_plugins'] = False
         if 'allow_group_agents' not in settings:
             settings['allow_group_agents'] = False
-        if 'allow_group_custom_agent_endpoints' not in settings:
-            settings['allow_group_custom_agent_endpoints'] = False
+        if 'allow_group_custom_endpoints' not in settings:
+            settings['allow_group_custom_endpoints'] = settings.get('allow_group_custom_agent_endpoints', False)
         if 'allow_group_plugins' not in settings:
             settings['allow_group_plugins'] = False
+        if 'enable_agent_template_gallery' not in settings:
+            settings['enable_agent_template_gallery'] = True
+        if 'agent_templates_allow_user_submission' not in settings:
+            settings['agent_templates_allow_user_submission'] = True
+        if 'agent_templates_require_approval' not in settings:
+            settings['agent_templates_require_approval'] = True
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:
@@ -152,11 +253,51 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_text'] = ''
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+        if 'classification_banner_text_color' not in settings:
+            settings['classification_banner_text_color'] = '#ffffff'  # White text by default
         
-        # --- Add defaults for left nav ---
+        # --- Add defaults for user agreement ---
+        if 'enable_user_agreement' not in settings:
+            settings['enable_user_agreement'] = False
+        if 'user_agreement_text' not in settings:
+            settings['user_agreement_text'] = ''
+        if 'user_agreement_apply_to' not in settings:
+            settings['user_agreement_apply_to'] = []
+        if 'enable_user_agreement_daily' not in settings:
+            settings['enable_user_agreement_daily'] = False
+        
+        # --- Add defaults for key vault
+        if 'enable_key_vault_secret_storage' not in settings:
+            settings['enable_key_vault_secret_storage'] = False
+        if 'key_vault_name' not in settings:
+            settings['key_vault_name'] = ''
+        if 'key_vault_identity' not in settings:
+            settings['key_vault_identity'] = ''
+
+            # --- Add defaults for left nav ---
         if 'enable_left_nav_default' not in settings:
             settings['enable_left_nav_default'] = True
+        
+        # --- Add defaults for workspace scope lock ---
+        if 'enforce_workspace_scope_lock' not in settings:
+            settings['enforce_workspace_scope_lock'] = True
 
+        # --- Add defaults for multimodal vision ---
+        if 'enable_multimodal_vision' not in settings:
+            settings['enable_multimodal_vision'] = False
+        if 'multimodal_vision_model' not in settings:
+            settings['multimodal_vision_model'] = ''
+
+        # --- Add defaults for user idle timeout ---
+        if 'enable_idle_timeout' not in settings:
+            settings['enable_idle_timeout'] = False
+        if 'idle_timeout_minutes' not in settings:
+            settings['idle_timeout_minutes'] = 30
+        if 'idle_warning_minutes' not in settings:
+            settings['idle_warning_minutes'] = 28
+        if 'idle_warning_message' not in settings:
+            settings['idle_warning_message'] = "You've been inactive for a while."
+            
         if request.method == 'GET':
             # --- Model fetching logic remains the same ---
             gpt_deployments = []
@@ -171,7 +312,7 @@ def register_route_frontend_admin_settings(app):
                      pass # Replace with actual logic
             except Exception as e:
                  print(f"Error retrieving GPT deployments: {e}")
-            # ... similar try/except for embedding and image models ...
+                 log_event(f"Error retrieving GPT deployments: {e}", level=logging.ERROR)
 
             # Check for application updates
             current_version = app.config['VERSION']
@@ -214,17 +355,36 @@ def register_route_frontend_admin_settings(app):
                         settings.update(new_settings)
                 except Exception as e:
                     print(f"Error checking for updates: {e}")
+                    log_event(f"Error checking for updates: {e}", level=logging.ERROR)
             
             # Get the persisted values for template rendering
             update_available = settings.get('update_available', False)
             latest_version = settings.get('latest_version_available')
+            
+            # Get user settings for profile and navigation
+            user_id = get_current_user_id()
+            user_settings = get_user_settings(user_id)
+            settings_for_template = dict(settings)
+            settings_for_template['model_endpoints'] = frontend_model_endpoints
 
             return render_template(
                 'admin_settings.html',
-                settings=settings,
+                app_settings=settings_for_template,
+                settings=settings_for_template,
+                azure_environment=AZURE_ENVIRONMENT,
+                default_video_indexer_endpoint=video_indexer_endpoint,
+                default_video_indexer_arm_api_version=DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
+                user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
-                download_url=download_url
+                download_url=download_url,
+                support_latest_feature_catalog=get_support_latest_feature_catalog(),
+                support_latest_feature_release_groups=get_support_latest_feature_release_groups(),
+                support_latest_feature_release_groups_preview=get_support_latest_feature_release_groups_for_settings(settings),
+                chunk_size_defaults=get_chunk_size_defaults(),
+                chunk_size_settings=settings.get('chunk_size', {}),
+                chunk_size_cap=get_chunk_size_cap(settings),
+                chunk_size_effective=get_chunk_size_config(settings)
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -233,20 +393,107 @@ def register_route_frontend_admin_settings(app):
 
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
+            user_id = get_current_user_id()
+
+            def parse_admin_int(raw_value, fallback_value, field_name="unknown", hard_default=0):
+                """
+                Parse an admin form value to an integer with structured fallback diagnostics.
+
+                Args:
+                    raw_value (object): The submitted form value to parse.
+                    fallback_value (object): The fallback value to parse when input conversion fails.
+                    field_name (str): The admin settings field name being parsed.
+                    hard_default (int): Final integer default when both input and fallback are invalid.
+
+                Returns:
+                    int: A valid integer derived from input, fallback, or hard default.
+                Raises:
+                    None.
+                """
+                parsed_value, parse_source = safe_int_with_source(raw_value, fallback_value, hard_default)
+
+                if parse_source == "hard_default":
+                    log_event(
+                        "Invalid admin settings integer input and fallback detected; using hard default value.",
+                        extra={
+                            "field": field_name,
+                            "raw_value": str(raw_value),
+                            "fallback_value": str(fallback_value),
+                            "hard_default": hard_default,
+                            "user_id": user_id
+                        },
+                        level=logging.WARNING
+                    )
+                elif parse_source == "fallback":
+                    log_event(
+                        "Invalid admin settings integer input detected; using fallback value.",
+                        extra={
+                            "field": field_name,
+                            "raw_value": str(raw_value),
+                            "fallback_value": str(fallback_value),
+                            "user_id": user_id
+                        },
+                        level=logging.WARNING
+                    )
+
+                return parsed_value
 
             # --- Fetch all other form data as before ---
             app_title = form_data.get('app_title', 'AI Chat Application')
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
             conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
+            enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
+            idle_timeout_minutes = max(10, parse_admin_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
+            idle_warning_minutes = max(0, parse_admin_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes', 28))
+            idle_warning_message = form_data.get(
+                'idle_warning_message',
+                settings.get('idle_warning_message', "You've been inactive for a while.")
+            ).strip()
+            if idle_warning_minutes > idle_timeout_minutes:
+                idle_warning_minutes = idle_timeout_minutes
+            if not idle_warning_message:
+                idle_warning_message = "You've been inactive for a while."
             # ... (fetch all other fields using form_data.get) ...
             enable_video_file_support = form_data.get('enable_video_file_support') == 'on'
             enable_audio_file_support = form_data.get('enable_audio_file_support') == 'on'
             enable_extract_meta_data = form_data.get('enable_extract_meta_data') == 'on'
+            
+            # Vision settings
+            enable_multimodal_vision = form_data.get('enable_multimodal_vision') == 'on'
+            multimodal_vision_model = form_data.get('multimodal_vision_model', '')
 
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
+            require_owner_for_group_agent_management = form_data.get('require_owner_for_group_agent_management') == 'on'
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
+            require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
+            require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
+
+            web_search_consent_message = (
+                "When you use Grounding with Bing Search, your customer data is transferred "
+                "outside of the Azure compliance boundary to the Grounding with Bing Search service. "
+                "Grounding with Bing Search is not subject to the same data processing terms "
+                "(including location of processing) and does not have the same compliance standards "
+                "and certifications as the Azure AI Agent Service, as described in the "
+                "Grounding with Bing Search TOU (https://www.microsoft.com/en-us/bing/apis/grounding-legal). "
+                "It is your responsibility to assess whether use of Grounding with Bing Search in your agent "
+                "meets your needs and requirements."
+            )
+            web_search_consent_accepted = form_data.get('web_search_consent_accepted') == 'true'
+            requested_enable_web_search = form_data.get('enable_web_search') == 'on'
+            enable_web_search = requested_enable_web_search and web_search_consent_accepted
+
+            if requested_enable_web_search and not web_search_consent_accepted:
+                flash('Web search requires consent before it can be enabled.', 'warning')
+
+            if enable_web_search and web_search_consent_accepted and not settings.get('web_search_consent_accepted'):
+                log_web_search_consent_acceptance(
+                    user_id=user_id,
+                    admin_email=admin_email,
+                    consent_text=web_search_consent_message,
+                    source='admin_settings'
+                )
 
             # --- Handle Document Classification Toggle ---
             enable_document_classification = form_data.get('enable_document_classification') == 'on'
@@ -316,6 +563,33 @@ def register_route_frontend_admin_settings(app):
                 # Keep existing external links from the database instead of overwriting with bad data
                 parsed_external_links = settings.get('external_links', []) # Fallback to existing
 
+            enable_support_menu = form_data.get('enable_support_menu') == 'on'
+            support_menu_name = form_data.get('support_menu_name', 'Support').strip()
+            if not support_menu_name:
+                support_menu_name = 'Support'
+
+            enable_support_send_feedback = form_data.get('enable_support_send_feedback') == 'on'
+            support_feedback_recipient_email = form_data.get('support_feedback_recipient_email', '').strip()
+            if enable_support_send_feedback and not support_feedback_recipient_email:
+                flash('Support Send Feedback requires a recipient email. The Send Feedback entry was disabled.', 'warning')
+                enable_support_send_feedback = False
+            elif support_feedback_recipient_email and '@' not in support_feedback_recipient_email:
+                flash('Support feedback recipient email must be a valid email address. The Send Feedback entry was disabled.', 'warning')
+                support_feedback_recipient_email = ''
+                enable_support_send_feedback = False
+
+            enable_support_latest_features = form_data.get('enable_support_latest_features') == 'on'
+            enable_support_latest_feature_documentation_links = (
+                form_data.get('enable_support_latest_feature_documentation_links') == 'on'
+            )
+            support_latest_features_visibility = {}
+            for feature in get_support_latest_feature_catalog():
+                field_name = f"support_latest_feature_{feature['id']}"
+                support_latest_features_visibility[feature['id']] = form_data.get(field_name) == 'on'
+            support_latest_features_visibility = normalize_support_latest_features_visibility(
+                support_latest_features_visibility
+            )
+
             # Enhanced Citations...
             enable_enhanced_citations = form_data.get('enable_enhanced_citations') == 'on'
             office_docs_storage_account_blob_endpoint = form_data.get('office_docs_storage_account_blob_endpoint', '').strip()
@@ -336,25 +610,230 @@ def register_route_frontend_admin_settings(app):
             except Exception as e:
                 print(f"Error parsing gpt_model_json: {e}")
                 flash('Error parsing GPT model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing GPT model data: {e}", level=logging.ERROR)
                 gpt_model_obj = settings.get('gpt_model', {'selected': [], 'all': []}) # Fallback
-            # ... similar try/except for embedding and image models ...
+                
             try:
                 embedding_model_obj = json.loads(embedding_model_json) if embedding_model_json else {'selected': [], 'all': []}
             except Exception as e:
                 print(f"Error parsing embedding_model_json: {e}")
                 flash('Error parsing Embedding model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing Embedding model data: {e}", level=logging.ERROR)
                 embedding_model_obj = settings.get('embedding_model', {'selected': [], 'all': []}) # Fallback
             try:
                 image_gen_model_obj = json.loads(image_gen_model_json) if image_gen_model_json else {'selected': [], 'all': []}
             except Exception as e:
                 print(f"Error parsing image_gen_model_json: {e}")
                 flash('Error parsing Image Gen model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing Image Gen model data: {e}", level=logging.ERROR)
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
+
+            requested_enable_multi_model_endpoints = form_data.get('enable_multi_model_endpoints') == 'on'
+            model_endpoints_json = form_data.get('model_endpoints_json', '[]')
+            existing_model_endpoints = settings.get('model_endpoints', []) or []
+            parsed_model_endpoints = []
+            try:
+                parsed_model_endpoints_raw = json.loads(model_endpoints_json) if model_endpoints_json else []
+                if isinstance(parsed_model_endpoints_raw, list):
+                    parsed_model_endpoints = parsed_model_endpoints_raw
+                else:
+                    raise ValueError("Invalid format: model_endpoints must be a list.")
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error processing model_endpoints_json: {e}")
+                flash(f"Error processing model endpoints: {e}. Changes for endpoints not saved.", 'danger')
+                parsed_model_endpoints = settings.get('model_endpoints', [])
+
+            existing_multi_endpoints_enabled = settings.get('enable_multi_model_endpoints', False)
+            enable_multi_model_endpoints = coerce_multi_model_endpoint_enablement(
+                existing_multi_endpoints_enabled,
+                requested_enable_multi_model_endpoints,
+            )
+            should_migrate_endpoints = enable_multi_model_endpoints and not existing_multi_endpoints_enabled
+            migration_notice = settings.get('multi_endpoint_migration_notice', {
+                'enabled': False,
+                'message': '',
+                'created_at': None
+            })
+            migration_notice['enabled'] = False
+            migration_notice['message'] = ''
+            migrated_at = settings.get('multi_endpoint_migrated_at')
+
+            if should_migrate_endpoints and not parsed_model_endpoints:
+                default_endpoint_id = str(uuid.uuid4())
+                migrated_models = []
+                for model in gpt_model_obj.get('selected', []):
+                    deployment_name = model.get('deploymentName') or model.get('deployment') or ''
+                    model_name = model.get('modelName') or model.get('name') or ''
+                    if not deployment_name:
+                        continue
+                    migrated_models.append({
+                        'id': str(uuid.uuid4()),
+                        'deploymentName': deployment_name,
+                        'modelName': model_name,
+                        'displayName': deployment_name,
+                        'description': '',
+                        'enabled': True
+                    })
+
+                legacy_auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+                migrated_auth_type = 'api_key' if legacy_auth_type == 'key' else legacy_auth_type
+
+                parsed_model_endpoints = [{
+                    'id': default_endpoint_id,
+                    'name': 'Migrated Azure OpenAI Endpoint',
+                    'provider': 'aoai',
+                    'enabled': True,
+                    'auth': {
+                        'type': migrated_auth_type,
+                        'managed_identity_type': 'system_assigned',
+                        'managed_identity_client_id': '',
+                        'tenant_id': '',
+                        'client_id': '',
+                        'client_secret': '',
+                        'api_key': settings.get('azure_openai_gpt_key', '')
+                    },
+                    'connection': {
+                        'endpoint': settings.get('azure_openai_gpt_endpoint', ''),
+                        'api_version': settings.get('azure_openai_gpt_api_version', '')
+                    },
+                    'management': {
+                        'subscription_id': settings.get('azure_openai_gpt_subscription_id', ''),
+                        'resource_group': settings.get('azure_openai_gpt_resource_group', ''),
+                        'location': ''
+                    },
+                    'models': migrated_models
+                }]
+                debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
+                debug_print(
+                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
+                )
+                log_event(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.", level=logging.INFO)
+                log_event(
+                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}",
+                    level=logging.INFO,
+                )
+                log_general_admin_action(
+                    admin_user_id=user_id,
+                    admin_email=admin_email,
+                    action='Enabled and migrated multi-model endpoints',
+                    description=f'Migrated {len(migrated_models)} models to multi-endpoint configuration.'
+                )
+
+
+                migrated_at = datetime.now(timezone.utc).isoformat()
+                migration_notice['created_at'] = migrated_at
+
+            parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
+            parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+
+            existing_endpoints_by_id = {
+                endpoint.get('id'): endpoint
+                for endpoint in existing_model_endpoints
+                if isinstance(endpoint, dict) and endpoint.get('id')
+            }
+            parsed_model_endpoints = [
+                keyvault_model_endpoint_save_helper(
+                    endpoint,
+                    endpoint.get('id'),
+                    scope='global',
+                    existing_endpoint=existing_endpoints_by_id.get(endpoint.get('id')),
+                )
+                for endpoint in parsed_model_endpoints
+            ]
+
+            for endpoint in parsed_model_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = endpoint.get('id')
+                if not endpoint_id:
+                    continue
+                keyvault_model_endpoint_cleanup_helper(
+                    existing_endpoints_by_id.get(endpoint_id),
+                    endpoint,
+                    endpoint_id,
+                    scope='global',
+                )
+
+            saved_endpoint_ids = {
+                endpoint.get('id')
+                for endpoint in parsed_model_endpoints
+                if isinstance(endpoint, dict) and endpoint.get('id')
+            }
+            for endpoint in existing_model_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = endpoint.get('id')
+                if endpoint_id and endpoint_id not in saved_endpoint_ids:
+                    keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope='global')
+
+            default_model_selection_json = form_data.get('default_model_selection_json', '{}')
+            parsed_default_model_selection = {}
+            try:
+                parsed_default_model_selection_raw = (
+                    json.loads(default_model_selection_json) if default_model_selection_json else {}
+                )
+                if isinstance(parsed_default_model_selection_raw, dict):
+                    parsed_default_model_selection = parsed_default_model_selection_raw
+                else:
+                    raise ValueError("Invalid format: default_model_selection must be an object.")
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error processing default_model_selection_json: {e}")
+                flash(f"Error processing default model selection: {e}. Changes not saved.", 'danger')
+                parsed_default_model_selection = settings.get('default_model_selection', {})
+
+            normalized_default_model_selection = {
+                'endpoint_id': str(parsed_default_model_selection.get('endpoint_id') or '').strip(),
+                'model_id': str(parsed_default_model_selection.get('model_id') or '').strip(),
+                'provider': str(parsed_default_model_selection.get('provider') or '').strip().lower()
+            }
+
+            if not enable_multi_model_endpoints:
+                normalized_default_model_selection = {
+                    'endpoint_id': '',
+                    'model_id': '',
+                    'provider': ''
+                }
+            elif normalized_default_model_selection['endpoint_id'] and normalized_default_model_selection['model_id']:
+                endpoint_cfg = next(
+                    (e for e in parsed_model_endpoints if e.get('id') == normalized_default_model_selection['endpoint_id']),
+                    None
+                )
+                if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
+                    flash('Default model endpoint is not available. Please select a valid endpoint.', 'warning')
+                    normalized_default_model_selection = {
+                        'endpoint_id': '',
+                        'model_id': '',
+                        'provider': ''
+                    }
+                else:
+                    models = endpoint_cfg.get('models', []) or []
+                    model_cfg = next(
+                        (m for m in models if m.get('id') == normalized_default_model_selection['model_id']),
+                        None
+                    )
+                    if not model_cfg or not model_cfg.get('enabled', True):
+                        flash('Default model is not available. Please select a valid model.', 'warning')
+                        normalized_default_model_selection = {
+                            'endpoint_id': '',
+                            'model_id': '',
+                            'provider': ''
+                        }
+                    else:
+                        endpoint_provider = (endpoint_cfg.get('provider') or '').strip().lower()
+                        if endpoint_provider:
+                            normalized_default_model_selection['provider'] = endpoint_provider
+            else:
+                normalized_default_model_selection = {
+                    'endpoint_id': '',
+                    'model_id': '',
+                    'provider': ''
+                }
 
             # --- Extract banner fields from form_data ---
             classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
             classification_banner_text = form_data.get('classification_banner_text', '').strip()
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
+            classification_banner_text_color = form_data.get('classification_banner_text_color', '#ffffff').strip()
 
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
@@ -381,24 +860,47 @@ def register_route_frontend_admin_settings(app):
                 if debug_timer_value < min_val or debug_timer_value > max_val:
                     debug_timer_value = min(max(debug_timer_value, min_val), max_val)
             
+            # Get existing timer settings to check if they've changed
+            existing_debug_timer_enabled = settings.get('debug_logging_timer_enabled', False)
+            existing_debug_timer_value = settings.get('debug_timer_value', 1)
+            existing_debug_timer_unit = settings.get('debug_timer_unit', 'hours')
+            existing_debug_logging_enabled = settings.get('enable_debug_logging', False)
+            existing_debug_turnoff_time = settings.get('debug_logging_turnoff_time')
+            
+            # Determine if timer settings have changed
+            timer_settings_changed = (
+                debug_logging_timer_enabled != existing_debug_timer_enabled or
+                debug_timer_value != existing_debug_timer_value or
+                debug_timer_unit != existing_debug_timer_unit
+            )
+            debug_logging_newly_enabled = enable_debug_logging and not existing_debug_logging_enabled
+            
             # Calculate debug logging turnoff time if timer is enabled and debug logging is on
             if enable_debug_logging and debug_logging_timer_enabled:
-                now = datetime.now()
-                
-                if debug_timer_unit == 'minutes':
-                    delta = timedelta(minutes=debug_timer_value)
-                elif debug_timer_unit == 'hours':
-                    delta = timedelta(hours=debug_timer_value)
-                elif debug_timer_unit == 'days':
-                    delta = timedelta(days=debug_timer_value)
-                elif debug_timer_unit == 'weeks':
-                    delta = timedelta(weeks=debug_timer_value)
+                # Only recalculate turnoff time if:
+                # 1. Timer settings have changed (value, unit, or enabled state), OR
+                # 2. Debug logging was just enabled, OR
+                # 3. No existing turnoff time exists
+                if timer_settings_changed or debug_logging_newly_enabled or not existing_debug_turnoff_time:
+                    now = datetime.now()
+                    
+                    if debug_timer_unit == 'minutes':
+                        delta = timedelta(minutes=debug_timer_value)
+                    elif debug_timer_unit == 'hours':
+                        delta = timedelta(hours=debug_timer_value)
+                    elif debug_timer_unit == 'days':
+                        delta = timedelta(days=debug_timer_value)
+                    elif debug_timer_unit == 'weeks':
+                        delta = timedelta(weeks=debug_timer_value)
+                    else:
+                        delta = timedelta(hours=1)  # default fallback
+                    
+                    debug_logging_turnoff_time = now + delta
+                    # Convert to ISO string for JSON serialization
+                    debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
                 else:
-                    delta = timedelta(hours=1)  # default fallback
-                
-                debug_logging_turnoff_time = now + delta
-                # Convert to ISO string for JSON serialization
-                debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
+                    # Preserve existing turnoff time
+                    debug_logging_turnoff_time_str = existing_debug_turnoff_time
             else:
                 debug_logging_turnoff_time_str = None
 
@@ -407,6 +909,7 @@ def register_route_frontend_admin_settings(app):
             file_timer_value = int(form_data.get('file_timer_value', 1))
             file_timer_unit = form_data.get('file_timer_unit', 'hours')
             file_processing_logs_turnoff_time = None
+            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             
             # Validate file timer values
             if file_timer_unit in timer_limits:
@@ -414,27 +917,102 @@ def register_route_frontend_admin_settings(app):
                 if file_timer_value < min_val or file_timer_value > max_val:
                     file_timer_value = min(max(file_timer_value, min_val), max_val)
             
+            # Get existing file timer settings to check if they've changed
+            existing_file_timer_enabled = settings.get('file_processing_logs_timer_enabled', False)
+            existing_file_timer_value = settings.get('file_timer_value', 1)
+            existing_file_timer_unit = settings.get('file_timer_unit', 'hours')
+            existing_file_processing_logs_enabled = settings.get('enable_file_processing_logs', False)
+            existing_file_turnoff_time = settings.get('file_processing_logs_turnoff_time')
+            
+            # Determine if timer settings have changed
+            file_timer_settings_changed = (
+                file_processing_logs_timer_enabled != existing_file_timer_enabled or
+                file_timer_value != existing_file_timer_value or
+                file_timer_unit != existing_file_timer_unit
+            )
+            file_processing_logs_newly_enabled = enable_file_processing_logs and not existing_file_processing_logs_enabled
+            
             # Calculate file processing logs turnoff time if timer is enabled and file processing logs are on
-            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             if enable_file_processing_logs and file_processing_logs_timer_enabled:
-                now = datetime.now()
-                
-                if file_timer_unit == 'minutes':
-                    delta = timedelta(minutes=file_timer_value)
-                elif file_timer_unit == 'hours':
-                    delta = timedelta(hours=file_timer_value)
-                elif file_timer_unit == 'days':
-                    delta = timedelta(days=file_timer_value)
-                elif file_timer_unit == 'weeks':
-                    delta = timedelta(weeks=file_timer_value)
+                # Only recalculate turnoff time if:
+                # 1. Timer settings have changed (value, unit, or enabled state), OR
+                # 2. File processing logs was just enabled, OR
+                # 3. No existing turnoff time exists
+                if file_timer_settings_changed or file_processing_logs_newly_enabled or not existing_file_turnoff_time:
+                    now = datetime.now()
+                    
+                    if file_timer_unit == 'minutes':
+                        delta = timedelta(minutes=file_timer_value)
+                    elif file_timer_unit == 'hours':
+                        delta = timedelta(hours=file_timer_value)
+                    elif file_timer_unit == 'days':
+                        delta = timedelta(days=file_timer_value)
+                    elif file_timer_unit == 'weeks':
+                        delta = timedelta(weeks=file_timer_value)
+                    else:
+                        delta = timedelta(hours=1)  # default fallback
+                    
+                    file_processing_logs_turnoff_time = now + delta
+                    # Convert to ISO string for JSON serialization
+                    file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
                 else:
-                    delta = timedelta(hours=1)  # default fallback
-                
-                file_processing_logs_turnoff_time = now + delta
-                # Convert to ISO string for JSON serialization
-                file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
+                    # Preserve existing turnoff time
+                    file_processing_logs_turnoff_time_str = existing_file_turnoff_time
             else:
                 file_processing_logs_turnoff_time_str = None
+
+            # --- Retention Policy Settings ---
+            enable_retention_policy_personal = form_data.get('enable_retention_policy_personal') == 'on'
+            enable_retention_policy_group = form_data.get('enable_retention_policy_group') == 'on'
+            enable_retention_policy_public = form_data.get('enable_retention_policy_public') == 'on'
+            retention_policy_execution_hour = int(form_data.get('retention_policy_execution_hour', 2))
+            
+            # Default retention policy values for each workspace type
+            default_retention_conversation_personal = form_data.get('default_retention_conversation_personal', 'none')
+            default_retention_document_personal = form_data.get('default_retention_document_personal', 'none')
+            default_retention_conversation_group = form_data.get('default_retention_conversation_group', 'none')
+            default_retention_document_group = form_data.get('default_retention_document_group', 'none')
+            default_retention_conversation_public = form_data.get('default_retention_conversation_public', 'none')
+            default_retention_document_public = form_data.get('default_retention_document_public', 'none')
+            
+            # Validate execution hour (0-23)
+            if retention_policy_execution_hour < 0 or retention_policy_execution_hour > 23:
+                retention_policy_execution_hour = 2  # Default to 2 AM
+            
+            # Calculate next scheduled execution time if any retention policy is enabled
+            retention_policy_next_run = None
+            if enable_retention_policy_personal or enable_retention_policy_group or enable_retention_policy_public:
+                now = datetime.now(timezone.utc)
+                # Create next run datetime with the specified hour
+                next_run = now.replace(hour=retention_policy_execution_hour, minute=0, second=0, microsecond=0)
+                
+                # If the scheduled time has already passed today, schedule for tomorrow
+                if next_run <= now:
+                    next_run = next_run + timedelta(days=1)
+                
+                retention_policy_next_run = next_run.isoformat()
+
+            # --- User Agreement Settings ---
+            enable_user_agreement = form_data.get('enable_user_agreement') == 'on'
+            user_agreement_text = form_data.get('user_agreement_text', '').strip()
+            enable_user_agreement_daily = form_data.get('enable_user_agreement_daily') == 'on'
+            
+            # Build apply_to list from checkboxes
+            user_agreement_apply_to = []
+            if form_data.get('user_agreement_apply_personal') == 'on':
+                user_agreement_apply_to.append('personal')
+            if form_data.get('user_agreement_apply_group') == 'on':
+                user_agreement_apply_to.append('group')
+            if form_data.get('user_agreement_apply_public') == 'on':
+                user_agreement_apply_to.append('public')
+            if form_data.get('user_agreement_apply_chat') == 'on':
+                user_agreement_apply_to.append('chat')
+            
+            # Validate word count (max 200 words)
+            if enable_user_agreement and user_agreement_text:
+                word_count = len(user_agreement_text.split())
+                if word_count > 200:
+                    flash('User Agreement text exceeds 200 word limit. Please shorten the text.', 'warning')
 
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
@@ -457,6 +1035,45 @@ def register_route_frontend_admin_settings(app):
             if front_door_url and not is_valid_url(front_door_url):
                 flash('Invalid Front Door URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
                 front_door_url = ''
+
+            # --- Chunk Size Overrides ---
+            chunk_size_defaults = get_chunk_size_defaults()
+            existing_chunk_sizes = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
+            chunk_size_cap = get_chunk_size_cap(settings)
+            enable_chunk_size_override = form_data.get('enable_chunk_size_override') == 'on'
+            normalized_chunk_sizes = {}
+            chunk_size_warning_keys = []
+
+            for key, meta in chunk_size_defaults.items():
+                field_name = f"chunk_size_{key}"
+                incoming_raw = form_data.get(field_name, '')
+                stored_meta = existing_chunk_sizes.get(key, {}) if isinstance(existing_chunk_sizes, dict) else {}
+
+                try:
+                    parsed_value = int(incoming_raw) if incoming_raw not in [None, ''] else int(stored_meta.get('value', meta.get('value', 1)))
+                except Exception:
+                    parsed_value = meta.get('value', 1)
+
+                sanitized_value = max(1, parsed_value)
+                if sanitized_value > chunk_size_cap:
+                    chunk_size_warning_keys.append(key.upper())
+                sanitized_value = min(sanitized_value, chunk_size_cap)
+
+                normalized_chunk_sizes[key] = {
+                    'value': sanitized_value,
+                    'unit': stored_meta.get('unit', meta.get('unit', 'words'))
+                }
+
+            chunk_size_changed = (
+                enable_chunk_size_override != settings.get('enable_chunk_size_override', False)
+                or normalized_chunk_sizes != existing_chunk_sizes
+            )
+
+            if chunk_size_warning_keys:
+                flash(
+                    f"Chunk sizes capped at {chunk_size_cap} for: {', '.join(chunk_size_warning_keys)}.",
+                    'warning'
+                )
 
             # --- Construct new_settings Dictionary ---
             new_settings = {
@@ -481,10 +1098,20 @@ def register_route_frontend_admin_settings(app):
                 'landing_page_alignment': form_data.get('landing_page_alignment', 'left'),
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
                 'enable_left_nav_default': form_data.get('enable_left_nav_default') == 'on',
+                'release_notifications_registered': form_data.get('release_notifications_registered', 'false').lower() == 'true',
+                'release_notifications_name': form_data.get('release_notifications_name', settings.get('release_notifications_name', '')).strip(),
+                'release_notifications_email': form_data.get('release_notifications_email', settings.get('release_notifications_email', '')).strip(),
+                'release_notifications_org': form_data.get('release_notifications_org', settings.get('release_notifications_org', '')).strip(),
+                'release_notifications_registered_at': form_data.get('release_notifications_registered_at', settings.get('release_notifications_registered_at', '')).strip(),
+                'release_notifications_updated_at': form_data.get('release_notifications_updated_at', settings.get('release_notifications_updated_at', '')).strip(),
                 'enable_external_healthcheck': form_data.get('enable_external_healthcheck') == 'on',
+                'enable_no_auth_external_healthcheck': form_data.get('enable_no_auth_external_healthcheck') == 'on',
                 'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
+                'enable_agent_template_gallery': form_data.get('enable_agent_template_gallery') == 'on',
+                'agent_templates_allow_user_submission': form_data.get('agent_templates_allow_user_submission') == 'on',
+                'agent_templates_require_approval': form_data.get('agent_templates_require_approval') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -495,6 +1122,11 @@ def register_route_frontend_admin_settings(app):
                 'azure_openai_gpt_resource_group': form_data.get('azure_openai_gpt_resource_group', '').strip(),
                 'azure_openai_gpt_key': form_data.get('azure_openai_gpt_key', '').strip(), # Consider encryption/decryption here if needed
                 'gpt_model': gpt_model_obj,
+                'enable_multi_model_endpoints': enable_multi_model_endpoints,
+                'model_endpoints': parsed_model_endpoints,
+                'default_model_selection': normalized_default_model_selection,
+                'multi_endpoint_migrated_at': migrated_at,
+                'multi_endpoint_migration_notice': migration_notice,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),
                 'azure_apim_gpt_subscription_key': form_data.get('azure_apim_gpt_subscription_key', '').strip(),
                 'azure_apim_gpt_deployment': form_data.get('azure_apim_gpt_deployment', '').strip(),
@@ -538,15 +1170,38 @@ def register_route_frontend_admin_settings(app):
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
                 'enable_group_workspaces': form_data.get('enable_group_workspaces') == 'on',
+                # disable_group_creation is inverted: when checked (on), enable_group_creation = False
+                'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
+                'enforce_workspace_scope_lock': form_data.get('enforce_workspace_scope_lock') == 'on',
                 'enable_file_processing_logs': enable_file_processing_logs,
                 'file_processing_logs_timer_enabled': file_processing_logs_timer_enabled,
                 'file_timer_value': file_timer_value,
                 'file_timer_unit': file_timer_unit,
                 'file_processing_logs_turnoff_time': file_processing_logs_turnoff_time_str,
                 'require_member_of_create_group': require_member_of_create_group,
+                'require_owner_for_group_agent_management': require_owner_for_group_agent_management,
                 'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
+                
+                # Retention Policy
+                'enable_retention_policy_personal': enable_retention_policy_personal,
+                'enable_retention_policy_group': enable_retention_policy_group,
+                'enable_retention_policy_public': enable_retention_policy_public,
+                'retention_policy_execution_hour': retention_policy_execution_hour,
+                'retention_policy_next_run': retention_policy_next_run,
+                'default_retention_conversation_personal': default_retention_conversation_personal,
+                'default_retention_document_personal': default_retention_document_personal,
+                'default_retention_conversation_group': default_retention_conversation_group,
+                'default_retention_document_group': default_retention_document_group,
+                'default_retention_conversation_public': default_retention_conversation_public,
+                'default_retention_document_public': default_retention_document_public,
+
+                # User Agreement
+                'enable_user_agreement': enable_user_agreement,
+                'user_agreement_text': user_agreement_text,
+                'user_agreement_apply_to': user_agreement_apply_to,
+                'enable_user_agreement_daily': enable_user_agreement_daily,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
@@ -566,10 +1221,20 @@ def register_route_frontend_admin_settings(app):
                 'external_links_force_menu': external_links_force_menu,
                 'external_links': parsed_external_links, # Store the PARSED LIST
 
+                # *** Support Menu ***
+                'enable_support_menu': enable_support_menu,
+                'support_menu_name': support_menu_name,
+                'enable_support_send_feedback': enable_support_send_feedback,
+                'support_feedback_recipient_email': support_feedback_recipient_email,
+                'enable_support_latest_features': enable_support_latest_features,
+                'enable_support_latest_feature_documentation_links': enable_support_latest_feature_documentation_links,
+                'support_latest_features_visibility': support_latest_features_visibility,
+
                 # Enhanced Citations
                 'enable_enhanced_citations': enable_enhanced_citations,
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
+                'tabular_preview_max_blob_size_mb': int(form_data.get('tabular_preview_max_blob_size_mb', 200)),
                 'office_docs_storage_account_blob_endpoint': office_docs_storage_account_blob_endpoint,
                 'office_docs_storage_account_url': office_docs_storage_account_url,
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
@@ -592,15 +1257,38 @@ def register_route_frontend_admin_settings(app):
                 'require_member_of_safety_violation_admin': require_member_of_safety_violation_admin, # ADDED
                 'require_member_of_feedback_admin': require_member_of_feedback_admin, # ADDED
 
-                # Feedback & Archiving
+                # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
+                'enable_thoughts': form_data.get('enable_thoughts') == 'on',
 
-                # Search (Web Search Direct & APIM)
-                'enable_web_search': form_data.get('enable_web_search') == 'on',
-                'enable_web_search_apim': form_data.get('enable_web_search_apim') == 'on',
-                'azure_apim_web_search_endpoint': form_data.get('azure_apim_web_search_endpoint', '').strip(),
-                'azure_apim_web_search_subscription_key': form_data.get('azure_apim_web_search_subscription_key', '').strip(),
+                # Search (Web Search via Azure AI Foundry agent)
+                'enable_web_search': enable_web_search,
+                'web_search_consent_accepted': web_search_consent_accepted,
+                'enable_web_search_user_notice': form_data.get('enable_web_search_user_notice') == 'on',
+                'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.').strip(),
+                'web_search_agent': {
+                    'agent_type': 'aifoundry',
+                    'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
+                    'azure_openai_gpt_api_version': form_data.get('web_search_foundry_api_version', '').strip(),
+                    'azure_openai_gpt_deployment': '',
+                    'other_settings': {
+                        'azure_ai_foundry': {
+                            'agent_id': form_data.get('web_search_foundry_agent_id', '').strip(),
+                            'endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
+                            'api_version': form_data.get('web_search_foundry_api_version', '').strip(),
+                            'authentication_type': form_data.get('web_search_foundry_auth_type', 'managed_identity').strip(),
+                            'managed_identity_type': form_data.get('web_search_foundry_managed_identity_type', 'system_assigned').strip(),
+                            'managed_identity_client_id': form_data.get('web_search_foundry_managed_identity_client_id', '').strip(),
+                            'tenant_id': form_data.get('web_search_foundry_tenant_id', '').strip(),
+                            'client_id': form_data.get('web_search_foundry_client_id', '').strip(),
+                            'client_secret': form_data.get('web_search_foundry_client_secret', '').strip(),
+                            'cloud': form_data.get('web_search_foundry_cloud', '').strip(),
+                            'authority': form_data.get('web_search_foundry_authority', '').strip(),
+                            'notes': form_data.get('web_search_foundry_notes', '').strip()
+                        }
+                    }
+                },
 
                 # Search (AI Search Direct & APIM)
                 'azure_ai_search_endpoint': form_data.get('azure_ai_search_endpoint', '').strip(),
@@ -609,6 +1297,8 @@ def register_route_frontend_admin_settings(app):
                 'enable_ai_search_apim': form_data.get('enable_ai_search_apim') == 'on',
                 'azure_apim_ai_search_endpoint': form_data.get('azure_apim_ai_search_endpoint', '').strip(),
                 'azure_apim_ai_search_subscription_key': form_data.get('azure_apim_ai_search_subscription_key', '').strip(),
+                'enable_chunk_size_override': enable_chunk_size_override,
+                'chunk_size': normalized_chunk_sizes,
 
                 # Extract (Doc Intelligence Direct & APIM)
                 'azure_document_intelligence_endpoint': form_data.get('azure_document_intelligence_endpoint', '').strip(),
@@ -618,6 +1308,10 @@ def register_route_frontend_admin_settings(app):
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),
 
+                'enable_key_vault_secret_storage': form_data.get('enable_key_vault_secret_storage') == 'on',
+                'key_vault_name': form_data.get('key_vault_name', '').strip(),
+                'key_vault_identity': form_data.get('key_vault_identity', ''),
+
                 # Authentication & Redirect Settings
                 'enable_front_door': enable_front_door,
                 'front_door_url': front_door_url,
@@ -625,31 +1319,54 @@ def register_route_frontend_admin_settings(app):
                 # Other
                 'max_file_size_mb': max_file_size_mb,
                 'conversation_history_limit': conversation_history_limit,
+                'enable_idle_timeout': enable_idle_timeout,
+                'idle_timeout_minutes': idle_timeout_minutes,
+                'idle_warning_minutes': idle_warning_minutes,
+                'idle_warning_message': idle_warning_message,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
+                'access_denied_message': form_data.get('access_denied_message', settings.get('access_denied_message', '')).strip(),
 
                 # Video file settings with Azure Video Indexer Settings
                 'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),
                 'video_indexer_location': form_data.get('video_indexer_location', '').strip(),
                 'video_indexer_account_id': form_data.get('video_indexer_account_id', '').strip(),
-                'video_indexer_api_key': form_data.get('video_indexer_api_key', '').strip(),
                 'video_indexer_resource_group': form_data.get('video_indexer_resource_group', '').strip(),
                 'video_indexer_subscription_id': form_data.get('video_indexer_subscription_id', '').strip(),
                 'video_indexer_account_name': form_data.get('video_indexer_account_name', '').strip(),
-                'video_indexer_arm_api_version': form_data.get('video_indexer_arm_api_version', '2021-11-10-preview').strip(),
+                'video_indexer_arm_api_version': form_data.get('video_indexer_arm_api_version', DEFAULT_VIDEO_INDEXER_ARM_API_VERSION).strip(),
                 'video_index_timeout': int(form_data.get('video_index_timeout', 600)),
 
                 # Audio file settings with Azure speech service
                 'speech_service_endpoint': form_data.get('speech_service_endpoint', '').strip(),
                 'speech_service_location': form_data.get('speech_service_location', '').strip(),
+                'speech_service_subscription_id': form_data.get('speech_service_subscription_id', '').strip(),
+                'speech_service_resource_group': form_data.get('speech_service_resource_group', '').strip(),
+                'speech_service_resource_name': form_data.get('speech_service_resource_name', '').strip(),
+                'speech_service_resource_id': form_data.get('speech_service_resource_id', '').strip(),
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
+                'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
+                
+                # Speech-to-text chat input
+                'enable_speech_to_text_input': form_data.get('enable_speech_to_text_input') == 'on',
+                
+                # Text-to-speech chat output
+                'enable_text_to_speech': form_data.get('enable_text_to_speech') == 'on',
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
+
+                # Multi-modal vision settings
+                'enable_multimodal_vision': form_data.get('enable_multimodal_vision') == 'on',
+                'multimodal_vision_model': form_data.get('multimodal_vision_model', '').strip(),
 
                 # --- Banner fields ---
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
+                'classification_banner_text_color': classification_banner_text_color,
+
+                'require_member_of_control_center_admin': require_member_of_control_center_admin,
+                'require_member_of_control_center_dashboard_reader': require_member_of_control_center_dashboard_reader
             }
             
             # --- Prevent Legacy Fields from Being Created/Updated ---
@@ -658,6 +1375,16 @@ def register_route_frontend_admin_settings(app):
                 del new_settings['semantic_kernel_agents']
             if 'semantic_kernel_plugins' in new_settings:
                 del new_settings['semantic_kernel_plugins']
+
+            # Remove legacy web search keys if present
+            for legacy_key in [
+                'bing_search_key',
+                'enable_web_search_apim',
+                'azure_apim_web_search_endpoint',
+                'azure_apim_web_search_subscription_key'
+            ]:
+                if legacy_key in new_settings:
+                    del new_settings[legacy_key]
             
             logo_file = request.files.get('logo_file')
             if logo_file and allowed_file(logo_file.filename, ALLOWED_EXTENSIONS_IMG):
@@ -671,13 +1398,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 3) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, logo_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded image for processing: {logo_file.filename}"
+                        content=f"Loaded image for processing: {logo_file.filename} (format: {detected_format})"
                     )
 
                     # Ensure image mode is compatible (e.g., convert palette modes)
@@ -738,7 +1464,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing logo file: {e}") # Log the error for debugging
                     flash(f"Error processing logo file: {e}. Existing logo preserved.", "danger")
-                    # On error, new_settings['custom_logo_base64'] keeps its initial value (the old logo)
+                    log_event(f"Error processing logo file: {e}", level=logging.ERROR)
 
             # Process dark mode logo file upload
             logo_dark_file = request.files.get('logo_dark_file')
@@ -754,13 +1480,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 2) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, logo_dark_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename}"
+                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename} (format: {detected_format})"
                     )
 
                     # 3) Ensure image mode is compatible (e.g., convert palette modes)
@@ -821,7 +1546,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing dark mode logo file: {e}") # Log the error for debugging
                     flash(f"Error processing dark mode logo file: {e}. Existing dark mode logo preserved.", "danger")
-                    # On error, new_settings['custom_logo_dark_base64'] keeps its initial value (the old logo)
+                    log_event(f"Error processing dark mode logo file: {e}", level=logging.ERROR)
 
             # Process favicon file upload
             favicon_file = request.files.get('favicon_file')
@@ -836,13 +1561,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 2) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, favicon_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded favicon image for processing: {favicon_file.filename}"
+                        content=f"Loaded favicon image for processing: {favicon_file.filename} (format: {detected_format})"
                     )
 
                     # 3) Ensure image mode is compatible (e.g., convert palette modes)
@@ -895,7 +1619,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing favicon file: {e}") # Log the error for debugging
                     flash(f"Error processing favicon file: {e}. Existing favicon preserved.", "danger")
-                    # On error, new_settings['custom_favicon_base64'] keeps its initial value (the old favicon)
+                    log_event(f"Error processing favicon file: {e}", level=logging.ERROR)
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones
@@ -913,6 +1637,34 @@ def register_route_frontend_admin_settings(app):
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
+
+                if chunk_size_changed:
+                    try:
+                        log_general_admin_action(
+                            admin_user_id=user_id,
+                            admin_email=admin_email,
+                            action='chunk_size_settings_updated',
+                            description='Updated chunk size overrides for document processing.',
+                            additional_context={
+                                'override_enabled': enable_chunk_size_override,
+                                'chunk_size_cap': chunk_size_cap,
+                                'chunk_sizes': normalized_chunk_sizes
+                            }
+                        )
+                    except Exception as e:
+                        print(f"Warning logging chunk size admin action: {e}")
+
+                    try:
+                        broadcast_system_notification(
+                            title="Document chunk sizes updated",
+                            message="Admins updated chunk size defaults. New uploads will use the latest limits.",
+                            metadata={
+                                'override_enabled': enable_chunk_size_override,
+                                'chunk_size_cap': chunk_size_cap
+                            }
+                        )
+                    except Exception as e:
+                        print(f"Warning sending chunk size notification: {e}")
 
             else:
                 flash("Failed to update admin settings.", "danger")

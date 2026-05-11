@@ -4,8 +4,112 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
+from functions_activity_logging import (
+    log_admin_feedback_email_submission,
+    log_admin_release_notifications_registration,
+    log_user_support_feedback_email_submission,
+)
+from functions_appinsights import log_event
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
 import redis 
+
+
+def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: str = None) -> dict:
+    """
+    Automatically fix missing fields in an Azure AI Search index.
+    
+    Args:
+        idx_type (str): Type of index ('user', 'group', or 'public')
+        user_id (str): User ID triggering the fix
+        admin_email (str): Admin email if available
+        
+    Returns:
+        dict: Result with 'status', 'added' fields, or 'error'
+    """
+    try:
+        # Load the golden JSON schema
+        json_name = secure_filename(f'ai_search-index-{idx_type}.json')
+        base_path = os.path.join(current_app.root_path, 'static', 'json')
+        json_path = os.path.normpath(os.path.join(base_path, json_name))
+        
+        if not json_path.startswith(base_path):
+            return {'error': 'Invalid file path'}
+            
+        with open(json_path, 'r') as f:
+            full_def = json.load(f)
+
+        client = get_index_client()
+        index_obj = client.get_index(full_def['name'])
+
+        existing_names = {fld.name for fld in index_obj.fields}
+        missing_defs = [fld for fld in full_def['fields'] if fld['name'] not in existing_names]
+
+        if not missing_defs:
+            return {'status': 'nothingToAdd'}
+
+        new_fields = []
+        for fld in missing_defs:
+            name = fld['name']
+            ftype = fld['type']
+
+            if ftype.lower() == "collection(edm.single)":
+                # Vector field
+                dims = fld.get('dimensions', 1536)
+                vp = fld.get('vectorSearchProfile')
+                new_fields.append(
+                    SearchField(
+                        name=name,
+                        type=ftype,
+                        searchable=True,
+                        filterable=False,
+                        retrievable=True,
+                        sortable=False,
+                        facetable=False,
+                        vector_search_dimensions=dims,
+                        vector_search_profile_name=vp
+                    )
+                )
+            else:
+                # Regular field
+                new_fields.append(
+                    SearchField(
+                        name=name,
+                        type=ftype,
+                        searchable=fld.get('searchable', False),
+                        filterable=fld.get('filterable', False),
+                        retrievable=fld.get('retrievable', True),
+                        sortable=fld.get('sortable', False),
+                        facetable=fld.get('facetable', False),
+                        key=fld.get('key', False),
+                        analyzer_name=fld.get('analyzer'),
+                        index_analyzer_name=fld.get('indexAnalyzer'),
+                        search_analyzer_name=fld.get('searchAnalyzer'),
+                        normalizer_name=fld.get('normalizer'),
+                        synonym_map_names=fld.get('synonymMaps', [])
+                    )
+                )
+
+        # Update the index
+        index_obj.fields.extend(new_fields)
+        index_obj.etag = "*"
+        client.create_or_update_index(index_obj)
+
+        added = [f.name for f in new_fields]
+        
+        # Log the automatic fix
+        log_index_auto_fix(
+            index_type=idx_type,
+            missing_fields=added,
+            user_id=user_id,
+            admin_email=admin_email
+        )
+        
+        return {'status': 'success', 'added': added}
+
+    except Exception as e:
+        return {'error': str(e)}
 
 
 def register_route_backend_settings(app):
@@ -17,6 +121,7 @@ def register_route_backend_settings(app):
         try:
             data = request.get_json(force=True)
             idx_type = data.get('indexType')  # 'user', 'group', or 'public'
+            auto_fix = data.get('autoFix', True)  # Default to auto-fix enabled
 
             if not idx_type or idx_type not in ['user', 'group', 'public']:
                 return jsonify({'error': 'Invalid indexType. Must be "user", "group", or "public"'}), 400
@@ -50,11 +155,49 @@ def register_route_backend_settings(app):
                 expected_names = { fld['name'] for fld in expected['fields'] }
                 missing = sorted(expected_names - existing_names)
 
-                return jsonify({ 
-                    'missingFields': missing,
-                    'indexExists': True,
-                    'indexName': expected['name']
-                }), 200
+                if missing:
+                    # Automatically fix if enabled
+                    if auto_fix:
+                        user = session.get('user', {})
+                        admin_email = user.get('preferred_username', user.get('email'))
+                        user_id = get_current_user_id() or 'system'
+                        
+                        fix_result = auto_fix_index_fields(
+                            idx_type=idx_type,
+                            user_id=user_id,
+                            admin_email=admin_email
+                        )
+                        
+                        if fix_result.get('status') == 'success':
+                            return jsonify({
+                                'indexExists': True,
+                                'missingFields': [],
+                                'autoFixed': True,
+                                'fieldsAdded': fix_result.get('added', []),
+                                'indexName': expected['name']
+                            }), 200
+                        else:
+                            # Auto-fix failed, return missing fields for manual fix
+                            return jsonify({
+                                'indexExists': True,
+                                'missingFields': missing,
+                                'autoFixFailed': True,
+                                'error': fix_result.get('error'),
+                                'indexName': expected['name']
+                            }), 200
+                    else:
+                        # Auto-fix disabled, return missing fields
+                        return jsonify({
+                            'indexExists': True,
+                            'missingFields': missing,
+                            'indexName': expected['name']
+                        }), 200
+                else:
+                    return jsonify({ 
+                        'missingFields': [],
+                        'indexExists': True,
+                        'indexName': expected['name']
+                    }), 200
                 
             except ResourceNotFoundError as not_found_error:
                 # Index doesn't exist - this is the specific exception for "index not found"
@@ -276,16 +419,409 @@ def register_route_backend_settings(app):
             elif test_type == 'azure_doc_intelligence':
                 return _test_azure_doc_intelligence_connection(data)
 
+            elif test_type == 'multimodal_vision':
+                return _test_multimodal_vision_connection(data)
+
             elif test_type == 'chunking_api':
                 # If you have a chunking API test, implement it here.
                 return jsonify({'message': 'Chunking API connection successful'}), 200
+            
+            elif test_type == 'key_vault':
+                return _test_key_vault_connection(data)
+            
+            elif test_type == 'multimodal_vision':
+                return _test_multimodal_vision_connection(data)
 
             else:
                 return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
 
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/settings/send_feedback_email', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def send_feedback_email():
+        """Log an admin feedback email draft request before the client opens mailto."""
+        user_id = get_current_user_id() or 'unknown'
+        feedback_type = ''
+        try:
+            data = request.get_json(force=True)
+
+            feedback_type = (data.get('feedbackType') or '').strip()
+            reporter_name = (data.get('reporterName') or '').strip()
+            reporter_email = (data.get('reporterEmail') or '').strip()
+            organization = (data.get('organization') or '').strip()
+            details = (data.get('details') or '').strip()
+            if feedback_type not in ['bug_report', 'feature_request']:
+                return jsonify({'error': 'Invalid feedback type'}), 400
+
+            if not reporter_name or not reporter_email or not organization or not details:
+                return jsonify({'error': 'Name, email, organization, and details are required'}), 400
+
+            if '@' not in reporter_email:
+                return jsonify({'error': 'Reporter email must be a valid email address'}), 400
+
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', reporter_email))
+
+            feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
+            subject_line = f'[SimpleChat Admin Feedback] {feedback_label} - {organization}'
+
+            log_admin_feedback_email_submission(
+                user_id=user_id,
+                admin_email=admin_email,
+                feedback_type=feedback_type,
+                reporter_name=reporter_name,
+                reporter_email=reporter_email,
+                organization=organization,
+                details=details,
+                recipient_email='simplechat@microsoft.com'
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': 'simplechat@microsoft.com',
+                'subjectLine': subject_line,
+                'feedbackLabel': feedback_label
+            }), 200
+
+        except Exception:
+            log_event(
+                '[Admin Feedback] Failed to prepare feedback email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'admin_feedback_email_submission',
+                    'route': 'send_feedback_email',
+                    'feedback_type': feedback_type,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare feedback email'}), 500
+
+    @app.route('/api/support/send_feedback_email', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_support_menu")
+    def send_support_feedback_email():
+        """Log a support feedback draft request before the client opens mailto."""
+        user_id = get_current_user_id() or 'unknown'
+        feedback_type = ''
+        try:
+            user = session.get('user', {})
+            roles = user.get('roles', []) if isinstance(user.get('roles', []), list) else []
+            if 'Admin' not in roles and 'User' not in roles:
+                return jsonify({'error': 'Support menu is available to signed-in app users only'}), 403
+
+            settings = get_settings()
+            if not settings.get('enable_support_send_feedback', True):
+                return jsonify({'error': 'Send Feedback is disabled'}), 400
+
+            recipient_email = (settings.get('support_feedback_recipient_email') or '').strip()
+            if not recipient_email or '@' not in recipient_email:
+                return jsonify({'error': 'Support feedback recipient email is not configured'}), 400
+
+            data = request.get_json(force=True)
+
+            feedback_type = (data.get('feedbackType') or '').strip()
+            reporter_name = (data.get('reporterName') or '').strip()
+            reporter_email = (data.get('reporterEmail') or '').strip()
+            organization = (data.get('organization') or '').strip()
+            details = (data.get('details') or '').strip()
+            if feedback_type not in ['bug_report', 'feature_request']:
+                return jsonify({'error': 'Invalid feedback type'}), 400
+
+            if not reporter_name or not reporter_email or not organization or not details:
+                return jsonify({'error': 'Name, email, organization, and details are required'}), 400
+
+            if '@' not in reporter_email:
+                return jsonify({'error': 'Reporter email must be a valid email address'}), 400
+
+            user_email = user.get('preferred_username', user.get('email', reporter_email))
+            feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
+            application_title = str(settings.get('app_title') or '').strip() or 'Simple Chat'
+            subject_line = f'[{application_title} User Support] {feedback_label} - {organization}'
+
+            log_user_support_feedback_email_submission(
+                user_id=user_id,
+                user_email=user_email,
+                feedback_type=feedback_type,
+                reporter_name=reporter_name,
+                reporter_email=reporter_email,
+                organization=organization,
+                details=details,
+                recipient_email=recipient_email,
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': recipient_email,
+                'subjectLine': subject_line,
+                'feedbackLabel': feedback_label
+            }), 200
+
+        except Exception:
+            log_event(
+                '[Support Feedback] Failed to prepare feedback email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'user_support_feedback_email_submission',
+                    'route': 'send_support_feedback_email',
+                    'feedback_type': feedback_type,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare feedback email'}), 500
+
+    @app.route('/api/admin/settings/release_notifications_registration', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def release_notifications_registration():
+        """Persist release/community call registration and prepare a mailto draft."""
+        user_id = get_current_user_id() or 'unknown'
+        try:
+            data = request.get_json(force=True)
+
+            registrant_name = (data.get('name') or '').strip()
+            registrant_email = (data.get('email') or '').strip()
+            organization = (data.get('organization') or '').strip()
+
+            if not registrant_name or not registrant_email or not organization:
+                return jsonify({'error': 'Name, email, and organization are required'}), 400
+
+            if '@' not in registrant_email:
+                return jsonify({'error': 'Email must be a valid email address'}), 400
+
+            existing_settings = get_settings()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            registered_at = existing_settings.get('release_notifications_registered_at') or now_iso
+
+            new_settings = {
+                'release_notifications_registered': True,
+                'release_notifications_name': registrant_name,
+                'release_notifications_email': registrant_email,
+                'release_notifications_org': organization,
+                'release_notifications_registered_at': registered_at,
+                'release_notifications_updated_at': now_iso,
+            }
+
+            if not update_settings(new_settings):
+                return jsonify({'error': 'Failed to persist registration settings'}), 500
+
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', registrant_email))
+            subject_line = f'[SimpleChat Registration] Release and Community Call Notifications - {organization}'
+
+            log_admin_release_notifications_registration(
+                user_id=user_id,
+                admin_email=admin_email,
+                registrant_name=registrant_name,
+                registrant_email=registrant_email,
+                organization=organization,
+                registered_at=registered_at,
+                updated_at=now_iso,
+                recipient_email='simplechat@microsoft.com',
+                source='admin_settings'
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': 'simplechat@microsoft.com',
+                'subjectLine': subject_line,
+                'registered': True,
+                'registeredAt': registered_at,
+                'updatedAt': now_iso,
+            }), 200
+
+        except Exception:
+            log_event(
+                '[Admin Release Notifications] Failed to prepare registration email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'admin_release_notifications_registration',
+                    'route': 'release_notifications_registration',
+                    'source': 'admin_settings',
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare registration email'}), 500
+
+def _test_multimodal_vision_connection(payload):
+    """Test multi-modal vision analysis with a sample image."""
+    enable_apim = payload.get('enable_apim', False)
+    vision_model = payload.get('vision_model')
     
+    if not vision_model:
+        return jsonify({'error': 'No vision model specified'}), 400
+    
+    # Create a simple test image (1x1 red pixel PNG)
+    test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    
+    try:
+        if enable_apim:
+            apim_data = payload.get('apim', {})
+            endpoint = apim_data.get('endpoint')
+            api_version = apim_data.get('api_version')
+            subscription_key = apim_data.get('subscription_key')
+            
+            gpt_client = AzureOpenAI(
+                api_version=api_version,
+                azure_endpoint=endpoint,
+                api_key=subscription_key
+            )
+        else:
+            direct_data = payload.get('direct', {})
+            endpoint = direct_data.get('endpoint')
+            api_version = direct_data.get('api_version')
+            auth_type = direct_data.get('auth_type', 'key')
+            
+            if auth_type == 'managed_identity':
+                token_provider = get_bearer_token_provider(
+                    DefaultAzureCredential(), 
+                    cognitive_services_scope
+                )
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    azure_ad_token_provider=token_provider
+                )
+            else:
+                api_key = direct_data.get('key')
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    api_key=api_key
+                )
+        
+        # Test vision analysis with simple prompt
+        response = gpt_client.chat.completions.create(
+            model=vision_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What color is this image? Just say the color."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{test_image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=50
+        )
+        
+        result = response.choices[0].message.content
+        
+        return jsonify({
+            'message': 'Multi-modal vision connection successful',
+            'details': f'Model responded: {result}'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
+    
+def _test_multimodal_vision_connection(payload):
+    """Test multi-modal vision analysis with a sample image."""
+    enable_apim = payload.get('enable_apim', False)
+    vision_model = payload.get('vision_model')
+
+    if not vision_model:
+        return jsonify({'error': 'No vision model specified'}), 400
+
+    # Create a simple test image (1x1 red pixel PNG)
+    test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+
+    try:
+        if enable_apim:
+            apim_data = payload.get('apim', {})
+            endpoint = apim_data.get('endpoint')
+            api_version = apim_data.get('api_version')
+            subscription_key = apim_data.get('subscription_key')
+
+            gpt_client = AzureOpenAI(
+                api_version=api_version,
+                azure_endpoint=endpoint,
+                api_key=subscription_key
+            )
+        else:
+            direct_data = payload.get('direct', {})
+            endpoint = direct_data.get('endpoint')
+            api_version = direct_data.get('api_version')
+            auth_type = direct_data.get('auth_type', 'key')
+
+            if auth_type == 'managed_identity':
+                token_provider = get_bearer_token_provider(
+                    DefaultAzureCredential(), 
+                    cognitive_services_scope
+                )
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    azure_ad_token_provider=token_provider
+                )
+            else:
+                api_key = direct_data.get('key')
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    api_key=api_key
+                )
+
+        # Determine which token parameter to use based on model type
+        # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+        vision_model_lower = vision_model.lower()
+        api_params = {
+            "model": vision_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What color is this image? Just say the color."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{test_image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        # Use max_completion_tokens for o-series and gpt-5 models, max_tokens for others
+        if ('o1' in vision_model_lower or 'o3' in vision_model_lower or 'gpt-5' in vision_model_lower):
+            api_params["max_completion_tokens"] = 50
+        else:
+            api_params["max_tokens"] = 50
+        
+        # Test vision analysis with simple prompt
+        response = gpt_client.chat.completions.create(**api_params)
+
+        result = response.choices[0].message.content
+
+        return jsonify({
+            'message': 'Multi-modal vision connection successful',
+            'details': f'Model responded: {result}'
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
+
 def get_index_client() -> SearchIndexClient:
     """
     Returns a SearchIndexClient wired up based on:
@@ -323,9 +859,9 @@ def _test_gpt_connection(payload):
     # Decide GPT model
     if enable_apim:
         apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
+        endpoint = apim_data.get('endpoint') #.rstrip('/openai')
         api_version = apim_data.get('api_version')
-        gpt_model = apim_data.get('deployment')
+        gpt_model = apim_data.get('deployment').split(',')[0]
         subscription_key = apim_data.get('subscription_key')
 
         gpt_client = AzureOpenAI(
@@ -383,12 +919,24 @@ def _test_redis_connection(payload):
     try:
         if redis_auth_type == 'managed_identity':
             # Acquire token from managed identity for Redis scope
+            from config import get_redis_cache_infrastructure_endpoint
             credential = DefaultAzureCredential()
-            token = credential.get_token("https://*.cacheinfra.windows.net:10225/appid/.default").token
-            redis_password = token
+            redis_hostname = redis_host.split('.')[0]
+            cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
+            token = credential.get_token(cache_endpoint)
+            redis_password = token.token
+        elif redis_auth_type == 'key_vault':
+            if not redis_key:
+                return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
+            try:
+                from functions_keyvault import retrieve_secret_direct
+                redis_password = retrieve_secret_direct(redis_key)
+            except Exception as kv_err:
+                log_event(f"[REDIS_TEST] Key Vault retrieval failed for secret '{redis_key}': {str(kv_err)}", level="error")
+                return jsonify({'error': 'Failed to retrieve Redis key from Key Vault. Check Application Insights using "[REDIS_TEST]" for details.'}), 500
         else:
             if not redis_key:
-                return jsonify({'error': 'Redis key is required for key auth'}), 400
+                return jsonify({'error': 'Redis key is required for key authentication'}), 400
             redis_password = redis_key
 
         r = redis.Redis(
@@ -604,18 +1152,45 @@ def _test_azure_ai_search_connection(payload):
                     'Authorization': f'Bearer {search_token}',
                     'Content-Type': 'application/json'
                 }
+    try:
+        if enable_apim:
+            apim_data = payload.get('apim', {})
+            endpoint = apim_data.get('endpoint')
+            subscription_key = apim_data.get('subscription_key')
+            
+            # Use SearchIndexClient for APIM
+            credential = AzureKeyCredential(subscription_key)
+            client = SearchIndexClient(endpoint=endpoint, credential=credential)
         else:
-            headers = {
-                'api-key': key,
-                'Content-Type': 'application/json'
-            }
+            direct_data = payload.get('direct', {})
+            endpoint = direct_data.get('endpoint')
+            key = direct_data.get('key')
 
-    # A small GET to /indexes to verify we have connectivity
-    resp = requests.get(url, headers=headers, timeout=10)
-    if resp.status_code == 200:
+            if direct_data.get('auth_type') == 'managed_identity':
+                credential = DefaultAzureCredential()
+                # For managed identity, use the SDK which handles authentication properly
+                if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                    client = SearchIndexClient(
+                        endpoint=endpoint,
+                        credential=credential,
+                        audience=search_resource_manager
+                    )
+                else:
+                    # For public cloud, don't use audience parameter
+                    client = SearchIndexClient(
+                        endpoint=endpoint,
+                        credential=credential
+                    )
+            else:
+                credential = AzureKeyCredential(key)
+                client = SearchIndexClient(endpoint=endpoint, credential=credential)
+
+        # Test by listing indexes (simple operation to verify connectivity)
+        _ = list(client.list_indexes())
         return jsonify({'message': 'Azure AI search connection successful'}), 200
-    else:
-        raise Exception(f"Azure AI search connection error: {resp.status_code} - {resp.text}")
+
+    except Exception as e:
+        return jsonify({'error': f'Azure AI search connection error: {str(e)}'}), 500
 
 
 def _test_azure_doc_intelligence_connection(payload):
@@ -693,3 +1268,35 @@ def _test_azure_doc_intelligence_connection(payload):
         return jsonify({'message': 'Azure document intelligence connection successful'}), 200
     else:
         return jsonify({'error': f"Document Intelligence error: {status}"}), 500
+
+def _test_key_vault_connection(payload):
+    """Attempt to connect to Azure Key Vault using ephemeral settings."""
+    vault_name = payload.get('vault_name', '').strip()
+    client_id = payload.get('client_id', '').strip()
+
+    if not vault_name:
+        return jsonify({'error': 'Key Vault name is required'}), 400
+
+    try:
+        vault_url = f"https://{vault_name}{KEY_VAULT_DOMAIN}"
+
+        if client_id:
+            credential = DefaultAzureCredential(managed_identity_client_id=client_id)
+        else:
+            credential = DefaultAzureCredential()
+
+        if AZURE_ENVIRONMENT == "custom":
+            #TODO: Needs to be tested with a custom environment
+            kv_client = SecretClient(vault_url=vault_url, credential=credential)
+        else:
+            kv_client = SecretClient(vault_url=vault_url, credential=credential)
+
+        # Perform a simple list operation to verify connectivity
+        secrets = kv_client.list_properties_of_secrets()
+        _ = next(secrets, None)  # Attempt to get the first secret (if any)
+
+        return jsonify({'message': 'Key Vault connection successful'}), 200
+
+    except Exception as e:
+        log_event(f"[AKV_TEST] Key Vault connection error: {str(e)}", level="error")
+        return jsonify({'error': 'Key Vault connection failed. Check Application Insights using "[AKV_TEST]" for details.'}), 500

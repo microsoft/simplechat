@@ -15,6 +15,12 @@ import docx
 import fitz # PyMuPDF
 import math
 import mimetypes
+# Register font MIME types so Flask serves them correctly (required for
+# X-Content-Type-Options: nosniff to not block Bootstrap Icons)
+mimetypes.add_type('font/woff', '.woff')
+mimetypes.add_type('font/woff2', '.woff2')
+mimetypes.add_type('font/ttf', '.ttf')
+mimetypes.add_type('font/otf', '.otf')
 import openpyxl
 import xlrd
 import traceback
@@ -40,9 +46,9 @@ from flask import (
     session, 
     send_from_directory, 
     send_file, 
-    Markup,
     current_app
 )
+from markupsafe import Markup
 from werkzeug.utils import secure_filename
 from datetime import datetime, timezone, timedelta
 from functools import wraps
@@ -88,8 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.229.063"
-
+VERSION = "0.241.007"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -101,12 +106,16 @@ SECURITY_HEADERS = {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Content-Security-Policy': (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+        #"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        #"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "img-src 'self' data: https: blob:; "
-        "font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "font-src 'self'; "
+        #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
+        "frame-src 'self' blob:; "
         "object-src 'none'; "
         "frame-ancestors 'self'; "
         "base-uri 'self';"
@@ -120,22 +129,79 @@ HSTS_MAX_AGE = int(os.getenv('HSTS_MAX_AGE', '31536000'))  # 1 year default
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
 
-ALLOWED_EXTENSIONS = {
-    'txt', 'pdf', 'docx', 'xlsx', 'xls', 'csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
-    'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp', 'mpg', 'wmv', 'asf', 'm4a', 'm4v', 'isma', 'ismv', 
-    'dvr-ms', 'wav'
+# Base allowed extensions (always available)
+BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
+DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'pptx', 'ppt'}
+TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
+
+# Updates to image, video, or audio extensions should also be made in static/js/chat/chat-enhanced-citations.js if the new file types can be natively rendered in the browser.
+IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic'}
+
+# Optional extensions by feature
+VIDEO_EXTENSIONS = {
+    'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp',
+    'mpg', 'wmv', 'asf', 'm4v', 'isma', 'ismv', 'dvr-ms', 'webm', 'mpeg'
 }
+
+AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'}
+
+def get_allowed_extensions(enable_video=False, enable_audio=False):
+    """
+    Get allowed file extensions based on feature flags.
+    
+    Args:
+        enable_video: Whether video file support is enabled
+        enable_audio: Whether audio file support is enabled
+    Returns:
+        set: Allowed file extensions
+    """
+    extensions = BASE_ALLOWED_EXTENSIONS.copy()
+    extensions.update(DOCUMENT_EXTENSIONS)
+    extensions.update(IMAGE_EXTENSIONS)
+    extensions.update(TABULAR_EXTENSIONS)
+
+    if enable_video:
+        extensions.update(VIDEO_EXTENSIONS)
+
+    if enable_audio:
+        extensions.update(AUDIO_EXTENSIONS)
+
+    return extensions
+
+ALLOWED_EXTENSIONS = get_allowed_extensions(enable_video=True, enable_audio=True)
+
+# Admin UI specific extensions (for logo/favicon uploads)
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
 MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
 
 # Add Support for Custom Azure Environments
 CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
+CUSTOM_GRAPH_AUTHORITY_URL_VALUE = os.getenv("CUSTOM_GRAPH_AUTHORITY_URL_VALUE", "")
 CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
 CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
+CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
+CUSTOM_OIDC_METADATA_URL_VALUE = os.getenv("CUSTOM_OIDC_METADATA_URL_VALUE", "")
 
+
+# Optional User Idle Timeout Configuration
+IDLE_TIMEOUT_EXEMPT_PATHS = {
+    '/login',
+    '/logout',
+    '/logout/local',
+    '/getAToken',
+    '/getATokenApi',
+    '/robots933456.txt',
+    '/favicon.ico'
+}
+
+IDLE_TIMEOUT_EXEMPT_PREFIXES = (
+    '/static/',
+    '/health',
+    '/api/health'
+)
 
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -146,47 +212,78 @@ SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"]
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
-
-OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
-
-if AZURE_ENVIRONMENT == "custom":
-    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
-else:
-    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
-
-# Commercial Azure Video Indexer Endpoint
-video_indexer_endpoint = "https://api.videoindexer.ai"
 
 WORD_CHUNK_SIZE = 400
 
-if AZURE_ENVIRONMENT == "usgovernment":
+DEFAULT_VIDEO_INDEXER_ARM_API_VERSION = os.getenv(
+    'VIDEO_INDEXER_ARM_API_VERSION',
+    '2024-01-01' if AZURE_ENVIRONMENT == 'usgovernment' else '2025-04-01'
+)
+
+if AZURE_ENVIRONMENT == "custom" or CUSTOM_IDENTITY_URL_VALUE or CUSTOM_GRAPH_AUTHORITY_URL_VALUE:
+    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE.rstrip('/')}/{TENANT_ID}"
+    base_authority = CUSTOM_GRAPH_AUTHORITY_URL_VALUE or CUSTOM_IDENTITY_URL_VALUE
+    if not base_authority:
+        base_authority = AUTHORITY.rstrip('/').removesuffix(f"/{TENANT_ID}")
+    authority = base_authority
+elif AZURE_ENVIRONMENT == "usgovernment":
+    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+    authority = AzureAuthorityHosts.AZURE_GOVERNMENT
+else:
+    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+    authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+
+if AZURE_ENVIRONMENT == "custom":
+    OIDC_METADATA_URL = CUSTOM_OIDC_METADATA_URL_VALUE or f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
+    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
+    video_indexer_endpoint = os.getenv("CUSTOM_VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
+    credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
+    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
+    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
+elif AZURE_ENVIRONMENT == "usgovernment":
     OIDC_METADATA_URL = f"https://login.microsoftonline.us/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.usgovcloudapi.net"
-    authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai.azure.us"
     search_resource_manager = "https://search.azure.us"
-
-elif AZURE_ENVIRONMENT == "custom":
-    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
-    authority = CUSTOM_IDENTITY_URL_VALUE
-    credential_scopes=[resource_manager + "/.default"]
-    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
-    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
+    KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
-    authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
-    # Default audience/resource identifier for Azure Cognitive Search in public cloud
-    search_resource_manager = "https://search.azure.com"
+    video_indexer_endpoint = "https://api.videoindexer.ai"
+    KEY_VAULT_DOMAIN = ".vault.azure.net"
+
+def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
+    """
+    Get the appropriate Redis cache infrastructure endpoint based on Azure environment.
+    
+    Args:
+        redis_hostname (str): The hostname of the Redis cache instance
+        
+    Returns:
+        str: The complete endpoint URL for Redis cache infrastructure token acquisition
+    """
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return f"https://{redis_hostname}.cacheinfra.azure.us:10225/appid"
+    elif AZURE_ENVIRONMENT == "custom" and CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE:
+        # For custom environments, allow override via environment variable
+        # Format: https://{hostname}.custom-cache-domain.com:10225/appid
+        return CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE.format(hostname=redis_hostname)
+    else:
+        # Default to Azure Public Cloud
+        return f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid"
+    
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
 storage_account_public_documents_container_name = "public-documents"
+storage_account_personal_chat_container_name = "personal-chat"
+storage_account_group_chat_container_name = "group-chat"
 
 # Initialize Azure Cosmos DB client 
 ## changed to managed identity
@@ -214,6 +311,47 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
+cosmos_personal_workflows_container_name = "personal_workflows"
+cosmos_personal_workflows_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_workflows_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_personal_workflow_runs_container_name = "personal_workflow_runs"
+cosmos_personal_workflow_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_workflow_runs_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_group_conversations_container_name = "group_conversations"
+cosmos_group_conversations_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_conversations_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_group_messages_container_name = "group_messages"
+cosmos_group_messages_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_messages_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_collaboration_conversations_container_name = "collaboration_conversations"
+cosmos_collaboration_conversations_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_conversations_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_collaboration_messages_container_name = "collaboration_messages"
+cosmos_collaboration_messages_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_messages_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_collaboration_user_state_container_name = "collaboration_user_state"
+cosmos_collaboration_user_state_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_user_state_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
 
 cosmos_settings_container_name = "settings"
 cosmos_settings_container = cosmos_database.create_container_if_not_exists(
@@ -317,18 +455,6 @@ cosmos_personal_actions_container = cosmos_database.create_container_if_not_exis
     partition_key=PartitionKey(path="/user_id")
 )
 
-cosmos_file_processing_container_name = "group_messages"
-cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_file_processing_container_name,
-    partition_key=PartitionKey(path="/conversation_id")
-)
-
-cosmos_file_processing_container_name = "group_conversations"
-cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_file_processing_container_name,
-    partition_key=PartitionKey(path="/id")
-)
-
 cosmos_group_agents_container_name = "group_agents"
 cosmos_group_agents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_agents_container_name,
@@ -353,17 +479,61 @@ cosmos_global_actions_container = cosmos_database.create_container_if_not_exists
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_agent_templates_container_name = "agent_templates"
+cosmos_agent_templates_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_agent_templates_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
 cosmos_agent_facts_container_name = "agent_facts"
 cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_agent_facts_container_name,
     partition_key=PartitionKey(path="/scope_id")
 )
 
+cosmos_search_cache_container_name = "search_cache"
+cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_search_cache_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_activity_logs_container_name = "activity_logs"
+cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_activity_logs_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_notifications_container_name = "notifications"
+cosmos_notifications_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_notifications_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1  # TTL disabled by default, enabled per-document
+)
+
+cosmos_approvals_container_name = "approvals"
+cosmos_approvals_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_approvals_container_name,
+    partition_key=PartitionKey(path="/group_id"),
+    default_ttl=-1  # TTL disabled by default, enabled per-document for auto-cleanup
+)
+
+cosmos_thoughts_container_name = "thoughts"
+cosmos_thoughts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_thoughts_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_archived_thoughts_container_name = "archive_thoughts"
+cosmos_archived_thoughts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_archived_thoughts_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
 def ensure_custom_logo_file_exists(app, settings):
     """
     If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate
     static files exist and reflect the current base64 data. Overwrites if necessary.
-    If base64 is empty/missing, removes the corresponding file.
+    If base64 is empty/missing, preserves any existing file on disk.
     """
     # Handle light mode logo
     custom_logo_b64 = settings.get('custom_logo_base64', '')
@@ -375,13 +545,9 @@ def ensure_custom_logo_file_exists(app, settings):
     os.makedirs(images_dir, exist_ok=True)
 
     if not custom_logo_b64:
-        # No custom logo in DB; remove the static file if it exists
+        # No custom logo in DB; preserve existing file if one is already present
         if os.path.exists(logo_path):
-            try:
-                os.remove(logo_path)
-                print(f"Removed existing {logo_filename} as custom logo is disabled/empty.")
-            except OSError as ex:
-                print(f"Error removing {logo_filename}: {ex}")
+            print(f"Preserving existing {logo_filename}; no custom logo base64 value found in settings.")
     else:
         # Custom logo exists in settings, write/overwrite the file
         try:
@@ -404,13 +570,9 @@ def ensure_custom_logo_file_exists(app, settings):
     logo_dark_path = os.path.join(app.root_path, 'static', 'images', logo_dark_filename)
 
     if not custom_logo_dark_b64:
-        # No custom dark logo in DB; remove the static file if it exists
+        # No custom dark logo in DB; preserve existing file if one is already present
         if os.path.exists(logo_dark_path):
-            try:
-                os.remove(logo_dark_path)
-                print(f"Removed existing {logo_dark_filename} as custom dark logo is disabled/empty.")
-            except OSError as ex:
-                print(f"Error removing {logo_dark_filename}: {ex}")
+            print(f"Preserving existing {logo_dark_filename}; no custom dark logo base64 value found in settings.")
     else:
         # Custom dark logo exists in settings, write/overwrite the file
         try:
@@ -459,7 +621,7 @@ def ensure_custom_favicon_file_exists(app, settings):
     except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
         print(f"Failed to write/overwrite {favicon_filename}: {ex}")
     except Exception as ex: # Catch any other unexpected errors
-         print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
+        print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
 
 def initialize_clients(settings):
     """
@@ -595,7 +757,7 @@ def initialize_clients(settings):
             azure_apim_content_safety_endpoint = settings.get("azure_apim_content_safety_endpoint")
             azure_apim_content_safety_subscription_key = settings.get("azure_apim_content_safety_subscription_key")
 
-            if safety_endpoint and safety_key:
+            if safety_endpoint:
                 try:
                     if enable_content_safety_apim:
                         content_safety_client = ContentSafetyClient(
@@ -645,18 +807,20 @@ def initialize_clients(settings):
                 # This addresses the issue where the application assumes containers exist
                 if blob_service_client:
                     for container_name in [
-                        storage_account_user_documents_container_name, 
-                        storage_account_group_documents_container_name, 
-                        storage_account_public_documents_container_name
+                        storage_account_user_documents_container_name,
+                        storage_account_group_documents_container_name,
+                        storage_account_public_documents_container_name,
+                        storage_account_personal_chat_container_name,
+                        storage_account_group_chat_container_name
                         ]:
                         try:
                             container_client = blob_service_client.get_container_client(container_name)
                             if not container_client.exists():
-                                print(f"DEBUG: Container '{container_name}' does not exist. Creating...")
+                                print(f"Container '{container_name}' does not exist. Creating...")
                                 container_client.create_container()
-                                print(f"DEBUG: Container '{container_name}' created successfully.")
+                                print(f"Container '{container_name}' created successfully.")
                             else:
-                                print(f"DEBUG: Container '{container_name}' already exists.")
+                                print(f"Container '{container_name}' already exists.")
                         except Exception as container_error:
                             print(f"Error creating container {container_name}: {str(container_error)}")
         except Exception as e:

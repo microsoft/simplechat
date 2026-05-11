@@ -1,57 +1,82 @@
-# Simple Chat - Application workflows
+---
+layout: showcase-page
+title: "Application Workflows"
+permalink: /application_workflows/
+menubar: docs_menu
+accent: violet
+eyebrow: "How Requests Move"
+description: "Two workflows explain most of the system behavior: how user prompts are screened, and how uploaded files become searchable context for grounded chat."
+hero_icons:
+  - bi-shield-check
+  - bi-arrow-repeat
+  - bi-diagram-2
+hero_pills:
+  - Prompt safety gate
+  - RAG ingestion pipeline
+  - Search-ready document processing
+hero_links:
+  - label: Review features
+    url: /features/
+    style: primary
+  - label: Open troubleshooting
+    url: /troubleshooting/
+    style: secondary
+---
+These flows are the fastest way to understand where Simple Chat applies safety checks, where Azure services participate, and where document-grounded answers actually come from.
 
-- [Content Safety](#content-safety---workflow)
-- [Add your data (RAG Ingestion)](#add-your-data-rag-ingestion)
+<section class="latest-release-card-grid">
+    <article class="latest-release-card">
+        <div class="latest-release-card-image">
+            <img src="{{ '/images/workflow-content_safety.png' | relative_url }}" alt="Workflow diagram for content safety screening before model execution">
+        </div>
+        <h2>Content Safety</h2>
+        <p>User prompts can be screened before the system touches retrieval, direct model calls, or image generation. Unsafe prompts are blocked before they propagate.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-image">
+            <img src="{{ '/images/workflow-add_your_data.png' | relative_url }}" alt="Workflow diagram for document ingestion into retrieval indices">
+        </div>
+        <h2>Add Your Data</h2>
+        <p>Uploads are extracted, chunked, embedded, and indexed so chat can retrieve the right fragments later with citations and metadata.</p>
+    </article>
+</section>
 
-- [Return to Main](../README.md)
+<div class="latest-release-note-panel">
+    <h2>Why these two flows matter</h2>
+    <p>The first flow protects the front door. The second flow determines whether retrieval answers are useful, traceable, and fast. Most production issues map back to one of these two paths.</p>
+</div>
 
-## Content Safety - Workflow
+## Content Safety Workflow
 
-![Workflow - Content Safety](./images/workflow-content_safety.png) 
+![Workflow - Content Safety](./images/workflow-content_safety.png)
 
-1.  **User Sends Message**: A user types a message in the chat interface.
-2.  **Content Safety Interrogation (If Enabled)**:
-    *   Before the message reaches *any* backend service (AI model, Search, Image Gen, etc.), it is sent to the configured **Azure AI Content Safety** endpoint.
-    *   Content Safety analyzes the text for harmful content based on configured categories (Hate, Sexual, Violence, Self-Harm) and severity thresholds.
-    *   Custom blocklists can also be applied.
-3.  **Decision Point**:
-    *   **If Safe**: The message proceeds to the intended service (e.g., RAG, Direct Model Interaction, Image Generation).
-    *   **If Unsafe**: The message is blocked. The user receives a generic notification (or configured message). Details of the violation may be logged (if configured) and potentially viewable by users with the `SafetyAdmin` role.
-4.  **Service Interaction (If Safe)**:
-    *   **RAG / AI Search**: The query is used to search Azure AI Search indexes (personal/group).
-    *   **Direct Model Interaction**: The message is sent directly to the Azure OpenAI GPT model.
-    *   **Image Generation**: The prompt is sent to the Azure OpenAI DALL-E model (if enabled).
-    *   *Note:* Responses from these services are typically *not* sent back through Content Safety by default in this flow, though Azure OpenAI itself has built-in content filtering.
+1. A user sends a message from the chat interface.
+2. If Content Safety is enabled, the message is evaluated before it reaches the target backend service.
+3. Azure AI Content Safety evaluates configured categories such as hate, sexual content, violence, and self-harm, and can also apply custom blocklists.
+4. If the message passes, the system routes it to the intended destination.
+5. If the message fails, the request is blocked and the user receives a generic notification. Details can be logged for administrators when that feature is enabled.
 
-## Add your data (RAG Ingestion)
+When a prompt is considered safe, it can continue into one of several paths:
 
-This workflow describes how documents uploaded via "Your Workspace" or "Group Workspaces" are processed for Retrieval-Augmented Generation.
+- Retrieval-backed chat that queries Azure AI Search.
+- Direct GPT interaction against Azure OpenAI.
+- Image generation against a configured DALL-E deployment.
 
-![Add your data - Workflow](./images/workflow-add_your_data.png) 
+The default flow protects the inbound user message. Downstream services may still apply their own filtering behavior after that point.
 
-1.  **User Uploads File(s)**:
-    *   User selects one or more supported files via the application UI (e.g., PDF, DOCX, TXT, MP4, MP3).
-    *   Files are sent to the backend application running on Azure App Service.
-2.  **Initial Processing & Text Extraction**:
-    *   The backend determines the file type.
-    *   The file is sent to the appropriate service for text extraction:
-        *   **Azure AI Document Intelligence**: For PDFs, Office Docs, Images (OCR). Extracts text, layout, tables.
-        *   **Azure Video Indexer**: For videos. Extracts audio transcript and frame OCR text (if enabled).
-        *   **Azure Speech Service**: For audio files. Extracts audio transcript (if enabled).
-        *   **Internal Parsers**: For plain text, HTML, Markdown, JSON, CSV.
-3.  **Content Chunking**:
-    *   The extracted text content is divided into smaller, manageable chunks based on file type and content structure.
-    *   Chunking strategies vary (see [Advanced Chunking Logic](#advanced-chunking-logic) under Latest Features) but aim for semantic coherence and appropriate size (~400-1200 words, depending on type), often with overlap between chunks to preserve context. Timestamps or page numbers are included where applicable.
-4.  **Vectorization (Embedding)**:
-    *   Each text chunk is sent to the configured **Embedding Model** endpoint in **Azure OpenAI**.
-    *   The model generates a high-dimensional **vector embedding** (a numerical representation) for the semantic content of the chunk.
-    *   This process repeats for all chunks from the uploaded file(s).
-5.  **Storage in Azure AI Search and Cosmos DB**:
-    *   For each chunk, the following are stored in the appropriate **Azure AI Search Index** (`simplechat-user-index` or `simplechat-group-index`):
-        *   Chunk content (text).
-        *   Vector embedding.
-        *   Metadata: Parent document ID, user/group ID, filename, chunk sequence number, page number (if applicable), timestamp (if applicable), classification tags (if applicable), extracted keywords/summary (if applicable).
-    *   Metadata about the **parent document** (e.g., original filename, total chunks, upload date, user ID, group ID, document version, classification, processing status) is stored in **Azure Cosmos DB**.
-    *   Cosmos DB maintains the relationship between the parent document record and its constituent chunks stored in Azure AI Search.
-6.  **Ready for Retrieval**:
-    *   Once indexed, the document content is available for hybrid search (vector + keyword) when users toggle "Search Your Data" or perform targeted searches within workspaces.
+## Add Your Data Workflow
+
+This workflow covers what happens when users upload content into personal or group workspaces for Retrieval-Augmented Generation.
+
+![Add your data - Workflow](./images/workflow-add_your_data.png)
+
+1. Users upload one or more supported files through the application UI.
+2. The backend determines file type and chooses the correct extraction path.
+3. Text is extracted through Azure AI Document Intelligence, Azure Video Indexer, Azure Speech Service, or internal parsers depending on the content type.
+4. Extracted content is chunked into retrieval-friendly segments while preserving structural context such as pages, timestamps, tables, or sequence.
+5. Each chunk is embedded through the configured Azure OpenAI embedding model.
+6. The chunk text, embedding vector, and retrieval metadata are written to Azure AI Search.
+7. Parent document records and processing metadata are written to Cosmos DB so the system can relate the original file to its indexed chunks.
+8. Once indexing completes, the document becomes available to hybrid retrieval in chat and workspace search.
+
+Typical chunk metadata includes document identity, filename, workspace scope, sequence numbers, page references, timestamps, and optional classification or extraction metadata.

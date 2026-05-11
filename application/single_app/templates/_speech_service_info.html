@@ -1,0 +1,330 @@
+<!-- Azure Speech Service Configuration Information Modal -->
+<div class="modal fade" id="speechServiceInfoModal" tabindex="-1" aria-labelledby="speechServiceInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="speechServiceInfoModalLabel">
+                    <i class="bi bi-mic-fill me-2"></i>
+                    Azure AI Voice Conversations Configuration Guide
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>What is Azure AI Voice Conversations?</strong> In Simple Chat, Azure AI Speech powers three related experiences from one shared Speech resource: audio file transcription, live voice input, and spoken AI responses.
+                </div>
+
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Managed identity note:</strong> For App Service deployments, managed identity is the recommended setup. When you choose managed identity, use the resource-specific custom-domain Speech endpoint and Speech-specific RBAC roles. If you also enable Voice Responses, provide the full Speech Resource ID.
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-gear me-2"></i>Current Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <strong>Audio Upload Enabled:</strong>
+                                <span id="modal-audio-enabled" class="badge bg-secondary">No</span>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <strong>Voice Input Enabled:</strong>
+                                <span id="modal-stt-enabled" class="badge bg-secondary">No</span>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <strong>Voice Responses Enabled:</strong>
+                                <span id="modal-tts-enabled" class="badge bg-secondary">No</span>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <strong>Authentication Type:</strong><br />
+                                <code id="modal-speech-auth-type">Not configured</code>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <strong>Speech Endpoint:</strong><br />
+                                <code id="modal-speech-endpoint">Not configured</code>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <strong>Location:</strong><br />
+                                <code id="modal-speech-location">Not configured</code>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <strong>Locale:</strong><br />
+                                <code id="modal-speech-locale">Not configured</code>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <strong>Speech Resource Name:</strong><br />
+                                <code id="modal-speech-resource-name">Not configured</code>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <strong>Speech Resource ID:</strong><br />
+                                <code id="modal-speech-resource-id">Not configured</code>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <strong>Subscription ID:</strong><br />
+                                <code id="modal-speech-subscription-id">Not configured</code>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <strong>Resource Group:</strong><br />
+                                <code id="modal-speech-resource-group">Not configured</code>
+                            </div>
+                        </div>
+                        <div class="alert alert-secondary mb-0" id="modal-speech-resource-id-status">
+                            Resource ID is only required when Voice Responses and Managed Identity are both enabled.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Create or Choose an Azure AI Speech Resource</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <h6>Prerequisites</h6>
+                            <ul class="mb-3">
+                                <li>An Azure subscription</li>
+                                <li>An Azure AI Speech resource in the region you want to use</li>
+                                <li>Access to your App Service if you plan to use managed identity</li>
+                            </ul>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>1. Create or Reuse the Speech Resource</h6>
+                            <ol class="mb-3">
+                                <li>In the Azure portal, create or open an <strong>Azure AI Speech</strong> resource</li>
+                                <li>Choose the region that is closest to your users and workload</li>
+                                <li>Decide whether the app will use <strong>Managed Identity</strong> or <strong>Key</strong> authentication</li>
+                                <li>Note the resource name, subscription ID, and resource group for the Admin Settings form</li>
+                            </ol>
+                        </div>
+
+                        <div class="alert alert-info mb-0">
+                            <strong>Shared-resource model:</strong> You do not need separate Speech resources for audio uploads, voice input, and voice responses unless you want to isolate costs or permissions.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-globe2 me-2"></i>Turn On the Custom Domain for Managed Identity</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-warning">
+                            <strong>Required for managed identity:</strong> Microsoft Learn requires a custom domain name for Speech SDK Microsoft Entra authentication. This operation is <strong>not reversible</strong>, so use a test Speech resource first if your production resource already has a lot of Speech Studio assets.
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>Azure Portal Walkthrough</h6>
+                            <ol class="mb-3">
+                                <li>Open the Azure portal and select your <strong>Azure AI Speech</strong> resource.</li>
+                                <li>In the left navigation under <strong>Resource Management</strong>, select <strong>Networking</strong>.</li>
+                                <li>Open the <strong>Firewalls and virtual networks</strong> tab.</li>
+                                <li>Select <strong>Generate Custom Domain Name</strong>.</li>
+                                <li>Enter a globally unique custom domain name. The final endpoint will be <code>https://&lt;your-custom-name&gt;.cognitiveservices.azure.com</code>.</li>
+                                <li>Select <strong>Save</strong> and wait for the update to finish.</li>
+                                <li>Go to <strong>Keys and Endpoint</strong> and confirm the endpoint now starts with <code>https://&lt;your-custom-name&gt;.cognitiveservices.azure.com</code>.</li>
+                                <li>Copy that endpoint into the Simple Chat <strong>Speech Service Endpoint</strong> field.</li>
+                            </ol>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>Optional Azure CLI Path</h6>
+                            <p class="mb-2">If you prefer CLI, select the correct subscription and turn on the custom domain directly:</p>
+<pre class="bg-light border rounded p-3"><code>az account set --subscription &lt;subscription-id&gt;
+az cognitiveservices account update --name &lt;speech-resource-name&gt; --resource-group &lt;resource-group-name&gt; --custom-domain &lt;custom-domain-name&gt;</code></pre>
+                            <p class="mb-0">Afterward, verify the endpoint on the Speech resource <strong>Keys and Endpoint</strong> page before saving it in Admin Settings.</p>
+                        </div>
+
+                        <div class="alert alert-secondary mb-0">
+                            <strong>What to avoid:</strong> Do not leave the endpoint set to a regional hostname like <code>https://eastus.api.cognitive.microsoft.com</code> when <strong>Managed Identity</strong> is selected. Use the generated custom-domain endpoint instead.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-shield-check me-2"></i>Configure Authentication</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <h6>Option A: Managed Identity (Recommended on App Service)</h6>
+                            <ol class="mb-3">
+                                <li>Enable the <strong>system-assigned managed identity</strong> on your App Service</li>
+                                <li>On the Speech resource, open <strong>Access control (IAM)</strong> and grant the App Service managed identity the <strong>Cognitive Services Speech User</strong> role</li>
+                                <li>If fast transcription or other write-style Speech operations still fail, also grant <strong>Cognitive Services Speech Contributor</strong></li>
+                                <li>In Admin Settings, choose <strong>Managed Identity</strong>, paste the custom-domain endpoint, and set the location</li>
+                                <li>If you enable <strong>Voice Responses</strong>, fill in the <strong>Speech Resource ID</strong>. The helper fields in Admin Settings can build it for you.</li>
+                            </ol>
+                        </div>
+
+                        <div class="alert alert-warning mb-4">
+                            <strong>Role guidance:</strong> Speech relies heavily on data-plane permissions. Generic <strong>Owner</strong>, <strong>Contributor</strong>, and <strong>Cognitive Services Contributor</strong> do not provide the same effective Speech access as <strong>Cognitive Services Speech User</strong> or <strong>Cognitive Services Speech Contributor</strong>.
+                        </div>
+
+                        <div>
+                            <h6>Option B: API Key</h6>
+                            <ol class="mb-0">
+                                <li>In the Speech resource, copy a key and the endpoint</li>
+                                <li>In Admin Settings, choose <strong>Key</strong>, paste the endpoint, set the location, and provide the key</li>
+                                <li>Speech Resource ID is not required for key-based authentication</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Required Configuration Values</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Field</th>
+                                        <th>Description</th>
+                                        <th>Example</th>
+                                        <th>Required</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>Speech Service Endpoint</strong></td>
+                                        <td>Speech endpoint used by all enabled voice features</td>
+                                        <td><code>https://my-speech-resource.cognitiveservices.azure.com</code></td>
+                                        <td><span class="badge bg-danger">Required</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Authentication Type</strong></td>
+                                        <td>Choose Key or Managed Identity</td>
+                                        <td><code>Managed Identity</code></td>
+                                        <td><span class="badge bg-danger">Required</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Speech Service Location</strong></td>
+                                        <td>Azure region used by Speech SDK defaults and TTS with managed identity</td>
+                                        <td><code>eastus</code></td>
+                                        <td><span class="badge bg-danger">Required</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Speech Service Locale</strong></td>
+                                        <td>Default language locale for speech recognition</td>
+                                        <td><code>en-US</code></td>
+                                        <td><span class="badge bg-secondary">Recommended</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Speech Service Key</strong></td>
+                                        <td>Required only when using API key authentication</td>
+                                        <td><code>xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code></td>
+                                        <td><span class="badge bg-warning text-dark">Key Auth Only</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Speech Resource ID</strong></td>
+                                        <td>ARM resource ID used by Speech SDK for managed-identity voice responses</td>
+                                        <td><code>/subscriptions/.../providers/Microsoft.CognitiveServices/accounts/my-speech-resource</code></td>
+                                        <td><span class="badge bg-primary">Managed Identity + Voice Responses</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Speech Subscription ID / Resource Group / Resource Name</strong></td>
+                                        <td>Optional helper fields that can build the Speech Resource ID for you</td>
+                                        <td><code>12345678-1234-1234-1234-123456789abc</code></td>
+                                        <td><span class="badge bg-secondary">Optional Helper</span></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Important Notes</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info mb-3">
+                            <h6><i class="bi bi-link-45deg me-2"></i>One Shared Speech Resource</h6>
+                            <p class="mb-0">Simple Chat uses one Speech configuration block for audio transcription, voice input, and voice responses. Update it once and then enable only the speech features you want.</p>
+                        </div>
+
+                        <div class="alert alert-warning mb-3">
+                            <h6><i class="bi bi-globe2 me-2"></i>Managed Identity Endpoint Requirement</h6>
+                            <p class="mb-0">Managed identity should use the custom-domain Speech endpoint such as <code>https://my-speech-resource.cognitiveservices.azure.com</code> rather than a generic regional endpoint such as <code>https://eastus.api.cognitive.microsoft.com</code>.</p>
+                        </div>
+
+                        <div class="alert alert-secondary mb-0">
+                            <h6><i class="bi bi-tools me-2"></i>Resource ID Builder</h6>
+                            <p class="mb-0">If the portal makes the Speech Resource ID hard to find, enter the subscription ID, resource group, and Speech resource name in Admin Settings and let the built-in helper generate the ARM path.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/" target="_blank" class="btn btn-primary">
+                    <i class="bi bi-book me-2"></i>View Full Documentation
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateSpeechServiceModalInfo() {
+    const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
+    const speechToTextEnabled = document.getElementById('enable_speech_to_text_input')?.checked || false;
+    const textToSpeechEnabled = document.getElementById('enable_text_to_speech')?.checked || false;
+    const authenticationType = document.getElementById('speech_service_authentication_type')?.selectedOptions?.[0]?.textContent?.trim() || 'Not configured';
+    const endpoint = document.getElementById('speech_service_endpoint')?.value?.trim() || '';
+    const location = document.getElementById('speech_service_location')?.value?.trim() || '';
+    const locale = document.getElementById('speech_service_locale')?.value?.trim() || '';
+    const resourceId = document.getElementById('speech_service_resource_id')?.value?.trim() || '';
+    const subscriptionId = document.getElementById('speech_service_subscription_id')?.value?.trim() || '';
+    const resourceGroup = document.getElementById('speech_service_resource_group')?.value?.trim() || '';
+    const resourceName = document.getElementById('speech_service_resource_name')?.value?.trim() || '';
+    const resourceIdStatus = document.getElementById('modal-speech-resource-id-status');
+
+    document.getElementById('modal-audio-enabled').textContent = audioEnabled ? 'Yes' : 'No';
+    document.getElementById('modal-audio-enabled').className = audioEnabled ? 'badge bg-success' : 'badge bg-secondary';
+    document.getElementById('modal-stt-enabled').textContent = speechToTextEnabled ? 'Yes' : 'No';
+    document.getElementById('modal-stt-enabled').className = speechToTextEnabled ? 'badge bg-success' : 'badge bg-secondary';
+    document.getElementById('modal-tts-enabled').textContent = textToSpeechEnabled ? 'Yes' : 'No';
+    document.getElementById('modal-tts-enabled').className = textToSpeechEnabled ? 'badge bg-success' : 'badge bg-secondary';
+
+    document.getElementById('modal-speech-auth-type').textContent = authenticationType || 'Not configured';
+    document.getElementById('modal-speech-endpoint').textContent = endpoint || 'Not configured';
+    document.getElementById('modal-speech-location').textContent = location || 'Not configured';
+    document.getElementById('modal-speech-locale').textContent = locale || 'Not configured';
+    document.getElementById('modal-speech-resource-id').textContent = resourceId || 'Not configured';
+    document.getElementById('modal-speech-subscription-id').textContent = subscriptionId || 'Not configured';
+    document.getElementById('modal-speech-resource-group').textContent = resourceGroup || 'Not configured';
+    document.getElementById('modal-speech-resource-name').textContent = resourceName || 'Not configured';
+
+    if (resourceIdStatus) {
+        if (authenticationType === 'Managed Identity' && textToSpeechEnabled) {
+            resourceIdStatus.className = resourceId ? 'alert alert-success mb-0' : 'alert alert-warning mb-0';
+            resourceIdStatus.textContent = resourceId
+                ? 'Speech Resource ID is present for managed-identity voice responses.'
+                : 'Voice Responses and Managed Identity are enabled together, so Speech Resource ID should be set.';
+        } else {
+            resourceIdStatus.className = 'alert alert-secondary mb-0';
+            resourceIdStatus.textContent = 'Speech Resource ID is only required when Voice Responses and Managed Identity are both enabled.';
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('speechServiceInfoModal');
+    if (modal) {
+        modal.addEventListener('show.bs.modal', updateSpeechServiceModalInfo);
+    }
+});
+</script>

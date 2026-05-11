@@ -2,9 +2,11 @@
 
 from config import *
 from functions_settings import *
+from functions_debug import debug_print
 
 # Default redirect path for OAuth consent flow (must match your Azure AD app registration)
 REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
+REQUESTED_SCOPES_SESSION_KEY = "requested_oauth_scopes"
 #REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
 
 def build_front_door_urls(front_door_url):
@@ -37,7 +39,7 @@ def _load_cache():
             cache.deserialize(session["token_cache"])
         except Exception as e:
             # Handle potential corruption or format issues gracefully
-            print(f"Warning: Could not deserialize token cache: {e}. Starting fresh.")
+            debug_print(f"Warning: Could not deserialize token cache: {e}. Starting fresh.")
             session.pop("token_cache", None) # Clear corrupted cache
     return cache
 
@@ -47,32 +49,108 @@ def _save_cache(cache):
         try:
             session["token_cache"] = cache.serialize()
         except Exception as e:
-            print(f"Error: Could not serialize token cache: {e}")
+            debug_print(f"Error: Could not serialize token cache: {e}")
             # Decide how to handle this, maybe clear cache or log extensively
             # session.pop("token_cache", None) # Option: Clear on serialization failure
 
-def _build_msal_app(cache=None):
+def _build_msal_app(cache=None, authority_override=None):
     """Builds the MSAL ConfidentialClientApplication, optionally initializing with a cache."""
+    authority = authority_override or AUTHORITY
     return ConfidentialClientApplication(
         CLIENT_ID,
-        authority=AUTHORITY,
+        authority=authority,
         client_credential=CLIENT_SECRET,
         token_cache=cache  # Pass the cache instance here
     )
 
 
+def _normalize_scopes(scopes=None):
+    """Return a de-duplicated scope list while preserving the original order."""
+    normalized_scopes = []
+    for scope in scopes or SCOPE:
+        if isinstance(scope, str) and scope and scope not in normalized_scopes:
+            normalized_scopes.append(scope)
+    return normalized_scopes or list(SCOPE)
+
+
+def set_requested_oauth_scopes(scopes=None):
+    """Persist the scopes required for the next interactive OAuth callback."""
+    session[REQUESTED_SCOPES_SESSION_KEY] = _normalize_scopes(scopes)
+
+
+def get_requested_oauth_scopes(clear_after_read=False):
+    """Return the currently requested OAuth scopes, optionally clearing them."""
+    stored_scopes = _normalize_scopes(session.get(REQUESTED_SCOPES_SESSION_KEY))
+    if clear_after_read:
+        session.pop(REQUESTED_SCOPES_SESSION_KEY, None)
+    return stored_scopes
+
+
+def clear_requested_oauth_scopes():
+    """Clear any interactive OAuth scope request state from the session."""
+    session.pop(REQUESTED_SCOPES_SESSION_KEY, None)
+
+
+def _build_redirect_url(host_url):
+    """Build the absolute redirect URL used for interactive OAuth flows."""
+    normalized_host_url = host_url.rstrip('/')
+    if not (
+        normalized_host_url.startswith('http://localhost')
+        or normalized_host_url.startswith('http://127.0.0.1')
+    ):
+        if not normalized_host_url.startswith('https://'):
+            normalized_host_url = 'https://' + normalized_host_url.split('://', 1)[-1]
+    return normalized_host_url + REDIRECT_PATH
+
+
+def _build_plugin_auth_response(
+    msal_app,
+    user_info,
+    scopes,
+    error,
+    message,
+    error_code=None,
+    error_description=None,
+    prompt=None,
+):
+    """Create a structured interactive authentication response for plugin callers."""
+    required_scopes = _normalize_scopes(scopes)
+    set_requested_oauth_scopes(required_scopes)
+
+    redirect_url = _build_redirect_url(request.host_url)
+    debug_print(f"[Auth] Redirect URL for {user_info.get('oid')}: {redirect_url}")
+    consent_url = get_consent_url(
+        msal_app=msal_app,
+        scopes=required_scopes,
+        redirect_uri=redirect_url,
+        prompt=prompt,
+    )
+    debug_print(f"[Auth] Interactive auth URL generated for scopes {required_scopes}")
+
+    return {
+        "error": error,
+        "message": message,
+        "consent_url": consent_url,
+        "auth_url": consent_url,
+        "scopes": required_scopes,
+        "error_code": error_code,
+        "error_description": error_description,
+    }
+
+
 # Helper: Generate a consent URL for user to grant permissions
-def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, prompt="consent"):
+def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, prompt=None):
     msal_app = _build_msal_app() if msal_app is None else msal_app
-    required_scopes = scopes or SCOPE
+    required_scopes = _normalize_scopes(scopes)
     # Use a default redirect URI if not provided
     redirect_uri = redirect_uri or REDIRECT_PATH
-    auth_url = msal_app.get_authorization_request_url(
-        required_scopes,
-        redirect_uri=redirect_uri,
-        state=state,
-        prompt=prompt
-    )
+    auth_request_kwargs = {
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    if prompt:
+        auth_request_kwargs["prompt"] = prompt
+    auth_url = msal_app.get_authorization_request_url(required_scopes, **auth_request_kwargs)
     return auth_url
 
 def get_valid_access_token(scopes=None):
@@ -82,12 +160,12 @@ def get_valid_access_token(scopes=None):
     Returns the access token string or None if refresh failed or user not logged in.
     """
     if "user" not in session:
-        print("get_valid_access_token: No user in session.")
+        debug_print("get_valid_access_token: No user in session.")
         return None # User not logged in
 
-    required_scopes = scopes or SCOPE # Use default SCOPE if none provided
+    required_scopes = _normalize_scopes(scopes) # Use default SCOPE if none provided
 
-    msal_app = _build_msal_app(cache=_load_cache())
+    msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
     user_info = session.get("user", {})
     # MSAL uses home_account_id which combines oid and tid
     # Construct it carefully based on your id_token_claims structure
@@ -105,37 +183,40 @@ def get_valid_access_token(scopes=None):
                  break
         if not account:
              account = accounts[0] # Fallback to first account if no perfect match
-             print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
+             debug_print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
 
     if account:
         # Try to get token silently (checks cache, then uses refresh token)
         result = msal_app.acquire_token_silent(required_scopes, account=account)
         _save_cache(msal_app.token_cache) # Save cache state AFTER attempt
 
+        debug_print(f"User account name: {account.get('username')}")
+        debug_print(f"All roles assigned to user: {user_info.get('roles')}")
+
         if result and "access_token" in result:
             # Optional: Check expiry if you want fine-grained control, but MSAL usually handles it
             # expires_in = result.get('expires_in', 0)
             # if expires_in > 60: # Check if token is valid for at least 60 seconds
-            #     print("get_valid_access_token: Token acquired silently.")
+            #     debug_print("get_valid_access_token: Token acquired silently.")
             #     return result['access_token']
             # else:
-            #     print("get_valid_access_token: Silent token expired or about to expire.")
+            #     debug_print("get_valid_access_token: Silent token expired or about to expire.")
             #     # MSAL should have refreshed, but if not, fall through
-            print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+            debug_print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
             return result['access_token']
         else:
             # acquire_token_silent failed (e.g., refresh token expired, needs interaction)
-            print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication.")
+            debug_print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication.")
             # Log the specific error if available in result
             if result and ('error' in result or 'error_description' in result):
-                print(f"MSAL Error: {result.get('error')}, Description: {result.get('error_description')}")
+                debug_print(f"MSAL Error: {result.get('error')}, Description: {result.get('error_description')}")
             # Optionally clear session or specific keys if refresh consistently fails
             # session.pop("token_cache", None)
             # session.pop("user", None)
             return None # Indicate failure to get a valid token
 
     else:
-        print("get_valid_access_token: No matching account found in MSAL cache.")
+        debug_print("get_valid_access_token: No matching account found in MSAL cache.")
         # This might happen if the cache was cleared or the user logged in differently
         return None # Cannot acquire token without an account context
 
@@ -146,7 +227,7 @@ def get_valid_access_token_for_plugins(scopes=None):
     Returns the access token string or None if refresh failed or user not logged in.
     """
     if "user" not in session:
-        print("get_valid_access_token: No user in session.")
+        debug_print("get_valid_access_token: No user in session.")
         return {
             "error": "not_logged_in",
             "message": "User is not logged in.",
@@ -154,9 +235,9 @@ def get_valid_access_token_for_plugins(scopes=None):
             "error_description": "No user in session."
         }
 
-    required_scopes = scopes or SCOPE # Use default SCOPE if none provided
+    required_scopes = _normalize_scopes(scopes) # Use default SCOPE if none provided
 
-    msal_app = _build_msal_app(cache=_load_cache())
+    msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
     user_info = session.get("user", {})
     # MSAL uses home_account_id which combines oid and tid
     # Construct it carefully based on your id_token_claims structure
@@ -174,10 +255,10 @@ def get_valid_access_token_for_plugins(scopes=None):
                  break
         if not account:
              account = accounts[0] # Fallback to first account if no perfect match
-             print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
+             debug_print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
 
     if not account:
-        print("get_valid_access_token: No matching account found in MSAL cache.")
+        debug_print("get_valid_access_token: No matching account found in MSAL cache.")
         return {
             "error": "no_account",
             "message": "No matching account found in MSAL cache.",
@@ -189,52 +270,56 @@ def get_valid_access_token_for_plugins(scopes=None):
     _save_cache(msal_app.token_cache)
 
     if result and "access_token" in result:
-        print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+        debug_print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+        clear_requested_oauth_scopes()
         return {"access_token": result['access_token']}
 
     # If we reach here, it means silent acquisition failed
-    print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication or received invalid grants.")
-    if result is None: # Assume invalid grants or no token
-        print("result is None: get_valid_access_token: Consent required.")
-        host_url = request.host_url.rstrip('/')
-        # Only enforce https if not localhost or 127.0.0.1
-        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
-            if not host_url.startswith('https://'):
-                host_url = 'https://' + host_url.split('://', 1)[-1]
-        redirect_url = host_url + REDIRECT_PATH
-        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
-        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
-        logging.debug(f"Consent URL: {consent_url}")
-        return {
-            "error": "consent_required",
-            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
-            "consent_url": consent_url,
-            "scopes": required_scopes,
-            "error_code": None,
-            "error_description": "No token result; interactive authentication required."
-        }
+    debug_print("[Auth] acquire_token_silent_with_error failed. Evaluating interactive auth requirements.")
+    if result is None:
+        debug_print("[Auth] Silent token lookup returned no result. Interactive sign-in is required.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="interactive_auth_required",
+            message=(
+                "Interactive sign-in is required to access this Microsoft Graph resource. "
+                "If the permission is already granted, the auth flow should complete without prompting for consent."
+            ),
+            error_description="No token result; interactive authentication required.",
+        )
 
     error_code = result.get('error') if result else None
     error_desc = result.get('error_description') if result else None
-    print(f"MSAL Error: {error_code}, Description: {error_desc}")
+    debug_print(f"[Auth] MSAL Error: {error_code}, Description: {error_desc}")
 
     if error_code == "invalid_grant" and error_desc and ("AADSTS65001" in error_desc or "consent_required" in error_desc):
-        host_url = request.host_url.rstrip('/')
-        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
-            if not host_url.startswith('https://'):
-                host_url = 'https://' + host_url.split('://', 1)[-1]
-        redirect_url = host_url + REDIRECT_PATH
-        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
-        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
-        logging.debug(f"Consent URL: {consent_url}")
-        return {
-            "error": "consent_required",
-            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
-            "consent_url": consent_url,
-            "scopes": required_scopes,
-            "error_code": error_code,
-            "error_description": error_desc
-        }
+        debug_print("[Auth] Entra explicitly reported missing consent for the requested scopes.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="consent_required",
+            message="User consent is required to access this Microsoft Graph resource.",
+            error_code=error_code,
+            error_description=error_desc,
+            prompt="consent",
+        )
+    if error_code in {"interaction_required", "login_required"}:
+        debug_print("[Auth] Entra requested an interactive sign-in without requiring new consent.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="interactive_auth_required",
+            message=(
+                "Interactive sign-in is required to refresh this Microsoft Graph session. "
+                "If permissions are already granted, the auth flow should complete without another consent prompt."
+            ),
+            error_code=error_code,
+            error_description=error_desc,
+        )
     else:
         return {
             "error": "token_acquisition_failed",
@@ -245,7 +330,27 @@ def get_valid_access_token_for_plugins(scopes=None):
     
 def get_video_indexer_account_token(settings, video_id=None):
     """
-    For ARM-based VideoIndexer accounts:
+    Get Video Indexer access token using managed identity authentication.
+    
+    This function authenticates with Azure Video Indexer using the App Service's
+    managed identity. The managed identity must have Contributor role on the
+    Video Indexer resource.
+    
+    Authentication flow:
+    1. Acquire ARM access token using DefaultAzureCredential (managed identity)
+    2. Call ARM generateAccessToken API to get Video Indexer access token
+    3. Use Video Indexer access token for all API operations
+    """
+    from functions_debug import debug_print
+    
+    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition using managed identity for video_id: {video_id}")
+    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    
+    return get_video_indexer_managed_identity_token(settings, video_id)
+
+def get_video_indexer_managed_identity_token(settings, video_id=None):
+    """
+    For ARM-based VideoIndexer accounts using managed identity:
     1) Acquire an ARM token with DefaultAzureCredential
     2) POST to the ARM generateAccessToken endpoint
     3) Return the account-level accessToken
@@ -254,6 +359,7 @@ def get_video_indexer_account_token(settings, video_id=None):
     
     debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition for video_id: {video_id}")
     debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    debug_print(f"[VIDEO INDEXER AUTH] Using managed identity authentication")
     
     # 1) ARM token
     if AZURE_ENVIRONMENT == "usgovernment":
@@ -270,7 +376,7 @@ def get_video_indexer_account_token(settings, video_id=None):
         debug_print(f"[VIDEO INDEXER AUTH] DefaultAzureCredential initialized successfully")
         arm_token = credential.get_token(arm_scope).token
         debug_print(f"[VIDEO INDEXER AUTH] ARM token acquired successfully (length: {len(arm_token) if arm_token else 0})")
-        print("[VIDEO] ARM token acquired", flush=True)
+        debug_print("[VIDEO] ARM token acquired", flush=True)
     except Exception as e:
         debug_print(f"[VIDEO INDEXER AUTH] ERROR acquiring ARM token: {str(e)}")
         raise
@@ -279,7 +385,7 @@ def get_video_indexer_account_token(settings, video_id=None):
     rg       = settings["video_indexer_resource_group"]
     sub      = settings["video_indexer_subscription_id"]
     acct     = settings["video_indexer_account_name"]
-    api_ver  = settings.get("video_indexer_arm_api_version", "2021-11-10-preview")
+    api_ver  = settings.get("video_indexer_arm_api_version", DEFAULT_VIDEO_INDEXER_ARM_API_VERSION)
     
     debug_print(f"[VIDEO INDEXER AUTH] Settings extracted - Subscription: {sub}, Resource Group: {rg}, Account: {acct}, API Version: {api_ver}")
     
@@ -337,7 +443,7 @@ def get_video_indexer_account_token(settings, video_id=None):
             raise ValueError("No accessToken found in ARM API response")
             
         debug_print(f"[VIDEO INDEXER AUTH] Account token acquired successfully (length: {len(ai)})")
-        print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
+        debug_print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
         return ai
     except requests.exceptions.RequestException as e:
         debug_print(f"[VIDEO INDEXER AUTH] ERROR in ARM API request: {str(e)}")
@@ -368,7 +474,7 @@ def get_microsoft_entra_jwks():
             jwks_response = requests.get(jwks_uri).json()
             JWKS_CACHE = {key['kid']: key for key in jwks_response['keys']}
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching JWKS: {e}")
+            debug_print(f"Error fetching JWKS: {e}")
             return None
     return JWKS_CACHE
 
@@ -423,7 +529,7 @@ def accesstoken_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
 
-        print("accesstoken_required")
+        debug_print("accesstoken_required")
 
         auth_header = request.headers.get('Authorization')
         if not auth_header:
@@ -443,7 +549,7 @@ def accesstoken_required(f):
         if not roles or "ExternalApi" not in roles:
             return jsonify({"message": "Forbidden: ExternalApi role required"}), 403
 
-        print("User is valid")
+        debug_print("User is valid")
 
         # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
         #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
@@ -460,10 +566,10 @@ def login_required(f):
             ) or request.path.startswith('/api/')
 
             if is_api_request:
-                print(f"API request to {request.path} blocked (401 Unauthorized). No valid session.")
+                debug_print(f"API request to {request.path} blocked (401 Unauthorized). No valid session.")
                 return jsonify({"error": "Unauthorized", "message": "Authentication required"}), 401
             else:
-                print(f"Browser request to {request.path} redirected ta login. No valid session.")
+                debug_print(f"Browser request to {request.path} redirected ta login. No valid session.")
                 # Get settings from database, with environment variable fallback
                 from functions_settings import get_settings
                 settings = get_settings()
@@ -483,6 +589,53 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def check_user_access_status(user_id):
+    """
+    Check if user access is currently allowed based on Control Center settings.
+    Returns (is_allowed: bool, reason: str)
+    """
+    try:
+        from functions_settings import get_user_settings
+        user_settings = get_user_settings(user_id)
+        
+        access_settings = user_settings.get('settings', {}).get('access', {})
+        status = access_settings.get('status', 'allow')
+        
+        if status == 'allow':
+            return True, None
+        
+        if status == 'deny':
+            datetime_to_allow = access_settings.get('datetime_to_allow')
+            if datetime_to_allow:
+                try:
+                    # Check if time-based restriction has expired
+                    allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                    current_time = datetime.now(timezone.utc)
+                    
+                    if current_time >= allow_time:
+                        # Time-based restriction has expired, automatically restore access
+                        from functions_settings import update_user_settings
+                        update_user_settings(user_id, {
+                            'access': {
+                                'status': 'allow',
+                                'datetime_to_allow': None
+                            }
+                        })
+                        return True, None
+                    else:
+                        return False, f"Access denied until {datetime_to_allow}"
+                except ValueError:
+                    # Invalid datetime format, treat as permanent deny
+                    return False, "Access denied by administrator"
+            else:
+                return False, "Access denied by administrator"
+        
+        return True, None  # Default to allow if status is unknown
+        
+    except Exception as e:
+        debug_print(f"Error checking user access status: {e}")
+        return True, None  # Default to allow on error to prevent lockouts
+
 def user_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -492,6 +645,85 @@ def user_required(f):
                   return jsonify({"error": "Forbidden", "message": "Insufficient permissions (User/Admin role required)"}), 403
              else:
                   return "Forbidden", 403
+        
+        # Check access control restrictions (admins bypass access control)
+        if 'Admin' not in user.get('roles', []):
+            user_id = user.get('oid') or user.get('sub')
+            if user_id:
+                is_allowed, reason = check_user_access_status(user_id)
+                if not is_allowed:
+                    if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                        return jsonify({"error": "Access Denied", "message": reason}), 403
+                    else:
+                        return f"Access Denied: {reason}", 403
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
+def file_upload_required(f):
+    """
+    Decorator to check if user is allowed to upload files to their personal workspace.
+    Should be used in addition to @login_required and @user_required.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = session.get('user', {})
+        
+        # Admins bypass file upload restrictions
+        if 'Admin' in user.get('roles', []):
+            return f(*args, **kwargs)
+        
+        user_id = user.get('oid') or user.get('sub')
+        if user_id:
+            try:
+                from functions_settings import get_user_settings
+                user_settings = get_user_settings(user_id)
+                
+                file_upload_settings = user_settings.get('settings', {}).get('file_uploads', {})
+                status = file_upload_settings.get('status', 'allow')
+                
+                if status == 'deny':
+                    datetime_to_allow = file_upload_settings.get('datetime_to_allow')
+                    if datetime_to_allow:
+                        try:
+                            # Check if time-based restriction has expired
+                            allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                            current_time = datetime.now(timezone.utc)
+                            
+                            if current_time >= allow_time:
+                                # Time-based restriction has expired, automatically restore access
+                                from functions_settings import update_user_settings
+                                update_user_settings(user_id, {
+                                    'file_uploads': {
+                                        'status': 'allow',
+                                        'datetime_to_allow': None
+                                    }
+                                })
+                                return f(*args, **kwargs)  # Allow the upload
+                            else:
+                                reason = f"File uploads to personal workspace are disabled until {datetime_to_allow}"
+                                if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                                    return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                                else:
+                                    return f"File Upload Denied: {reason}", 403
+                        except ValueError:
+                            # Invalid datetime format, treat as permanent deny
+                            reason = "File uploads to personal workspace are disabled by administrator"
+                            if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                                return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                            else:
+                                return f"File Upload Denied: {reason}", 403
+                    else:
+                        # Permanent deny
+                        reason = "File uploads to personal workspace are disabled by administrator"
+                        if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                            return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                        else:
+                            return f"File Upload Denied: {reason}", 403
+            except Exception as e:
+                debug_print(f"Error checking file upload permissions: {e}")
+                # Default to allow on error to prevent breaking functionality
+        
         return f(*args, **kwargs)
     return decorated_function
 
@@ -514,14 +746,30 @@ def feedback_admin_required(f):
         settings = get_settings()
         require_member_of_feedback_admin = settings.get("require_member_of_feedback_admin", False)
 
+        has_feedback_admin_role = 'roles' in user and 'FeedbackAdmin' in user['roles']
+        has_admin_role = 'roles' in user and 'Admin' in user['roles']
+        
+        # If requirement is enabled, only FeedbackAdmin role grants access
         if require_member_of_feedback_admin:
-            if 'roles' not in user or 'FeedbackAdmin' not in user['roles']:
-                 is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
-                 if is_api_request:
-                      return jsonify({"error": "Forbidden", "message": "Insufficient permissions (FeedbackAdmin role required)"}), 403
-                 else:
-                      return "Forbidden: FeedbackAdmin role required", 403
-        return f(*args, **kwargs)
+            if has_feedback_admin_role:
+                return f(*args, **kwargs)
+            else:
+                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+                if is_api_request:
+                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (FeedbackAdmin role required)"}), 403
+                else:
+                    return "Forbidden: FeedbackAdmin role required", 403
+        
+        # If requirement is not enabled, only regular admins can access
+        if has_admin_role:
+            return f(*args, **kwargs)
+        
+        # No access if neither condition is met
+        is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+        if is_api_request:
+            return jsonify({"error": "Forbidden", "message": "Insufficient permissions"}), 403
+        else:
+            return "Forbidden", 403
     return decorated_function
     
 def safety_violation_admin_required(f):
@@ -531,15 +779,101 @@ def safety_violation_admin_required(f):
         settings = get_settings()
         require_member_of_safety_violation_admin = settings.get("require_member_of_safety_violation_admin", False)
 
+        has_safety_admin_role = 'roles' in user and 'SafetyViolationAdmin' in user['roles']
+        has_admin_role = 'roles' in user and 'Admin' in user['roles']
+        
+        # If requirement is enabled, only SafetyViolationAdmin role grants access
         if require_member_of_safety_violation_admin:
-            if 'roles' not in user or 'SafetyViolationAdmin' not in user['roles']:
+            if has_safety_admin_role:
+                return f(*args, **kwargs)
+            else:
                 is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
                 if is_api_request:
                     return jsonify({"error": "Forbidden", "message": "Insufficient permissions (SafetyViolationAdmin role required)"}), 403
                 else:
                     return "Forbidden: SafetyViolationAdmin role required", 403
-        return f(*args, **kwargs)
+        
+        # If requirement is not enabled, only regular admins can access
+        if has_admin_role:
+            return f(*args, **kwargs)
+        
+        # No access if neither condition is met
+        is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+        if is_api_request:
+            return jsonify({"error": "Forbidden", "message": "Insufficient permissions"}), 403
+        else:
+            return "Forbidden", 403
     return decorated_function
+
+def control_center_required(access_level='admin'):
+    """
+    Unified Control Center access control decorator.
+    
+    Args:
+        access_level: 'admin' for full admin access, 'dashboard' for dashboard-only access
+    
+    Access logic when require_member_of_control_center_admin is ENABLED:
+    - ControlCenterAdmin role → Full access to everything (admin + dashboard)
+    - ControlCenterDashboardReader role → Dashboard access only (if that setting is also enabled)
+    - Regular Admin role → NO access (must have ControlCenterAdmin)
+    - ControlCenterAdmin role is REQUIRED - having it without the setting enabled does nothing
+    
+    Access logic when require_member_of_control_center_admin is DISABLED (default):
+    - Regular Admin role → Full access to dashboard + management + activity logs
+    - ControlCenterAdmin role → IGNORED (role feature not enabled)
+    - ControlCenterDashboardReader role → Dashboard access only (if that setting is enabled)
+    - Non-admins → NO access
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            user = session.get('user', {})
+            settings = get_settings()
+            require_member_of_control_center_admin = settings.get("require_member_of_control_center_admin", False)
+            require_member_of_control_center_dashboard_reader = settings.get("require_member_of_control_center_dashboard_reader", False)
+
+            has_control_center_admin_role = 'roles' in user and 'ControlCenterAdmin' in user['roles']
+            has_dashboard_reader_role = 'roles' in user and 'ControlCenterDashboardReader' in user['roles']
+            has_regular_admin_role = 'roles' in user and 'Admin' in user['roles']
+            
+            # Check if ControlCenterAdmin role requirement is enforced
+            if require_member_of_control_center_admin:
+                # ControlCenterAdmin role is REQUIRED for access
+                # Only ControlCenterAdmin role grants full access
+                if has_control_center_admin_role:
+                    return f(*args, **kwargs)
+                
+                # For dashboard access, check if DashboardReader role grants access
+                if access_level == 'dashboard':
+                    if require_member_of_control_center_dashboard_reader and has_dashboard_reader_role:
+                        return f(*args, **kwargs)
+                
+                # User doesn't have ControlCenterAdmin role, deny access
+                # Note: Regular Admin role does NOT grant access when this setting is enabled
+                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+                if is_api_request:
+                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (ControlCenterAdmin role required)"}), 403
+                else:
+                    return "Forbidden: ControlCenterAdmin role required", 403
+            
+            # ControlCenterAdmin requirement is NOT enforced (default behavior)
+            # Only regular Admin role grants access - ControlCenterAdmin role is IGNORED
+            if has_regular_admin_role:
+                return f(*args, **kwargs)
+            
+            # For dashboard-only access, check if DashboardReader role is enabled and user has it
+            if access_level == 'dashboard':
+                if require_member_of_control_center_dashboard_reader and has_dashboard_reader_role:
+                    return f(*args, **kwargs)
+            
+            # User is not an admin and doesn't have special roles - deny access
+            is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+            if is_api_request:
+                return jsonify({"error": "Forbidden", "message": "Insufficient permissions (Admin role required)"}), 403
+            else:
+                return "Forbidden: Admin role required", 403
+        return decorated_function
+    return decorator
 
 def create_group_role_required(f):
     @wraps(f)
@@ -591,6 +925,103 @@ def get_current_user_info():
         "displayName": user.get("name")
     }
 
+
+def _normalize_authority(authority_base, tenant_id):
+    """Normalize an authority URL and append tenant when appropriate."""
+    base = (authority_base or "").strip().rstrip("/")
+    tenant = (tenant_id or "").strip()
+
+    if not base or not tenant:
+        return base
+
+    lowered = base.lower()
+    tenant_lower = tenant.lower()
+
+    if lowered.endswith(f"/{tenant_lower}"):
+        return base
+
+    if lowered.endswith("/common") or lowered.endswith("/organizations") or lowered.endswith("/consumers"):
+        return base
+
+    return f"{base}/{tenant}"
+
+
+def get_graph_authority():
+    """
+    Resolve authority for Graph token acquisition, independent of general Azure environment defaults.
+
+    Precedence:
+    1. CUSTOM_GRAPH_AUTHORITY_URL_VALUE if provided
+    2. Custom cloud identity authority for AZURE_ENVIRONMENT=custom
+    3. Gov/Public cloud authority based on AZURE_ENVIRONMENT
+    """
+    custom_graph_authority = (CUSTOM_GRAPH_AUTHORITY_URL_VALUE or "").strip()
+    if custom_graph_authority:
+        return _normalize_authority(custom_graph_authority, TENANT_ID)
+
+    if AZURE_ENVIRONMENT == "custom":
+        return _normalize_authority(CUSTOM_IDENTITY_URL_VALUE, TENANT_ID)
+
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return f"https://login.microsoftonline.us/{TENANT_ID}"
+
+    return f"https://login.microsoftonline.com/{TENANT_ID}"
+
+
+def get_graph_base_url():
+    """
+    Resolve the Microsoft Graph base URL for this deployment.
+
+    Precedence:
+    1. CUSTOM_GRAPH_URL_VALUE if provided (works in any AZURE_ENVIRONMENT mode)
+    2. Azure Gov Graph for usgovernment
+    3. Public Graph by default
+
+    Returns:
+        str: Normalized Graph base URL ending with /v1.0
+    """
+    custom_graph_url = (CUSTOM_GRAPH_URL_VALUE or "").strip().rstrip("/")
+    if custom_graph_url:
+        normalized = custom_graph_url
+        lowered = normalized.lower()
+
+        # Allow legacy values such as https://.../v1.0/users
+        if lowered.endswith("/users"):
+            normalized = normalized[:-6].rstrip("/")
+            lowered = normalized.lower()
+
+        if "/v1.0" not in lowered:
+            normalized = f"{normalized}/v1.0"
+
+        return normalized
+
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return "https://graph.microsoft.us/v1.0"
+
+    return "https://graph.microsoft.com/v1.0"
+
+
+def get_graph_endpoint(path=""):
+    """
+    Build a full Graph endpoint from a relative path.
+
+    Args:
+        path (str): Relative Graph path (for example: "/users" or "users/{id}")
+
+    Returns:
+        str: Fully qualified Microsoft Graph URL
+    """
+    base_url = get_graph_base_url().rstrip("/")
+    path = (path or "").strip()
+
+    if not path:
+        return base_url
+
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    return f"{base_url}{path}"
+
 def get_user_profile_image():
     """
     Fetches the user's profile image from Microsoft Graph and returns it as base64.
@@ -598,16 +1029,10 @@ def get_user_profile_image():
     """
     token = get_valid_access_token()
     if not token:
-        print("get_user_profile_image: Could not acquire access token")
+        debug_print("get_user_profile_image: Could not acquire access token")
         return None
 
-    # Determine the correct Graph endpoint based on Azure environment
-    if AZURE_ENVIRONMENT == "usgovernment":
-        profile_image_endpoint = "https://graph.microsoft.us/v1.0/me/photo/$value"
-    elif AZURE_ENVIRONMENT == "custom":
-        profile_image_endpoint = f"{CUSTOM_GRAPH_URL_VALUE}/me/photo/$value"
-    else:
-        profile_image_endpoint = "https://graph.microsoft.com/v1.0/me/photo/$value"
+    profile_image_endpoint = get_graph_endpoint("/me/photo/$value")
     
     headers = {
         "Authorization": f"Bearer {token}",
@@ -629,15 +1054,15 @@ def get_user_profile_image():
             
         elif response.status_code == 404:
             # User has no profile image
-            print("get_user_profile_image: User has no profile image")
+            debug_print("get_user_profile_image: User has no profile image")
             return None
         else:
-            print(f"get_user_profile_image: Failed to fetch profile image. Status: {response.status_code}")
+            debug_print(f"get_user_profile_image: Failed to fetch profile image. Status: {response.status_code}")
             return None
             
     except requests.exceptions.RequestException as e:
-        print(f"get_user_profile_image: Request failed: {e}")
+        debug_print(f"get_user_profile_image: Request failed: {e}")
         return None
     except Exception as e:
-        print(f"get_user_profile_image: Unexpected error: {e}")
+        debug_print(f"get_user_profile_image: Unexpected error: {e}")
         return None

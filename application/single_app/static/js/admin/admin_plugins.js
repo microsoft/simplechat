@@ -1,6 +1,6 @@
 // admin_plugins.js (updated to use new multi-step modal)
 import { showToast } from "../chat/chat-toast.js"
-import { renderPluginsTable as sharedRenderPluginsTable, validatePluginManifest as sharedValidatePluginManifest } from "../plugin_common.js";
+import { renderPluginsTable as sharedRenderPluginsTable, validatePluginManifest as sharedValidatePluginManifest, getErrorMessageFromResponse } from "../plugin_common.js";
 
 // Main logic
 document.addEventListener('DOMContentLoaded', function () {
@@ -55,20 +55,37 @@ function setupSaveHandler(plugin, modal) {
         
         saveBtn.onclick = async (event) => {
             event.preventDefault();
-            
+            const errorDiv = document.getElementById('plugin-modal-error');
+            if (errorDiv) {
+                errorDiv.classList.add('d-none');
+                errorDiv.textContent = '';
+            }
             try {
                 // Get form data from the stepper
                 const formData = window.pluginModalStepper.getFormData();
                 
                 // Validate with JSON schema
-                const valid = await sharedValidatePluginManifest(formData);
-                if (!valid) {
-                    window.pluginModalStepper.showError('Validation error: Invalid action data.');
+                const validation = await sharedValidatePluginManifest(formData);
+                const validationFailed = validation === false || (validation && validation.valid === false);
+                if (validationFailed) {
+                    const message = validation?.errors?.join('\n') || 'Validation error: Invalid action data.';
+                    window.pluginModalStepper.showError(message);
                     return;
                 }
                 
+                const originalText = saveBtn.innerHTML;
+                saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Saving...`;
+                saveBtn.disabled = true;
                 // Save the action
-                await savePlugin(formData, plugin);
+                try {
+                    await savePlugin(formData, plugin);
+                } catch (error) {
+                    window.pluginModalStepper.showError(error.message);
+                    return;
+                } finally {
+                    saveBtn.innerHTML = originalText;
+                    saveBtn.disabled = false;
+                }
                 
                 // Close modal and refresh
                 if (modal && typeof modal.hide === 'function') {
@@ -103,8 +120,8 @@ async function savePlugin(pluginData, existingPlugin = null) {
     });
     
     if (!saveRes.ok) {
-        const errorText = await saveRes.text();
-        throw new Error(`Failed to save action: ${errorText}`);
+        const errorMessage = await getErrorMessageFromResponse(saveRes, 'Failed to save action');
+        throw new Error(errorMessage);
     }
 }
 

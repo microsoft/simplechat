@@ -1,0 +1,231 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "ServiceNow Asset Creation API",
+    "description": "ServiceNow REST API for creating new assets",
+    "version": "1.0.0",
+    "contact": {
+      "name": "ServiceNow API Support",
+      "url": "https://developer.servicenow.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://YOUR-INSTANCE.service-now.com/api/now",
+      "description": "ServiceNow Instance"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant."
+      }
+    },
+    "schemas": {
+      "AssetCreateRequest": {
+        "type": "object",
+        "required": ["asset_tag", "display_name"],
+        "properties": {
+          "asset_tag": {
+            "type": "string",
+            "description": "Unique asset tag identifier (required)",
+            "example": "P1000500"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name for the asset (required)",
+            "example": "Jane's Laptop"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model reference (sys_id or display name)",
+            "example": "Dell Latitude 5420"
+          },
+          "model_category": {
+            "type": "string",
+            "description": "Model category (sys_id or name)",
+            "example": "Computer"
+          },
+          "serial_number": {
+            "type": "string",
+            "description": "Serial number of the asset",
+            "example": "SN987654321"
+          },
+          "assigned_to": {
+            "type": "string",
+            "description": "User assigned to the asset (sys_id or name)",
+            "example": "Jane Smith"
+          },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group (sys_id or name)",
+            "example": "IT Support"
+          },
+          "location": {
+            "type": "string",
+            "description": "Physical location (sys_id or name)",
+            "example": "Building A, Floor 3"
+          },
+          "install_status": {
+            "type": "string",
+            "description": "Installation status: 1=In use, 6=In stock, 7=Retired",
+            "example": "6",
+            "enum": ["1", "6", "7"]
+          },
+          "substatus": {
+            "type": "string",
+            "description": "Substatus of the asset",
+            "example": "available"
+          },
+          "purchase_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Purchase date (YYYY-MM-DD)",
+            "example": "2024-01-15"
+          },
+          "warranty_expiration": {
+            "type": "string",
+            "format": "date",
+            "description": "Warranty expiration date (YYYY-MM-DD)",
+            "example": "2027-01-15"
+          },
+          "cost": {
+            "type": "string",
+            "description": "Asset cost in dollars",
+            "example": "1500.00"
+          },
+          "department": {
+            "type": "string",
+            "description": "Department (sys_id or name)",
+            "example": "IT"
+          },
+          "managed_by": {
+            "type": "string",
+            "description": "Manager of the asset (sys_id or name)",
+            "example": "John Manager"
+          },
+          "owned_by": {
+            "type": "string",
+            "description": "Owner of the asset (sys_id or name)",
+            "example": "IT Department"
+          },
+          "comments": {
+            "type": "string",
+            "description": "Additional comments or notes",
+            "example": "Purchased for new hire"
+          }
+        }
+      },
+      "AssetCreateResponse": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "sys_id": {
+                "type": "string",
+                "description": "Newly created asset sys_id"
+              },
+              "asset_tag": {
+                "type": "string",
+                "description": "Asset tag"
+              },
+              "display_name": {
+                "type": "string",
+                "description": "Display name"
+              },
+              "sys_created_on": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Creation timestamp"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/table/alm_asset": {
+      "post": {
+        "summary": "Create new asset",
+        "description": "Create a new asset in ServiceNow\n\nRequired fields:\n- asset_tag: Unique asset identifier\n- display_name: Display name for the asset\n\nOptional fields:\n- model: Model reference (sys_id or display name)\n- serial_number: Serial number\n- assigned_to: User reference (sys_id or name)\n- location: Location reference (sys_id or name)\n- install_status: Status (1=In use, 6=In stock, 7=Retired)\n- purchase_date: Purchase date (YYYY-MM-DD)\n- warranty_expiration: Warranty date (YYYY-MM-DD)\n- cost: Asset cost\n- department: Department reference\n- managed_by: Manager reference\n- owned_by: Owner reference\n- comments: Additional notes\n\nThe API will return the newly created asset with its sys_id.",
+        "operationId": "createAsset",
+        "requestBody": {
+          "required": true,
+          "description": "Asset data to create",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetCreateRequest"
+              },
+              "examples": {
+                "laptop": {
+                  "summary": "Create laptop asset",
+                  "value": {
+                    "asset_tag": "P1000500",
+                    "display_name": "Jane's Laptop",
+                    "model": "Dell Latitude 5420",
+                    "serial_number": "SN987654321",
+                    "assigned_to": "Jane Smith",
+                    "location": "Building A, Floor 3",
+                    "install_status": "6",
+                    "purchase_date": "2024-01-15",
+                    "warranty_expiration": "2027-01-15",
+                    "cost": "1500.00"
+                  }
+                },
+                "monitor": {
+                  "summary": "Create monitor asset",
+                  "value": {
+                    "asset_tag": "M2000100",
+                    "display_name": "Conference Room Monitor",
+                    "model": "Dell U2720Q",
+                    "serial_number": "MON123456",
+                    "location": "Conference Room A",
+                    "install_status": "1",
+                    "cost": "550.00"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Asset created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request - Missing required fields or invalid data"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication token"
+          },
+          "409": {
+            "description": "Conflict - Asset tag already exists"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  }
+}

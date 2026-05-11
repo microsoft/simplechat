@@ -3,6 +3,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from functions_settings import get_settings
+from semantic_kernel.agents.runtime.in_process.in_process_runtime import InProcessRuntime
 
 # Global executor for background orchestration
 executor = ThreadPoolExecutor(max_workers=4)  # Tune as needed
@@ -13,7 +14,6 @@ def run_orchestration_in_thread(orchestrator, agent_message_history, run_sk_call
         asyncio.set_event_loop(loop)
         runtime = None
         try:
-            from semantic_kernel.agents.runtime.in_process.in_process_runtime import InProcessRuntime
             runtime = InProcessRuntime()
             result = loop.run_until_complete(
                 run_sk_call(

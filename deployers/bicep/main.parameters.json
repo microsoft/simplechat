@@ -1,0 +1,105 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "cloudEnvironment": {
+      "value": "${env_AZURE_CLOUD_ENVIRONMENT}"
+    },
+    "appName": {
+      "value": "${env_DEPLOYMENT_APPNAME}"
+    },
+    "environment": {
+      "value": "${environment}"
+    },
+    "azdEnvironmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "imageName": {
+      "value": "${CONTAINER_IMAGE_NAME}"
+    },
+    "enterpriseAppClientId": {
+      "value": "${ENTERPRISE_APP_CLIENT_ID}"
+    },
+    "enterpriseAppServicePrincipalId": {
+      "value": "${ENTERPRISE_APP_SERVICE_PRINCIPAL_ID}"
+    },
+    "enterpriseAppClientSecret": {
+      "value": "${ENTERPRISE_APP_CLIENT_SECRET}"
+    },
+    "authenticationType": {
+      "value": "${AUTHENTICATION_TYPE}"
+    },
+    "configureApplicationPermissions": {
+      "value": "${CONFIGURE_APPLICATION_PERMISSIONS}"
+    },    
+    "specialTags": {
+      "value": {
+        "Project": "SimpleChat"
+      }
+    },
+    "enableDiagLogging": {
+      "value": "${ENABLE_DIAG_LOGGING}"
+    }, 
+    "enablePrivateNetworking": {
+      "value": "${ENABLE_PRIVATE_NETWORKING}"
+    },
+    "existingVirtualNetworkId": {
+      "value": "${EXISTING_VNET_RESOURCE_ID}"
+    },
+    "existingAppServiceSubnetId": {
+      "value": "${EXISTING_APP_SERVICE_SUBNET_RESOURCE_ID}"
+    },
+    "existingPrivateEndpointSubnetId": {
+      "value": "${EXISTING_PRIVATE_ENDPOINT_SUBNET_RESOURCE_ID}"
+    },
+    "privateDnsZoneConfigs": {
+      "value": "${PRIVATE_DNS_ZONE_CONFIGS}"
+    },
+    "existingOpenAIEndpoint": {
+      "value": "${EXISTING_AZURE_OPENAI_ENDPOINT}"
+    },
+    "customVideoIndexerArmApiVersion": {
+      "value": "${CUSTOM_VIDEO_INDEXER_ARM_API_VERSION}"
+    },
+    "customVideoIndexerEndpoint": {
+      "value": "${CUSTOM_VIDEO_INDEXER_ENDPOINT}"
+    },
+    "existingOpenAIResourceName": {
+      "value": "${EXISTING_AZURE_OPENAI_RESOURCE_NAME}"
+    },
+    "existingOpenAIResourceGroup": {
+      "value": "${EXISTING_AZURE_OPENAI_RESOURCE_GROUP}"
+    },
+    "existingOpenAISubscriptionId": {
+      "value": "${EXISTING_AZURE_OPENAI_SUBSCRIPTION_ID}"
+    },
+    "openAIDeploymentType": {
+      "value": "${OPENAI_DEPLOYMENT_TYPE}"
+    },
+    "gptModels": {
+      "value": "${GPT_MODELS}"
+    },
+    "embeddingModels": {
+      "value": "${EMBEDDING_MODELS}"
+    },
+    "allowedIpAddresses": {
+      "value": "${ALLOWED_IP_RANGES}"
+    },
+    "deployContentSafety": {
+      "value": "${DEPLOY_CONTENT_SAFETY}"
+    },
+    "deployRedisCache": {
+      "value": "${DEPLOY_REDIS_CACHE}"
+    },
+    "deploySpeechService": {
+      "value": "${DEPLOY_SPEECH_SERVICE}"
+    },
+    "deployVideoIndexerService": {
+      "value": "${DEPLOY_VIDEO_INDEXER_SERVICE}"
+    }
+  }
+}

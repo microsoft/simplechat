@@ -1,35 +1,64 @@
-# semantic_kernel_loader.py
+﻿# semantic_kernel_loader.py
 """
 Loader for Semantic Kernel plugins/actions from app settings.
 - Loads plugin/action manifests from settings (CosmosDB)
 - Registers plugins with the Semantic Kernel instance
 """
 
+import logging
+import builtins
+import os
+from azure.identity import AzureAuthorityHosts, ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from agent_orchestrator_groupchat import OrchestratorAgent, SCGroupChatManager
 from semantic_kernel import Kernel
 from semantic_kernel.agents import Agent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
-from semantic_kernel.core_plugins import TimePlugin, HttpPlugin
-from semantic_kernel.core_plugins.wait_plugin import WaitPlugin
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+from semantic_kernel.core_plugins import HttpPlugin
+from semantic_kernel_plugins.time_plugin import TimePlugin
+from semantic_kernel_plugins.wait_plugin import WaitPlugin
 from semantic_kernel_plugins.math_plugin import MathPlugin
 from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
-from functions_settings import get_settings, get_user_settings
+from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled
+from foundry_agent_runtime import (
+    AzureAIFoundryChatCompletionAgent,
+    AzureAIFoundryNewChatCompletionAgent,
+)
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
-import logging
-import importlib
-import os
-import importlib.util
-import inspect
-import builtins
+from functions_keyvault import (
+    SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
+    SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
+    SecretReturnType,
+    keyvault_model_endpoint_get_helper,
+    resolve_secret_reference_for_context,
+    retrieve_secret_from_key_vault,
+    retrieve_secret_from_key_vault_by_full_name,
+    validate_secret_name_dynamic,
+)
+from functions_global_actions import get_global_actions
+from functions_global_agents import get_global_agents
+from functions_group_agents import get_group_agent, get_group_agents
+from functions_group_actions import get_group_actions
+from functions_group import assert_group_role, get_group_model_endpoints, require_active_group
+from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
+from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
+from functions_agent_payload import can_agent_use_default_multi_endpoint_model
+from semantic_kernel_plugins.plugin_loader import discover_plugins
+from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+from config import cognitive_services_scope
+from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
+import app_settings_cache
 
 # Agent and Azure OpenAI chat service imports
 log_event("[SK Loader] Starting loader imports")
@@ -88,10 +117,21 @@ def first_if_comma(val):
             return val.split(",")[0].strip()
         return val
 
-def resolve_agent_config(agent, settings):
+
+def resolve_foundry_endpoint_from_settings(foundry_settings, settings):
+    endpoint = (foundry_settings or {}).get("endpoint")
+    if endpoint:
+        return endpoint
+    return settings.get("azure_ai_foundry_endpoint") or os.getenv("AZURE_AI_AGENT_ENDPOINT")
+
+def resolve_agent_config(agent, settings, group_scope_id=None):
     debug_print(f"[SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
     debug_print(f"[SK Loader] Agent config: {agent}")
     debug_print(f"[SK Loader] Agent is_global flag: {agent.get('is_global')}")
+    debug_print(f"[SK Loader] Agent is_group flag: {agent.get('is_group')}")
+    agent_type = (agent.get('agent_type') or 'local').lower()
+    agent['agent_type'] = agent_type
+    other_settings = agent.get("other_settings", {}) or {}
 
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
@@ -102,10 +142,27 @@ def resolve_agent_config(agent, settings):
     user_apim_enabled = agent.get("enable_agent_gpt_apim") in [True, 1, "true", "True"]
     global_apim_enabled = settings.get("enable_gpt_apim", False)
     per_user_enabled = settings.get('per_user_semantic_kernel', False)
-    allow_user_custom_agent_endpoints = settings.get('allow_user_custom_agent_endpoints', False)
-    allow_group_custom_agent_endpoints = settings.get('allow_group_custom_agent_endpoints', False)
+    allow_user_custom_endpoints = settings.get('allow_user_custom_endpoints', False) or settings.get('allow_user_custom_agent_endpoints', False)
+    allow_group_custom_endpoints = settings.get('allow_group_custom_endpoints', False) or settings.get('allow_group_custom_agent_endpoints', False)
+    is_group_agent = agent.get("is_group", False)
+    is_global_agent = agent.get("is_global", False)
+    explicit_group_scope_id = str(group_scope_id or "").strip()
+
+    if is_group_agent:
+        allow_custom_agent_endpoints = allow_group_custom_endpoints
+    elif is_global_agent:
+        allow_custom_agent_endpoints = False
+    else:
+        allow_custom_agent_endpoints = allow_user_custom_endpoints
 
     debug_print(f"[SK Loader] user_apim_enabled: {user_apim_enabled}, global_apim_enabled: {global_apim_enabled}, per_user_enabled: {per_user_enabled}")
+    debug_print(f"[SK Loader] allow_user_custom_endpoints: {allow_user_custom_endpoints}, allow_group_custom_endpoints: {allow_group_custom_endpoints}, allow_custom_agent_endpoints_resolved: {allow_custom_agent_endpoints}")
+    debug_print(f"[SK Loader] Max completion tokens from agent: {agent.get('max_completion_tokens')}")
+
+    def resolve_secret_value_if_needed(value, scope_value, source, scope):
+        if validate_secret_name_dynamic(value):
+            return retrieve_secret_from_key_vault(value, scope_value, scope, source)
+        return value
 
     def any_filled(*fields):
         return any(bool(f) for f in fields)
@@ -113,50 +170,457 @@ def resolve_agent_config(agent, settings):
     def all_filled(*fields):
         return all(bool(f) for f in fields)
 
+    def get_group_scope_id():
+        if not is_group_agent:
+            return ""
+
+        if explicit_group_scope_id:
+            return explicit_group_scope_id
+
+        persisted_group_id = str(agent.get("group_id") or "").strip()
+        if persisted_group_id:
+            return persisted_group_id
+
+        try:
+            return require_active_group(get_current_user_id())
+        except ValueError as err:
+            debug_print(f"[SK Loader] No active group available while resolving group endpoint scope: {err}")
+            log_event(
+                "[SK Loader] Group endpoint resolution could not determine a group scope.",
+                level=logging.WARNING,
+                extra={"agent_name": agent.get("name")}
+            )
+            return ""
+
     def get_user_apim():
-        return (
-            agent.get("azure_apim_gpt_endpoint"),
-            agent.get("azure_apim_gpt_subscription_key"),
-            agent.get("azure_apim_gpt_deployment"),
-            agent.get("azure_apim_gpt_api_version")
-        )
+        endpoint = agent.get("azure_apim_gpt_endpoint")
+        key = agent.get("azure_apim_gpt_subscription_key")
+        deployment = agent.get("azure_apim_gpt_deployment")
+        api_version = agent.get("azure_apim_gpt_api_version")
+
+        # Check if key vault secret storage is enabled in settings
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
+            try:
+                if validate_secret_name_dynamic(key):
+                    # Try to retrieve the secret from Key Vault
+                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
+                    if resolved_key:
+                        # Update the agent dict with the resolved key for this session
+                        agent["azure_apim_gpt_subscription_key"] = resolved_key
+                        key = resolved_key
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secret for agent '{agent.get('name')}' in get_user_apim: {e}", level=logging.ERROR, exceptionTraceback=True)
+                # Fallback to using the value as-is
+        return (endpoint, key, deployment, api_version)
 
     def get_global_apim():
-        return (
-            settings.get("azure_apim_gpt_endpoint"),
-            settings.get("azure_apim_gpt_subscription_key"),
-            first_if_comma(settings.get("azure_apim_gpt_deployment")),
-            settings.get("azure_apim_gpt_api_version")
-        )
+        endpoint = settings.get("azure_apim_gpt_endpoint")
+        key = settings.get("azure_apim_gpt_subscription_key")
+        deployment = first_if_comma(settings.get("azure_apim_gpt_deployment"))
+        api_version = settings.get("azure_apim_gpt_api_version")
+
+        # Check if key vault secret storage is enabled in settings
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
+            try:
+                if validate_secret_name_dynamic(key):
+                    # Try to retrieve the secret from Key Vault
+                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
+                    if resolved_key:
+                        # Update the settings dict with the resolved key for this session
+                        settings["azure_apim_gpt_subscription_key"] = resolved_key
+                        key = resolved_key
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secret in get_global_apim: {e}", level=logging.ERROR, exceptionTraceback=True)
+                # Fallback to using the value as-is
+        return (endpoint, key, deployment, api_version)
 
     def get_user_gpt():
-        return (
-            agent.get("azure_openai_gpt_endpoint"),
-            agent.get("azure_openai_gpt_key"),
-            agent.get("azure_openai_gpt_deployment"),
-            agent.get("azure_openai_gpt_api_version")
-        )
+        endpoint = agent.get("azure_openai_gpt_endpoint")
+        key = agent.get("azure_openai_gpt_key")
+        deployment = agent.get("azure_openai_gpt_deployment")
+        api_version = agent.get("azure_openai_gpt_api_version")
+
+        # Check if key vault secret storage is enabled in settings
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
+            try:
+                if validate_secret_name_dynamic(key):
+                    # Try to retrieve the secret from Key Vault
+                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
+                    if resolved_key:
+                        # Update the agent dict with the resolved key for this session
+                        agent["azure_openai_gpt_key"] = resolved_key
+                        key = resolved_key
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secret for agent '{agent.get('name')}' in get_user_gpt: {e}", level=logging.ERROR, exceptionTraceback=True)
+                # Fallback to using the value as-is
+        return (endpoint, key, deployment, api_version)
 
     def get_global_gpt():
-        return (
-            settings.get("azure_openai_gpt_endpoint") or selected_model.get("endpoint"),
-            settings.get("azure_openai_gpt_key") or selected_model.get("key"),
-            settings.get("azure_openai_gpt_deployment") or selected_model.get("deploymentName"),
-            settings.get("azure_openai_gpt_api_version") or selected_model.get("api_version")
-        )
+        endpoint = settings.get("azure_openai_gpt_endpoint") or selected_model.get("endpoint")
+        key = settings.get("azure_openai_gpt_key") or selected_model.get("key")
+        deployment = settings.get("azure_openai_gpt_deployment") or selected_model.get("deploymentName")
+        api_version = settings.get("azure_openai_gpt_api_version") or selected_model.get("api_version")
+
+        # Check if key vault secret storage is enabled in settings
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
+            try:
+                if validate_secret_name_dynamic(key):
+                    # Try to retrieve the secret from Key Vault
+                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
+                    if resolved_key:
+                        # Update the settings dict with the resolved key for this session
+                        settings["azure_openai_gpt_key"] = resolved_key
+                        key = resolved_key
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secret in get_global_gpt: {e}", level=logging.ERROR, exceptionTraceback=True)
+                # Fallback to using the value as-is
+        return (endpoint, key, deployment, api_version)
 
     def merge_fields(primary, fallback):
         return tuple(p if p not in [None, ""] else f for p, f in zip(primary, fallback))
 
+    def resolve_authority(auth_settings):
+        management_cloud = (auth_settings.get("management_cloud") or "public").lower()
+        if management_cloud in ("government", "usgovernment", "usgov"):
+            return AzureAuthorityHosts.AZURE_GOVERNMENT
+        custom_authority = auth_settings.get("custom_authority") or ""
+        if custom_authority:
+            return custom_authority
+        return AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+
+    def resolve_aoai_scope():
+        return str(cognitive_services_scope or "").strip()
+
+    def resolve_foundry_scope(auth_settings, endpoint=None):
+        custom_scope = (auth_settings.get("foundry_scope") or "").strip()
+        if custom_scope:
+            return custom_scope
+
+        management_cloud = (auth_settings.get("management_cloud") or "public").lower()
+        if management_cloud in ("government", "usgovernment", "usgov"):
+            return "https://ai.azure.us/.default"
+        if management_cloud == "china":
+            return "https://ai.azure.cn/.default"
+        if management_cloud == "germany":
+            return "https://ai.azure.de/.default"
+
+        endpoint_value = (endpoint or "").lower()
+        if "azure.us" in endpoint_value:
+            return "https://ai.azure.us/.default"
+        if "azure.cn" in endpoint_value:
+            return "https://ai.azure.cn/.default"
+        if "azure.de" in endpoint_value:
+            return "https://ai.azure.de/.default"
+        return "https://ai.azure.com/.default"
+
+    def build_token_provider(auth_settings, provider="aoai", endpoint=None):
+        auth_type = (auth_settings.get("type") or "managed_identity").lower()
+        authority = resolve_authority(auth_settings)
+        if auth_type == "service_principal":
+            credential = ClientSecretCredential(
+                tenant_id=auth_settings.get("tenant_id"),
+                client_id=auth_settings.get("client_id"),
+                client_secret=auth_settings.get("client_secret"),
+                authority=authority,
+            )
+        else:
+            managed_identity_client_id = auth_settings.get("managed_identity_client_id") or None
+            credential = DefaultAzureCredential(
+                managed_identity_client_id=managed_identity_client_id,
+                authority=authority,
+            )
+
+        if provider in ("aifoundry", "new_foundry"):
+            scope = resolve_foundry_scope(auth_settings, endpoint=endpoint)
+        else:
+            scope = resolve_aoai_scope()
+
+        return get_bearer_token_provider(credential, scope)
+
+    def resolve_global_gpt_token_provider(global_key):
+        auth_type = (settings.get("azure_openai_gpt_authentication_type") or "key").lower()
+        if auth_type in ("key", "api_key"):
+            return None
+        if global_key:
+            return None
+        if auth_type in ("managed_identity", "service_principal"):
+            auth_settings = {
+                "type": auth_type,
+                "tenant_id": settings.get("azure_openai_gpt_tenant_id") or settings.get("azure_openai_tenant_id"),
+                "client_id": settings.get("azure_openai_gpt_client_id") or settings.get("azure_openai_client_id"),
+                "client_secret": settings.get("azure_openai_gpt_client_secret") or settings.get("azure_openai_client_secret"),
+                "managed_identity_client_id": settings.get("azure_openai_gpt_managed_identity_client_id") or settings.get("azure_openai_managed_identity_client_id"),
+                "management_cloud": settings.get("management_cloud") or settings.get("azure_management_cloud") or "public",
+                "custom_authority": settings.get("custom_authority") or settings.get("azure_custom_authority") or "",
+            }
+            try:
+                return build_token_provider(auth_settings, provider="aoai")
+            except Exception as e:
+                log_event(
+                    f"[SK Loader] Failed to build global GPT token provider: {e}",
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+        return None
+
+    def get_agent_model_endpoint_candidates():
+        endpoints = []
+        if is_group_agent:
+            if allow_custom_agent_endpoints:
+                group_id = get_group_scope_id()
+                if group_id:
+                    endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
+        elif not is_global_agent:
+            if allow_custom_agent_endpoints:
+                user_settings = get_user_settings(get_current_user_id())
+                endpoints.extend([
+                    {**endpoint, "_endpoint_scope": "user"}
+                    for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                ])
+        endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
+
+        return endpoints
+
+    def resolve_multi_endpoint_agent_binding(endpoint_candidates, endpoint_id, model_id):
+        if not endpoint_id or not model_id:
+            return None
+
+        endpoint_cfg = next((e for e in endpoint_candidates if e.get("id") == endpoint_id), None)
+        if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
+            return None
+
+        endpoint_scope = endpoint_cfg.get("_endpoint_scope", "global")
+        endpoint_cfg = dict(endpoint_cfg)
+        endpoint_cfg.pop("_endpoint_scope", None)
+        endpoint_cfg = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            endpoint_cfg.get("id") or endpoint_id,
+            scope=endpoint_scope,
+            return_type=SecretReturnType.VALUE,
+        )
+
+        models = endpoint_cfg.get("models", []) or []
+        model_cfg = next((m for m in models if m.get("id") == model_id), None)
+        if not model_cfg or not model_cfg.get("enabled", True):
+            return None
+
+        provider = (endpoint_cfg.get("provider") or "aoai").lower()
+        connection = endpoint_cfg.get("connection", {}) or {}
+        auth = endpoint_cfg.get("auth", {}) or {}
+        deployment = model_cfg.get("deploymentName") or model_cfg.get("deployment") or ""
+        api_version = connection.get("openai_api_version") or connection.get("api_version")
+        endpoint = connection.get("endpoint")
+        return {
+            "provider": provider,
+            "endpoint": endpoint,
+            "api_version": api_version,
+            "deployment": deployment,
+            "auth": auth,
+            "model": model_cfg,
+        }
+
+    def resolve_multi_endpoint_agent_config():
+        endpoint_candidates = get_agent_model_endpoint_candidates()
+        endpoint_id = (agent.get("model_endpoint_id") or "").strip()
+        model_id = (agent.get("model_id") or "").strip()
+
+        if endpoint_id and model_id:
+            bound_config = resolve_multi_endpoint_agent_binding(
+                endpoint_candidates,
+                endpoint_id,
+                model_id,
+            )
+            if bound_config:
+                return bound_config
+            debug_print(
+                f"[SK Loader] Saved multi-endpoint binding is unavailable for agent '{agent.get('name')}'. Falling back to default model selection."
+            )
+        elif endpoint_id or model_id:
+            debug_print(
+                f"[SK Loader] Incomplete multi-endpoint binding for agent '{agent.get('name')}'. Falling back to default model selection."
+            )
+
+        if not can_agent_use_default_multi_endpoint_model(agent):
+            return None
+
+        default_selection = settings.get("default_model_selection", {}) or {}
+        default_endpoint_id = str(default_selection.get("endpoint_id") or "").strip()
+        default_model_id = str(default_selection.get("model_id") or "").strip()
+        if not default_endpoint_id or not default_model_id:
+            return None
+
+        default_config = resolve_multi_endpoint_agent_binding(
+            endpoint_candidates,
+            default_endpoint_id,
+            default_model_id,
+        )
+        if default_config:
+            debug_print(
+                f"[SK Loader] Using saved admin default multi-endpoint model for agent '{agent.get('name')}'."
+            )
+            return default_config
+
+        debug_print(
+            f"[SK Loader] Saved admin default multi-endpoint model could not be resolved for agent '{agent.get('name')}'."
+        )
+        return None
+
+    def resolve_foundry_endpoint_config():
+        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+        allowed_providers = {"aifoundry"}
+        if agent_type == "new_foundry":
+            allowed_providers.add("new_foundry")
+        endpoint_id = (agent.get("model_endpoint_id") or "").strip()
+        if not endpoint_id:
+            foundry_settings = other_settings.get(foundry_settings_key, {}) or {}
+            endpoint_id = (foundry_settings.get("endpoint_id") or "").strip()
+        if not endpoint_id:
+            return None
+
+        endpoints = []
+        if is_group_agent:
+            if allow_custom_agent_endpoints:
+                group_id = get_group_scope_id()
+                if group_id:
+                    endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
+        elif not is_global_agent:
+            if allow_custom_agent_endpoints:
+                user_settings = get_user_settings(get_current_user_id())
+                endpoints.extend([
+                    {**endpoint, "_endpoint_scope": "user"}
+                    for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                ])
+        endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
+
+        endpoint_cfg = next((e for e in endpoints if e.get("id") == endpoint_id), None)
+        if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
+            return None
+        if (endpoint_cfg.get("provider") or "aoai").lower() not in allowed_providers:
+            return None
+        endpoint_scope = endpoint_cfg.get("_endpoint_scope", "global")
+        endpoint_cfg = dict(endpoint_cfg)
+        endpoint_cfg.pop("_endpoint_scope", None)
+        endpoint_cfg = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            endpoint_cfg.get("id") or endpoint_id,
+            scope=endpoint_scope,
+            return_type=SecretReturnType.VALUE,
+        )
+        return endpoint_cfg
+
+    def enrich_foundry_settings(foundry_settings, endpoint_cfg):
+        provider = (endpoint_cfg.get("provider") or "aoai").lower() if endpoint_cfg else "aoai"
+        if provider not in {"aifoundry", "new_foundry"}:
+            return foundry_settings
+        connection = endpoint_cfg.get("connection", {}) or {}
+        auth = endpoint_cfg.get("auth", {}) or {}
+        foundry_settings["endpoint_id"] = endpoint_cfg.get("id") or foundry_settings.get("endpoint_id")
+        foundry_settings["endpoint"] = connection.get("endpoint") or foundry_settings.get("endpoint")
+        foundry_settings["project_name"] = connection.get("project_name") or foundry_settings.get("project_name")
+        if agent_type == "new_foundry":
+            stored_responses_api_version = (
+                foundry_settings.get("responses_api_version")
+                or agent.get("azure_openai_gpt_api_version")
+            )
+            foundry_settings["responses_api_version"] = (
+                stored_responses_api_version
+                or connection.get("openai_api_version")
+                or connection.get("api_version")
+            )
+        else:
+            foundry_settings["api_version"] = (
+                connection.get("project_api_version")
+                or connection.get("api_version")
+                or foundry_settings.get("api_version")
+            )
+        foundry_settings["authentication_type"] = auth.get("type") or foundry_settings.get("authentication_type")
+        foundry_settings["managed_identity_type"] = auth.get("managed_identity_type") or foundry_settings.get("managed_identity_type")
+        foundry_settings["managed_identity_client_id"] = auth.get("managed_identity_client_id") or foundry_settings.get("managed_identity_client_id")
+        foundry_settings["tenant_id"] = auth.get("tenant_id") or foundry_settings.get("tenant_id")
+        foundry_settings["client_id"] = auth.get("client_id") or foundry_settings.get("client_id")
+        if auth.get("client_secret"):
+            foundry_settings["client_secret"] = auth.get("client_secret")
+        foundry_settings["cloud"] = auth.get("management_cloud") or foundry_settings.get("cloud")
+        foundry_settings["authority"] = auth.get("custom_authority") or foundry_settings.get("authority")
+        return foundry_settings
+
     # If per-user mode is not enabled, ignore all user/agent-specific config fields
+    if agent_type in {"aifoundry", "new_foundry"}:
+        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+        foundry_settings = other_settings.get(foundry_settings_key, {}) or {}
+        endpoint_cfg = resolve_foundry_endpoint_config()
+        if endpoint_cfg:
+            foundry_settings = enrich_foundry_settings(foundry_settings, endpoint_cfg)
+            other_settings[foundry_settings_key] = foundry_settings
+            agent["azure_openai_gpt_endpoint"] = foundry_settings.get("endpoint", "")
+            agent["azure_openai_gpt_api_version"] = foundry_settings.get(
+                "responses_api_version" if agent_type == "new_foundry" else "api_version",
+                "",
+            )
+            agent["azure_openai_gpt_deployment"] = foundry_settings.get("project_name", agent.get("azure_openai_gpt_deployment", ""))
+        return {
+            "name": agent.get("name"),
+            "display_name": agent.get("display_name", agent.get("name")),
+            "description": agent.get("description", ""),
+            "id": agent.get("id", ""),
+            "default_agent": agent.get("default_agent", False),
+            "is_global": agent.get("is_global", False),
+            "is_group": agent.get("is_group", False),
+            "group_id": agent.get("group_id"),
+            "group_name": agent.get("group_name"),
+            "agent_type": agent_type,
+            "other_settings": other_settings,
+            "max_completion_tokens": agent.get("max_completion_tokens", -1),
+        }
+
+    multi_endpoint_config = resolve_multi_endpoint_agent_config()
+
     if not per_user_enabled:
         try:
+            token_provider = None
+            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry"):
+                auth = multi_endpoint_config.get("auth", {}) or {}
+                auth_type = (auth.get("type") or "managed_identity").lower()
+                provider = multi_endpoint_config.get("provider")
+                endpoint = multi_endpoint_config.get("endpoint")
+                deployment = multi_endpoint_config.get("deployment")
+                api_version = multi_endpoint_config.get("api_version")
+                key = auth.get("api_key") or ""
+                if auth_type != "api_key":
+                    token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
+                return {
+                    "endpoint": endpoint,
+                    "key": key,
+                    "deployment": deployment,
+                    "api_version": api_version,
+                    "instructions": agent.get("instructions", ""),
+                    "actions_to_load": agent.get("actions_to_load", []),
+                    "additional_settings": agent.get("additional_settings", {}),
+                    "name": agent.get("name"),
+                    "display_name": agent.get("display_name", agent.get("name")),
+                    "description": agent.get("description", ""),
+                    "id": agent.get("id", ""),
+                    "default_agent": agent.get("default_agent", False),
+                    "is_global": agent.get("is_global", False),
+                    "is_group": agent.get("is_group", False),
+                    "group_id": agent.get("group_id"),
+                    "group_name": agent.get("group_name"),
+                    "enable_agent_gpt_apim": False,
+                    "max_completion_tokens": agent.get("max_completion_tokens", -1),
+                    "agent_type": agent_type or "local",
+                    "other_settings": other_settings,
+                    "token_provider": token_provider,
+                    "model_endpoint_id": agent.get("model_endpoint_id", ""),
+                    "model_id": agent.get("model_id", ""),
+                    "model_provider": provider,
+                }
             if global_apim_enabled:
                 g_apim = get_global_apim()
                 endpoint, key, deployment, api_version = g_apim
             else:
                 g_gpt = get_global_gpt()
                 endpoint, key, deployment, api_version = g_gpt
+                token_provider = resolve_global_gpt_token_provider(key)
             return {
                 "endpoint": endpoint,
                 "key": key,
@@ -171,7 +635,14 @@ def resolve_agent_config(agent, settings):
                 "id": agent.get("id", ""),
                 "default_agent": agent.get("default_agent", False),
                 "is_global": agent.get("is_global", False),
-                "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False)
+                "is_group": agent.get("is_group", False),
+                "group_id": agent.get("group_id"),
+                "group_name": agent.get("group_name"),
+                "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False),
+                "max_completion_tokens": agent.get("max_completion_tokens", -1),
+                "agent_type": agent_type or "local",
+                "other_settings": other_settings,
+                "token_provider": token_provider,
             }
         except Exception as e:
             log_event(f"[SK Loader] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
@@ -181,22 +652,63 @@ def resolve_agent_config(agent, settings):
     g_apim = get_global_apim()
     u_gpt = get_user_gpt()
     g_gpt = get_global_gpt()
+    can_use_agent_endpoints = allow_custom_agent_endpoints
+    user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
+
+    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry"):
+        auth = multi_endpoint_config.get("auth", {}) or {}
+        auth_type = (auth.get("type") or "managed_identity").lower()
+        provider = multi_endpoint_config.get("provider")
+        endpoint = multi_endpoint_config.get("endpoint")
+        deployment = multi_endpoint_config.get("deployment")
+        api_version = multi_endpoint_config.get("api_version")
+        key = auth.get("api_key") or ""
+        token_provider = None
+        if auth_type != "api_key":
+            token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
+        result = {
+            "endpoint": endpoint,
+            "key": key,
+            "deployment": deployment,
+            "api_version": api_version,
+            "instructions": agent.get("instructions", ""),
+            "actions_to_load": agent.get("actions_to_load", []),
+            "additional_settings": agent.get("additional_settings", {}),
+            "name": agent.get("name"),
+            "display_name": agent.get("display_name", agent.get("name")),
+            "description": agent.get("description", ""),
+            "id": agent.get("id", ""),
+            "default_agent": agent.get("default_agent", False),
+            "is_global": agent.get("is_global", False),
+            "is_group": agent.get("is_group", False),
+            "group_id": agent.get("group_id"),
+            "group_name": agent.get("group_name"),
+            "enable_agent_gpt_apim": False,
+            "max_completion_tokens": agent.get("max_completion_tokens", -1),
+            "agent_type": agent_type or "local",
+            "other_settings": other_settings,
+            "token_provider": token_provider,
+            "model_endpoint_id": agent.get("model_endpoint_id", ""),
+            "model_id": agent.get("model_id", ""),
+            "model_provider": provider,
+        }
+        return result
 
     # 1. User APIM enabled and any user APIM values set: use user APIM (merge with global APIM if needed)
-    if user_apim_enabled and any_filled(*u_apim) and allow_user_custom_agent_endpoints:
+    if user_apim_allowed and any_filled(*u_apim):
         debug_print(f"[SK Loader] Using user APIM with global fallback")
         merged = merge_fields(u_apim, g_apim if global_apim_enabled and any_filled(*g_apim) else (None, None, None, None))
         endpoint, key, deployment, api_version = merged
     # 2. User APIM enabled but no user APIM values, and global APIM enabled and present: use global APIM
-    elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim) and allow_group_custom_agent_endpoints:
+    elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim):
         debug_print(f"[SK Loader] Using global APIM (user APIM enabled but not present)")
         endpoint, key, deployment, api_version = g_apim
     # 3. User GPT config is FULLY filled: use user GPT (all fields filled)
-    elif all_filled(*u_gpt) and allow_user_custom_agent_endpoints:
+    elif all_filled(*u_gpt) and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (all fields filled)")
         endpoint, key, deployment, api_version = u_gpt
     # 4. User GPT config is PARTIALLY filled, global APIM is NOT enabled: merge user GPT with global GPT
-    elif any_filled(*u_gpt) and not global_apim_enabled and allow_user_custom_agent_endpoints:
+    elif any_filled(*u_gpt) and not global_apim_enabled and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (partially filled, merging with global GPT, global APIM not enabled)")
         endpoint, key, deployment, api_version = merge_fields(u_gpt, g_gpt)
     # 5. Global APIM enabled and present: use global APIM
@@ -207,6 +719,8 @@ def resolve_agent_config(agent, settings):
     else:
         debug_print(f"[SK Loader] Using global GPT config (fallback)")
         endpoint, key, deployment, api_version = g_gpt
+
+    token_provider = resolve_global_gpt_token_provider(key)
 
     result = {
         "endpoint": endpoint,
@@ -222,10 +736,20 @@ def resolve_agent_config(agent, settings):
         "id": agent.get("id", ""),
         "default_agent": agent.get("default_agent", False),  # [Deprecated, use 'selected_agent' or 'global_selected_agent' in agent config]
         "is_global": agent.get("is_global", False),  # Ensure we have this field
-        "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False)  # Use this to check if APIM is enabled for the agent
+        "is_group": agent.get("is_group", False),
+        "group_id": agent.get("group_id"),
+        "group_name": agent.get("group_name"),
+        "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False),  # Use this to check if APIM is enabled for the agent
+        "max_completion_tokens": agent.get("max_completion_tokens", -1),  # -1 meant use model default determined by the service, 35-trubo is 4096, 4o is 16384, 4.1 is at least 32768
+        "agent_type": agent_type or "local",
+        "other_settings": other_settings,
+        "token_provider": token_provider,
     }
 
-    print(f"[SK Loader] Final resolved config for {agent.get('name')}: endpoint={bool(endpoint)}, key={bool(key)}, deployment={deployment}")
+    print(
+        f"[SK Loader] Final resolved config for {agent.get('name')}: "
+        f"endpoint={bool(endpoint)}, key={bool(key)}, token_provider={bool(token_provider)}, deployment={deployment}"
+    )
     return result
 
 def load_time_plugin(kernel: Kernel):
@@ -236,9 +760,7 @@ def load_time_plugin(kernel: Kernel):
     )
 
 def load_http_plugin(kernel: Kernel):
-    # Import the smart HTTP plugin for better content size management
     try:
-        from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
         # Use smart HTTP plugin with 75k character limit (≈50k tokens)
         smart_plugin = SmartHttpPlugin(max_content_size=75000, extract_text_only=True)
         kernel.add_plugin(
@@ -296,6 +818,13 @@ def load_embedding_model_plugin(kernel: Kernel, settings):
             description="Provides text embedding functions using the configured embedding model."
         )
 
+def load_tabular_processing_plugin(kernel: Kernel):
+    kernel.add_plugin(
+        TabularProcessingPlugin(),
+        plugin_name="tabular_processing",
+        description="Provides data analysis on tabular files (CSV, XLSX) stored in blob storage. Can list files, describe schemas, aggregate columns, filter rows, run queries, and perform group-by operations."
+    )
+
 def load_core_plugins_only(kernel: Kernel, settings):
     """Load only core plugins for model-only conversations without agents."""
     debug_print(f"[SK Loader] Loading core plugins only for model-only mode...")
@@ -317,6 +846,10 @@ def load_core_plugins_only(kernel: Kernel, settings):
         load_text_plugin(kernel)
         log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
 
+    if is_tabular_processing_enabled(settings):
+        load_tabular_processing_plugin(kernel)
+        log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+
 # =================== Semantic Kernel Initialization ===================
 def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     debug_print(f"[SK Loader] Initializing Semantic Kernel and plugins...")
@@ -335,8 +868,7 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
         "[SK Loader] Starting to load Semantic Kernel Agent and Plugins",
         level=logging.INFO
     )
-    settings = get_settings()
-    print(f"[SK Loader] Settings check - per_user_semantic_kernel: {settings.get('per_user_semantic_kernel', False)}, user_id: {user_id}")
+    settings = app_settings_cache.get_settings_cache()
     log_event(f"[SK Loader] Settings check - per_user_semantic_kernel: {settings.get('per_user_semantic_kernel', False)}, user_id: {user_id}", level=logging.INFO)
     
     if settings.get('per_user_semantic_kernel', False) and user_id is not None:
@@ -384,7 +916,7 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     )
     debug_print(f"[SK Loader] Semantic Kernel Agent and Plugins loading completed.")
 
-def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_id=None):
+def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None):
     """
     Load specific plugins by name for an agent with enhanced logging.
     
@@ -393,29 +925,44 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
         plugin_names: List of plugin names to load (from agent's actions_to_load)
         mode_label: 'per-user' or 'global' for logging
         user_id: User ID for per-user mode
+        group_id: Active group identifier when loading group-scoped plugins
     """
     if not plugin_names:
+        debug_print(f"[SK Loader] No plugin names provided to load_agent_specific_plugins")
         return
         
     print(f"[SK Loader] Loading {len(plugin_names)} agent-specific plugins: {plugin_names}")
     
     try:
+        merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
         # Create logged plugin loader for enhanced logging
         logged_loader = create_logged_plugin_loader(kernel)
         
-        # Get plugin manifests based on mode
-        if mode_label == "per-user":
-            from functions_personal_actions import get_personal_actions
-            if user_id:
-                all_plugin_manifests = get_personal_actions(user_id)
-                print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
+        if mode_label == "group":
+            if not group_id:
+                debug_print(f"[SK Loader] Warning: Group mode requested without group_id. Skipping plugin load.")
+                all_plugin_manifests = []
             else:
-                print(f"[SK Loader] Warning: No user_id provided for per-user plugin loading")
+                all_plugin_manifests = get_group_actions(group_id, return_type=SecretReturnType.NAME)
+                debug_print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} group plugin manifests for group {group_id}")
+                if merge_global:
+                    global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                    all_plugin_manifests.extend(global_plugins)
+                    debug_print(f"[SK Loader] Merged global plugins for group mode. Total manifests: {len(all_plugin_manifests)}")
+        elif mode_label == "per-user":
+            if user_id:
+                all_plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
+                if merge_global:
+                    global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                    for g in global_plugins:
+                        all_plugin_manifests.append(g)
+                debug_print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
+            else:
+                debug_print(f"[SK Loader] Warning: No user_id provided for per-user plugin loading")
                 all_plugin_manifests = []
         else:
             # Global mode - get from global actions container
-            from functions_global_actions import get_global_actions
-            all_plugin_manifests = get_global_actions()
+            all_plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
             print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} global plugin manifests")
             
         # Filter manifests to only include requested plugins
@@ -424,6 +971,18 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
             p for p in all_plugin_manifests 
             if p.get('name') in plugin_names or p.get('id') in plugin_names
         ]
+
+        debug_print(f"[SK Loader] Filtered to {len(plugin_manifests)} plugin manifests after matching names/IDs")
+        debug_print(f"[SK Loader] Plugin manifests to load: {plugin_manifests}")
+
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
+            debug_print(f"[SK Loader] Resolving Key Vault secrets in plugin manifests if needed")
+            try:
+                plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
+                debug_print(f"[SK Loader] Resolved Key Vault secrets in plugin manifests {plugin_manifests}")
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
+                print(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}")
         
         if not plugin_manifests:
             print(f"[SK Loader] Warning: No plugin manifests found for names/IDs: {plugin_names}")
@@ -468,35 +1027,46 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
         
     except Exception as e:
         log_event(
-            f"[SK Loader] Error in agent-specific plugin loading: {e}",
+            f"[SK Loader][Error] Error in agent-specific plugin loading: {e}",
             extra={"error": str(e), "mode": mode_label, "user_id": user_id, "plugin_names": plugin_names},
             level=logging.ERROR,
             exceptionTraceback=True
         )
+        print(f"[SK Loader][Error] Error in agent-specific plugin loading: {e}")
         
         # Fallback to original method
-        log_event("[SK Loader] Falling back to original plugin loading method due to error", level=logging.WARNING)
         try:
             # Get plugin manifests again for fallback
-            if mode_label == "per-user":
-                from functions_personal_actions import get_personal_actions
+            if mode_label == "group":
+                if group_id:
+                    all_plugin_manifests = get_group_actions(group_id, return_type=SecretReturnType.NAME)
+                    if merge_global:
+                        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                        all_plugin_manifests.extend(global_plugins)
+                else:
+                    all_plugin_manifests = []
+            elif mode_label == "per-user":
                 if user_id:
-                    all_plugin_manifests = get_personal_actions(user_id)
+                    all_plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
+                    if merge_global:
+                        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                        for g in global_plugins:
+                            all_plugin_manifests.append(g)
                 else:
                     all_plugin_manifests = []
             else:
-                from functions_global_actions import get_global_actions
-                all_plugin_manifests = get_global_actions()
-                
+                all_plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
+
             plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
         except Exception as fallback_error:
             log_event(
-                f"[SK Loader] Fallback plugin loading also failed: {fallback_error}",
+                f"[SK Loader][Error] Fallback plugin loading also failed: {fallback_error}",
                 extra={"error": str(fallback_error), "mode": mode_label, "user_id": user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True
             )
+            print(f"[SK Loader][Error] Fallback plugin loading also failed: {fallback_error}")
 
 
 def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="global"):
@@ -505,7 +1075,6 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
     """
     try:
         # Load the filtered plugins using original method
-        from semantic_kernel_plugins.plugin_loader import discover_plugins
         discovered_plugins = discover_plugins()
         
         for manifest in plugin_manifests:
@@ -529,12 +1098,11 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                 try:
                     # Special handling for OpenAPI plugins
                     if normalized_type == normalize('openapi') or 'openapi' in normalized_type:
-                        from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
                         plugin = OpenApiPluginFactory.create_from_config(manifest)
                         print(f"[SK Loader] Created OpenAPI plugin: {name}")
                     else:
                         # Standard plugin instantiation
-                        from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
+                        
                         plugin_instance, instantiation_errors = PluginHealthChecker.create_plugin_safely(
                             matched_class, manifest, name
                         )
@@ -546,9 +1114,6 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                             raise Exception(f"Plugin creation failed: {'; '.join(instantiation_errors)}")
                             
                         plugin = plugin_instance
-                    
-                    # Add plugin to kernel
-                    from semantic_kernel.functions.kernel_plugin import KernelPlugin
                     
                     # Special handling for OpenAPI plugins with dynamic functions
                     if hasattr(plugin, 'get_kernel_plugin'):
@@ -577,7 +1142,196 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
         print(f"[SK Loader] Error loading agent-specific plugins: {e}")
         log_event(f"[SK Loader] Error loading agent-specific plugins: {e}", level=logging.ERROR, exceptionTraceback=True)
 
-def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global"):
+
+def _extract_sql_schema_for_instructions(kernel) -> str:
+    """
+    Check if any SQL Schema plugins are loaded in the kernel and extract their schema
+    information to inject into agent instructions.
+    
+    Returns a formatted schema summary string, or empty string if no SQL schema plugins found.
+    """
+    from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
+    
+    schema_parts = []
+    
+    try:
+        # Iterate through all registered plugins in the kernel
+        for plugin_name, plugin in kernel.plugins.items():
+            # Check if the underlying plugin object is a SQLSchemaPlugin
+            # Kernel plugins wrap the original object - we need to check the underlying instance
+            plugin_obj = None
+            
+            # Try to access the underlying plugin instance
+            if isinstance(plugin, SQLSchemaPlugin):
+                plugin_obj = plugin
+            elif hasattr(plugin, '_plugin_instance'):
+                if isinstance(plugin._plugin_instance, SQLSchemaPlugin):
+                    plugin_obj = plugin._plugin_instance
+            else:
+                # Check if any function in this plugin belongs to a SQLSchemaPlugin
+                for func_name, func in plugin.functions.items():
+                    if hasattr(func, 'method') and hasattr(func.method, '__self__'):
+                        if isinstance(func.method.__self__, SQLSchemaPlugin):
+                            plugin_obj = func.method.__self__
+                            break
+            
+            if plugin_obj is not None:
+                print(f"[SK Loader] Found SQL Schema plugin: {plugin_name}, fetching schema...")
+                try:
+                    schema_result = plugin_obj.get_database_schema()
+                    if schema_result and hasattr(schema_result, 'data'):
+                        schema_data = schema_result.data
+                    else:
+                        schema_data = schema_result
+                    
+                    if isinstance(schema_data, dict) and "tables" in schema_data:
+                        db_name = schema_data.get("database_name", "Unknown")
+                        db_type = schema_data.get("database_type", "Unknown")
+                        
+                        schema_text = f"### Database: {db_name} ({db_type})\n\n"
+                        
+                        for table_name, table_info in schema_data["tables"].items():
+                            schema_name = table_info.get("schema_name", "dbo")
+                            qualified_name = f"{schema_name}.{table_name}" if schema_name else table_name
+                            schema_text += f"**Table: {qualified_name}**\n"
+                            
+                            columns = table_info.get("columns", [])
+                            if columns:
+                                schema_text += "| Column | Type | Nullable |\n|--------|------|----------|\n"
+                                for col in columns:
+                                    col_name = col.get("column_name", "?")
+                                    col_type = col.get("data_type", "?")
+                                    nullable = "Yes" if col.get("is_nullable", True) else "No"
+                                    schema_text += f"| {col_name} | {col_type} | {nullable} |\n"
+                            
+                            pks = table_info.get("primary_keys", [])
+                            if pks:
+                                schema_text += f"Primary Key(s): {', '.join(pks)}\n"
+                            
+                            schema_text += "\n"
+                        
+                        # Add relationships
+                        relationships = schema_data.get("relationships", [])
+                        if relationships:
+                            schema_text += "**Relationships (Foreign Keys):**\n"
+                            for rel in relationships:
+                                parent = rel.get("parent_table", "?")
+                                parent_col = rel.get("parent_column", "?")
+                                ref = rel.get("referenced_table", "?")
+                                ref_col = rel.get("referenced_column", "?")
+                                schema_text += f"- {parent}.{parent_col} → {ref}.{ref_col}\n"
+                            schema_text += "\n"
+                        
+                        schema_parts.append(schema_text)
+                        print(f"[SK Loader] Successfully extracted schema for {db_name}: {len(schema_data['tables'])} tables")
+                    else:
+                        print(f"[SK Loader] Schema data for {plugin_name} was empty or had unexpected format")
+                        
+                except Exception as e:
+                    print(f"[SK Loader] Warning: Failed to fetch schema from {plugin_name}: {e}")
+                    log_event(f"[SK Loader] Failed to fetch SQL schema for injection: {e}",
+                             extra={"plugin_name": plugin_name, "error": str(e)},
+                             level=logging.WARNING)
+    except Exception as e:
+        print(f"[SK Loader] Warning: Error iterating kernel plugins for SQL schema: {e}")
+        log_event(f"[SK Loader] Error iterating kernel plugins for SQL schema: {e}",
+                 extra={"error": str(e)}, level=logging.WARNING)
+    
+    # Fallback: If no SQLSchemaPlugin was found, check for SQLQueryPlugin instances
+    # and create a temporary SQLSchemaPlugin from their connection config to extract schema
+    if not schema_parts:
+        from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin as _SQLQueryPlugin
+        
+        try:
+            for plugin_name, plugin in kernel.plugins.items():
+                query_obj = None
+                
+                if isinstance(plugin, _SQLQueryPlugin):
+                    query_obj = plugin
+                elif hasattr(plugin, '_plugin_instance'):
+                    if isinstance(plugin._plugin_instance, _SQLQueryPlugin):
+                        query_obj = plugin._plugin_instance
+                else:
+                    for func_name, func in plugin.functions.items():
+                        if hasattr(func, 'method') and hasattr(func.method, '__self__'):
+                            if isinstance(func.method.__self__, _SQLQueryPlugin):
+                                query_obj = func.method.__self__
+                                break
+                
+                if query_obj is not None:
+                    print(f"[SK Loader] Fallback: Found SQLQueryPlugin '{plugin_name}', creating temporary schema extractor...")
+                    try:
+                        temp_manifest = {
+                            'type': 'sql_schema',
+                            'name': f'{plugin_name}_temp_schema',
+                            'database_type': getattr(query_obj, 'database_type', 'azure_sql'),
+                            'server': getattr(query_obj, 'server', ''),
+                            'database': getattr(query_obj, 'database', ''),
+                            'username': getattr(query_obj, 'username', ''),
+                            'password': getattr(query_obj, 'password', ''),
+                            'driver': getattr(query_obj, 'driver', ''),
+                            'connection_string': getattr(query_obj, 'connection_string', ''),
+                        }
+                        temp_schema = SQLSchemaPlugin(temp_manifest)
+                        schema_result = temp_schema.get_database_schema()
+                        if schema_result and hasattr(schema_result, 'data'):
+                            schema_data = schema_result.data
+                        else:
+                            schema_data = schema_result
+                        
+                        if isinstance(schema_data, dict) and "tables" in schema_data:
+                            db_name = schema_data.get("database_name", "Unknown")
+                            db_type = schema_data.get("database_type", "Unknown")
+                            
+                            schema_text = f"### Database: {db_name} ({db_type})\n\n"
+                            
+                            for table_name, table_info in schema_data["tables"].items():
+                                schema_name = table_info.get("schema_name", "dbo")
+                                qualified_name = f"{schema_name}.{table_name}" if schema_name else table_name
+                                schema_text += f"**Table: {qualified_name}**\n"
+                                
+                                columns = table_info.get("columns", [])
+                                if columns:
+                                    schema_text += "| Column | Type | Nullable |\n|--------|------|----------|\n"
+                                    for col in columns:
+                                        col_name = col.get("column_name", "?")
+                                        col_type = col.get("data_type", "?")
+                                        nullable = "Yes" if col.get("is_nullable", True) else "No"
+                                        schema_text += f"| {col_name} | {col_type} | {nullable} |\n"
+                                
+                                pks = table_info.get("primary_keys", [])
+                                if pks:
+                                    schema_text += f"Primary Key(s): {', '.join(pks)}\n"
+                                
+                                schema_text += "\n"
+                            
+                            relationships = schema_data.get("relationships", [])
+                            if relationships:
+                                schema_text += "**Relationships (Foreign Keys):**\n"
+                                for rel in relationships:
+                                    parent = rel.get("parent_table", "?")
+                                    parent_col = rel.get("parent_column", "?")
+                                    ref = rel.get("referenced_table", "?")
+                                    ref_col = rel.get("referenced_column", "?")
+                                    schema_text += f"- {parent}.{parent_col} → {ref}.{ref_col}\n"
+                                schema_text += "\n"
+                            
+                            schema_parts.append(schema_text)
+                            print(f"[SK Loader] Fallback: Successfully extracted schema from SQLQueryPlugin '{plugin_name}': {len(schema_data['tables'])} tables")
+                    except Exception as e:
+                        print(f"[SK Loader] Fallback: Failed to extract schema from SQLQueryPlugin '{plugin_name}': {e}")
+                        log_event(f"[SK Loader] Fallback schema extraction failed",
+                                 extra={"plugin_name": plugin_name, "error": str(e)},
+                                 level=logging.WARNING)
+        except Exception as e:
+            print(f"[SK Loader] Warning: Error in fallback SQL schema extraction: {e}")
+            log_event(f"[SK Loader] Error in fallback SQL schema extraction: {e}",
+                     extra={"error": str(e)}, level=logging.WARNING)
+    
+    return "\n".join(schema_parts)
+
+
+def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global", group_scope_id=None):
     """
     DRY helper to load a single agent (default agent) for the kernel.
     - context_obj: g (per-user) or builtins (global)
@@ -592,15 +1346,91 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     if mode_label == "per-user":
         context_obj.redis_client = redis_client
     agent_objs = {}
-    agent_config = resolve_agent_config(agent_cfg, settings)
-    print(f"[SK Loader] Agent config resolved for {agent_cfg.get('name')}: endpoint={bool(agent_config.get('endpoint'))}, key={bool(agent_config.get('key'))}, deployment={agent_config.get('deployment')}")
+    agent_config = resolve_agent_config(agent_cfg, settings, group_scope_id=group_scope_id)
+    agent_type = (agent_config.get("agent_type") or agent_cfg.get("agent_type") or "local").lower()
     service_id = f"aoai-chat-{agent_config['name']}"
     chat_service = None
     apim_enabled = settings.get("enable_gpt_apim", False)
+
+    def create_chat_completion_service():
+        token_provider = agent_config.get("token_provider")
+        resolved_api_key = agent_config.get("key") or ""
+        if token_provider:
+            try:
+                return AzureChatCompletion(
+                    service_id=service_id,
+                    deployment_name=agent_config["deployment"],
+                    endpoint=agent_config["endpoint"],
+                    api_key=resolved_api_key,
+                    api_version=agent_config["api_version"],
+                    azure_ad_token_provider=token_provider,
+                )
+            except TypeError:
+                try:
+                    return AzureChatCompletion(
+                        service_id=service_id,
+                        deployment_name=agent_config["deployment"],
+                        endpoint=agent_config["endpoint"],
+                        api_key=resolved_api_key,
+                        api_version=agent_config["api_version"],
+                        ad_token_provider=token_provider,
+                    )
+                except TypeError as exc:
+                    log_event(
+                        f"[SK Loader] Token provider not supported by AzureChatCompletion: {exc}",
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    return None
+        return AzureChatCompletion(
+            service_id=service_id,
+            deployment_name=agent_config["deployment"],
+            endpoint=agent_config["endpoint"],
+            api_key=resolved_api_key,
+            api_version=agent_config["api_version"],
+        )
+
+    if agent_type in {"aifoundry", "new_foundry"}:
+        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+        foundry_settings = (agent_config.get("other_settings") or {}).get(foundry_settings_key) or {}
+        endpoint = resolve_foundry_endpoint_from_settings(foundry_settings, settings)
+        if not endpoint:
+            log_event(
+                f"[SK Loader] Foundry endpoint missing for agent: {agent_config.get('name')} ({mode_label})",
+                {
+                    "agent_name": agent_config.get("name"),
+                    "agent_id": agent_config.get("id"),
+                    "is_global": agent_config.get("is_global", False),
+                    "is_group": agent_config.get("is_group", False),
+                    "group_id": agent_config.get("group_id"),
+                },
+                level=logging.WARNING,
+            )
+            return kernel, None
+
+        if agent_type == "new_foundry":
+            foundry_agent = AzureAIFoundryNewChatCompletionAgent(agent_config, settings)
+        else:
+            foundry_agent = AzureAIFoundryChatCompletionAgent(agent_config, settings)
+        agent_objs[agent_config["name"]] = foundry_agent
+        log_event(
+            f"[SK Loader] Registered Foundry agent: {agent_config['name']} ({mode_label})",
+            {
+                "agent_name": agent_config["name"],
+                "agent_id": agent_config.get("id"),
+                "is_global": agent_config.get("is_global", False),
+                "agent_type": agent_type,
+            },
+            level=logging.INFO,
+        )
+        return kernel, agent_objs
+
+    log_event(f"[SK Loader] Agent config resolved for {agent_cfg.get('name')} - endpoint: {bool(agent_config.get('endpoint'))}, key: {bool(agent_config.get('key'))}, deployment: {agent_config.get('deployment')}, max_completion_tokens: {agent_config.get('max_completion_tokens')}", level=logging.INFO)
     
-    log_event(f"[SK Loader] Agent config resolved - endpoint: {bool(agent_config.get('endpoint'))}, key: {bool(agent_config.get('key'))}, deployment: {agent_config.get('deployment')}", level=logging.INFO)
-    
-    if AzureChatCompletion and agent_config["endpoint"] and agent_config["key"] and agent_config["deployment"]:
+    token_provider_present = bool(agent_config.get("token_provider"))
+    has_auth = bool(agent_config.get("key")) or token_provider_present
+
+    if AzureChatCompletion and agent_config["endpoint"] and has_auth and agent_config["deployment"]:
         print(f"[SK Loader] Azure config valid for {agent_config['name']}, creating chat service...")
         if apim_enabled:
             log_event(
@@ -613,14 +1443,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 },
                 level=logging.INFO
             )
-            chat_service = AzureChatCompletion(
-                service_id=service_id,
-                deployment_name=agent_config["deployment"],
-                endpoint=agent_config["endpoint"],
-                api_key=agent_config["key"],
-                api_version=agent_config["api_version"],
-                # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
-            )
+            chat_service = create_chat_completion_service()
         else:
             log_event(
                 f"[SK Loader] Initializing GPT Direct AzureChatCompletion for agent: {agent_config['name']} ({mode_label})",
@@ -632,13 +1455,22 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 },
                 level=logging.INFO
             )
-            chat_service = AzureChatCompletion(
-                service_id=service_id,
-                deployment_name=agent_config["deployment"],
-                endpoint=agent_config["endpoint"],
-                api_key=agent_config["key"],
-                api_version=agent_config["api_version"]
+            chat_service = create_chat_completion_service()
+        if not chat_service:
+            log_event(
+                f"[SK Loader] AzureChatCompletion could not be created for agent: {agent_config['name']} ({mode_label})",
+                {
+                    "agent_name": agent_config["name"],
+                    "aoai_endpoint": agent_config.get("endpoint"),
+                    "aoai_deployment": agent_config.get("deployment"),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
             )
+            return None, None
+        if agent_config.get('max_completion_tokens', -1) > 0:
+            print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
+            chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
         kernel.add_service(chat_service)
         log_event(
             f"[SK Loader] AOAI chat completion service registered for agent: {agent_config['name']} ({mode_label})",
@@ -656,6 +1488,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         print(f"  - AzureChatCompletion available: {bool(AzureChatCompletion)}")
         print(f"  - endpoint: {bool(agent_config.get('endpoint'))}")
         print(f"  - key: {bool(agent_config.get('key'))}")
+        print(f"  - token_provider: {token_provider_present}")
         print(f"  - deployment: {bool(agent_config.get('deployment'))}")
         log_event(
             f"[SK Loader] AzureChatCompletion or configuration not resolved for agent: {agent_config['name']} ({mode_label})",
@@ -663,6 +1496,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "agent_name": agent_config["name"],
                 "aoai_endpoint": agent_config["endpoint"],
                 "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                "token_provider": token_provider_present,
                 "aoai_deployment": agent_config["deployment"],
             },
             level=logging.ERROR,
@@ -672,17 +1506,52 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         return None, None
     if LoggingChatCompletionAgent and chat_service:
         print(f"[SK Loader] Creating LoggingChatCompletionAgent for {agent_config['name']}...")
-        
         # Load agent-specific plugins into the kernel before creating the agent
         if agent_config.get("actions_to_load"):
             print(f"[SK Loader] Loading agent-specific plugins: {agent_config['actions_to_load']}")
-            # Determine plugin source based on agent's global status, not overall mode
+            # Determine plugin source based on agent scope
             agent_is_global = agent_config.get("is_global", False)
-            plugin_mode = "global" if agent_is_global else mode_label
-            user_id = get_current_user_id() if not agent_is_global else None
-            print(f"[SK Loader] Agent is_global: {agent_is_global}, using plugin_mode: {plugin_mode}")
-            load_agent_specific_plugins(kernel, agent_config["actions_to_load"], plugin_mode, user_id=user_id)
-        
+            agent_is_group = agent_config.get("is_group", False)
+            if agent_is_global:
+                plugin_mode = "global"
+            elif agent_is_group:
+                plugin_mode = "group"
+            else:
+                plugin_mode = mode_label
+
+            resolved_user_id = None if agent_is_global else get_current_user_id()
+            group_id = agent_config.get("group_id") if agent_is_group else None
+            print(f"[SK Loader] Agent scope - is_global: {agent_is_global}, is_group: {agent_is_group}, plugin_mode: {plugin_mode}, group_id: {group_id}")
+            load_agent_specific_plugins(
+                kernel,
+                agent_config["actions_to_load"],
+                settings,
+                plugin_mode,
+                user_id=resolved_user_id,
+                group_id=group_id,
+            )
+
+            # Auto-inject SQL database schema into agent instructions if SQL plugins are loaded
+            try:
+                sql_schema_summary = _extract_sql_schema_for_instructions(kernel)
+                if sql_schema_summary:
+                    agent_config["instructions"] = (
+                        agent_config.get("instructions", "") +
+                        "\n\n## Available Database Schema\n"
+                        "The following database tables and columns are available for SQL queries. "
+                        "ALWAYS use these exact table and column names when writing SQL queries.\n\n" +
+                        sql_schema_summary +
+                        "\n\nWhen a user asks a question about data, use the schema above to construct "
+                        "the appropriate SQL query and execute it using the SQL Query plugin functions. "
+                        "Do NOT ask the user for table or column names — use the schema provided above."
+                    )
+                    print(f"[SK Loader] Injected SQL schema into agent instructions for {agent_config['name']}")
+            except Exception as e:
+                print(f"[SK Loader] Warning: Failed to inject SQL schema into instructions: {e}")
+                log_event(f"[SK Loader] Failed to inject SQL schema into agent instructions: {e}",
+                         extra={"agent_name": agent_config["name"], "error": str(e)},
+                         level=logging.WARNING)
+
         try:
             kwargs = {
                 "name": agent_config["name"],
@@ -695,7 +1564,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "default_agent": agent_config.get("default_agent", False),
                 "deployment_name": agent_config["deployment"],
                 "azure_endpoint": agent_config["endpoint"],
-                "api_version": agent_config["api_version"]
+                "api_version": agent_config["api_version"],
+                "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=10)
             }
             # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
@@ -708,7 +1578,9 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                     "aoai_endpoint": agent_config["endpoint"],
                     "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
                     "aoai_deployment": agent_config["deployment"],
-                    "agent_name": agent_config["name"]
+                    "agent_name": agent_config["name"],
+                    "max_completion_tokens": agent_config.get("max_completion_tokens", -1),
+                    "agent_type": agent_type,
                 },
                 level=logging.INFO
             )
@@ -737,10 +1609,109 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     log_event(f"[SK Loader] load_single_agent_for_kernel completed - returning {len(agent_objs)} agents: {list(agent_objs.keys())}", level=logging.INFO)
     return kernel, agent_objs
 
+def _get_plugin_secret_context(plugin_manifest):
+    """Infer the expected Key Vault scope for a plugin manifest."""
+    if not isinstance(plugin_manifest, dict):
+        return None, None
+
+    plugin_scope = str(plugin_manifest.get("scope") or "").strip().lower()
+    if plugin_scope == "group" or plugin_manifest.get("is_group"):
+        return plugin_manifest.get("group_id"), "group"
+    if plugin_scope == "global" or plugin_manifest.get("is_global"):
+        return plugin_manifest.get("id"), "global"
+    if plugin_scope == "user" or plugin_manifest.get("user_id"):
+        return plugin_manifest.get("user_id"), "user"
+    return plugin_manifest.get("id"), "global"
+
+
+def _is_sql_sensitive_plugin_field(plugin_manifest, field_name):
+    """Return True when an additional field should resolve as a SQL secret."""
+    plugin_type = str((plugin_manifest or {}).get("type") or "").strip().lower()
+    return plugin_type in {"sql_query", "sql_schema"} and field_name in SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS
+
+
+def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
+    """
+    Resolve any Key Vault secrets in a plugin manifest.
+    """
+    if not isinstance(plugin_manifest, dict):
+        raise ValueError("Plugin manifest must be a dictionary")
+    
+    kv_name = settings.get("key_vault_name")
+    if not kv_name:
+        raise ValueError("Key Vault name not configured in settings")
+    
+    scope_value, scope = _get_plugin_secret_context(plugin_manifest)
+    resolved_manifest = dict(plugin_manifest)
+
+    auth = plugin_manifest.get("auth", {})
+    if isinstance(auth, dict):
+        resolved_auth = dict(auth)
+        for auth_field in ("key", *SQL_PLUGIN_SENSITIVE_AUTH_FIELDS):
+            value = auth.get(auth_field)
+            if not isinstance(value, str) or not validate_secret_name_dynamic(value):
+                continue
+            try:
+                resolved_auth[auth_field] = resolve_secret_reference_for_context(
+                    value,
+                    scope_value=scope_value,
+                    scope=scope,
+                    allowed_sources={"action"},
+                    context_label=f"plugin auth field '{auth_field}'",
+                )
+            except ValueError as exc:
+                log_event(
+                    f"[SK Loader] Blocked plugin auth secret resolution for field '{auth_field}': {exc}",
+                    extra={
+                        "plugin_name": plugin_manifest.get("name"),
+                        "plugin_id": plugin_manifest.get("id"),
+                        "scope": scope,
+                    },
+                    level=logging.WARNING,
+                )
+                resolved_auth[auth_field] = ""
+        resolved_manifest["auth"] = resolved_auth
+
+    additional_fields = plugin_manifest.get("additionalFields", {})
+    if isinstance(additional_fields, dict):
+        resolved_additional_fields = dict(additional_fields)
+        for field_name, value in additional_fields.items():
+            if not isinstance(value, str) or not validate_secret_name_dynamic(value):
+                continue
+            if not (field_name.endswith("__Secret") or _is_sql_sensitive_plugin_field(plugin_manifest, field_name)):
+                continue
+            try:
+                resolved_additional_fields[field_name] = resolve_secret_reference_for_context(
+                    value,
+                    scope_value=scope_value,
+                    scope=scope,
+                    allowed_sources={"action-addset"},
+                    context_label=f"plugin additional field '{field_name}'",
+                )
+            except ValueError as exc:
+                log_event(
+                    f"[SK Loader] Blocked plugin additionalField secret resolution for '{field_name}': {exc}",
+                    extra={
+                        "plugin_name": plugin_manifest.get("name"),
+                        "plugin_id": plugin_manifest.get("id"),
+                        "scope": scope,
+                    },
+                    level=logging.WARNING,
+                )
+                resolved_additional_fields[field_name] = ""
+        resolved_manifest["additionalFields"] = resolved_additional_fields
+
+    return resolved_manifest
+
 def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="global"):
     """
     DRY helper to load plugins from a manifest list (user or global).
     """
+    if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
+        try:
+            plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
+        except Exception as e:
+            log_event(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
     # Create logged plugin loader for enhanced logging
     logged_loader = create_logged_plugin_loader(kernel)
     
@@ -795,6 +1766,14 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             log_event("[SK Loader] Loaded Fact Memory Plugin.", level=logging.INFO)
         except Exception as e:
             log_event(f"[SK Loader] Failed to load Fact Memory Plugin: {e}", level=logging.WARNING)
+
+    # Register Tabular Processing Plugin if enabled (requires enhanced citations)
+    if is_tabular_processing_enabled(settings):
+        try:
+            load_tabular_processing_plugin(kernel)
+            log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+        except Exception as e:
+            log_event(f"[SK Loader] Failed to load Tabular Processing plugin: {e}", level=logging.WARNING)
 
     # Conditionally load static embedding model plugin
     if settings.get('enable_default_embedding_model_plugin', True):
@@ -854,7 +1833,6 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
     Original plugin loading method as fallback.
     """
     try:
-        from semantic_kernel_plugins.plugin_loader import discover_plugins
         discovered_plugins = discover_plugins()
         for manifest in plugin_manifests:
             plugin_type = manifest.get('type')
@@ -874,7 +1852,6 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                 try:
                     # Special handling for OpenAPI plugins
                     if normalized_type == normalize('openapi') or 'openapi' in normalized_type:
-                        from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
                         # Use the factory to create OpenAPI plugins from configuration
                         plugin = OpenApiPluginFactory.create_from_config(manifest)
                     else:
@@ -929,7 +1906,26 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # Early check: Get user settings to see if agents are enabled and if an agent is selected
     user_settings = get_user_settings(user_id).get('settings', {})
     enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
+    
+    # Check if request has forced agent enablement (e.g., retry with specific agent)
+    # import g here as it is not used in global mode
+    from flask import g
+    force_enable_agents = getattr(g, 'force_enable_agents', False)
+    request_agent_info = getattr(g, 'request_agent_info', None)
+    request_agent_name = getattr(g, 'request_agent_name', None)
+    
+    if force_enable_agents:
+        enable_agents = True
+        log_event(f"[SK Loader] Force enabling agents due to request agent_info (agent: {request_agent_name})", level=logging.INFO)
+    
     selected_agent = user_settings.get('selected_agent')
+    
+    # Override selected_agent if request specifies one
+    if request_agent_info:
+        if not isinstance(request_agent_info, dict):
+            request_agent_info = {"name": request_agent_info}
+        selected_agent = request_agent_info
+        log_event(f"[SK Loader] Using agent from request: {request_agent_info}", level=logging.INFO)
     
     # If agents are disabled or no agent is selected, skip agent loading entirely
     if not enable_agents:
@@ -946,26 +1942,175 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         load_core_plugins_only(kernel, settings)
         return kernel, None
     
-    # Redis is now optional for per-user mode. If not present, state will not persist.
-    
-    # Load agents from personal_agents container
-    from functions_personal_agents import get_personal_agents, ensure_migration_complete
-    
     # Ensure migration is complete (will migrate any remaining legacy data)
-    ensure_migration_complete(user_id)
+    ensure_agents_migration_complete(user_id)
     agents_cfg = get_personal_agents(user_id)
-    
+
     print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
-    
+
     # Always mark user agents as is_global: False
     for agent in agents_cfg:
         agent['is_global'] = False
+
+    # Load group agents for user's active group (if any)
+    try:
+        active_group_id = require_active_group(user_id)
+        group_agents = get_group_agents(active_group_id)
+        if group_agents:
+            print(f"[SK Loader] Found {len(group_agents)} group agents for active group '{active_group_id}'")
+            # Badge group agents with group metadata
+            for group_agent in group_agents:
+                group_agent['is_global'] = False
+                group_agent['is_group'] = True
+            agents_cfg.extend(group_agents)
+            print(f"[SK Loader] After merging group agents: {len(agents_cfg)} total agents")
+        else:
+            print(f"[SK Loader] No group agents found for active group '{active_group_id}'")
+    except ValueError:
+        # No active group set - this is fine, just means no group agents available
+        print(f"[SK Loader] User '{user_id}' has no active group - skipping group agent loading")
+
+    # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
+    selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}
+    selected_agent_is_global = selected_agent_data.get('is_global', False)
+    selected_agent_is_group = selected_agent_data.get('is_group', False)
+    selected_agent_group_id = selected_agent_data.get('group_id')
+    conversation_group_id = getattr(g, "conversation_group_id", None)
+    allow_user_agents = settings.get('allow_user_agents', False)
+    allow_group_agents = settings.get('allow_group_agents', False)
+
+    if not is_selected_agent_scope_enabled(settings, selected_agent_data):
+        if selected_agent_is_group:
+            log_event(
+                "[SK Loader] Group agents are disabled; skipping group agent load.",
+                level=logging.WARNING,
+                extra={
+                    'agent_name': selected_agent_data.get('name'),
+                    'allow_group_agents': allow_group_agents,
+                    'is_global': selected_agent_is_global,
+                }
+            )
+        else:
+            log_event(
+                "[SK Loader] User agents are disabled; skipping personal agent load.",
+                level=logging.WARNING,
+                extra={
+                    'agent_name': selected_agent_data.get('name'),
+                    'allow_user_agents': allow_user_agents,
+                    'is_global': selected_agent_is_global,
+                }
+            )
+        load_core_plugins_only(kernel, settings)
+        return kernel, None
+
+    effective_group_id = None
+    if selected_agent_is_group:
+        selected_group_id = str(selected_agent_data.get('group_id') or '').strip()
+        conversation_scope_group_id = str(conversation_group_id or '').strip()
+
+        if conversation_scope_group_id and selected_group_id and conversation_scope_group_id != selected_group_id:
+            debug_print(
+                f"[SK Loader] Group agent scope mismatch. conversation_group_id={conversation_scope_group_id}, selected_group_id={selected_group_id}."
+            )
+            log_event(
+                "[SK Loader] Group agent scope mismatch between conversation and selection.",
+                level=logging.ERROR,
+                extra={
+                    'conversation_group_id': conversation_scope_group_id,
+                    'selected_group_id': selected_group_id,
+                    'agent_name': selected_agent_data.get('name')
+                }
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+
+        effective_group_id = conversation_scope_group_id or selected_group_id
+        if not effective_group_id:
+            try:
+                effective_group_id = require_active_group(user_id)
+                log_event(
+                    "[SK Loader] Group agent scope missing from selection; falling back to active group.",
+                    level=logging.WARNING,
+                    extra={'agent_name': selected_agent_data.get('name')}
+                )
+            except ValueError as err:
+                debug_print(f"[SK Loader] No group scope available while loading group agent: {err}")
+                log_event(
+                    "[SK Loader] Group agent selected but no group scope could be resolved.",
+                    level=logging.ERROR,
+                    extra={'agent_name': selected_agent_data.get('name')}
+                )
+                load_core_plugins_only(kernel, settings)
+                return kernel, None
+
+        try:
+            assert_group_role(
+                user_id,
+                effective_group_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        except LookupError as err:
+            debug_print(f"[SK Loader] Group {effective_group_id} not found while loading group agent: {err}")
+            log_event(
+                "[SK Loader] Group agent selected but referenced group no longer exists.",
+                level=logging.ERROR,
+                extra={'group_id': effective_group_id, 'agent_name': selected_agent_data.get('name')}
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+        except PermissionError as err:
+            debug_print(f"[SK Loader] User {user_id} is not authorized for group {effective_group_id}: {err}")
+            log_event(
+                "[SK Loader] Group agent selected but user is not authorized for the resolved group.",
+                level=logging.ERROR,
+                extra={'group_id': effective_group_id, 'agent_name': selected_agent_data.get('name')}
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+
+        selected_agent_data['group_id'] = effective_group_id
+
+        if effective_group_id:
+            agent_identifier = selected_agent_data.get('id') or selected_agent_data.get('name')
+            group_agent_cfg = None
+            if agent_identifier:
+                group_agent_cfg = get_group_agent(effective_group_id, agent_identifier)
+            if not group_agent_cfg:
+                # Fallback: search by name across group agents if ID lookup failed
+                for candidate in get_group_agents(effective_group_id):
+                    if candidate.get('name') == selected_agent_data.get('name'):
+                        group_agent_cfg = candidate
+                        break
+
+            if group_agent_cfg:
+                group_agent_cfg['is_global'] = False
+                group_agent_cfg['is_group'] = True
+                group_agent_cfg.setdefault('group_id', effective_group_id)
+                group_agent_cfg['group_name'] = selected_agent_data.get('group_name')
+                if not any(
+                    agent.get('id') == group_agent_cfg.get('id')
+                    or (
+                        agent.get('name') == group_agent_cfg.get('name')
+                        and bool(agent.get('is_group', False))
+                        and str(agent.get('group_id') or '') == str(effective_group_id)
+                    )
+                    for agent in agents_cfg
+                ):
+                    agents_cfg.append(group_agent_cfg)
+                log_event(
+                    f"[SK Loader] Added group agent '{group_agent_cfg.get('name')}' from group {effective_group_id} to candidate list.",
+                    level=logging.INFO
+                )
+            else:
+                log_event(
+                    f"[SK Loader] Selected group agent '{selected_agent_data.get('name')}' not found for group {effective_group_id}.",
+                    level=logging.WARNING
+                )
 
     # PATCH: Merge global agents if enabled
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     print(f"[SK Loader] merge_global_semantic_kernel_with_workspace: {merge_global}")
     if merge_global:
-        from functions_global_agents import get_global_agents
         global_agents = get_global_agents()
         print(f"[SK Loader] Found {len(global_agents)} global agents to merge")
         # Mark global agents
@@ -981,9 +2126,11 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             key = f"global_{agent['name']}"
             all_agents[key] = agent
             
-        # Add personal agents with 'personal_' prefix  
+        # Add workspace agents with scoped prefixes
         for agent in agents_cfg:
-            key = f"personal_{agent['name']}"
+            prefix = "group" if agent.get('is_group') else "personal"
+            scoped_name = agent.get('name') or agent.get('id') or 'unnamed'
+            key = f"{prefix}_{scoped_name}"
             all_agents[key] = agent
             
         agents_cfg = list(all_agents.values())
@@ -998,18 +2145,13 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             "agents": agents_cfg
         },
         level=logging.INFO)
-        
-    # Load plugins from personal_actions container
-    from functions_personal_actions import get_personal_actions, ensure_migration_complete
-    
     # Ensure migration is complete (will migrate any remaining legacy data)
-    ensure_migration_complete(user_id)
-    plugin_manifests = get_personal_actions(user_id)
+    ensure_actions_migration_complete(user_id)
+    plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
         
     # PATCH: Merge global plugins if enabled
     if merge_global:
-        from functions_global_actions import get_global_actions
-        global_plugins = get_global_actions()
+        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
         # User plugins take precedence
         all_plugins = {p.get('name'): p for p in plugin_manifests}
         all_plugins.update({p.get('name'): p for p in global_plugins})
@@ -1021,42 +2163,60 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # Only load core Semantic Kernel plugins here
     if settings.get('enable_time_plugin', True):
         load_time_plugin(kernel)
+        print(f"[SK Loader] Loaded Time plugin.")
         log_event("[SK Loader] Loaded Time plugin.", level=logging.INFO)
 
     if settings.get('enable_fact_memory_plugin', True):
         load_fact_memory_plugin(kernel)
+        print(f"[SK Loader] Loaded Fact Memory plugin.")
         log_event("[SK Loader] Loaded Fact Memory plugin.", level=logging.INFO)
 
     if settings.get('enable_math_plugin', True):
         load_math_plugin(kernel)
+        print(f"[SK Loader] Loaded Math plugin.")
         log_event("[SK Loader] Loaded Math plugin.", level=logging.INFO)
 
     if settings.get('enable_text_plugin', True):
         load_text_plugin(kernel)
+        print(f"[SK Loader] Loaded Text plugin.")
         log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
 
     if settings.get('enable_http_plugin', True):
         load_http_plugin(kernel)
+        print(f"[SK Loader] Loaded HTTP plugin.")
         log_event("[SK Loader] Loaded HTTP plugin.", level=logging.INFO)
 
     if settings.get('enable_wait_plugin', True):
         load_wait_plugin(kernel)
+        print(f"[SK Loader] Loaded Wait plugin.")
         log_event("[SK Loader] Loaded Wait plugin.", level=logging.INFO)
 
     if settings.get('enable_default_embedding_model_plugin', True):
         load_embedding_model_plugin(kernel, settings)
+        print(f"[SK Loader] Loaded Default Embedding Model plugin.")
         log_event("[SK Loader] Loaded Default Embedding Model plugin.", level=logging.INFO)
-    
+
+    if is_tabular_processing_enabled(settings):
+        load_tabular_processing_plugin(kernel)
+        log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+
     # Get selected agent from user settings (this still needs to be in user settings for UI state)
     user_settings = get_user_settings(user_id).get('settings', {})
     selected_agent = user_settings.get('selected_agent')
+    if request_agent_info:
+        selected_agent = request_agent_info if isinstance(request_agent_info, dict) else {"name": request_agent_info}
     debug_print(f"[SK Loader] User settings selected_agent: {selected_agent}")
     debug_print(f"[SK Loader] Type of selected_agent: {type(selected_agent)}")
     if isinstance(selected_agent, dict):
         selected_agent_name = selected_agent.get('name')
+        selected_agent_id = selected_agent.get('id')
         is_global_flag = selected_agent.get('is_global', False)
+        is_group_flag = selected_agent.get('is_group', False)
+        selected_agent_group_id = selected_agent.get('group_id')
         debug_print(f"[SK Loader] Selected agent name: {selected_agent_name}")
         debug_print(f"[SK Loader] Selected agent is_global flag: {is_global_flag}")
+        debug_print(f"[SK Loader] Selected agent is_group flag: {is_group_flag}")
+        debug_print(f"[SK Loader] Selected agent group_id: {selected_agent_group_id}")
     else:
         debug_print(f"[SK Loader] User {user_id} selected_agent is not a dict: {selected_agent}. Using None.")
         log_event(
@@ -1064,29 +2224,36 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             level=logging.ERROR
         )
         selected_agent_name = None
+        selected_agent_id = None
         is_global_flag = False
+        is_group_flag = False
+        selected_agent_group_id = None
     debug_print(f"[SK Loader] Selected agent name: {selected_agent_name}")
     debug_print(f"[SK Loader] Selected agent global flag: {is_global_flag}")
     agent_cfg = None
     # Try user-selected agent
     if selected_agent_name:
-        debug_print(f"[SK Loader] Looking for agent named '{selected_agent_name}' with is_global={is_global_flag}")
-        debug_print(f"[SK Loader] Available agents: {[{a.get('name'): a.get('is_global', False)} for a in agents_cfg]}")
-        
-        # First try to find exact match including is_global flag
-        found = next((a for a in agents_cfg if a.get('name') == selected_agent_name and a.get('is_global', False) == is_global_flag), None)
+        debug_print(
+            f"[SK Loader] Looking for agent named '{selected_agent_name}' with is_global={is_global_flag}, is_group={is_group_flag}"
+        )
+        debug_print(
+            f"[SK Loader] Available agents: [{', '.join([str({'name': a.get('name'), 'is_global': a.get('is_global', False), 'is_group': a.get('is_group', False), 'group_id': a.get('group_id')}) for a in agents_cfg])}]"
+        )
+
+        found = find_agent_by_scope(agents_cfg, {
+            "name": selected_agent_name,
+            "id": selected_agent_id,
+            "is_global": is_global_flag,
+            "is_group": is_group_flag,
+            "group_id": selected_agent_group_id
+        })
         if found:
-            debug_print(f"[SK Loader] User {user_id} Found EXACT match for agent: {selected_agent_name} (is_global={is_global_flag})")
+            debug_print(f"[SK Loader] User {user_id} Found scoped match for agent: {selected_agent_name}")
             agent_cfg = found
         else:
-            # Fallback: try to find by name only
-            found = next((a for a in agents_cfg if a.get('name') == selected_agent_name), None)
-            if found:
-                debug_print(f"[SK Loader] User {user_id} Found NAME-ONLY match for agent: {selected_agent_name} (requested is_global={is_global_flag}, found is_global={found.get('is_global', False)})")
-                agent_cfg = found
-            else:
-                debug_print(f"[SK Loader] User {user_id} NO agent found matching user-selected agent: {selected_agent_name}")
+            debug_print(f"[SK Loader] User {user_id} NO agent found matching user-selected agent: {selected_agent_name}")
         
+        #TODO: Fix this logging
         if found:
             print(f"[SK Loader] User {user_id} Found user-selected agent: {selected_agent_name}")
             logging.debug(f"[SK Loader] User {user_id} Found user-selected agent: {selected_agent_name}")
@@ -1116,7 +2283,8 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
                     f"[SK Loader] User {user_id} No agent found matching global selected agent: {global_selected_agent_name}",
                     level=logging.WARNING
                 )
-    # If still not found, DON'T use first agent - only load when explicitly selected
+
+    # If still not found, stop here instead of masking the loading issue with a fallback.
     if agent_cfg is None and agents_cfg:
         debug_print(f"[SK Loader] User {user_id} Agent selection final status: agent_cfg is None")
         debug_print(f"[SK Loader] User {user_id} Available agents: {[{a.get('name'): a.get('is_global', False)} for a in agents_cfg]}")
@@ -1139,7 +2307,19 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     debug_print(f"[SK Loader] User {user_id} Agent azure_deployment: {agent_cfg.get('azure_deployment', 'NOT SET')}")
     
     print(f"[SK Loader] User {user_id} Loading agent: {agent_cfg.get('name')}")
-    kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
+    agent_type = (agent_cfg.get('agent_type') or 'local').lower()
+    agent_cfg['agent_type'] = agent_type
+    if agent_type == 'local':
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
+    elif agent_type in ('aifoundry', 'new_foundry'):
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
+    else:
+        log_event(
+            f"[SK Loader] Unsupported agent_type '{agent_type}' for agent '{agent_cfg.get('name')}'. Defaulting to local path.",
+            level=logging.WARNING,
+            extra={'agent_type': agent_type, 'agent_name': agent_cfg.get('name')}
+        )
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
     print(f"[SK Loader] User {user_id} Agent loading completed. Agent objects: {type(agent_objs)} with {len(agent_objs) if agent_objs else 0} items")
     return kernel, agent_objs
 
@@ -1148,8 +2328,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
     log_event("[SK Loader] Global Semantic Kernel mode enabled. Loading global plugins and agents.", level=logging.INFO)
     
     # Conditionally load core plugins based on settings
-    from functions_global_actions import get_global_actions
-    plugin_manifests = get_global_actions()
+    
+    plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
     log_event(f"[SK Loader] Found {len(plugin_manifests)} plugin manifests", level=logging.INFO)
     
     # --- Dynamic Plugin Type Loading (semantic_kernel_plugins) ---
@@ -1157,7 +2337,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
 
 # --- Agent and Service Loading ---
 # region Multi-agent Orchestration
-    from functions_global_agents import get_global_agents
+    
     agents_cfg = get_global_agents()
     enable_multi_agent_orchestration = settings.get('enable_multi_agent_orchestration', False)
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
@@ -1232,13 +2412,20 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 deployment_name=agent_config["deployment"],
                                 endpoint=agent_config["endpoint"],
                                 api_key=agent_config["key"],
-                                api_version=agent_config["api_version"]
+                                api_version=agent_config["api_version"],
+                                # default_headers={"Ocp-Apim-Subscription-Key": key}
                             )
+                        if agent_config.get('max_completion_tokens', -1) > 0:
+                            print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
+                            chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
                         kernel.add_service(chat_service)
                 except Exception as e:
                     log_event(f"[SK Loader] Failed to create or get AzureChatCompletion for agent: {agent_config['name']}: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
             if LoggingChatCompletionAgent and chat_service:
                 try:
+                    if agent_config.get('max_completion_tokens', -1) > 0:
+                        print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
+                        chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
                     kwargs = {
                         "name": agent_config["name"],
                         "instructions": agent_config["instructions"],
@@ -1250,7 +2437,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         "default_agent": agent_config.get("default_agent", False),
                         "deployment_name": agent_config["deployment"],
                         "azure_endpoint": agent_config["endpoint"],
-                        "api_version": agent_config["api_version"]
+                        "api_version": agent_config["api_version"],
+                        "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=10)
                     }
                     if agent_config.get("actions_to_load"):
                         kwargs["plugins"] = agent_config["actions_to_load"]
@@ -1333,8 +2521,12 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 deployment_name=orchestrator_config["deployment"],
                                 endpoint=orchestrator_config["endpoint"],
                                 api_key=orchestrator_config["key"],
-                                api_version=orchestrator_config["api_version"]
+                                api_version=orchestrator_config["api_version"],
+                                # default_headers={"Ocp-Apim-Subscription-Key": orchestrator_config["key"]}
                             )
+                        if agent_config.get('max_completion_tokens', -1) > 0:
+                            print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
+                            chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
                         kernel.add_service(chat_service)
                 if not chat_service:
                     raise RuntimeError(f"[SK Loader] No AzureChatCompletion service available for orchestrator agent '{orchestrator_config['name']}'")
@@ -1432,7 +2624,17 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 
         if global_selected_agent_cfg:
             log_event(f"[SK Loader] Using global_selected_agent: {global_selected_agent_cfg.get('name')}", level=logging.INFO)
-            kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+            agent_type = (global_selected_agent_cfg.get('agent_type') or 'local').lower()
+            global_selected_agent_cfg['agent_type'] = agent_type
+            if agent_type == 'local':
+                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+            else:
+                log_event(
+                    f"[SK Loader] Unsupported agent_type '{agent_type}' for global agent '{global_selected_agent_cfg.get('name')}'. Defaulting to local path.",
+                    level=logging.WARNING,
+                    extra={'agent_type': agent_type, 'agent_name': global_selected_agent_cfg.get('name')}
+                )
+                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
             log_event(f"[SK Loader] load_single_agent_for_kernel returned agent_objs: {type(agent_objs)} with {len(agent_objs) if agent_objs else 0} agents", level=logging.INFO)
         else:
             log_event("[SK Loader] No global_selected_agent found. Proceeding in kernel-only mode.", level=logging.WARNING)
@@ -1447,8 +2649,17 @@ def load_semantic_kernel(kernel: Kernel, settings):
             if AzureChatCompletion and endpoint and key and deployment:
                 apim_enabled = settings.get("enable_gpt_apim", False)
                 if apim_enabled:
-                    kernel.add_service(
-                        AzureChatCompletion(
+                    chat_service = AzureChatCompletion(
+                            service_id=f"aoai-chat-global",
+                            deployment_name=deployment,
+                            endpoint=endpoint,
+                            api_key=key,
+                            api_version=api_version,
+                            # default_headers={"Ocp-Apim-Subscription-Key": key}
+                    )
+                    kernel.add_service(chat_service)
+                else:
+                    chat_service = AzureChatCompletion(
                             service_id=f"aoai-chat-global",
                             deployment_name=deployment,
                             endpoint=endpoint,
@@ -1456,17 +2667,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             api_version=api_version,
                             # default_headers={"Ocp-Apim-Subscription-Key": key}
                         )
-                    )
-                else:
-                    kernel.add_service(
-                        AzureChatCompletion(
-                            service_id=f"aoai-chat-global",
-                            deployment_name=deployment,
-                            endpoint=endpoint,
-                            api_key=key,
-                            api_version=api_version
-                        )
-                    )
+                    kernel.add_service(chat_service)
                 log_event(
                     f"[SK Loader] Azure OpenAI chat completion service registered (kernel-only mode)",
                     {
@@ -1491,3 +2692,162 @@ def load_semantic_kernel(kernel: Kernel, settings):
 
 def load_multi_agent_for_kernel(kernel: Kernel, settings):
     return None, None
+
+def set_prompt_settings_for_agent(chat_service, agent_config: dict):
+    """
+    Update the chat_service's prompt execution settings by merging agent_config overrides
+    into the existing settings. No prompt_settings argument is needed; all defaults are read
+    from the chat_service itself.
+    """
+    if not (chat_service and agent_config):
+        return
+
+    PromptExecutionSettingsClass = chat_service.get_prompt_execution_settings_class()
+
+    # Try to get an existing settings object from the service
+    existing = getattr(chat_service, "prompt_execution_settings", None)
+    if existing is None and hasattr(chat_service, "instantiate_prompt_execution_settings"):
+        try:
+            existing = chat_service.instantiate_prompt_execution_settings()
+        except Exception:
+            existing = None
+
+    # Convert/normalize existing settings into the concrete class if needed
+    if existing:
+        try:
+            prompt_exec_settings = PromptExecutionSettingsClass.from_prompt_execution_settings(existing)
+        except Exception:
+            prompt_exec_settings = PromptExecutionSettingsClass()
+    else:
+        prompt_exec_settings = PromptExecutionSettingsClass()
+
+    # Utility to pick an override from agent_config (None means no override)
+    def pick(key):
+        return agent_config.get(key, None)
+
+    # Handle token fields - prefer agent_config max_completion_tokens then max_tokens
+    desired_tokens = pick("max_completion_tokens")
+    if desired_tokens is None:
+        desired_tokens = pick("max_tokens")
+
+    model_fields = getattr(PromptExecutionSettingsClass, "model_fields", {})
+    if desired_tokens is not None:
+        try:
+            desired_tokens = int(desired_tokens)
+        except Exception:
+            desired_tokens = None
+    if desired_tokens and desired_tokens > 0:
+        # This includes reasoning tokens in addition to response tokens. max_tokens is ONLY response tokens.
+        if "max_completion_tokens" in model_fields:
+            setattr(prompt_exec_settings, "max_completion_tokens", desired_tokens)
+        if "max_tokens" in model_fields:
+            setattr(prompt_exec_settings, "max_tokens", desired_tokens)
+
+    chat_service.get_prompt_execution_settings_class()
+
+    # Common numeric settings
+    for fld in ("temperature", "top_p", "frequency_penalty", "presence_penalty"):
+        val = pick(fld)
+        if val is not None:
+            try:
+                setattr(prompt_exec_settings, fld, val)
+            except Exception:
+                # pass this to prevent additional future agent types from potentially failing
+                pass
+
+    # stop sequences -> map to 'stop' which OpenAI expects
+    stop_seqs = pick("stop_sequences") or pick("stop")
+    if stop_seqs is not None:
+        try:
+            setattr(prompt_exec_settings, "stop", stop_seqs)
+        except Exception:
+            # pass this to prevent additional future agent types from potentially failing
+            pass
+    
+    # Reasoning effort - only add if not 'none' or empty
+    reasoning_effort = pick("reasoning_effort")
+    if reasoning_effort and reasoning_effort != "none" and "reasoning_effort" in model_fields:
+        try:
+            setattr(prompt_exec_settings, "reasoning_effort", reasoning_effort)
+            print(f"[SK Loader] Set reasoning_effort={reasoning_effort} for agent: {agent_config.get('name')}")
+        except Exception as e:
+            print(f"[SK Loader] Failed to set reasoning_effort for agent {agent_config.get('name')}: {e}")
+            pass
+    
+    if hasattr(prompt_exec_settings, 'function_choice_behavior'):
+        if getattr(prompt_exec_settings, 'function_choice_behavior', None) is None:
+            try:
+                prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=10)
+            except Exception:
+                # pass this to prevent additional future agent types from potentially failing
+                pass
+    else:
+        print(f"[SK Loader] function_choice_behavior attribute not found in prompt execution settings for agent: {agent_config.get('name')}")
+
+    # Apply settings back to service (prefer explicit setter, do NOT set attribute if not supported)
+    if hasattr(chat_service, "set_prompt_execution_settings"):
+        try:
+            chat_service.set_prompt_execution_settings(prompt_exec_settings)
+        except Exception as e:
+            # Log error but do not set attribute directly to avoid Pydantic validation errors
+            log_event(f"[SK Loader] Failed to set prompt execution settings via setter: {e}", level=logging.ERROR, exceptionTraceback=True)
+    # Do not set prompt_execution_settings as an attribute if not supported by the service
+    
+    # Store reasoning_effort info for retry logic
+    if hasattr(chat_service, '_agent_config'):
+        chat_service._agent_config = agent_config
+    
+    return chat_service
+
+
+def handle_agent_reasoning_error(chat_service, error, agent_config):
+    """
+    Handle reasoning_effort errors by retrying without the parameter.
+    Similar to the retry logic in route_backend_chats.py for direct GPT calls.
+    
+    Args:
+        chat_service: The AzureChatCompletion service
+        error: The exception that occurred
+        agent_config: The agent configuration dict
+        
+    Returns:
+        bool: True if reasoning_effort was removed and service updated, False otherwise
+    """
+    error_str = str(error).lower()
+    has_reasoning = agent_config.get("reasoning_effort") and agent_config.get("reasoning_effort") != "none"
+    
+    # Check if error is related to reasoning_effort parameter
+    if has_reasoning and (
+        'reasoning_effort' in error_str or 
+        'unrecognized request argument' in error_str or
+        'invalid_request_error' in error_str
+    ):
+        print(f"[SK Loader] Reasoning effort not supported by model, retrying without reasoning_effort for agent: {agent_config.get('name')}")
+        
+        # Remove reasoning_effort from agent_config
+        agent_config["reasoning_effort"] = ""
+        
+        # Update the service's prompt execution settings without reasoning_effort
+        try:
+            PromptExecutionSettingsClass = chat_service.get_prompt_execution_settings_class()
+            existing = getattr(chat_service, "prompt_execution_settings", None)
+            
+            if existing:
+                prompt_exec_settings = PromptExecutionSettingsClass.from_prompt_execution_settings(existing)
+            else:
+                prompt_exec_settings = PromptExecutionSettingsClass()
+            
+            # Remove reasoning_effort if it exists
+            if hasattr(prompt_exec_settings, "reasoning_effort"):
+                delattr(prompt_exec_settings, "reasoning_effort")
+            
+            # Update service settings
+            if hasattr(chat_service, "set_prompt_execution_settings"):
+                chat_service.set_prompt_execution_settings(prompt_exec_settings)
+            
+            return True
+        except Exception as update_error:
+            print(f"[SK Loader] Failed to remove reasoning_effort: {update_error}")
+            return False
+    
+    return False

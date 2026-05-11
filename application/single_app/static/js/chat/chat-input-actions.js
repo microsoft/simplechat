@@ -86,6 +86,16 @@ export function uploadFileToConversation(file) {
     .then((data) => {
       if (data.conversation_id) {
         currentConversationId = data.conversation_id;
+        
+        // If a title was returned and it's different from "New Conversation",
+        // update the conversation title in the UI
+        if (data.title && data.title !== "New Conversation") {
+          const currentConversationTitleEl = document.getElementById("current-conversation-title");
+          if (currentConversationTitleEl) {
+            currentConversationTitleEl.textContent = data.title;
+          }
+        }
+        
         loadMessages(currentConversationId);
         loadConversations();
       } else {
@@ -117,11 +127,11 @@ export function fetchFileContent(conversationId, fileId) {
       hideLoadingIndicator();
 
       if (data.file_content && data.filename) {
-        showFileContentPopup(data.file_content, data.filename, data.is_table);
+        showFileContentPopup(data.file_content, data.filename, data.is_table, data.file_content_source, conversationId, fileId);
       } else if (data.error) {
         showToast(data.error, "danger");
       } else {
-        ashowToastlert("Unexpected response from server.", "danger");
+        showToast("Unexpected response from server.", "danger");
       }
     })
     .catch((error) => {
@@ -131,7 +141,7 @@ export function fetchFileContent(conversationId, fileId) {
     });
 }
 
-export function showFileContentPopup(fileContent, filename, isTable) {
+export function showFileContentPopup(fileContent, filename, isTable, fileContentSource, conversationId, fileId) {
   let modalContainer = document.getElementById("file-modal");
   if (!modalContainer) {
     modalContainer = document.createElement("div");
@@ -144,7 +154,8 @@ export function showFileContentPopup(fileContent, filename, isTable) {
       <div class="modal-dialog modal-dialog-scrollable modal-xl modal-fullscreen-sm-down">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title">Uploaded File: ${filename}</h5>
+            <h5 class="modal-title"></h5>
+            <div class="ms-auto me-2" id="file-modal-download-btn-container"></div>
             <button
               type="button"
               class="btn-close"
@@ -159,88 +170,56 @@ export function showFileContentPopup(fileContent, filename, isTable) {
       </div>
     `;
     document.body.appendChild(modalContainer);
-  } else {
-    const modalTitle = modalContainer.querySelector(".modal-title");
-    if (modalTitle) {
-      modalTitle.textContent = `Uploaded File: ${filename}`;
+  }
+
+  const modalTitle = modalContainer.querySelector(".modal-title");
+  if (modalTitle) {
+    modalTitle.textContent = `Uploaded File: ${filename}`;
+  }
+
+  // Add or remove download button for blob-stored files
+  const downloadBtnContainer = document.getElementById("file-modal-download-btn-container");
+  if (downloadBtnContainer) {
+    downloadBtnContainer.replaceChildren();
+
+    if (fileContentSource === 'blob' && conversationId && fileId) {
+      const downloadLink = document.createElement("a");
+      downloadLink.href = `/api/enhanced_citations/tabular?conversation_id=${encodeURIComponent(conversationId)}&file_id=${encodeURIComponent(fileId)}`;
+      downloadLink.className = "btn btn-sm btn-outline-primary";
+      downloadLink.setAttribute("download", "");
+
+      const downloadIcon = document.createElement("i");
+      downloadIcon.className = "bi bi-download me-1";
+
+      downloadLink.appendChild(downloadIcon);
+      downloadLink.appendChild(document.createTextNode("Download Original"));
+      downloadBtnContainer.appendChild(downloadLink);
     }
   }
 
   const fileContentElement = document.getElementById("file-content");
   if (!fileContentElement) return;
 
+  fileContentElement.replaceChildren();
+
   if (isTable) {
-    // Check if content is CSV (new format) or HTML (legacy format)
-    const isCSVContent = !fileContent.trim().startsWith('<table') && 
-                         !fileContent.trim().startsWith('<') && 
-                         fileContent.includes(',');
-    
-    if (isCSVContent) {
-      // Convert CSV to HTML table for display
-      // Use a simple CSV parser that handles quoted fields
-      const parseCSVLine = (line) => {
-        const result = [];
-        let current = '';
-        let inQuotes = false;
-        
-        for (let i = 0; i < line.length; i++) {
-          const char = line[i];
-          
-          if (char === '"') {
-            inQuotes = !inQuotes;
-          } else if (char === ',' && !inQuotes) {
-            result.push(current.trim());
-            current = '';
-          } else {
-            current += char;
-          }
-        }
-        result.push(current.trim());
-        return result;
-      };
-      
-      const csvLines = fileContent.trim().split('\n');
-      if (csvLines.length > 0) {
-        const headers = parseCSVLine(csvLines[0]);
-        const headerCount = headers.length;
-        const rows = csvLines.slice(1);
-        
-        let tableHTML = '<table class="table table-striped table-bordered"><thead><tr>';
-        headers.forEach(header => {
-          tableHTML += `<th>${escapeHtml(header)}</th>`;
-        });
-        tableHTML += '</tr></thead><tbody>';
-        
-        rows.forEach(row => {
-          if (row.trim()) {
-            const cells = parseCSVLine(row);
-            // Ensure all rows have the same number of columns as headers
-            while (cells.length < headerCount) {
-              cells.push(''); // Add empty cells for missing columns
-            }
-            // Truncate if there are too many columns (shouldn't happen but safety check)
-            if (cells.length > headerCount) {
-              cells.splice(headerCount);
-            }
-            
-            tableHTML += '<tr>';
-            cells.forEach(cell => {
-              tableHTML += `<td>${escapeHtml(cell)}</td>`;
-            });
-            tableHTML += '</tr>';
-          }
-        });
-        
-        tableHTML += '</tbody></table>';
-        fileContentElement.innerHTML = `<div class="table-responsive">${tableHTML}</div>`;
-      } else {
-        fileContentElement.innerHTML = '<p>No data available</p>';
-      }
+    const trimmedContent = String(fileContent ?? "").trim();
+    const isLegacyHtmlTableContent = /^<table[\s\S]*<\/table>$/i.test(trimmedContent);
+
+    if (isLegacyHtmlTableContent) {
+      renderPreformattedText(fileContentElement, fileContent);
     } else {
-      // Legacy HTML format
-      fileContentElement.innerHTML = `<div class="table-responsive">${fileContent}</div>`;
+      const tableWrapper = buildCsvTableElement(fileContent);
+
+      if (tableWrapper) {
+        fileContentElement.appendChild(tableWrapper);
+      } else {
+        const emptyState = document.createElement("p");
+        emptyState.textContent = "No data available";
+        fileContentElement.appendChild(emptyState);
+      }
     }
-    
+
     // Apply DataTable after content is set
     $(document).ready(function () {
       const table = $("#file-content table");
@@ -253,23 +232,100 @@ export function showFileContentPopup(fileContent, filename, isTable) {
       }
     });
   } else {
-    fileContentElement.innerHTML = `<pre style="white-space: pre-wrap;">${fileContent}</pre>`;
+    renderPreformattedText(fileContentElement, fileContent);
   }
 
   const modal = new bootstrap.Modal(modalContainer);
   modal.show();
 }
 
-// Helper function to escape HTML
-function escapeHtml(text) {
-  const map = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;'
-  };
-  return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+function buildCsvTableElement(fileContent) {
+  const csvLines = String(fileContent ?? "")
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => line.trim());
+
+  if (csvLines.length === 0) {
+    return null;
+  }
+
+  const headers = parseCSVLine(csvLines[0]);
+  const headerCount = headers.length;
+  const rows = csvLines.slice(1);
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-responsive";
+
+  const table = document.createElement("table");
+  table.className = "table table-striped table-bordered";
+
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  headers.forEach((header) => {
+    const headerCell = document.createElement("th");
+    headerCell.textContent = header;
+    headerRow.appendChild(headerCell);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach((row) => {
+    const cells = parseCSVLine(row);
+    while (cells.length < headerCount) {
+      cells.push("");
+    }
+    if (cells.length > headerCount) {
+      cells.splice(headerCount);
+    }
+
+    const rowElement = document.createElement("tr");
+    cells.forEach((cell) => {
+      const cellElement = document.createElement("td");
+      cellElement.textContent = cell;
+      rowElement.appendChild(cellElement);
+    });
+    tbody.appendChild(rowElement);
+  });
+  table.appendChild(tbody);
+
+  tableWrapper.appendChild(table);
+  return tableWrapper;
+}
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      result.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+
+  result.push(current.trim());
+  return result;
+}
+
+function renderPreformattedText(container, text) {
+  const pre = document.createElement("pre");
+  pre.style.whiteSpace = "pre-wrap";
+  pre.textContent = String(text ?? "");
+  container.replaceChildren(pre);
 }
 
 export function getUrlParameter(name) {
@@ -298,6 +354,7 @@ if (imageGenBtn) {
     const docBtn = document.getElementById("search-documents-btn");
     const webBtn = document.getElementById("search-web-btn");
     const fileBtn = document.getElementById("choose-file-btn");
+    const modelSelectContainer = document.getElementById("model-select-container");
 
     if (isImageGenEnabled) {
       if (docBtn) {
@@ -312,17 +369,53 @@ if (imageGenBtn) {
         fileBtn.disabled = true;
         fileBtn.classList.remove("active");
       }
+      if (modelSelectContainer) {
+        modelSelectContainer.style.display = "none";
+      }
     } else {
       if (docBtn) docBtn.disabled = false;
       if (webBtn) webBtn.disabled = false;
       if (fileBtn) fileBtn.disabled = false;
+      if (modelSelectContainer) {
+        modelSelectContainer.style.display = "block";
+      }
     }
   });
 }
 
 if (webSearchBtn) {
+  const webSearchNoticeContainer = document.getElementById("web-search-notice-container");
+  const webSearchNoticeDismiss = document.getElementById("web-search-notice-dismiss");
+  const webSearchNoticeSessionKey = "webSearchNoticeDismissed";
+  
+  // Check if notice was dismissed this session
+  const isNoticeDismissed = () => sessionStorage.getItem(webSearchNoticeSessionKey) === "true";
+  
+  // Show/hide notice based on web search state
+  const updateWebSearchNotice = (isActive) => {
+    if (webSearchNoticeContainer && window.appSettings?.enable_web_search_user_notice) {
+      if (isActive && !isNoticeDismissed()) {
+        webSearchNoticeContainer.style.display = "block";
+      } else {
+        webSearchNoticeContainer.style.display = "none";
+      }
+    }
+  };
+  
+  // Dismiss button handler
+  if (webSearchNoticeDismiss) {
+    webSearchNoticeDismiss.addEventListener("click", function() {
+      sessionStorage.setItem(webSearchNoticeSessionKey, "true");
+      if (webSearchNoticeContainer) {
+        webSearchNoticeContainer.style.display = "none";
+      }
+    });
+  }
+  
   webSearchBtn.addEventListener("click", function () {
     this.classList.toggle("active");
+    const isActive = this.classList.contains("active");
+    updateWebSearchNotice(isActive);
   });
 }
 
@@ -348,13 +441,29 @@ if (fileInputEl) {
       // Hide the upload button since we're auto-uploading
       uploadBtn.style.display = "none";
       
-      // Automatically upload the file
-      if (!currentConversationId) {
-        createNewConversation(() => {
+      // Check for user agreement before uploading
+      const doUpload = () => {
+        if (!currentConversationId) {
+          createNewConversation(() => {
+            uploadFileToConversation(file);
+          }, { preserveSelections: true });
+        } else {
           uploadFileToConversation(file);
-        });
+        }
+      };
+      
+      // Check if UserAgreementManager exists and check for agreement
+      if (window.UserAgreementManager) {
+        window.UserAgreementManager.checkBeforeUpload(
+          fileInputEl.files,
+          'chat',
+          'default',
+          function(files) {
+            doUpload();
+          }
+        );
       } else {
-        uploadFileToConversation(file);
+        doUpload();
       }
     } else {
       resetFileButton();
@@ -381,12 +490,29 @@ if (uploadBtn) {
       return;
     }
 
-    if (!currentConversationId) {
-      createNewConversation(() => {
+    // Check for user agreement before uploading
+    const doUpload = () => {
+      if (!currentConversationId) {
+        createNewConversation(() => {
+          uploadFileToConversation(file);
+        }, { preserveSelections: true });
+      } else {
         uploadFileToConversation(file);
-      });
+      }
+    };
+    
+    // Check if UserAgreementManager exists and check for agreement
+    if (window.UserAgreementManager) {
+      window.UserAgreementManager.checkBeforeUpload(
+        fileInput.files,
+        'chat',
+        'default',
+        function(files) {
+          doUpload();
+        }
+      );
     } else {
-      uploadFileToConversation(file);
+      doUpload();
     }
   });
 }

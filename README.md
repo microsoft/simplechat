@@ -8,106 +8,246 @@ Built with modularity in mind, the application offers a suite of powerful **opti
 
 The application utilizes **Azure Cosmos DB** for storing conversations, metadata, and settings, and is secured using **Azure Active Directory (Entra ID)** for authentication and fine-grained Role-Based Access Control (RBAC) via App Roles. Designed for enterprise use, it runs reliably on **Azure App Service** and supports deployment in both **Azure Commercial** and **Azure Government** cloud environments, offering a versatile tool for knowledge discovery, content generation, and collaborative AI-powered tasks within a secure, customizable, and Azure-native framework.
 
-## Table of Contents
+## Documentation
 
-- [Features](./docs/features.md)
-  - [Application Features](#features)
-  - [Architecture Diagram](#architecture-diagram)
-  - [Optional Features](./docs/features.md#optional-features) 
-- [Release Notes](./RELEASE_NOTES.md)
-- [Roadmap (as of 8/20/25)](https://github.com/microsoft/simplechat/discussions/133)
-- [Application Workflow](./docs/application_workflows.md)
-  - [Content Safety](./docs/application_workflows.md#content-safety---workflow)
-  - [Add your data (RAG Ingestion)](./docs/application_workflows.md#add-your-data-rag-ingestion)
-- [Demos](#demos)
-  - [Upload document and review metadata](#upload-document-and-review-metadata)
-  - [Classify document and chat with content](#classify-document-and-chat-with-content)
-- [Setup Instructions](./docs/setup_instructions.md)
-  - [Azure CLI with Powershell](./docs/setup_instructions.md#azure-cli-with-powershell)
-  - [Bicep](./docs/setup_instructions.md#bicep)
-  - [Terraform](./docs/setup_instructions.md#hashicorp-terraform)
-  - [Special Cases](./docs/setup_instructions_special.md)
-    - [Azure Government Configuration](./docs/setup_instructions_special.md#azure-government-configuration)
-    - [How to use Managed Identity](./docs/setup_instructions_special.md#how-to-use-managed-identity)
-    - [Enterprise Networking](./docs/setup_instructions_special.md#enterprise-networking)
-  
-- [Admin Configuration](./docs/admin_configuration.md)
-- [Application Scaling](./docs/application_scaling.md)
-  - [Azure App Service](./docs/application_scaling.md#azure-app-service)
-  - [Azure Cosmos DB](./docs/application_scaling.md#azure-cosmos-db)
-  - [Azure AI Search](./docs/application_scaling.md#azure-ai-search)
-  - [Azure AI / Cognitive Services](./docs/application_scaling.md#azure-ai--cognitive-services-openai-document-intelligence-etc)
-- [FAQs](./docs/faqs.md)
-- [External Apps Overview](./docs/external_apps_overview.md)
-  - [Bulk uploader utility](./docs/external_apps_overview.md#bulk-uploader-utility)
-  - [Database seeder utility](./docs/external_apps_overview.md#database-seeder-utility)
+[Simple Chat Documentation | Simple Chat Documentation](https://microsoft.github.io/simplechat/)
 
-## Features
+## Contributing
 
-- **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT models.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the fork-based workflow, target branch guidance, and local development references for SimpleChat contributors.
 
-- **RAG with Hybrid Search**: Upload documents and perform hybrid searches (vector + keyword), retrieving relevant information from your files to augment AI responses.
+## Quick Deploy
 
-- **Document Management**: Upload, store, and manage multiple versions of documents—personal ("Your Workspace") or group-level ("Group Workspaces").
+[Detailed deployment Guide](./deployers/bicep/README.md)
 
-- **Group Management**: Create and join groups to share access to group-specific documents, enabling collaboration with Role-Based Access Control (RBAC).
+If you prefer a PowerShell and Azure CLI driven deployment without AZD, or you want more script-level control over deployment and recovery steps, see [deployers/azurecli/README.md](./deployers/azurecli/README.md).
 
-- **Ephemeral (Single-Convo) Documents**: Upload temporary documents available only during the current chat session, without persistent storage in Azure AI Search.
+### Prerequisites
 
-- **Conversation Archiving (Optional)**: Retain copies of user conversations—even after deletion from the UI—in a dedicated Cosmos DB container for audit, compliance, or legal requirements.
+Install these tools before starting the deployment flow:
 
-- **Content Safety (Optional)**: Integrate Azure AI Content Safety to review every user message *before* it reaches AI models, search indexes, or image generation services. Enforce custom filters and compliance policies, with an optional `SafetyAdmin` role for viewing violations.
+1. Azure CLI
+    Download: https://learn.microsoft.com/cli/azure/install-azure-cli
+2. Azure Developer CLI (`azd`)
+    Download: https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd
+3. PowerShell 7
+    Download: https://learn.microsoft.com/powershell/scripting/install/installing-powershell
+4. Visual Studio Code
+    Download: https://code.visualstudio.com/download
 
-- **Feedback System (Optional)**: Allow users to rate AI responses (thumbs up/down) and provide contextual comments on negative feedback. Includes user and admin dashboards, governed by an optional `FeedbackAdmin` role.
+Shell guidance:
 
-- **Bing Web Search (Optional)**: Augment AI responses with live Bing search results, providing up-to-date information. Configurable via Admin Settings.
+- This quick-start section uses PowerShell examples.
+- Windows users can run the commands in PowerShell.
+- Linux and macOS users can run the PowerShell scripts by using PowerShell 7 with `pwsh`.
+- If you prefer bash for the surrounding shell commands, use the shell-specific examples in [deployers/bicep/README.md](./deployers/bicep/README.md).
 
-- **Image Generation (Optional)**: Enable on-demand image creation using Azure OpenAI's DALL-E models, controlled via Admin Settings.
+Minimum access and setup:
 
-- **Video Extraction (Optional)**: Utilize Azure Video Indexer to transcribe speech and perform Optical Character Recognition (OCR) on video frames. Segments are timestamp-chunked for precise retrieval and enhanced citations linking back to the video timecode.
+- An Azure subscription where you have Owner or Contributor access for deployment.
+- Permission to create an Entra application registration, or coordination with an Entra admin who can run that step for you.
+- Access to Azure Container Registry Tasks so `azd up` can build the application image in ACR.
 
-- **Audio Extraction (Optional)**: Leverage Azure Speech Service to transcribe audio files into timestamped text chunks, making audio content searchable and enabling enhanced citations linked to audio timecodes.
+### Pre-Configuration:
 
-- **Document Classification (Optional)**: Admins define custom classification types and associated colors. Users tag uploaded documents with these labels, which flow through to AI conversations, providing lineage and insight into data sensitivity or type.
+The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenant. 
 
-- **Enhanced Citation (Optional)**: Store processed, chunked files in Azure Storage (organized into user- and document-scoped folders). Display interactive citations in the UI—showing page numbers or timestamps—that link directly to the source document preview.
+#### Create the application registration:
 
-- **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
+```powershell
+cd ./deployers
+```
 
-- **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
+Define your application name and your environment in PowerShell:
 
-- **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
+```powershell
+$appName = "simplechat"
+$environment = "dev"
+```
 
-- **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
+If you type `appName = "simplechat"` in PowerShell, PowerShell treats `appName` as a command name. PowerShell variables must start with `$`.
 
-- **Backend Services**:
+This main README uses PowerShell examples consistently. Linux and macOS users should run the same script with `pwsh`. If you prefer bash for the surrounding shell commands, use the shell-specific examples in [deployers/bicep/README.md](./deployers/bicep/README.md).
 
-  -   **Azure Cosmos DB**: Stores conversations, document metadata, user/group information, settings, and optionally archived chats and feedback.
-  -   **Azure AI Search**: Powers efficient hybrid search and retrieval over personal and group documents.
-  -   **Azure AI Document Intelligence**: Extracts text, layout, and structured data from PDFs, Office files, images, and more during ingestion.
-  -   **Azure Cache for Redis**: (Optional) Provides a distributed cache for session data, enabling seamless scaling and improved reliability.
+The following script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.  
 
-- **Supported File Types**:
+> [!TIP]
+>
+> The web service name may be overriden with the `-AppServceName` parameter. 
 
-  -   Text: `txt`, `md`, `html`, `json`
+> [!TIP]
+>
+> A different expiration date for the secret which defaults to 180 days with the `-SecretExpirationDays` parameter.
 
-  *   Documents: `pdf`, `docx`, `pptx`, `xlsx`, `xls`, `csv`
-  *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif` (processed via Document Intelligence OCR)
-  *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm` (requires Video Indexer)
-  *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a` (requires Speech Service)
+```powershell
+.\Initialize-EntraApplication.ps1 -AppName $appName -Environment $environment -AppRolesJsonPath "./azurecli/appRegistrationRoles.json"
+```
 
-## Architecture-diagram
+Linux and macOS example:
+
+```bash
+pwsh ./Initialize-EntraApplication.ps1 -AppName simplechat -Environment dev -AppRolesJsonPath ./azurecli/appRegistrationRoles.json
+```
+
+> [!NOTE]
+>
+> Be sure to save this information as it will not be available after the window is closed.*
+
+```========================================
+App Registration Created Successfully!
+Application Name:       <registered application name>
+Client ID:              <clientID>
+Tenant ID:              <tenantID>
+Service Principal ID:   <servicePrincipalId>
+Client Secret:          <clientSecret>
+Secret Expiration:      <yyyy-mm-dd>
+```
+
+In addition, the script will note additional steps that must be taken for the app registration step to be completed.
+
+1.  Grant Admin Consent for API Permissions:
+
+    - Navigate to Azure Portal > Entra ID > App registrations
+    - Find app: *\<registered application name\>*
+    - Go to API permissions
+    - Click 'Grant admin consent for [Tenant]'
+
+2.  Assign Users/Groups to Enterprise Application:
+    - Navigate to Azure Portal > Entra ID > Enterprise applications
+    - Find app: *\<registered application name\>*
+    - Go to Users and groups
+    - Add user/group assignments with appropriate app roles
+
+3.  Store the Client Secret Securely:
+    - Save the client secret in Azure Key Vault or secure credential store
+    - The secret value is shown above and will not be displayed again
+
+#### Configure AZD Environment
+
+Using PowerShell in Visual Studio Code
+
+```powershell
+cd ./deployers
+```
+
+If you work with other Azure clouds, you may need to update your cloud like `azd config set cloud.name AzureUSGovernment` - more information here - [Use Azure Developer CLI in sovereign clouds | Microsoft Learn](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/sovereign-clouds)
+
+```powershell
+azd config set cloud.name AzureCloud
+```
+
+This will open a browser window that the user with Owner level permissions to the target subscription will need to authenticate with.
+
+```powershell
+azd auth login
+```
+
+Initialize the AZD project in the current folder before creating or selecting the environment.
+
+```powershell
+azd init
+```
+
+Use the same value for `$environment` that was used in the application registration.
+
+```powershell
+azd env new $environment
+```
+
+Select the new environment
+
+```powershell
+azd env select $environment
+```
+
+This step will begin the deployment process.  
+
+```powershell
+azd up 
+```
+
+## Deployment Runtime Notes
+
+### Container
+> [!NOTE]
+>
+> The container deployments of Simple Chat does NOT need this step, when you run `azd up` for new installs or `azd deploy` for updates, the container is configured to run with gunicorn.
+
+- The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are **container-based** App Service deployments.
+- For those container deployments, do **not** set an App Service Stack Settings Startup command. 
+    - The container already starts Gunicorn through `application/single_app/Dockerfile`.
+- If your environment needs private or self-signed certificate authorities for outbound TLS checks to internal services, add them during image build using [docs/how-to/docker_customization.md](docs/how-to/docker_customization.md).
+
+### Native Python
+- For **native Python App Service** deployments, deploy the `application/single_app` folder and set the App Service Startup command explicitly.
+
+Native Python deployment references:
+
+- [Manual deployment notes](./docs/reference/deploy/manual_deploy.md)
+- [Manual setup steps](./docs/setup_instructions_manual.md#installing-and-deploying-the-application-code)
+- [VS Code deployment steps](./docs/setup_instructions_manual.md#deploying-via-vs-code-recommended-for-simplicity)
+- [Azure CLI ZIP deploy steps](./docs/setup_instructions_manual.md#deploying-via-azure-cli-zip-deploy)
+
+To set the Startup command in Azure Portal:
+
+1. Go to the App Service.
+2. Open **Settings** > **Configuration** > **Stack Settings**.
+3. Enter the following Startup command.
+4. Save the change, then stop and start the app.
+
+Use this Startup command for native Python App Service deployments:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```
+
+> [!IMPORTANT]
+>
+> Running Simple Chat with gunicorn improves the experience with better request handling and concurrency.
+
+## Upgrade Paths
+
+- For a concise upgrade decision guide, see [docs/how-to/upgrade_paths.md](docs/how-to/upgrade_paths.md).
+
+### Container
+- **Container-based upgrades** should usually start with `azd deploy` for code-only changes. Use `azd up` only when the release also changes infrastructure.
+- If your App Service is already configured to pull from ACR and you want image-only rollouts, use the ACR/image refresh approach described in [docs/how-to/upgrade_paths.md](docs/how-to/upgrade_paths.md) instead of treating every release as a full reprovisioning event.
+
+### Native Python
+- **Native Python App Service upgrades** should reuse the manual deployment path, validate the Startup command above, and deploy the `application/single_app` folder with VS Code or Azure CLI ZIP deploy.
+- [Manual native Python upgrade guide](./docs/setup_instructions_manual.md#upgrading-the-application)
+- [Native Python ZIP deploy reference](./docs/setup_instructions_manual.md#deploying-via-azure-cli-zip-deploy)
+- [Native Python deployment notes](./docs/reference/deploy/manual_deploy.md)
+
+## Architecture
 
 ![Architecture](./docs/images/architecture.png)
 
-## Demos
+## Features
 
-<a href="#simple-chat" style="text-decoration: none;">Return to top</a>
+- **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT and Thinking models.
+- **RAG with Hybrid Search**: Upload documents and perform hybrid searches (vector + keyword), retrieving relevant information from your files to augment AI responses.
+- **Document Management**: Upload, store, and manage multiple versions of documents—personal ("Your Workspace") or group-level ("Group Workspaces").
+- **Group Management**: Create and join groups to share access to group-specific documents, enabling collaboration with Role-Based Access Control (RBAC).
+- **Ephemeral (Single-Convo) Documents**: Upload temporary documents available only during the current chat session, without persistent storage in Azure AI Search.
+- **Conversation Archiving (Optional)**: Retain copies of user conversations—even after deletion from the UI—in a dedicated Cosmos DB container for audit, compliance, or legal requirements.
+- **Content Safety (Optional)**: Integrate Azure AI Content Safety to review every user message *before* it reaches AI models, search indexes, or image generation services. Enforce custom filters and compliance policies, with an optional `SafetyAdmin` role for viewing violations.
+- **Feedback System (Optional)**: Allow users to rate AI responses (thumbs up/down) and provide contextual comments on negative feedback. Includes user and admin dashboards, governed by an optional `FeedbackAdmin` role.
+- **Bing Web Search (Optional)**: Augment AI responses with live Bing search results, providing up-to-date information. Configurable via Admin Settings.
+- **Image Generation (Optional)**: Enable on-demand image creation using Azure OpenAI's DALL-E models, controlled via Admin Settings.
+- **Video Extraction (Optional)**: Utilize Azure Video Indexer to transcribe speech and perform Optical Character Recognition (OCR) on video frames. Segments are timestamp-chunked for precise retrieval and enhanced citations linking back to the video timecode.
+- **Audio Extraction (Optional)**: Leverage Azure Speech Service to transcribe audio files into timestamped text chunks, making audio content searchable and enabling enhanced citations linked to audio timecodes.
+- **Document Classification (Optional)**: Admins define custom classification types and associated colors. Users tag uploaded documents with these labels, which flow through to AI conversations, providing lineage and insight into data sensitivity or type.
+- **Enhanced Citation (Optional)**: Store processed, chunked files in Azure Storage (organized into user- and document-scoped folders). Display interactive citations in the UI—showing page numbers or timestamps—that link directly to the source document preview.
+- **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
+- **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
+- **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
+- **SQL Database Agents (Optional)**: Connect agents to Azure SQL or other SQL databases through configurable SQL Query and SQL Schema plugins. Database schema is automatically discovered and injected into agent instructions at load time, enabling agents to answer natural language questions by generating and executing SQL queries without requiring users to know table or column names.
+- **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
+- **Supported File Types**:
 
-### Upload document and review metadata
-
-![Upload Document Demo](./docs/images/UploadDocumentDemo.gif)
-
-### Classify document and chat with document
-
-![Chat with Searching your Documents Demo](./docs/images/ChatwithSearchingYourDocsDemo.gif)
+  -   **Text**: `txt`, `md`, `html`, `json`, `xml`, `yaml`, `yml`, `log`
+  -   **Documents**: `pdf`, `doc`, `docm`, `docx`, `pptx`, `xlsx`, `xlsm`, `xls`, `csv`
+  -   **Images**: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif`
+  -   **Video**: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `flv`, `mxf`, `gxf`, `ts`, `ps`, `3gp`, `3gpp`, `mpg`, `asf`, `m4v`, `isma`, `ismv`, `dvr-ms`
+  -   **Audio**: `wav`, `m4a`

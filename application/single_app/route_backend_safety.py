@@ -9,7 +9,7 @@ def register_route_backend_safety(app):
     @app.route('/api/safety/logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
+    @safety_violation_admin_required
     @enabled_required("enable_content_safety")
     def get_safety_logs():
         """
@@ -96,7 +96,7 @@ def register_route_backend_safety(app):
     @app.route('/api/safety/logs/<string:log_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
+    @safety_violation_admin_required
     @enabled_required("enable_content_safety")
     def update_safety_log(log_id):
         """

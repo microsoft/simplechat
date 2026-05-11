@@ -11,9 +11,13 @@ import uuid
 from datetime import datetime
 from azure.cosmos import exceptions
 from flask import current_app
+from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
+from functions_settings import get_user_settings, update_user_settings
+from functions_debug import debug_print
+from config import cosmos_personal_actions_container
 import logging
 
-def get_personal_actions(user_id):
+def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
     """
     Fetch all personal actions/plugins for a user.
     
@@ -24,8 +28,6 @@ def get_personal_actions(user_id):
         list: List of action/plugin dictionaries
     """
     try:
-        from config import cosmos_personal_actions_container
-        
         query = "SELECT * FROM c WHERE c.user_id = @user_id"
         parameters = [{"name": "@user_id", "value": user_id}]
         
@@ -35,21 +37,21 @@ def get_personal_actions(user_id):
             partition_key=user_id
         ))
         
-        # Remove Cosmos metadata for cleaner response
+        # Remove Cosmos metadata for cleaner response and resolve Key Vault references
         cleaned_actions = []
         for action in actions:
             cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
+            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
             cleaned_actions.append(cleaned_action)
-            
         return cleaned_actions
         
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as e:
-        current_app.logger.error(f"Error fetching personal actions for user {user_id}: {e}")
+        debug_print(f"Error fetching personal actions for user {user_id}: {e}")
         return []
 
-def get_personal_action(user_id, action_id):
+def get_personal_action(user_id, action_id, return_type=SecretReturnType.TRIGGER):
     """
     Fetch a specific personal action/plugin.
     
@@ -61,9 +63,6 @@ def get_personal_action(user_id, action_id):
         dict: Action dictionary or None if not found
     """
     try:
-        from config import cosmos_personal_actions_container
-        
-        # Try to find by ID first
         try:
             action = cosmos_personal_actions_container.read_item(
                 item=action_id,
@@ -87,12 +86,13 @@ def get_personal_action(user_id, action_id):
                 return None
             action = actions[0]
         
-        # Remove Cosmos metadata
+        # Remove Cosmos metadata and resolve Key Vault references
         cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
+        cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
         return cleaned_action
         
     except Exception as e:
-        current_app.logger.error(f"Error fetching action {action_id} for user {user_id}: {e}")
+        debug_print(f"Error fetching action {action_id} for user {user_id}: {e}")
         return None
 
 def save_personal_action(user_id, action_data):
@@ -107,23 +107,42 @@ def save_personal_action(user_id, action_data):
         dict: Saved action data with ID
     """
     try:
-        from config import cosmos_personal_actions_container
-        
         # Check if an action with this name already exists
         existing_action = None
+        if action_data.get('id'):
+            existing_action = get_personal_action(
+                user_id,
+                action_data['id'],
+                return_type=SecretReturnType.NAME,
+            )
         if 'name' in action_data and action_data['name']:
-            existing_action = get_personal_action(user_id, action_data['name'])
+            existing_action = existing_action or get_personal_action(
+                user_id,
+                action_data['name'],
+                return_type=SecretReturnType.NAME,
+            )
         
         # Preserve existing ID if updating, or generate new ID if creating
+        now = datetime.utcnow().isoformat()
         if existing_action:
-            # Update existing action - preserve the original ID
+            # Update existing action - preserve the original ID and creation tracking
             action_data['id'] = existing_action['id']
+            action_data['created_by'] = existing_action.get('created_by', user_id)
+            action_data['created_at'] = existing_action.get('created_at', now)
         elif 'id' not in action_data or not action_data['id']:
             # New action - generate UUID for ID
             action_data['id'] = str(uuid.uuid4())
-            
+            action_data['created_by'] = user_id
+            action_data['created_at'] = now
+        else:
+            # Has an ID but no existing action found - treat as new
+            action_data['created_by'] = user_id
+            action_data['created_at'] = now
+        action_data['modified_by'] = user_id
+        action_data['modified_at'] = now
+
         action_data['user_id'] = user_id
-        action_data['last_updated'] = datetime.utcnow().isoformat()
+        action_data['last_updated'] = now
         
         # Validate required fields
         required_fields = ['name', 'displayName', 'type', 'description']
@@ -146,14 +165,20 @@ def save_personal_action(user_id, action_data):
         elif 'type' not in action_data['auth']:
             action_data['auth']['type'] = 'identity'
         
+        # Store secrets in Key Vault before upsert
+        action_data = keyvault_plugin_save_helper(
+            action_data,
+            scope_value=user_id,
+            scope="user",
+            existing_plugin=existing_action,
+        )
         result = cosmos_personal_actions_container.upsert_item(body=action_data)
-        
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
         return cleaned_result
         
     except Exception as e:
-        current_app.logger.error(f"Error saving action for user {user_id}: {e}")
+        debug_print(f"Error saving action for user {user_id}: {e}")
         raise
 
 def delete_personal_action(user_id, action_id):
@@ -168,13 +193,13 @@ def delete_personal_action(user_id, action_id):
         bool: True if deleted, False if not found
     """
     try:
-        from config import cosmos_personal_actions_container
-        
         # Try to find the action first to get the correct ID
-        action = get_personal_action(user_id, action_id)
+        action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
         if not action:
             return False
             
+        # Delete secrets from Key Vault before deleting the action
+        keyvault_plugin_delete_helper(action, scope_value=user_id, scope="user")
         cosmos_personal_actions_container.delete_item(
             item=action['id'],
             partition_key=user_id
@@ -184,7 +209,7 @@ def delete_personal_action(user_id, action_id):
     except exceptions.CosmosResourceNotFoundError:
         return False
     except Exception as e:
-        current_app.logger.error(f"Error deleting action {action_id} for user {user_id}: {e}")
+        debug_print(f"Error deleting action {action_id} for user {user_id}: {e}")
         raise
 
 def ensure_migration_complete(user_id):
@@ -199,8 +224,6 @@ def ensure_migration_complete(user_id):
         int: Number of actions migrated (0 if already migrated)
     """
     try:
-        from functions_settings import get_user_settings, update_user_settings
-        
         user_settings = get_user_settings(user_id)
         plugins = user_settings.get('settings', {}).get('plugins', [])
         
@@ -217,13 +240,13 @@ def ensure_migration_complete(user_id):
                 settings_to_update = user_settings.get('settings', {})
                 settings_to_update['plugins'] = []  # Set to empty array instead of removing
                 update_user_settings(user_id, settings_to_update)
-                current_app.logger.info(f"Cleaned up legacy plugin data for user {user_id} (already migrated)")
+                debug_print(f"Cleaned up legacy plugin data for user {user_id} (already migrated)")
                 return 0
         
         return 0
         
     except Exception as e:
-        current_app.logger.error(f"Error ensuring action migration complete for user {user_id}: {e}")
+        debug_print(f"Error ensuring action migration complete for user {user_id}: {e}")
         return 0
 
 def migrate_actions_from_user_settings(user_id):
@@ -237,8 +260,6 @@ def migrate_actions_from_user_settings(user_id):
         int: Number of actions migrated
     """
     try:
-        from functions_settings import get_user_settings, update_user_settings
-        
         user_settings = get_user_settings(user_id)
         plugins = user_settings.get('settings', {}).get('plugins', [])
         
@@ -251,32 +272,31 @@ def migrate_actions_from_user_settings(user_id):
             try:
                 # Skip if plugin already exists in personal container
                 if plugin.get('name') in existing_action_names:
-                    current_app.logger.info(f"Skipping migration of plugin '{plugin.get('name')}' - already exists")
+                    debug_print(f"Skipping migration of plugin '{plugin.get('name')}' - already exists")
                     continue
-                
                 # Ensure plugin has an ID (generate GUID if missing)
                 if 'id' not in plugin or not plugin['id']:
                     plugin['id'] = str(uuid.uuid4())
-                    
+                # Store secrets in Key Vault before migration
+                plugin = keyvault_plugin_save_helper(plugin, scope_value=user_id, scope="user")
                 save_personal_action(user_id, plugin)
                 migrated_count += 1
-                
             except Exception as e:
-                current_app.logger.error(f"Error migrating plugin {plugin.get('name', 'unknown')} for user {user_id}: {e}")
+                debug_print(f"Error migrating plugin {plugin.get('name', 'unknown')} for user {user_id}: {e}")
                 
         # Always remove plugins from user settings after processing (even if no new ones migrated)
         settings_to_update = user_settings.get('settings', {})
         settings_to_update['plugins'] = []  # Set to empty array instead of removing
         update_user_settings(user_id, settings_to_update)
             
-        current_app.logger.info(f"Migrated {migrated_count} new actions for user {user_id}, cleaned up legacy data")
+        debug_print(f"Migrated {migrated_count} new actions for user {user_id}, cleaned up legacy data")
         return migrated_count
         
     except Exception as e:
-        current_app.logger.error(f"Error during action migration for user {user_id}: {e}")
+        debug_print(f"Error during action migration for user {user_id}: {e}")
         return 0
 
-def get_actions_by_names(user_id, action_names):
+def get_actions_by_names(user_id, action_names, return_type=SecretReturnType.TRIGGER):
     """
     Get multiple actions by their names.
     
@@ -288,8 +308,6 @@ def get_actions_by_names(user_id, action_names):
         list: List of action dictionaries
     """
     try:
-        from config import cosmos_personal_actions_container
-        
         if not action_names:
             return []
             
@@ -311,15 +329,16 @@ def get_actions_by_names(user_id, action_names):
         cleaned_actions = []
         for action in actions:
             cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
+            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
             cleaned_actions.append(cleaned_action)
             
         return cleaned_actions
         
     except Exception as e:
-        current_app.logger.error(f"Error fetching actions by names for user {user_id}: {e}")
+        debug_print(f"Error fetching actions by names for user {user_id}: {e}")
         return []
 
-def get_actions_by_type(user_id, action_type):
+def get_actions_by_type(user_id, action_type, return_type=SecretReturnType.TRIGGER):
     """
     Get all actions of a specific type for a user.
     
@@ -331,8 +350,6 @@ def get_actions_by_type(user_id, action_type):
         list: List of action dictionaries
     """
     try:
-        from config import cosmos_personal_actions_container
-        
         query = "SELECT * FROM c WHERE c.user_id = @user_id AND c.type = @type"
         parameters = [
             {"name": "@user_id", "value": user_id},
@@ -349,10 +366,11 @@ def get_actions_by_type(user_id, action_type):
         cleaned_actions = []
         for action in actions:
             cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
+            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
             cleaned_actions.append(cleaned_action)
             
         return cleaned_actions
         
     except Exception as e:
-        current_app.logger.error(f"Error fetching actions by type {action_type} for user {user_id}: {e}")
+        debug_print(f"Error fetching actions by type {action_type} for user {user_id}: {e}")
         return []

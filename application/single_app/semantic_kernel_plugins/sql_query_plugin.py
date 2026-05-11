@@ -176,11 +176,12 @@ class SQLQueryPlugin(BasePlugin):
         user_desc = self._metadata.get("description", f"SQL Query plugin for {self.database_type} database")
         api_desc = (
             "This plugin executes SQL queries against databases and returns structured results. "
-            "It supports SQL Server, PostgreSQL, MySQL, and SQLite databases. The plugin includes "
-            "query sanitization, validation, and security features including parameterized queries, "
-            "read-only mode, result limiting, and timeout protection. It automatically cleans queries "
-            "from unnecessary characters and formats results for easy consumption by AI agents. "
-            "The plugin handles database-specific SQL variations and connection management."
+            "It supports SQL Server, PostgreSQL, MySQL, and SQLite databases. "
+            "WORKFLOW: Before executing any query, you MUST first use the SQL Schema plugin to discover "
+            "available tables, column names, data types, and relationships. Then construct valid SQL queries "
+            "using the discovered schema with correct fully-qualified table names (e.g., dbo.TableName). "
+            "The plugin includes query sanitization, validation, and security features including "
+            "parameterized queries, read-only mode, result limiting, and timeout protection."
         )
         full_desc = f"{user_desc}\n\n{api_desc}"
         
@@ -215,14 +216,24 @@ class SQLQueryPlugin(BasePlugin):
                         {"name": "query", "type": "str", "description": "The SQL query to validate", "required": True}
                     ],
                     "returns": {"type": "ResultWithMetadata", "description": "Validation result with any issues found"}
+                },
+                {
+                    "name": "query_database",
+                    "description": "Execute a SQL query to answer a question about the database",
+                    "parameters": [
+                        {"name": "question", "type": "str", "description": "The natural language question being answered", "required": True},
+                        {"name": "query", "type": "str", "description": "The SQL query to execute", "required": True},
+                        {"name": "max_rows", "type": "int", "description": "Maximum number of rows to return (overrides default)", "required": False}
+                    ],
+                    "returns": {"type": "ResultWithMetadata", "description": "Query results with columns, data, and original question context"}
                 }
             ]
         }
 
     def get_functions(self) -> List[str]:
-        return ["execute_query", "execute_scalar", "validate_query"]
+        return ["execute_query", "execute_scalar", "validate_query", "query_database"]
 
-    @kernel_function(description="Execute a SQL query and return results")
+    @kernel_function(description="Execute a SQL query against the database and return results as structured data with columns and rows. If the database schema is provided in your instructions, use those exact table and column names to construct valid SQL queries. If no schema is available in your instructions, call get_database_schema or get_table_list from the SQL Schema plugin to discover tables first. Always use fully qualified table names (e.g., dbo.TableName) when available. Results are limited by max_rows to prevent excessive data transfer.")
     @plugin_function_logger("SQLQueryPlugin")
     def execute_query(
         self, 
@@ -301,7 +312,7 @@ class SQLQueryPlugin(BasePlugin):
             }
             return ResultWithMetadata(error_result, self.metadata)
 
-    @kernel_function(description="Execute a query that returns a single value")
+    @kernel_function(description="Execute a query that returns a single scalar value (e.g., COUNT, SUM, MAX, MIN). If the database schema is provided in your instructions, use it directly to construct the query. Otherwise, call get_database_schema from the SQL Schema plugin first to discover table and column names.")
     @plugin_function_logger("SQLQueryPlugin")
     def execute_scalar(
         self, 
@@ -360,7 +371,7 @@ class SQLQueryPlugin(BasePlugin):
             }
             return ResultWithMetadata(error_result, self.metadata)
 
-    @kernel_function(description="Validate a SQL query without executing it")
+    @kernel_function(description="Validate a SQL query for syntax correctness and safety without executing it. Use this to pre-check complex queries before execution, especially when constructing multi-table JOINs or complex WHERE clauses.")
     @plugin_function_logger("SQLQueryPlugin")
     def validate_query(self, query: str) -> ResultWithMetadata:
         """Validate a SQL query without executing it"""
@@ -377,6 +388,80 @@ class SQLQueryPlugin(BasePlugin):
                 "is_valid": False,
                 "issues": [str(e)],
                 "query": query
+            }
+            return ResultWithMetadata(error_result, self.metadata)
+
+    @kernel_function(description="Execute a SQL query to answer a question about the database. This is a convenience function that executes a SQL query and returns results along with the original question for context. If the database schema is provided in your instructions, use those table and column names directly to construct the query. Otherwise, first call get_database_schema from the SQL Schema plugin to discover the schema. Then construct the appropriate SQL query and provide it along with the original question.")
+    @plugin_function_logger("SQLQueryPlugin")
+    def query_database(
+        self,
+        question: str,
+        query: str,
+        max_rows: Optional[int] = None
+    ) -> ResultWithMetadata:
+        """Execute a SQL query to answer a specific question about the database"""
+        try:
+            # Clean and validate the query
+            cleaned_query = self._clean_query(query)
+            validation_result = self._validate_query(cleaned_query)
+            
+            if not validation_result["is_valid"]:
+                raise ValueError(f"Invalid query: {validation_result['issues']}")
+            
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # Set query timeout
+            if hasattr(cursor, 'settimeout'):
+                cursor.settimeout(self.timeout)
+            
+            cursor.execute(cleaned_query)
+            
+            # Get column names
+            if hasattr(cursor, 'description') and cursor.description:
+                columns = [desc[0] for desc in cursor.description]
+            else:
+                columns = []
+            
+            # Fetch results with row limit
+            effective_max_rows = max_rows or self.max_rows
+            
+            if self.database_type == 'sqlite':
+                rows = cursor.fetchall()
+                if len(rows) > effective_max_rows:
+                    rows = rows[:effective_max_rows]
+                results = [dict(row) for row in rows]
+            else:
+                rows = cursor.fetchmany(effective_max_rows)
+                results = []
+                for row in rows:
+                    if isinstance(row, (list, tuple)):
+                        results.append(dict(zip(columns, row)))
+                    else:
+                        results.append(row)
+            
+            # Prepare result data with question context
+            result_data = {
+                "question": question,
+                "columns": columns,
+                "data": results,
+                "row_count": len(results),
+                "is_truncated": len(results) >= effective_max_rows,
+                "query": cleaned_query
+            }
+            
+            log_event(f"[SQLQueryPlugin] query_database executed successfully, returned {len(results)} rows", extra={"question": question})
+            return ResultWithMetadata(result_data, self.metadata)
+            
+        except Exception as e:
+            log_event(f"[SQLQueryPlugin] Error in query_database: {e}", extra={"question": question})
+            error_result = {
+                "error": str(e),
+                "question": question,
+                "query": query,
+                "columns": [],
+                "data": [],
+                "row_count": 0
             }
             return ResultWithMetadata(error_result, self.metadata)
 
@@ -492,5 +577,5 @@ class SQLQueryPlugin(BasePlugin):
         if hasattr(self, '_connection') and self._connection:
             try:
                 self._connection.close()
-            except:
+            except Exception as ex:
                 pass

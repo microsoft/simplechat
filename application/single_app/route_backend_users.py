@@ -2,8 +2,15 @@
 
 from config import *
 from functions_authentication import *
+from functions_group import update_active_group_for_user
+from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
+
+
+def _escape_graph_odata_literal(value):
+    return str(value or "").replace("'", "''")
+
 
 def register_route_backend_users(app):
     """
@@ -20,16 +27,13 @@ def register_route_backend_users(app):
         if not query:
             return jsonify([]), 200
 
+        safe_query = _escape_graph_odata_literal(query)
+
         token = get_valid_access_token()
         if not token:
             return jsonify({"error": "Could not acquire access token"}), 401
 
-        if AZURE_ENVIRONMENT == "usgovernment":
-            user_endpoint = "https://graph.microsoft.us/v1.0/users"
-        elif AZURE_ENVIRONMENT == "custom":
-            user_endpoint = CUSTOM_GRAPH_URL_VALUE
-        else:
-            user_endpoint = "https://graph.microsoft.com/v1.0/users"
+        user_endpoint = get_graph_endpoint("/users")
             
         headers = {
             "Authorization": f"Bearer {token}",
@@ -37,9 +41,9 @@ def register_route_backend_users(app):
         }
 
         filter_str = (
-            f"startswith(displayName, '{query}') "
-            f"or startswith(mail, '{query}') "
-            f"or startswith(userPrincipalName, '{query}')"
+            f"startswith(displayName, '{safe_query}') "
+            f"or startswith(mail, '{safe_query}') "
+            f"or startswith(userPrincipalName, '{safe_query}')"
         )
         params = {
             "$filter": filter_str,
@@ -91,7 +95,7 @@ def register_route_backend_users(app):
                 item=user_id,
                 partition_key=user_id
             )
-            print(f"[DEBUG] /api/user/info/{user_id} → doc: {user_doc}", flush=True)
+            print(f"/api/user/info/{user_id} → doc: {user_doc}", flush=True)
             return jsonify({
                 "user_id": user_id,
                 "email": user_doc.get("email", ""),
@@ -147,17 +151,75 @@ def register_route_backend_users(app):
 
                 # Basic validation could go here (e.g., check allowed keys, value types)
                 # Example: Allowed keys
-                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 'navLayout', 'profileImage', 'enable_agents'} # Add others as needed
+                allowed_keys = {
+                    'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 
+                    'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 
+                    'navLayout', 'profileImage', 'enable_agents', 'streamingEnabled', 'reasoningEffortSettings',
+                    'preferredModelId', 'dismissedMultiEndpointNotice',
+                    # Public directory and workspace settings
+                    'publicDirectorySavedLists', 'publicDirectorySettings', 'activePublicWorkspaceOid',
+                    # Chat UI settings
+                    'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
+                    # Microphone permission settings
+                    'microphonePermissionState',
+                    # Text-to-speech settings
+                    'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
+                    # Tutorial visibility settings
+                    'showTutorialButtons',
+                    # Metrics and other settings
+                    'metrics', 'lastUpdated'
+                } # Add others as needed
                 invalid_keys = set(settings_to_update.keys()) - allowed_keys
                 if invalid_keys:
                     print(f"Warning: Received invalid settings keys: {invalid_keys}")
-                    # Decide whether to ignore them or return an error
-                    # To ignore: settings_to_update = {k: v for k, v in settings_to_update.items() if k in allowed_keys}
-                    # To error: return jsonify({"error": f"Invalid settings keys provided: {', '.join(invalid_keys)}"}), 400
+                    settings_to_update = {
+                        key: value
+                        for key, value in settings_to_update.items()
+                        if key in allowed_keys
+                    }
+                    if not settings_to_update:
+                        return jsonify({"error": "No valid settings keys provided"}), 400
 
+
+                settings_to_update = dict(settings_to_update)
+                active_group_updated = False
+                active_public_workspace_updated = False
+
+                if "activeGroupOid" in settings_to_update:
+                    requested_active_group = str(settings_to_update.pop("activeGroupOid") or "").strip()
+                    if requested_active_group:
+                        try:
+                            update_active_group_for_user(requested_active_group, user_id=user_id)
+                            active_group_updated = True
+                        except LookupError:
+                            return jsonify({"error": "Group not found"}), 404
+                        except PermissionError:
+                            return jsonify({"error": "You are not a member of this group"}), 403
+                    else:
+                        settings_to_update["activeGroupOid"] = requested_active_group
+
+                if "activePublicWorkspaceOid" in settings_to_update:
+                    requested_active_public_workspace = str(
+                        settings_to_update.pop("activePublicWorkspaceOid") or ""
+                    ).strip()
+                    if requested_active_public_workspace:
+                        try:
+                            update_active_public_workspace_for_user(
+                                user_id,
+                                requested_active_public_workspace,
+                            )
+                            active_public_workspace_updated = True
+                        except LookupError:
+                            return jsonify({"error": "Workspace not found"}), 404
+                    else:
+                        settings_to_update["activePublicWorkspaceOid"] = requested_active_public_workspace
 
                 # Call the updated function - it handles merging and timestamp
-                success = update_user_settings(user_id, settings_to_update)
+                success = True
+                if settings_to_update:
+                    success = update_user_settings(user_id, settings_to_update)
+                elif active_group_updated or active_public_workspace_updated:
+                    success = True
 
                 if success:
                     return jsonify({"message": "User settings updated successfully"}), 200
