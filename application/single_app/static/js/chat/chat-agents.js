@@ -28,6 +28,10 @@ let pendingScopeNarrowingAgent = null;
 let scopeClearActionInitialized = false;
 let dropdownHideListenerInitialized = false;
 
+function hasAgentInteractionControls() {
+    return Boolean(enableAgentsBtn && agentSelectContainer && agentSelect);
+}
+
 function initializeAgentSelector() {
     if (agentSelectorController || !agentSelect) {
         return agentSelectorController;
@@ -416,46 +420,49 @@ export function areAgentsEnabled() {
 }
 
 export async function initializeAgentInteractions() {
-    if (enableAgentsBtn && agentSelectContainer) {
-        initializeAgentSelector();
-        initializeScopeChangeListener();
-        initializeDropdownHideListener();
-        ensureScopeClearAction();
+    if (!hasAgentInteractionControls()) {
+        return;
+    }
 
-        // On load, sync UI with enable_agents setting
-        const enableAgents = await getUserSetting('enable_agents');
-        if (enableAgents) {
-            enableAgentsBtn.classList.add('active');
+    initializeAgentSelector();
+    initializeScopeChangeListener();
+    initializeDropdownHideListener();
+    ensureScopeClearAction();
+
+    // On load, sync UI with enable_agents setting
+    const enableAgents = await getUserSetting('enable_agents');
+    if (enableAgents) {
+        enableAgentsBtn.classList.add('active');
+        agentSelectContainer.style.display = "block";
+        if (modelSelectContainer) modelSelectContainer.style.display = "none";
+        await populateAgentDropdown();
+    } else {
+        enableAgentsBtn.classList.remove('active');
+        agentSelectContainer.style.display = "none";
+        if (modelSelectContainer) modelSelectContainer.style.display = "block";
+    }
+
+    // Button click handler
+    enableAgentsBtn.addEventListener("click", async function() {
+        const isActive = this.classList.toggle("active");
+        await setUserSetting('enable_agents', isActive);
+        if (isActive) {
             agentSelectContainer.style.display = "block";
             if (modelSelectContainer) modelSelectContainer.style.display = "none";
+            // Populate agent dropdown
             await populateAgentDropdown();
         } else {
-            enableAgentsBtn.classList.remove('active');
             agentSelectContainer.style.display = "none";
             if (modelSelectContainer) modelSelectContainer.style.display = "block";
         }
-
-        // Button click handler
-        enableAgentsBtn.addEventListener("click", async function() {
-            const isActive = this.classList.toggle("active");
-            await setUserSetting('enable_agents', isActive);
-            if (isActive) {
-                agentSelectContainer.style.display = "block";
-                if (modelSelectContainer) modelSelectContainer.style.display = "none";
-                // Populate agent dropdown
-                await populateAgentDropdown();
-            } else {
-                agentSelectContainer.style.display = "none";
-                if (modelSelectContainer) modelSelectContainer.style.display = "block";
-            }
-        });
-    } else {
-        if (!enableAgentsBtn) console.error("Agent Init Error: enable-agents-btn not found.");
-        if (!agentSelectContainer) console.error("Agent Init Error: agent-select-container not found.");
-    }
+    });
 }
 
 export async function populateAgentDropdown() {
+    if (!hasAgentInteractionControls()) {
+        return;
+    }
+
     initializeAgentSelector();
     initializeDropdownHideListener();
     ensureScopeClearAction();

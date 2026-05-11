@@ -50,13 +50,16 @@ function checkBrowserSupport() {
  * Initialize speech input functionality
  */
 export function initializeSpeechInput() {
+    if (!window.appSettings?.enable_speech_to_text_input) {
+        return;
+    }
+
     console.log('Initializing speech input...');
     
     const speechBtn = document.getElementById('speech-input-btn');
     
     if (!speechBtn) {
-        console.warn('Speech input button not found in DOM');
-        return; // Speech input not enabled
+        return;
     }
     
     console.log('Speech input button found:', speechBtn);

@@ -269,8 +269,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </style>
 {% endblock %} {% block content %}
 <div class="container">
-  <h2>Group Workspace</h2>
-  <!-- Removed redundant active-group-name heading -->
+  <div class="workspace-hero-card d-none" id="active-group-hero">
+    <div class="row align-items-center g-3">
+      <div class="col-auto">
+        <img class="workspace-hero-logo d-none" id="active-group-hero-logo" alt="Active group logo">
+        <div class="workspace-hero-placeholder" id="active-group-hero-initial">G</div>
+      </div>
+      <div class="col">
+        <div class="small text-uppercase opacity-75">Active Group Workspace</div>
+        <h3 class="mb-1" id="active-group-hero-name">No active group selected</h3>
+        <p class="mb-1 opacity-90"><i class="bi bi-person-circle me-2"></i><strong>Owner:</strong> <span id="active-group-hero-owner">-</span></p>
+        <p class="mb-0 opacity-75" id="active-group-hero-description">Choose an active group to see its workspace profile.</p>
+      </div>
+    </div>
+  </div>
 
   <!-- Group Selector and Role Display -->
   <div class="row mb-3">
@@ -314,21 +326,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <a class="btn btn-sm btn-outline-primary d-none" id="manage-active-group-btn" href="#">
         <i class="bi bi-gear me-1"></i>Manage Group
       </a>
-    </div>
-  </div>
-
-  <div class="workspace-hero-card d-none" id="active-group-hero">
-    <div class="row align-items-center g-3">
-      <div class="col-auto">
-        <img class="workspace-hero-logo d-none" id="active-group-hero-logo" alt="Active group logo">
-        <div class="workspace-hero-placeholder" id="active-group-hero-initial">G</div>
-      </div>
-      <div class="col">
-        <div class="small text-uppercase opacity-75">Active Group Workspace</div>
-        <h3 class="mb-1" id="active-group-hero-name">No active group selected</h3>
-        <p class="mb-1 opacity-90"><i class="bi bi-person-circle me-2"></i><strong>Owner:</strong> <span id="active-group-hero-owner">-</span></p>
-        <p class="mb-0 opacity-75" id="active-group-hero-description">Choose an active group to see its workspace profile.</p>
-      </div>
     </div>
   </div>
 

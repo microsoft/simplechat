@@ -1,12 +1,13 @@
 # test_workspace_branding_hero_and_logo.py
 """
 Functional test for workspace branding hero and logo support.
-Version: 0.241.125
+Version: 0.241.146
 Implemented in: 0.241.125
 
 This test ensures that group and public workspace branding metadata, logo
 endpoints, and hero UI hooks remain wired across the backend routes, manage
-pages, and active workspace pages.
+pages, and active workspace pages. Updated in 0.241.146 to validate that active
+workspace hero cards render before page selectors without redundant headings.
 """
 
 import os
@@ -99,6 +100,16 @@ def read_file(path):
 def assert_required_snippets(content, required_snippets, label):
     missing = [snippet for snippet in required_snippets if snippet not in content]
     assert not missing, f"Missing required {label} snippets: {missing}"
+
+
+def assert_ordered_snippets(content, ordered_snippets, label):
+    """Verify snippets appear in the expected order."""
+    previous_index = -1
+    for snippet in ordered_snippets:
+        current_index = content.find(snippet)
+        assert current_index != -1, f"Missing ordered {label} snippet: {snippet}"
+        assert current_index > previous_index, f"Snippet out of order for {label}: {snippet}"
+        previous_index = current_index
 
 
 def test_workspace_models_and_routes_include_branding_fields():
@@ -219,6 +230,16 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
         ],
         "group workspace template",
     )
+    assert '<h2>Group Workspace</h2>' not in group_workspaces_template
+    assert_ordered_snippets(
+        group_workspaces_template,
+        [
+            '<div class="container">',
+            '<div class="workspace-hero-card d-none" id="active-group-hero">',
+            '<!-- Group Selector and Role Display -->',
+        ],
+        "group workspace hero placement",
+    )
     assert_required_snippets(
         public_workspaces_template,
         [
@@ -226,6 +247,16 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
             'id="manage-active-public-btn"',
         ],
         "public workspace template",
+    )
+    assert '<h2>Public Workspace</h2>' not in public_workspaces_template
+    assert_ordered_snippets(
+        public_workspaces_template,
+        [
+            '<div class="container">',
+            '<div class="workspace-hero-card d-none" id="active-public-hero">',
+            '<div class="row mb-3">',
+        ],
+        "public workspace hero placement",
     )
     assert_required_snippets(
         public_workspace_script,
@@ -240,12 +271,12 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
     print("[pass] Workspace branding UI hooks passed")
 
 
-def test_config_version_is_bumped_for_workspace_branding_changes():
-    """Verify config.py reflects the workspace branding change version."""
+def test_config_version_is_bumped_for_workspace_hero_layout_changes():
+    """Verify config.py reflects the workspace hero layout change version."""
     print("[check] Testing config version bump...")
 
     config_content = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.241.125"' in config_content, "Expected config.py version 0.241.125"
+    assert 'VERSION = "0.241.146"' in config_content, "Expected config.py version 0.241.146"
 
     print("[pass] Config version bump passed")
 
@@ -254,7 +285,7 @@ if __name__ == "__main__":
     tests = [
         test_workspace_models_and_routes_include_branding_fields,
         test_workspace_manage_and_active_pages_include_branding_hooks,
-        test_config_version_is_bumped_for_workspace_branding_changes,
+        test_config_version_is_bumped_for_workspace_hero_layout_changes,
     ]
 
     results = []

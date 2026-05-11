@@ -1,11 +1,12 @@
 # test_workspace_active_hero_shortcuts.py
 """
 UI test for active workspace hero shortcuts.
-Version: 0.241.125
+Version: 0.241.146
 Implemented in: 0.241.125
 
 This test ensures the group and public workspace pages render the active hero
-card branding and expose the manage shortcut for the selected workspace.
+card branding at the top of the page and expose the manage shortcut for the
+selected workspace.
 """
 
 import base64
@@ -38,6 +39,19 @@ def _require_ui_env():
         pytest.skip("Set SIMPLECHAT_UI_BASE_URL to run this UI test.")
     if not STORAGE_STATE or not Path(STORAGE_STATE).exists():
         pytest.skip("Set SIMPLECHAT_UI_STORAGE_STATE to a valid authenticated Playwright storage state file.")
+
+
+def _is_before(page, first_selector, second_selector):
+    return page.evaluate(
+        """
+        ([firstSelector, secondSelector]) => {
+            const first = document.querySelector(firstSelector);
+            const second = document.querySelector(secondSelector);
+            return Boolean(first && second && (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING));
+        }
+        """,
+        [first_selector, second_selector],
+    )
 
 
 @pytest.mark.ui
@@ -118,6 +132,12 @@ def test_group_workspace_active_hero_and_manage_link(playwright):
         expect(page.locator("#manage-active-group-btn")).to_have_attribute("href", "/groups/group-alpha")
         expect(page.locator("#active-group-hero-logo")).to_be_visible()
         expect(page.locator("#active-group-hero-initial")).to_be_hidden()
+        assert _is_before(page, "#active-group-hero", "#group-dropdown"), (
+            "Expected the active group hero to render above the group selector."
+        )
+        assert page.locator("h2", has_text="Group Workspace").count() == 0, (
+            "Expected the redundant Group Workspace heading to be removed."
+        )
 
         hero_color = page.locator("#active-group-hero").evaluate(
             "el => el.style.getPropertyValue('--workspace-hero-color').trim()"
@@ -229,6 +249,12 @@ def test_public_workspace_active_hero_and_manage_link(playwright):
         )
         expect(page.locator("#active-public-hero-logo")).to_be_visible()
         expect(page.locator("#active-public-hero-initial")).to_be_hidden()
+        assert _is_before(page, "#active-public-hero", "#public-dropdown"), (
+            "Expected the active public hero to render above the public workspace selector."
+        )
+        assert page.locator("h2", has_text="Public Workspace").count() == 0, (
+            "Expected the redundant Public Workspace heading to be removed."
+        )
 
         hero_color = page.locator("#active-public-hero").evaluate(
             "el => el.style.getPropertyValue('--workspace-hero-color').trim()"

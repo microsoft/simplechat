@@ -160,7 +160,20 @@
 {% endblock %}
 {% block content %}
 <div class="container">
-  <h2>Public Workspace</h2>
+  <div class="workspace-hero-card d-none" id="active-public-hero">
+    <div class="row align-items-center g-3">
+      <div class="col-auto">
+        <img class="workspace-hero-logo d-none" id="active-public-hero-logo" alt="Active public workspace logo">
+        <div class="workspace-hero-placeholder" id="active-public-hero-initial">P</div>
+      </div>
+      <div class="col">
+        <div class="small text-uppercase opacity-75">Active Public Workspace</div>
+        <h3 class="mb-1" id="active-public-hero-name">No active workspace selected</h3>
+        <p class="mb-1 opacity-90"><i class="bi bi-person-circle me-2"></i><strong>Owner:</strong> <span id="active-public-hero-owner">-</span></p>
+        <p class="mb-0 opacity-75" id="active-public-hero-description">Choose an active public workspace to see its profile.</p>
+      </div>
+    </div>
+  </div>
   <h3 id="active-public-name" style="display:none"></h3>
 
   <div class="row mb-3">
@@ -192,21 +205,6 @@
       <a class="btn btn-sm btn-outline-primary d-none" id="manage-active-public-btn" href="#">
         <i class="bi bi-gear me-1"></i>Manage Public Workspace
       </a>
-    </div>
-  </div>
-
-  <div class="workspace-hero-card d-none" id="active-public-hero">
-    <div class="row align-items-center g-3">
-      <div class="col-auto">
-        <img class="workspace-hero-logo d-none" id="active-public-hero-logo" alt="Active public workspace logo">
-        <div class="workspace-hero-placeholder" id="active-public-hero-initial">P</div>
-      </div>
-      <div class="col">
-        <div class="small text-uppercase opacity-75">Active Public Workspace</div>
-        <h3 class="mb-1" id="active-public-hero-name">No active workspace selected</h3>
-        <p class="mb-1 opacity-90"><i class="bi bi-person-circle me-2"></i><strong>Owner:</strong> <span id="active-public-hero-owner">-</span></p>
-        <p class="mb-0 opacity-75" id="active-public-hero-description">Choose an active public workspace to see its profile.</p>
-      </div>
     </div>
   </div>
 
