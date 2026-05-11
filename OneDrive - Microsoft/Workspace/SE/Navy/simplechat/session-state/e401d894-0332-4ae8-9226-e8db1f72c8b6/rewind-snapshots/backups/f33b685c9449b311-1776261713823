@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "snapshots": [
+    {
+      "snapshotId": "d433f3c0-1e25-4e90-9a21-a81db3af16c3",
+      "eventId": "5a1e3545-7914-47cb-bf98-02d6231fb4bd",
+      "userMessage": "@C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\application\\single_app\\functions_documents.py",
+      "timestamp": "2026-04-15T13:26:32.105Z",
+      "fileCount": 26,
+      "gitCommit": "08e57994d6d1b731737fe708c3a37c4003bd079f",
+      "gitBranch": "bookstack",
+      "backupHashes": [
+        "4f6f0dfe268172eb-1776259591572",
+        "5d1bb1118b6bade1-1776259591584",
+        "2930a4d8e67db685-1776259591603",
+        "6c349c4fc5286ffc-1776259591626",
+        "193a2b31696f06d3-1776259591649",
+        "e04f6e58338772e0-1776259591671",
+        "bccb810b8264cb1e-1776259591696",
+        "08239ea68c8993e7-1776259591733",
+        "085a5cf9c040b9ab-1776259591757",
+        "d99c9fbc78420880-1776259591775",
+        "0330c4141ccd9db8-1776259591783",
+        "70aef67a00f5a48b-1776259591798",
+        "1e1e3c603fa2b086-1776259591808",
+        "70aef67a00f5a48b-1776259591798",
+        "784ae1c90d4392af-1776259591823",
+        "43ff511ef7db452b-1776259591830",
+        "43ff511ef7db452b-1776259591830",
+        "cc7bc7687ae6d6e2-1776259591841",
+        "66b174a8a397a7a3-1776259591852",
+        "9b924ffcae477fe2-1776259591865",
+        "3eb934256292697b-1776259591873",
+        "b86caed72854365a-1776259591881",
+        "f24ce3ae67dec9a1-1776259592076",
+        "e923875ed3e1767f-1776259592084",
+        "9280c34a6205b47c-1776259592091",
+        "ac5dde18d485ed9b-1776259592100"
+      ],
+      "files": {
+        "d7cec4c6a4f0bd8ec06ee121439f332d": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:4f6f0dfe268172eb625e8b3ce8dd7e70327d785d",
+          "backupFile": "4f6f0dfe268172eb-1776259591572",
+          "size": 645,
+          "mtime": "2025-11-17T14:08:40.035Z",
+          "mode": 33206
+        },
+        "5a51b574a1a740087b362ddcadddb24a": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:5d1bb1118b6bade19604dce991247a3f3b454474",
+          "backupFile": "5d1bb1118b6bade1-1776259591584",
+          "size": 5847,
+          "mtime": "2025-11-17T14:15:43.247Z",
+          "mode": 33206
+        },
+        "63fae41cff21d74f59b5656d0604d9c5": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:2930a4d8e67db6855b220293dd2cc417511f9997",
+          "backupFile": "2930a4d8e67db685-1776259591603",
+          "size": 2876,
+          "mtime": "2025-11-17T14:11:23.809Z",
+          "mode": 33206
+        },
+        "60075b6615445de05ffe8ade0a5bde9d": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:6c349c4fc5286ffc96bed55a561580a8192d3f90",
+          "backupFile": "6c349c4fc5286ffc-1776259591626",
+          "size": 184670,
+          "mtime": "2025-11-17T14:11:22.794Z",
+          "mode": 33206
+        },
+        "39a30389f199c360acf0e58085aa3945": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:193a2b31696f06d3a3c7d3071185d13b9e91b3ad",
+          "backupFile": "193a2b31696f06d3-1776259591649",
+          "size": 27213,
+          "mtime": "2026-02-18T20:36:25.683Z",
+          "mode": 33206
+        },
+        "e98da085032005d0b1ab2c9ec9931997": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:e04f6e58338772e00709b4c140cfedc9222ff717",
+          "backupFile": "e04f6e58338772e0-1776259591671",
+          "size": 46607,
+          "mtime": "2025-11-17T14:15:38.985Z",
+          "mode": 33206
+        },
+        "5e059e5c87aad55af3a4d08e8cedff83": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:bccb810b8264cb1e2793db2f8f6c3b756148b82e",
+          "backupFile": "bccb810b8264cb1e-1776259591696",
+          "size": 56138,
+          "mtime": "2026-02-18T20:36:41.268Z",
+          "mode": 33206
+        },
+        "c4c426a9f2b8df7e4d6efe71dea08bda": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:08239ea68c8993e7fa9e4b6567be80209c8f554a",
+          "backupFile": "08239ea68c8993e7-1776259591733",
+          "size": 633,
+          "mtime": "2025-11-17T14:10:50.435Z",
+          "mode": 33206
+        },
+        "f23a73c48dd47dccf03dbc21e460aafd": {
+          "gitStatus": " M",
+          "contentHash": "git-sha1:085a5cf9c040b9abbcb59ae86d125c2622ef8d9a",
+          "backupFile": "085a5cf9c040b9ab-1776259591757",
+          "size": 497,
+          "mtime": "2025-11-17T14:11:02.232Z",
+          "mode": 33206
+        },
+        "94ff46b4207718d86b70388e8bc48d04": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:d99c9fbc78420880f1251f8c033d4b31d99065db",
+          "backupFile": "d99c9fbc78420880-1776259591775",
+          "size": 54,
+          "mtime": "2026-03-20T14:02:26.462Z",
+          "mode": 33206
+        },
+        "47b514e89561a1ddabc546b05b28b22e": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:0330c4141ccd9db8538ce23b226f4ccbdf6fe3a4",
+          "backupFile": "0330c4141ccd9db8-1776259591783",
+          "size": 206,
+          "mtime": "2026-03-19T13:57:18.574Z",
+          "mode": 33206
+        },
+        "c45e58be9aa103ddc5007d362bc5e063": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:70aef67a00f5a48bfb0d87044cf8f151e2685b5d",
+          "backupFile": "70aef67a00f5a48b-1776259591798",
+          "size": 107,
+          "mtime": "2026-03-20T14:03:27.181Z",
+          "mode": 33206
+        },
+        "b4c62d7aa9a45f9c181b9ec6fab05477": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:1e1e3c603fa2b086dd5306a95091ce945ece94c7",
+          "backupFile": "1e1e3c603fa2b086-1776259591808",
+          "size": 4313833,
+          "mtime": "2026-03-20T15:51:59.564Z",
+          "mode": 33206
+        },
+        "8a3d508edefb8ddffc0fba5650de29d2": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:70aef67a00f5a48bfb0d87044cf8f151e2685b5d",
+          "backupFile": "70aef67a00f5a48b-1776259591798",
+          "size": 107,
+          "mtime": "2026-03-20T14:03:29.966Z",
+          "mode": 33206
+        },
+        "71eb9513a8147a005fbbc6596866c6c3": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:784ae1c90d4392af6a81c459d58129ed7ae8095d",
+          "backupFile": "784ae1c90d4392af-1776259591823",
+          "size": 17920,
+          "mtime": "2026-03-20T17:36:58.006Z",
+          "mode": 33206
+        },
+        "d75000d905f1d6e77715571a89a6a55c": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:43ff511ef7db452b1d2bde37f882a8c59fe969ec",
+          "backupFile": "43ff511ef7db452b-1776259591830",
+          "size": 2060,
+          "mtime": "2026-03-19T13:56:53.260Z",
+          "mode": 33206
+        },
+        "00b2b921c2304ddea18a790c992d9416": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:43ff511ef7db452b1d2bde37f882a8c59fe969ec",
+          "backupFile": "43ff511ef7db452b-1776259591830",
+          "size": 2060,
+          "mtime": "2026-03-20T17:36:57.847Z",
+          "mode": 33206
+        },
+        "43e0ab96869581b278f6ef0ad3e4ad93": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:cc7bc7687ae6d6e2b48c56fe5f359d70c0112050",
+          "backupFile": "cc7bc7687ae6d6e2-1776259591841",
+          "size": 101276,
+          "mtime": "2026-03-20T17:36:59.645Z",
+          "mode": 33206
+        },
+        "550fa3af2b63f84a7543532988e45ba2": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:66b174a8a397a7a3365c031cca49a8132c46c0fb",
+          "backupFile": "66b174a8a397a7a3-1776259591852",
+          "size": 192512,
+          "mtime": "2026-03-20T17:36:59.723Z",
+          "mode": 33206
+        },
+        "5fcf9479b80eba2bba77e04b35cd6650": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:9b924ffcae477fe27b413c4bfe8bda819b29e18d",
+          "backupFile": "9b924ffcae477fe2-1776259591865",
+          "size": 7140,
+          "mtime": "2025-11-17T14:15:47.104Z",
+          "mode": 33206
+        },
+        "99e29ef8c87e1da55ed3a4784fc5d3c3": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:3eb934256292697bb88a95209001c1b6cf2c12e7",
+          "backupFile": "3eb934256292697b-1776259591873",
+          "size": 163,
+          "mtime": "2026-04-15T13:26:27.829Z",
+          "mode": 33206
+        },
+        "d3b374e1f52c182aab9d00fde1d45638": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:b86caed72854365a28268e666edd2aef81e2c4a4",
+          "backupFile": "b86caed72854365a-1776259591881",
+          "size": 128,
+          "mtime": "2026-04-15T13:24:16.188Z",
+          "mode": 33206
+        },
+        "09871ed7fd189aa9edf43f484e7e706d": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:f24ce3ae67dec9a10ba6d0e1b62ae5123ed963ce",
+          "backupFile": "f24ce3ae67dec9a1-1776259592076",
+          "size": 2755,
+          "mtime": "2026-04-15T13:26:30.567Z",
+          "mode": 33206
+        },
+        "c9d39e1fb7f83e66b5252b06ba8d6924": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:e923875ed3e1767f8b939b86c643d02bd5d5f40a",
+          "backupFile": "e923875ed3e1767f-1776259592084",
+          "size": 172,
+          "mtime": "2026-04-15T13:24:03.313Z",
+          "mode": 33206
+        },
+        "a5c1b08951e2bc52faf22892f34f775d": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:9280c34a6205b47c27bc97aca1cdff57bd2202a5",
+          "backupFile": "9280c34a6205b47c-1776259592091",
+          "size": 5,
+          "mtime": "2026-04-15T13:24:03.430Z",
+          "mode": 33206
+        },
+        "62976c42be4bd9c3af325ba03eed81fc": {
+          "gitStatus": "??",
+          "contentHash": "git-sha1:ac5dde18d485ed9b098f0fb9ee4a01602acf786c",
+          "backupFile": "ac5dde18d485ed9b-1776259592100",
+          "size": 495,
+          "mtime": "2026-04-15T13:26:30.599Z",
+          "mode": 33206
+        }
+      }
+    }
+  ],
+  "filePathMap": {
+    "d7cec4c6a4f0bd8ec06ee121439f332d": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.gitignore",
+    "5a51b574a1a740087b362ddcadddb24a": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\application\\external_apps\\databaseseeder\\artifacts\\admin_settings.json",
+    "63fae41cff21d74f59b5656d0604d9c5": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\application\\single_app\\commands.txt",
+    "60075b6615445de05ffe8ade0a5bde9d": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\application\\single_app\\functions_documents.py",
+    "39a30389f199c360acf0e58085aa3945": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\application\\single_app\\functions_settings.py",
+    "e98da085032005d0b1ab2c9ec9931997": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\application\\single_app\\route_backend_group_documents.py",
+    "5e059e5c87aad55af3a4d08e8cedff83": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\application\\single_app\\route_frontend_admin_settings.py",
+    "c4c426a9f2b8df7e4d6efe71dea08bda": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\cosmosdb-data-writer-role.json",
+    "f23a73c48dd47dccf03dbc21e460aafd": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\cosmosdb-readmetadata-role.json",
+    "94ff46b4207718d86b70388e8bc48d04": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\PythonSettings.json",
+    "47b514e89561a1ddabc546b05b28b22e": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\VSWorkspaceState.json",
+    "c45e58be9aa103ddc5007d362bc5e063": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\simplechat\\FileContentIndex\\8322c891-7398-4709-b736-cef4edce29d8.vsidx",
+    "b4c62d7aa9a45f9c181b9ec6fab05477": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\simplechat\\FileContentIndex\\946e4798-810a-415e-becd-482574b8aa98.vsidx",
+    "8a3d508edefb8ddffc0fba5650de29d2": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\simplechat\\FileContentIndex\\d2dc32f0-deff-4d4e-852d-ad87e8c3eb60.vsidx",
+    "71eb9513a8147a005fbbc6596866c6c3": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\simplechat\\v17\\.wsuo",
+    "d75000d905f1d6e77715571a89a6a55c": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\simplechat\\v17\\DocumentLayout.backup.json",
+    "00b2b921c2304ddea18a790c992d9416": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\simplechat\\v17\\DocumentLayout.json",
+    "43e0ab96869581b278f6ef0ad3e4ad93": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\simplechat\\v17\\workspaceFileList.bin",
+    "550fa3af2b63f84a7543532988e45ba2": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\.vs\\slnx.sqlite",
+    "5fcf9479b80eba2bba77e04b35cd6650": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\BOOKSTACK_INTEGRATION_SETUP.md",
+    "99e29ef8c87e1da55ed3a4784fc5d3c3": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\command-history-state.json",
+    "d3b374e1f52c182aab9d00fde1d45638": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\config.json",
+    "09871ed7fd189aa9edf43f484e7e706d": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\logs\\process-1776259442344-4688.log",
+    "c9d39e1fb7f83e66b5252b06ba8d6924": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\session-state\\1b3da15a-ede4-4541-b601-e8a43ed1433d\\checkpoints\\index.md",
+    "a5c1b08951e2bc52faf22892f34f775d": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\session-state\\1b3da15a-ede4-4541-b601-e8a43ed1433d\\inuse.4688.lock",
+    "62976c42be4bd9c3af325ba03eed81fc": "C:\\Users\\monyoussef\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\OneDrive - Microsoft\\Workspace\\SE\\Navy\\simplechat\\session-state\\1b3da15a-ede4-4541-b601-e8a43ed1433d\\workspace.yaml"
+  }
+}

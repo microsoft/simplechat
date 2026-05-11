@@ -1,0 +1,65 @@
+2026-04-15T13:24:02.349Z [INFO] Running in offline mode. GitHub features are unavailable.
+2026-04-15T13:24:03.249Z [INFO] Session indexing debug: SESSION_INDEXING=false, repository=monyoussef/simplechat, savedIndexingLevel=undefined
+2026-04-15T13:24:03.249Z [INFO] Session indexing debug: showSessionSyncPrompt=false
+2026-04-15T13:24:03.350Z [INFO] Workspace initialized: 1b3da15a-ede4-4541-b601-e8a43ed1433d (checkpoints: 0)
+2026-04-15T13:24:03.442Z [INFO] Starting Copilot CLI: 1.0.24
+2026-04-15T13:24:03.443Z [INFO] Node.js version: v24.11.1
+2026-04-15T13:24:03.452Z [INFO] Registering foreground session: 1b3da15a-ede4-4541-b601-e8a43ed1433d
+2026-04-15T13:24:03.970Z [INFO] Remote session access disabled
+2026-04-15T13:24:03.987Z [INFO] Login status unknown
+2026-04-15T13:24:04.212Z [INFO] Logged out
+2026-04-15T13:24:04.380Z [INFO] Unregistering foreground session: 1b3da15a-ede4-4541-b601-e8a43ed1433d
+2026-04-15T13:24:04.381Z [INFO] Registering foreground session: 1b3da15a-ede4-4541-b601-e8a43ed1433d
+2026-04-15T13:24:04.617Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-15T13:24:04.618Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-15T13:24:04.618Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-15T13:24:04.618Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-15T13:24:04.809Z [INFO] Init suggestion check completed
+2026-04-15T13:24:10.178Z [INFO] Unregistering foreground session: 1b3da15a-ede4-4541-b601-e8a43ed1433d
+2026-04-15T13:24:10.178Z [INFO] Registering foreground session: 1b3da15a-ede4-4541-b601-e8a43ed1433d
+2026-04-15T13:24:16.251Z [INFO] Backup of previous settings created at C:\Users\monyoussef\AppData\Local\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json.2026-04-15T13-24-16-171Z.backup
+2026-04-15T13:26:27.898Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-15T13:26:27.898Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-15T13:26:27.913Z [INFO] Using custom provider: type=azure, baseUrl=https://ext-openai.openai.azure.us/openai/deployments/gpt-5.1, wireApi=completions
+2026-04-15T13:26:27.913Z [INFO]  
+2026-04-15T13:26:27.914Z [INFO] --- Start of group: configured settings: ---
+2026-04-15T13:26:27.914Z [INFO] --- End of group ---
+2026-04-15T13:26:27.918Z [ERROR] Failed to load memories for prompt: Error: Copilot token is required
+2026-04-15T13:26:28.165Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-04-15T13:26:28.166Z [INFO] --- End of group ---
+2026-04-15T13:26:30.213Z [INFO] CompactionProcessor: Utilization 12.7% (16217/128000 tokens) below threshold 80%
+2026-04-15T13:26:30.428Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:26:32.693Z [INFO] --- End of group ---
+2026-04-15T13:26:32.976Z [INFO] CompactionProcessor: Utilization 12.8% (16343/128000 tokens) below threshold 80%
+2026-04-15T13:26:33.168Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:26:33.875Z [INFO] --- End of group ---
+2026-04-15T13:26:34.184Z [INFO] CompactionProcessor: Utilization 13.7% (17533/128000 tokens) below threshold 80%
+2026-04-15T13:26:34.394Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:26:36.141Z [INFO] --- End of group ---
+2026-04-15T13:27:15.610Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-15T13:27:15.613Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-15T13:27:15.626Z [INFO] Using custom provider: type=azure, baseUrl=https://ext-openai.openai.azure.us/openai/deployments/gpt-5.1, wireApi=completions
+2026-04-15T13:27:15.626Z [INFO]  
+2026-04-15T13:27:15.627Z [INFO] --- Start of group: configured settings: ---
+2026-04-15T13:27:15.627Z [INFO] --- End of group ---
+2026-04-15T13:27:15.773Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-04-15T13:27:15.774Z [INFO] --- End of group ---
+2026-04-15T13:27:15.930Z [INFO] CompactionProcessor: Utilization 13.8% (17723/128000 tokens) below threshold 80%
+2026-04-15T13:27:16.083Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:27:16.838Z [INFO] --- End of group ---
+2026-04-15T13:27:17.109Z [INFO] CompactionProcessor: Utilization 13.9% (17850/128000 tokens) below threshold 80%
+2026-04-15T13:27:17.314Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:27:18.377Z [INFO] --- End of group ---
+2026-04-15T13:27:19.244Z [INFO] CompactionProcessor: Utilization 15.1% (19273/128000 tokens) below threshold 80%
+2026-04-15T13:27:19.433Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:27:20.176Z [INFO] --- End of group ---
+2026-04-15T13:27:20.357Z [INFO] CompactionProcessor: Utilization 16.0% (20513/128000 tokens) below threshold 80%
+2026-04-15T13:27:20.563Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:27:21.283Z [INFO] --- End of group ---
+2026-04-15T13:27:22.098Z [INFO] CompactionProcessor: Utilization 16.1% (20634/128000 tokens) below threshold 80%
+2026-04-15T13:27:22.276Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:27:22.959Z [INFO] --- End of group ---
+2026-04-15T13:27:23.276Z [INFO] CompactionProcessor: Utilization 17.3% (22128/128000 tokens) below threshold 80%
+2026-04-15T13:27:23.571Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T13:27:25.371Z [INFO] --- End of group ---
+2026-04-15T13:59:04.088Z [INFO] Unregistering foreground session: 1b3da15a-ede4-4541-b601-e8a43ed1433d

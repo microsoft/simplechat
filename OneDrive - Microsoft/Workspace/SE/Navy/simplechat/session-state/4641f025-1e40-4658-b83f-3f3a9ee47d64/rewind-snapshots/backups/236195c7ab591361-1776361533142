@@ -1,0 +1,81 @@
+2026-04-15T14:00:14.333Z [INFO] Running in offline mode. GitHub features are unavailable.
+2026-04-15T14:00:15.237Z [INFO] Session indexing debug: SESSION_INDEXING=false, repository=monyoussef/simplechat, savedIndexingLevel=undefined
+2026-04-15T14:00:15.237Z [INFO] Session indexing debug: showSessionSyncPrompt=false
+2026-04-15T14:00:15.318Z [INFO] Workspace initialized: e401d894-0332-4ae8-9226-e8db1f72c8b6 (checkpoints: 0)
+2026-04-15T14:00:15.389Z [INFO] Starting Copilot CLI: 1.0.24
+2026-04-15T14:00:15.390Z [INFO] Node.js version: v24.11.1
+2026-04-15T14:00:15.395Z [INFO] Registering foreground session: e401d894-0332-4ae8-9226-e8db1f72c8b6
+2026-04-15T14:00:15.840Z [INFO] Remote session access disabled
+2026-04-15T14:00:15.861Z [INFO] Login status unknown
+2026-04-15T14:00:16.001Z [INFO] Logged out
+2026-04-15T14:00:16.237Z [INFO] Unregistering foreground session: e401d894-0332-4ae8-9226-e8db1f72c8b6
+2026-04-15T14:00:16.243Z [INFO] Registering foreground session: e401d894-0332-4ae8-9226-e8db1f72c8b6
+2026-04-15T14:00:16.336Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-15T14:00:16.336Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-15T14:00:16.337Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-15T14:00:16.337Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-15T14:00:16.470Z [INFO] Init suggestion check completed
+2026-04-15T14:00:25.357Z [INFO] Unregistering foreground session: e401d894-0332-4ae8-9226-e8db1f72c8b6
+2026-04-15T14:00:25.357Z [INFO] Registering foreground session: e401d894-0332-4ae8-9226-e8db1f72c8b6
+2026-04-15T14:01:47.676Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-15T14:01:47.676Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-15T14:01:47.689Z [INFO] Using custom provider: type=azure, baseUrl=https://ext-openai.openai.azure.us/openai/deployments/gpt-5.1, wireApi=completions
+2026-04-15T14:01:47.691Z [INFO]  
+2026-04-15T14:01:47.692Z [INFO] --- Start of group: configured settings: ---
+2026-04-15T14:01:47.693Z [INFO] --- End of group ---
+2026-04-15T14:01:47.699Z [ERROR] Failed to load memories for prompt: Error: Copilot token is required
+2026-04-15T14:01:47.913Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-04-15T14:01:47.914Z [INFO] --- End of group ---
+2026-04-15T14:01:49.655Z [INFO] CompactionProcessor: Utilization 12.7% (16230/128000 tokens) below threshold 80%
+2026-04-15T14:01:49.834Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T14:01:51.607Z [INFO] --- End of group ---
+2026-04-15T14:01:51.974Z [INFO] CompactionProcessor: Utilization 12.8% (16361/128000 tokens) below threshold 80%
+2026-04-15T14:01:52.124Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T14:01:52.805Z [INFO] --- End of group ---
+2026-04-15T14:01:53.148Z [INFO] CompactionProcessor: Utilization 14.8% (18899/128000 tokens) below threshold 80%
+2026-04-15T14:01:53.334Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T14:02:06.295Z [INFO] --- End of group ---
+2026-04-15T14:02:21.117Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-15T14:02:21.118Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-15T14:02:21.125Z [INFO] Using custom provider: type=azure, baseUrl=https://ext-openai.openai.azure.us/openai/deployments/gpt-5.1, wireApi=completions
+2026-04-15T14:02:21.126Z [INFO]  
+2026-04-15T14:02:21.126Z [INFO] --- Start of group: configured settings: ---
+2026-04-15T14:02:21.126Z [INFO] --- End of group ---
+2026-04-15T14:02:23.500Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-04-15T14:02:23.501Z [INFO] --- End of group ---
+2026-04-15T14:02:23.619Z [INFO] CompactionProcessor: Utilization 14.9% (19098/128000 tokens) below threshold 80%
+2026-04-15T14:02:23.799Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T14:02:26.253Z [INFO] --- End of group ---
+2026-04-15T14:02:26.497Z [INFO] CompactionProcessor: Utilization 15.0% (19219/128000 tokens) below threshold 80%
+2026-04-15T14:02:26.664Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T14:02:27.268Z [INFO] --- End of group ---
+2026-04-15T14:02:27.612Z [INFO] CompactionProcessor: Utilization 15.1% (19333/128000 tokens) below threshold 80%
+2026-04-15T14:02:27.810Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T14:02:28.546Z [INFO] --- End of group ---
+2026-04-15T14:02:28.863Z [INFO] CompactionProcessor: Utilization 17.4% (22333/128000 tokens) below threshold 80%
+2026-04-15T14:02:29.050Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-15T14:02:30.837Z [INFO] --- End of group ---
+2026-04-16T11:50:25.603Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-16T11:50:25.604Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-16T11:50:25.607Z [INFO] Using custom provider: type=azure, baseUrl=https://ext-openai.openai.azure.us/openai/deployments/gpt-5.1, wireApi=completions
+2026-04-16T11:50:25.607Z [INFO]  
+2026-04-16T11:50:25.608Z [INFO] --- Start of group: configured settings: ---
+2026-04-16T11:50:25.608Z [INFO] --- End of group ---
+2026-04-16T11:50:25.844Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-04-16T11:50:25.846Z [INFO] --- End of group ---
+2026-04-16T11:50:26.007Z [INFO] CompactionProcessor: Utilization 17.6% (22553/128000 tokens) below threshold 80%
+2026-04-16T11:50:26.288Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-16T11:50:29.207Z [INFO] --- End of group ---
+2026-04-16T11:51:08.045Z [INFO] CompactionProcessor: Utilization 17.8% (22747/128000 tokens) below threshold 80%
+2026-04-16T11:51:08.316Z [INFO] --- Start of group: Sending request to the AI model ---
+2026-04-16T11:51:09.678Z [INFO] --- End of group ---
+2026-04-16T11:53:30.379Z [INFO] Memory is not enabled: Error: Copilot token is required
+2026-04-16T11:53:30.379Z [INFO] Memory is not enabled; skipping memory tools.
+2026-04-16T11:53:30.389Z [INFO] Using custom provider: type=azure, baseUrl=https://ext-openai.openai.azure.us/openai/deployments/gpt-5.1, wireApi=completions
+2026-04-16T11:53:30.390Z [INFO]  
+2026-04-16T11:53:30.390Z [INFO] --- Start of group: configured settings: ---
+2026-04-16T11:53:30.392Z [INFO] --- End of group ---
+2026-04-16T11:53:30.518Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-04-16T11:53:30.519Z [INFO] --- End of group ---
+2026-04-16T11:53:30.670Z [INFO] CompactionProcessor: Utilization 17.9% (22960/128000 tokens) below threshold 80%
+2026-04-16T11:53:30.885Z [INFO] --- Start of group: Sending request to the AI model ---

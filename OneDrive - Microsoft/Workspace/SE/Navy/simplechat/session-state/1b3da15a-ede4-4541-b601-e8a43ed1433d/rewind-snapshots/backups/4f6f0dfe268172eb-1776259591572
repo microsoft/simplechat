@@ -1,0 +1,42 @@
+
+# Azure Functions artifacts
+bin
+obj
+appsettings.json
+local.settings.json
+
+# Azurite artifacts
+__blobstorage__
+__queuestorage__
+__azurite_db*__.json
+.python_packages
+__pycache__
+.venv
+
+# Azure App Service artifacts
+.env
+.pem
+.deployment
+
+# macOS  custom attributes file
+.ds_store
+
+# Configured custom script extensions, powershell scripts, and linux scripts
+priv-*
+
+# Visual Studio Code
+.vscode
+
+# temporary files
+flask_session
+
+# node modules
+/node_modules
+/package-lock.json
+/package.json
+application/single_app/static/.DS_Store
+application/external_apps/bulkloader/map.csv
+
+flask_session
+
+commands.txt
