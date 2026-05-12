@@ -1,7 +1,7 @@
 # test_chat_optional_feature_initializers_quiet.py
 """
 UI test for quiet optional chat feature initialization.
-Version: 0.241.146
+Version: 0.241.152
 Implemented in: 0.241.145
 
 This test ensures the Chats page does not emit browser console errors or

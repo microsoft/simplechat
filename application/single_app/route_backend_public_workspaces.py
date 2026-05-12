@@ -122,7 +122,7 @@ def register_route_backend_public_workspaces(app):
     def api_list_public_workspaces():
         """
         GET /api/public_workspaces
-        Paginated list of the user's public workspaces.
+        Paginated list of public workspaces visible to authenticated users.
         Query params:
           - page (int), page_size (int), search (str)
         """
@@ -149,11 +149,11 @@ def register_route_backend_public_workspaces(app):
 
         search_term = request.args.get("search", "").strip()
 
-        # fetch user’s workspaces
+        # Fetch public workspaces. Public workspace discovery is open to all authenticated users.
         if search_term:
-            all_ws = search_public_workspaces(search_term, user_id)
+            all_ws = search_all_public_workspaces(search_term)
         else:
-            all_ws = get_user_public_workspaces(user_id)
+            all_ws = get_all_public_workspaces()
 
         total_count = len(all_ws)
         slice_ws = all_ws[offset: offset + page_size]

@@ -9,11 +9,14 @@ from functions_prompts import *
 from swagger_wrapper import swagger_route, get_auth_security
 
 
-def _get_active_public_workspace_or_error(user_id):
+def _get_active_public_workspace_or_error(
+    user_id,
+    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+):
     try:
         return require_active_public_workspace(
             user_id,
-            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            allowed_roles=allowed_roles,
         ), None
     except ValueError:
         return None, (jsonify({'error': 'No active public workspace selected'}), 400)
@@ -63,7 +66,10 @@ def register_route_backend_public_prompts(app):
     @enabled_required('enable_public_workspaces')
     def api_create_public_prompt():
         user_id = get_current_user_id()
-        active_workspace_context, error_response = _get_active_public_workspace_or_error(user_id)
+        active_workspace_context, error_response = _get_active_public_workspace_or_error(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+        )
         if error_response:
             return error_response
         active_ws, _, _ = active_workspace_context
@@ -120,7 +126,10 @@ def register_route_backend_public_prompts(app):
     @enabled_required('enable_public_workspaces')
     def api_update_public_prompt(prompt_id):
         user_id = get_current_user_id()
-        active_workspace_context, error_response = _get_active_public_workspace_or_error(user_id)
+        active_workspace_context, error_response = _get_active_public_workspace_or_error(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+        )
         if error_response:
             return error_response
         active_ws, _, _ = active_workspace_context
@@ -160,7 +169,10 @@ def register_route_backend_public_prompts(app):
     @enabled_required('enable_public_workspaces')
     def api_delete_public_prompt(prompt_id):
         user_id = get_current_user_id()
-        active_workspace_context, error_response = _get_active_public_workspace_or_error(user_id)
+        active_workspace_context, error_response = _get_active_public_workspace_or_error(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+        )
         if error_response:
             return error_response
         active_ws, _, _ = active_workspace_context

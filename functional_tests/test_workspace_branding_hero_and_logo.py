@@ -1,13 +1,16 @@
 # test_workspace_branding_hero_and_logo.py
 """
 Functional test for workspace branding hero and logo support.
-Version: 0.241.146
+Version: 0.241.152
 Implemented in: 0.241.125
 
 This test ensures that group and public workspace branding metadata, logo
 endpoints, and hero UI hooks remain wired across the backend routes, manage
 pages, and active workspace pages. Updated in 0.241.146 to validate that active
 workspace hero cards render before page selectors without redundant headings.
+Updated in 0.241.150 to validate compact public workspace selector controls.
+Updated in 0.241.151 to validate public workspace dropdown search wiring.
+Updated in 0.241.152 to keep public workspace search visible for any list size.
 """
 
 import os
@@ -254,19 +257,44 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
         [
             '<div class="container">',
             '<div class="workspace-hero-card d-none" id="active-public-hero">',
-            '<div class="row mb-3">',
+            'id="public-selector-row"',
         ],
         "public workspace hero placement",
     )
+    assert_required_snippets(
+        public_workspaces_template,
+        [
+            'id="public-selector-row"',
+            'class="public-role-pill"',
+            'id="public-selector-actions"',
+            'id="manage-active-public-btn"',
+            'id="btn-my-publics"',
+        ],
+        "public workspace compact selector",
+    )
+    assert 'id="btn-change-public"' not in public_workspaces_template
+    assert "Change Active Workspace" not in public_workspaces_template
+    assert "Your role in" not in public_workspaces_template
+    assert 'id="active-public-name-role"' not in public_workspaces_template
     assert_required_snippets(
         public_workspace_script,
         [
             'function updateActivePublicHero(activeWorkspace)',
             'function updateManagePublicWorkspaceLink(activeWorkspace)',
             'heroLogo.src = `/api/public_workspaces/${activeWorkspace.id}/logo',
+            'function activateSelectedPublic(publicId)',
+            'activateSelectedPublic(w.id);',
+            "fetch('/api/public_workspaces?page_size=1000')",
+            "fetch('/api/public_workspaces/setActive'",
+            'function filterPublicDropdownItems()',
+            'const shouldShowSearch = userPublics.length > 0;',
+            "publicSearchInput.addEventListener('input', filterPublicDropdownItems);",
+            'No public workspaces are available. Select My Workspaces to create one.',
         ],
         "public workspace script",
     )
+    assert "btnChangePublic" not in public_workspace_script
+    assert "active-public-name-role" not in public_workspace_script
 
     print("[pass] Workspace branding UI hooks passed")
 
@@ -276,7 +304,7 @@ def test_config_version_is_bumped_for_workspace_hero_layout_changes():
     print("[check] Testing config version bump...")
 
     config_content = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.241.146"' in config_content, "Expected config.py version 0.241.146"
+    assert 'VERSION = "0.241.152"' in config_content, "Expected config.py version 0.241.152"
 
     print("[pass] Config version bump passed")
 

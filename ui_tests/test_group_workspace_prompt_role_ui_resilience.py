@@ -1,12 +1,13 @@
 # test_group_workspace_prompt_role_ui_resilience.py
 """
 UI test for group workspace prompt role UI resilience.
-Version: 0.241.003
+Version: 0.241.152
 Implemented in: 0.241.003
 
 This test ensures the group workspace can refresh active group context without
 raising client-side errors when the prompt role warning and create button
-containers are absent from the DOM.
+containers are absent from the DOM. Updated in 0.241.147 to use direct dropdown
+activation after the separate Change Active Group button was removed.
 """
 
 import json
@@ -140,20 +141,12 @@ def test_group_workspace_group_change_tolerates_missing_prompt_role_elements(pla
                 document.getElementById('create-group-prompt-section')?.remove();
                 document.getElementById('group-prompts-role-warning')?.remove();
 
-                const select = document.getElementById('group-select');
-                if (select) {
-                    select.value = 'group-beta';
-                }
-
-                const selectedText = document.querySelector('#group-dropdown-button .selected-group-text');
-                if (selectedText) {
-                    selectedText.textContent = 'Beta Team';
-                }
             }
             """
         )
 
-        page.locator("#btn-change-group").click()
+        page.locator("#group-dropdown-button").click()
+        page.locator("#group-dropdown-items .dropdown-item", has_text="Beta Team").click()
         page.wait_for_function(
             """
             () => {

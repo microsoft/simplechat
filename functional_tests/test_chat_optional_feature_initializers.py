@@ -1,7 +1,7 @@
 # test_chat_optional_feature_initializers.py
 """
 Functional test for optional chat feature initializers.
-Version: 0.241.146
+Version: 0.241.152
 Implemented in: 0.241.145
 
 This test ensures that optional chat agent and speech-input modules exit quietly

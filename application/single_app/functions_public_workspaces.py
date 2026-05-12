@@ -80,6 +80,16 @@ def get_user_public_workspaces(user_id: str) -> list:
     ))
 
 
+def get_all_public_workspaces() -> list:
+    """
+    Fetch all public workspaces visible to authenticated users.
+    """
+    return list(cosmos_public_workspaces_container.query_items(
+        query="SELECT * FROM c",
+        enable_cross_partition_query=True
+    ))
+
+
 def search_public_workspaces(search_query: str, user_id: str) -> list:
     """
     Return the user's public workspaces matching the search term in name or description.
@@ -107,6 +117,24 @@ def search_public_workspaces(search_query: str, user_id: str) -> list:
     ))
 
 
+def search_all_public_workspaces(search_query: str) -> list:
+    """
+    Return all public workspaces matching the search term in name or description.
+    """
+    base_query = "SELECT * FROM c"
+    params = []
+
+    if search_query:
+        base_query += " WHERE CONTAINS(LOWER(c.name), @search) OR CONTAINS(LOWER(c.description), @search)"
+        params.append({"name": "@search", "value": search_query.lower()})
+
+    return list(cosmos_public_workspaces_container.query_items(
+        query=base_query,
+        parameters=params,
+        enable_cross_partition_query=True
+    ))
+
+
 def delete_public_workspace(ws_id: str) -> None:
     """
     Deletes a public workspace from Cosmos DB. Typically only the owner may call this.
@@ -119,9 +147,9 @@ def delete_public_workspace(ws_id: str) -> None:
 
 def get_user_role_in_public_workspace(ws_doc: dict, user_id: str) -> str | None:
     """
-    Determine the user's role in the given workspace doc.
+    Determine the user's effective role in the given public workspace doc.
     """
-    if not ws_doc:
+    if not ws_doc or not user_id:
         return None
     if ws_doc.get("owner", {}).get("userId") == user_id:
         return "Owner"
@@ -130,9 +158,12 @@ def get_user_role_in_public_workspace(ws_doc: dict, user_id: str) -> str | None:
             return "Admin"
         if isinstance(admin, dict) and admin.get("userId") == user_id:
             return "Admin"
-    if any(dm["userId"] == user_id for dm in ws_doc.get("documentManagers", [])):
-        return "DocumentManager"
-    return None
+    for manager in ws_doc.get("documentManagers", []):
+        if isinstance(manager, str) and manager == user_id:
+            return "DocumentManager"
+        if isinstance(manager, dict) and manager.get("userId") == user_id:
+            return "DocumentManager"
+    return "User"
 
 
 def build_public_workspace_public_summary(ws_doc: dict) -> dict:
@@ -329,17 +360,17 @@ def require_active_public_workspace(
 def get_user_visible_public_workspaces(user_id: str) -> list:
     """
     Get the list of public workspace IDs that the user has marked as visible.
-    Returns all accessible workspaces if no visibility settings exist yet.
+    Returns all public workspaces if no visibility settings exist yet.
     """
     from functions_settings import get_user_settings
     
     user_settings = get_user_settings(user_id)
     visible_workspace_ids = user_settings.get("settings", {}).get("visiblePublicWorkspaceIds")
     
-    # If no visibility settings exist yet, return all accessible workspaces (backward compatibility)
+    # If no visibility settings exist yet, return all public workspaces (backward compatibility)
     if visible_workspace_ids is None:
-        accessible_workspaces = get_user_public_workspaces(user_id)
-        return [ws["id"] for ws in accessible_workspaces]
+        public_workspaces = get_all_public_workspaces()
+        return [ws["id"] for ws in public_workspaces]
     
     return visible_workspace_ids
 
@@ -415,18 +446,17 @@ def remove_visible_public_workspace(user_id: str, ws_id: str) -> None:
 
 def get_user_visible_public_workspace_docs(user_id: str) -> list:
     """
-    Get all public workspaces that the user has access to AND has marked as visible.
+    Get all public workspaces that the user has marked as visible.
     This replaces get_user_public_workspaces for visibility-filtered results.
     """
-    # Get all workspaces the user has access to
-    accessible_workspaces = get_user_public_workspaces(user_id)
+    public_workspaces = get_all_public_workspaces()
     
     # Get the user's visibility preferences
     visible_workspace_ids = get_user_visible_public_workspaces(user_id)
     
     # Filter to only include visible workspaces
     visible_workspaces = [
-        ws for ws in accessible_workspaces
+        ws for ws in public_workspaces
         if ws["id"] in visible_workspace_ids
     ]
     

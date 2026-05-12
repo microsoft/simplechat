@@ -156,6 +156,41 @@ app_settings.app_title }} {% endblock %} {% block head %}
   #group-dropdown-button {
     text-align: left;
   }
+
+  .group-role-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 2.375rem;
+    padding: 0.375rem 0.625rem;
+    color: #084298;
+    background-color: #f4faff;
+    border: 1px solid #b6d4fe;
+    border-radius: 0.375rem;
+    white-space: nowrap;
+  }
+
+  .group-role-label {
+    color: #526070;
+    font-size: 0.875rem;
+  }
+
+  @media (max-width: 575.98px) {
+    #user-role-display,
+    #group-selector-actions {
+      width: 100%;
+    }
+
+    .group-role-pill {
+      width: 100%;
+      justify-content: center;
+    }
+
+    #group-selector-actions .btn,
+    #group-selector-actions a {
+      flex: 1 1 auto;
+    }
+  }
   
   /* Group status badges */
   .group-status-badge {
@@ -285,8 +320,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 
   <!-- Group Selector and Role Display -->
-  <div class="row mb-3">
-    <div class="col-sm-6">
+  <div class="row mb-3 align-items-center g-2" id="group-selector-row">
+    <div class="col-12 col-lg">
       <!-- Custom searchable dropdown -->
       <div class="dropdown" id="group-dropdown">
         <button class="form-select d-flex justify-content-between align-items-center" 
@@ -308,24 +343,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <select class="d-none" id="group-select" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true"></select>
       </div>
     </div>
-    <div class="col-sm-6">
-      <!-- Adjusted column size -->
-      <button class="btn btn-primary" id="btn-change-group">
-        Change Active Group
-      </button>
-      <button class="btn btn-secondary" id="btn-my-groups">My Groups</button>
-    </div>
-  </div>
-
-  <div class="alert alert-info" id="user-role-display" style="display: none">
-    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
-      <div>
-        Your role in <strong id="active-group-name-role"></strong>:
-        <span id="user-role" class="fw-bold"></span>
+    <div class="col-auto" id="user-role-display" style="display: none">
+      <div class="group-role-pill" role="status" aria-live="polite">
+        <span class="group-role-label">Role</span>
+        <span id="user-role" class="fw-semibold"></span>
       </div>
-      <a class="btn btn-sm btn-outline-primary d-none" id="manage-active-group-btn" href="#">
-        <i class="bi bi-gear me-1"></i>Manage Group
-      </a>
+    </div>
+    <div class="col-auto" id="group-selector-actions">
+      <div class="d-flex flex-wrap gap-2 justify-content-lg-end align-items-center h-100">
+        <a class="btn btn-sm btn-outline-primary d-none" id="manage-active-group-btn" href="#">
+          <i class="bi bi-gear me-1"></i>Manage Group
+        </a>
+        <button class="btn btn-sm btn-outline-secondary" id="btn-my-groups">My Groups</button>
+      </div>
     </div>
   </div>
 
@@ -2627,10 +2657,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
         "click",
         () => (window.location.href = "{{ url_for('my_groups') }}")
       );
-    document
-      .getElementById("btn-change-group")
-      .addEventListener("click", onChangeActiveGroup);
-
     // --- Event Listeners (Group Documents Tab) ---
     if (groupUploadBtn)
       groupUploadBtn.addEventListener("click", onGroupUploadClick);
@@ -2851,10 +2877,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const searchContainer = document.querySelector(".group-search-container");
 
     // Show loading state
+    const selectedGroupText = dropdownButton.querySelector(".selected-group-text");
+    const myGroupsButton = document.getElementById("btn-my-groups");
     dropdownButton.disabled = true;
-    dropdownButton.querySelector(".selected-group-text").textContent = "Loading groups...";
+    selectedGroupText.textContent = "Loading groups...";
     dropdownItems.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm" role="status"></div> Loading...</div>';
-    document.getElementById("btn-change-group").disabled = true;
+    if (myGroupsButton) {
+      myGroupsButton.disabled = true;
+    }
 
     // Set a large page_size to get all groups at once
     return fetch("/api/groups?page_size=1000") // Request up to 1000 groups to avoid pagination
@@ -2880,11 +2910,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
         sel.innerHTML = ""; 
         dropdownItems.innerHTML = "";
         
-        // Element removed from HTML, only keep role element reference
-        const activeGroupNameRoleEl = document.getElementById(
-          "active-group-name-role"
-        );
-
         let foundActive = false;
         
         // Show/hide search based on number of groups
@@ -2895,8 +2920,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
         }
 
         if (userGroups.length === 0) {
-          dropdownItems.innerHTML = '<div class="dropdown-item disabled">No groups found</div>';
-          sel.innerHTML = "<option>No groups found</option>";
+          selectedGroupText.textContent = "No groups yet";
+
+          const emptyItem = document.createElement("div");
+          emptyItem.className = "dropdown-item-text text-muted small text-wrap";
+          emptyItem.textContent = "You are not a member of any group. Select My Groups to find or create a group.";
+          dropdownItems.appendChild(emptyItem);
+
+          const emptyOption = document.createElement("option");
+          emptyOption.disabled = true;
+          emptyOption.selected = true;
+          emptyOption.textContent = "No groups available";
+          sel.appendChild(emptyOption);
         } else {
           userGroups.forEach((g) => {
             // Create option for hidden select (compatibility)
@@ -2915,7 +2950,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             if (g.isActive) {
               opt.selected = true;
               dropdownItem.classList.add("active");
-              dropdownButton.querySelector(".selected-group-text").textContent = g.name;
+              selectedGroupText.textContent = g.name;
               activeGroupId = g.id;
               userRoleInActiveGroup = g.userRole;
               activeGroupName = g.name;
@@ -2924,17 +2959,24 @@ app_settings.app_title }} {% endblock %} {% block head %}
             sel.appendChild(opt);
           });
 
+          if (!foundActive) {
+            selectedGroupText.textContent = "Select a group...";
+          }
+
           // Add click event listeners to dropdown items
           document.querySelectorAll("#group-dropdown-items .dropdown-item").forEach(item => {
             item.addEventListener("click", function() {
               const groupId = this.getAttribute("data-group-id");
               const groupName = this.textContent;
+              if (!groupId) {
+                return;
+              }
               
               // Update hidden select
               sel.value = groupId;
               
               // Update dropdown button text
-              dropdownButton.querySelector(".selected-group-text").textContent = groupName;
+              selectedGroupText.textContent = groupName;
               
               // Update active state
               document.querySelectorAll("#group-dropdown-items .dropdown-item").forEach(i => {
@@ -2947,6 +2989,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
               if (dropdownInstance) {
                 dropdownInstance.hide();
               }
+
+              activateSelectedGroup(groupId);
             });
           });
 
@@ -2973,8 +3017,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
         }
 
         if (foundActive) {
-          // Only update role element since heading element was removed
-          activeGroupNameRoleEl.textContent = activeGroupName;
           updateRoleDisplay(); // Update role display and UI elements
           updateGroupStatusAlert(); // Update status alert box
           updateGroupUIBasedOnStatus(); // Hide/show UI elements based on status
@@ -2986,17 +3028,21 @@ app_settings.app_title }} {% endblock %} {% block head %}
           document.getElementById("user-role-display").style.display = "none";
           updateActiveGroupHero(null);
           updateManageGroupButton(null);
+          const noActiveGroupMessage = userGroups.length === 0
+            ? "You are not a member of any group. Select My Groups to find or create a group."
+            : "Please select an active group.";
+
           // Clear tables or show message
           if (groupDocumentsTableBody)
             groupDocumentsTableBody.innerHTML =
-              '<tr><td colspan="4" class="text-center p-4 text-muted">Please select an active group.</td></tr>';
+              `<tr><td colspan="4" class="text-center p-4 text-muted">${noActiveGroupMessage}</td></tr>`;
           // Clear prompts table too if needed
           const promptsTbody = document.querySelector(
             "#group-prompts-table tbody"
           );
           if (promptsTbody)
             promptsTbody.innerHTML =
-              '<tr><td colspan="2" class="text-center p-4 text-muted">Please select an active group.</td></tr>';
+              `<tr><td colspan="2" class="text-center p-4 text-muted">${noActiveGroupMessage}</td></tr>`;
           // Disable upload section if no group active
           if (uploadSection) uploadSection.style.display = "none";
           if (uploadHr) uploadHr.style.display = "none";
@@ -3011,7 +3057,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             (err.error || err.message || "Unknown error")
         );
         sel.innerHTML = "<option>Error loading groups</option>"; // Show error in dropdown
-        dropdownButton.querySelector(".selected-group-text").textContent = "Error loading groups";
+        selectedGroupText.textContent = "Error loading groups";
         dropdownItems.innerHTML = '<div class="dropdown-item disabled">Error loading groups</div>';
         notifyGroupWorkspaceContext();
       })
@@ -3019,7 +3065,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
         // Re-enable controls after fetch completes
         sel.disabled = false;
         dropdownButton.disabled = false;
-        document.getElementById("btn-change-group").disabled = false;
+        if (myGroupsButton) {
+          myGroupsButton.disabled = false;
+        }
       });
   }
 
@@ -3038,21 +3086,28 @@ app_settings.app_title }} {% endblock %} {% block head %}
         }
         console.log("Active group set successfully");
       });
-    // Note: We refetch groups and data *after* this promise resolves in onChangeActiveGroup
+    // Note: We refetch groups and data *after* this promise resolves in activateSelectedGroup.
   }
 
-  function onChangeActiveGroup() {
+  function activateSelectedGroup(groupId) {
     const sel = document.getElementById("group-select");
-    const newGroupId = sel.value;
-    if (newGroupId === activeGroupId) return; // No change
+    const dropdownButton = document.getElementById("group-dropdown-button");
+    const selectedGroupText = dropdownButton?.querySelector(".selected-group-text");
+    const newGroupId = groupId || sel.value;
+    if (!newGroupId || newGroupId === activeGroupId) return Promise.resolve(); // No change
+
+    const selectedOption = Array.from(sel.options).find(option => option.value === newGroupId);
+    const selectedGroupName = selectedOption?.textContent || selectedGroupText?.textContent || "selected group";
 
     console.log(`Attempting to change active group to: ${newGroupId}`);
-    // Add loading indicator?
-    const changeButton = document.getElementById("btn-change-group");
-    changeButton.disabled = true;
-    changeButton.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Changing...`;
+    if (dropdownButton) {
+      dropdownButton.disabled = true;
+    }
+    if (selectedGroupText) {
+      selectedGroupText.textContent = `Switching to ${selectedGroupName}...`;
+    }
 
-    setActiveGroup(newGroupId)
+    return setActiveGroup(newGroupId)
       .then(() => fetchUserGroups()) // Refetch groups to update state (activeGroupId, role)
       .then(() => {
         // Check if active group was successfully set
@@ -3066,11 +3121,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .catch((err) => {
         console.error("Error during group change process:", err);
-        // fetchUserGroups might have already updated state, check if we need to revert UI
+        return fetchUserGroups().catch((refreshError) => {
+          console.error("Error refreshing groups after failed group change:", refreshError);
+        });
       })
       .finally(() => {
-        changeButton.disabled = false;
-        changeButton.textContent = "Change Active Group";
+        if (dropdownButton) {
+          dropdownButton.disabled = false;
+        }
       });
   }
 
@@ -3113,13 +3171,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const activeGroup = userGroups.find(group => group.id === activeGroupId) || null;
     const roleDisplay = document.getElementById("user-role-display");
     const roleSpan = document.getElementById("user-role");
-    const activeGroupNameRoleEl = document.getElementById(
-      "active-group-name-role"
-    );
 
     if (userRoleInActiveGroup && activeGroupName) {
       roleSpan.innerText = userRoleInActiveGroup;
-      activeGroupNameRoleEl.textContent = activeGroupName; // Ensure name is shown in role display
       roleDisplay.style.display = "block";
     } else {
       roleDisplay.style.display = "none";

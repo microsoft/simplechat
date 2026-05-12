@@ -1102,28 +1102,30 @@ function showPendingInviteToast(conversation) {
     }
 
     notifiedPendingInviteConversationIds.add(conversation.id);
-    const actionId = `collaboration-invite-review-${conversation.id}-${Date.now()}`;
-    showToast(
-        `You were invited to <strong>${escapeHtml(conversation.title || 'a collaborative conversation')}</strong>. <button type="button" id="${actionId}" class="btn btn-sm btn-light ms-2">Review invite</button>`,
-        'warning'
-    );
+    const messageFragment = document.createDocumentFragment();
+    messageFragment.appendChild(document.createTextNode('You were invited to '));
 
-    window.setTimeout(() => {
-        const actionButton = document.getElementById(actionId);
-        if (!actionButton) {
-            return;
+    const titleEl = document.createElement('strong');
+    titleEl.textContent = conversation.title || 'a collaborative conversation';
+    messageFragment.appendChild(titleEl);
+    messageFragment.appendChild(document.createTextNode('. '));
+
+    const actionButton = document.createElement('button');
+    actionButton.type = 'button';
+    actionButton.className = 'btn btn-sm btn-light ms-2';
+    actionButton.textContent = 'Review invite';
+    actionButton.addEventListener('click', async event => {
+        event.preventDefault();
+        if (window.chatConversations?.selectConversation) {
+            await window.chatConversations.selectConversation(conversation.id);
         }
+        if (window.showConversationDetails) {
+            window.showConversationDetails(conversation.id);
+        }
+    }, { once: true });
+    messageFragment.appendChild(actionButton);
 
-        actionButton.addEventListener('click', async event => {
-            event.preventDefault();
-            if (window.chatConversations?.selectConversation) {
-                await window.chatConversations.selectConversation(conversation.id);
-            }
-            if (window.showConversationDetails) {
-                window.showConversationDetails(conversation.id);
-            }
-        }, { once: true });
-    }, 0);
+    showToast(messageFragment, 'warning');
 }
 
 function notifyPendingInvites(conversations = []) {

@@ -240,7 +240,7 @@ const publicSelect = document.getElementById('public-select');
 const publicDropdownBtn = document.getElementById('public-dropdown-button');
 const publicDropdownItems = document.getElementById('public-dropdown-items');
 const publicSearchInput = document.getElementById('public-search-input');
-const btnChangePublic = document.getElementById('btn-change-public');
+const publicSearchContainer = publicSearchInput ? publicSearchInput.closest('.public-search-container') : null;
 const btnMyPublics = document.getElementById('btn-my-publics');
 const uploadSection = document.getElementById('upload-public-section');
 const uploadHr = document.getElementById('public-upload-hr');
@@ -265,18 +265,70 @@ const publicPromptForm = document.getElementById('public-prompt-form');
 const publicPromptIdEl = document.getElementById('public-prompt-id');
 const publicPromptNameEl = document.getElementById('public-prompt-name');
 
+function setPublicTableMessage(tableBody, columnSpan, message) {
+  if (!tableBody) return;
+
+  const row = document.createElement('tr');
+  const cell = document.createElement('td');
+  cell.colSpan = columnSpan;
+  cell.className = 'text-center p-4 text-muted';
+  cell.textContent = message;
+  row.appendChild(cell);
+  tableBody.replaceChildren(row);
+}
+
+function filterPublicDropdownItems() {
+  if (!publicDropdownItems) return;
+
+  const searchTerm = publicSearchInput ? publicSearchInput.value.toLowerCase().trim() : '';
+  let visibleCount = 0;
+
+  document.querySelectorAll('#public-dropdown-items .dropdown-item').forEach((item) => {
+    const workspaceName = item.textContent.toLowerCase();
+    const isVisible = workspaceName.includes(searchTerm);
+    item.classList.toggle('d-none', !isVisible);
+    if (isVisible) {
+      visibleCount += 1;
+    }
+  });
+
+  const noMatchesItem = document.getElementById('public-dropdown-no-matches');
+  if (noMatchesItem) {
+    noMatchesItem.classList.toggle('d-none', !searchTerm || visibleCount > 0);
+  }
+}
+
+function updatePublicDropdownSearchVisibility() {
+  if (!publicSearchContainer || !publicSearchInput) return;
+
+  const shouldShowSearch = userPublics.length > 0;
+  publicSearchContainer.classList.toggle('d-none', !shouldShowSearch);
+  if (!shouldShowSearch) {
+    publicSearchInput.value = '';
+  }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', ()=>{
   fetchUserPublics().then(()=>{
     if(activePublicId) loadActivePublicData();
     else {
-      publicDocsTableBody.innerHTML = '<tr><td colspan="4" class="text-center p-4 text-muted">Please select an active public workspace.</td></tr>';
-      publicPromptsTableBody.innerHTML = '<tr><td colspan="2" class="text-center p-4 text-muted">Please select an active public workspace.</td></tr>';
+      const noActivePublicMessage = userPublics.length === 0
+        ? 'No public workspaces are available. Select My Workspaces to create one.'
+        : 'Please select an active public workspace.';
+      setPublicTableMessage(publicDocsTableBody, 4, noActivePublicMessage);
+      setPublicTableMessage(publicPromptsTableBody, 2, noActivePublicMessage);
     }
   });
 
+  if (publicSearchInput) {
+    publicSearchInput.addEventListener('input', filterPublicDropdownItems);
+    publicSearchInput.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  }
+
   if (btnMyPublics) btnMyPublics.onclick = ()=> window.location.href = '/my_public_workspaces';
-  if (btnChangePublic) btnChangePublic.onclick = onChangeActivePublic;
 
   // Upload functionality - handle both button click and drag-and-drop
   if (uploadBtn) uploadBtn.onclick = () => checkUserAgreementBeforePublicUpload();
@@ -401,37 +453,88 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
 // Fetch User's Public Workspaces
 async function fetchUserPublics(){
+  const selectedPublicText = publicDropdownBtn.querySelector('.selected-public-text');
   publicSelect.disabled = true;
   publicDropdownBtn.disabled = true;
-  btnChangePublic.disabled = true;
-  publicDropdownBtn.querySelector('.selected-public-text').textContent = 'Loading...';
+  if (btnMyPublics) btnMyPublics.disabled = true;
+  selectedPublicText.textContent = 'Loading...';
   publicDropdownItems.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div> Loading...</div>';
   try {
-    const r = await fetch('/api/public_workspaces?');
+    const r = await fetch('/api/public_workspaces?page_size=1000');
     if(!r.ok) throw await r.json();
     const data = await r.json();
-    userPublics = data.workspaces || [];
+    userPublics = Array.isArray(data) ? data : (data.workspaces || []);
     publicSelect.innerHTML=''; publicDropdownItems.innerHTML='';
+    if (publicSearchInput) publicSearchInput.value = '';
+    updatePublicDropdownSearchVisibility();
     let found=false;
-    userPublics.forEach(w=>{
-      const opt = document.createElement('option'); opt.value=w.id; opt.text=w.name; publicSelect.append(opt);
-      const btn = document.createElement('button'); btn.type='button'; btn.className='dropdown-item'; btn.textContent=w.name; btn.dataset.publicId=w.id;
-      btn.onclick = ()=>{ publicSelect.value=w.id; publicDropdownBtn.querySelector('.selected-public-text').textContent=w.name; document.querySelectorAll('#public-dropdown-items .dropdown-item').forEach(i=>i.classList.remove('active')); btn.classList.add('active'); };
-      publicDropdownItems.append(btn);
-      if(w.isActive){ publicSelect.value=w.id; publicDropdownBtn.querySelector('.selected-public-text').textContent=w.name; activePublicId=w.id; userRoleInActivePublic=w.userRole; activePublicName=w.name; found=true; }
-    });
-    if(!found){ activePublicId=null; publicDropdownBtn.querySelector('.selected-public-text').textContent = userPublics.length? 'Select a workspace...':'No workspaces'; }
+    if (userPublics.length === 0) {
+      activePublicId = null;
+      userRoleInActivePublic = null;
+      activePublicName = '';
+      selectedPublicText.textContent = 'No workspaces yet';
+
+      const emptyItem = document.createElement('div');
+      emptyItem.className = 'dropdown-item-text text-muted small text-wrap';
+      emptyItem.textContent = 'No public workspaces are available. Select My Workspaces to create one.';
+      publicDropdownItems.appendChild(emptyItem);
+
+      const emptyOption = document.createElement('option');
+      emptyOption.disabled = true;
+      emptyOption.selected = true;
+      emptyOption.textContent = 'No workspaces available';
+      publicSelect.appendChild(emptyOption);
+    } else {
+      userPublics.forEach(w=>{
+        const opt = document.createElement('option'); opt.value=w.id; opt.textContent=w.name; publicSelect.append(opt);
+        const btn = document.createElement('button'); btn.type='button'; btn.className='dropdown-item'; btn.textContent=w.name; btn.dataset.publicId=w.id;
+        btn.onclick = ()=>{
+          publicSelect.value=w.id;
+          selectedPublicText.textContent=w.name;
+          document.querySelectorAll('#public-dropdown-items .dropdown-item').forEach(i=>i.classList.remove('active'));
+          btn.classList.add('active');
+          const dropdownInstance = bootstrap.Dropdown.getInstance(publicDropdownBtn);
+          if (dropdownInstance) dropdownInstance.hide();
+          activateSelectedPublic(w.id);
+        };
+        publicDropdownItems.append(btn);
+        if(w.isActive){ publicSelect.value=w.id; selectedPublicText.textContent=w.name; btn.classList.add('active'); activePublicId=w.id; userRoleInActivePublic=w.userRole; activePublicName=w.name; found=true; }
+      });
+      const noMatchesItem = document.createElement('div');
+      noMatchesItem.id = 'public-dropdown-no-matches';
+      noMatchesItem.className = 'dropdown-item-text text-muted small d-none';
+      noMatchesItem.textContent = 'No matching workspaces';
+      publicDropdownItems.appendChild(noMatchesItem);
+      if(!found){ activePublicId=null; userRoleInActivePublic=null; activePublicName=''; selectedPublicText.textContent = 'Select a workspace...'; }
+    }
+    filterPublicDropdownItems();
     updatePublicRoleDisplay();
-  } catch(err){ console.error(err); publicDropdownItems.innerHTML='<div class="dropdown-item disabled">Error loading</div>'; publicDropdownBtn.querySelector('.selected-public-text').textContent='Error'; }
-  finally{ publicSelect.disabled=false; publicDropdownBtn.disabled=false; btnChangePublic.disabled=false; }
+  } catch(err){ console.error(err); publicDropdownItems.innerHTML='<div class="dropdown-item disabled">Error loading</div>'; selectedPublicText.textContent='Error'; }
+  finally{ publicSelect.disabled=false; publicDropdownBtn.disabled=false; if (btnMyPublics) btnMyPublics.disabled=false; }
 }
 
-async function onChangeActivePublic(){
-  const newId = publicSelect.value; if(newId===activePublicId) return;
-  btnChangePublic.disabled=true; btnChangePublic.textContent='Changing...';
-  try { const r=await fetch('/api/public_workspaces/setActive',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({workspaceId:newId})}); if(!r.ok) throw await r.json(); await fetchUserPublics(); if(activePublicId===newId) loadActivePublicData(); }
-  catch(e){ console.error(e); alert('Error setting active workspace: '+(e.error||e.message)); }
-  finally{ btnChangePublic.disabled=false; btnChangePublic.textContent='Change Active Workspace'; }
+async function activateSelectedPublic(publicId){
+  const selectedPublicText = publicDropdownBtn.querySelector('.selected-public-text');
+  const newId = publicId || publicSelect.value;
+  if(!newId || newId===activePublicId) return;
+
+  const selectedOption = Array.from(publicSelect.options).find(option => option.value === newId);
+  const selectedWorkspaceName = selectedOption?.textContent || selectedPublicText?.textContent || 'selected workspace';
+
+  publicDropdownBtn.disabled = true;
+  if (selectedPublicText) selectedPublicText.textContent = `Switching to ${selectedWorkspaceName}...`;
+  try {
+    const r=await fetch('/api/public_workspaces/setActive',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({workspaceId:newId})});
+    if(!r.ok) throw await r.json();
+    await fetchUserPublics();
+    if(activePublicId===newId) loadActivePublicData();
+  }
+  catch(e){
+    console.error(e);
+    showPublicDocumentDeleteFeedback(`Error setting active workspace: ${e.error||e.message||'Unknown error'}`, 'danger');
+    await fetchUserPublics().catch(refreshError => console.error(refreshError));
+  }
+  finally{ publicDropdownBtn.disabled=false; }
 }
 
 function updatePublicRoleDisplay(){
@@ -439,10 +542,8 @@ function updatePublicRoleDisplay(){
   const activeWorkspace = userPublics.find(workspace => workspace.id === activePublicId) || null;
   if (activePublicId) {
     const roleEl = document.getElementById('user-public-role');
-    const nameRoleEl = document.getElementById('active-public-name-role');
     if (roleEl) roleEl.textContent = userRoleInActivePublic;
-    if (nameRoleEl) nameRoleEl.textContent = activePublicName;
-    if (display) display.style.display = 'block';
+    if (display) display.classList.remove('d-none');
     if (uploadSection) uploadSection.style.display = ['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic) ? 'block' : 'none';
     // Control visibility of Settings tab (only for Owners and Admins)
     const settingsTabNav = document.getElementById('public-settings-tab-nav');
@@ -453,7 +554,7 @@ function updatePublicRoleDisplay(){
     updateActivePublicHero(activeWorkspace);
     updateManagePublicWorkspaceLink(activeWorkspace);
   } else {
-    if (display) display.style.display = 'none';
+    if (display) display.classList.add('d-none');
     updateActivePublicHero(null);
     updateManagePublicWorkspaceLink(null);
   }
@@ -1612,7 +1713,7 @@ window.onExtractPublicMetadata = function(docId, event) {
     });
 };
 
-function updatePublicPromptsRoleUI(){ const canManage=['Owner','Admin','PromptManager'].includes(userRoleInActivePublic); document.getElementById('create-public-prompt-section').style.display=canManage?'block':'none'; document.getElementById('public-prompts-role-warning').style.display=canManage?'none':'block'; }
+function updatePublicPromptsRoleUI(){ const canManage=['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic); document.getElementById('create-public-prompt-section')?.classList.toggle('d-none', !canManage); document.getElementById('public-prompts-role-warning')?.classList.toggle('d-none', canManage); }
 
 // Expose fetch
 window.fetchPublicPrompts = fetchPublicPrompts;

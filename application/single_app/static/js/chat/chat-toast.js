@@ -17,7 +17,11 @@ export function showToast(message, variant = "danger") {
 
   const bodyEl = document.createElement("div");
   bodyEl.className = "toast-body";
-  bodyEl.textContent = String(message ?? "");
+  if (message instanceof Node) {
+    bodyEl.appendChild(message);
+  } else {
+    bodyEl.textContent = String(message ?? "");
+  }
 
   const closeButtonEl = document.createElement("button");
   closeButtonEl.type = "button";
