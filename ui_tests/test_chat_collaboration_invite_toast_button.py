@@ -8,7 +8,6 @@ This test ensures DOM-based chat toast messages can render a clickable Review
 invite button while untrusted conversation title text remains inert.
 """
 
-import json
 from pathlib import Path
 
 import pytest
@@ -20,12 +19,17 @@ CHAT_TOAST_JS = REPO_ROOT / "application" / "single_app" / "static" / "js" / "ch
 
 
 @pytest.mark.ui
-def test_chat_collaboration_invite_toast_button_renders_safely(page, tmp_path):
+def test_chat_collaboration_invite_toast_button_renders_safely(page):
     """Validate the chat toast helper renders DOM action content without executing title HTML."""
-    module_url = json.dumps(CHAT_TOAST_JS.as_uri())
-    html_path = tmp_path / "collaboration_invite_toast.html"
-    html_path.write_text(
-        f"""
+    toast_source = CHAT_TOAST_JS.read_text(encoding="utf-8")
+    toast_source = toast_source.replace(
+        "export function showToast(message, variant = \"danger\") {",
+        "window.showToast = function showToast(message, variant = \"danger\") {",
+    )
+    assert "window.showToast = function showToast" in toast_source
+
+    page.set_content(
+        """
 <!doctype html>
 <html lang="en">
 <head>
@@ -36,23 +40,28 @@ def test_chat_collaboration_invite_toast_button_renders_safely(page, tmp_path):
     <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
     <div id="click-count">0</div>
     <script>
-        window.bootstrap = {{
-            Toast: class {{
-                constructor(element) {{
+        window.bootstrap = {
+            Toast: class {
+                constructor(element) {
                     this.element = element;
-                }}
+                }
 
-                show() {{
+                show() {
                     this.element.classList.add('show');
-                }}
-            }}
-        }};
+                }
+            }
+        };
     </script>
-    <script type="module">
-        import {{ showToast }} from {module_url};
+</body>
+</html>
+""".strip()
+    )
+    page.add_script_tag(content=toast_source)
 
-        window.__xssFired = false;
-        window.renderInviteToast = () => {{
+    page.evaluate(
+        """
+        () => {
+            window.__xssFired = false;
             const maliciousTitle = '<img src=x onerror="window.__xssFired = true"> Incident Coordination';
             const fragment = document.createDocumentFragment();
             fragment.appendChild(document.createTextNode('You were invited to '));
@@ -66,24 +75,16 @@ def test_chat_collaboration_invite_toast_button_renders_safely(page, tmp_path):
             actionButton.type = 'button';
             actionButton.className = 'btn btn-sm btn-light ms-2';
             actionButton.textContent = 'Review invite';
-            actionButton.addEventListener('click', () => {{
+            actionButton.addEventListener('click', () => {
                 const countEl = document.getElementById('click-count');
                 countEl.textContent = String(Number(countEl.textContent) + 1);
-            }});
+            });
             fragment.appendChild(actionButton);
 
-            showToast(fragment, 'warning');
-        }};
-    </script>
-</body>
-</html>
-""".strip(),
-        encoding="utf-8",
+            window.showToast(fragment, 'warning');
+        }
+        """
     )
-
-    page.goto(html_path.as_uri(), wait_until="domcontentloaded")
-    page.wait_for_function("window.renderInviteToast !== undefined")
-    page.evaluate("window.renderInviteToast()")
 
     toast = page.locator("#toast-container .toast").last
     expect(toast).to_be_visible()
