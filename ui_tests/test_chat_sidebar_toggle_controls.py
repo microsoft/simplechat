@@ -1,14 +1,17 @@
 # test_chat_sidebar_toggle_controls.py
 """
 UI test for the unified chat navigation shell.
-Version: 0.241.023
-Implemented in: 0.241.023
+Version: 0.241.017
+Implemented in: 0.241.017
 
 This test ensures that chats in top-nav mode use the adaptive conversation
 rail, preserve compact desktop top-nav links, and become the hamburger drawer
 on mobile without reintroducing the old top-nav drawer or the chat drawer
 close-button crash while preserving direct workspace navigation in the mobile
-drawer.
+drawer. It also prevents the duplicate desktop inline sidebar toggle from
+returning in the chat header and verifies the user-selected sidebar toggle
+style. It also checks that the conversation details icon remains an unoutlined
+icon button and that compact sidebar controls render as icon-only buttons.
 """
 
 import os
@@ -61,8 +64,8 @@ def _set_user_settings(page, settings):
 
 
 @pytest.mark.ui
-def test_chat_sidebar_desktop_uses_inline_toggle_without_floating_reopen(playwright):
-    """Validate that desktop chat uses the docked rail, inline toggle, and compact header navigation."""
+def test_chat_sidebar_desktop_uses_sidebar_toggle_without_inline_duplicate(playwright):
+    """Validate that desktop chat uses the default large docked rail toggle only."""
     _require_authenticated_chat_env()
 
     browser = playwright.chromium.launch()
@@ -78,6 +81,7 @@ def test_chat_sidebar_desktop_uses_inline_toggle_without_floating_reopen(playwri
         original_settings = _get_user_settings(page)
         top_nav_settings = dict(original_settings)
         top_nav_settings["navLayout"] = "top"
+        top_nav_settings["sidebarToggleStyle"] = "large"
         assert _set_user_settings(page, top_nav_settings), "Expected nav layout update to succeed."
 
         response = page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
@@ -85,11 +89,14 @@ def test_chat_sidebar_desktop_uses_inline_toggle_without_floating_reopen(playwri
 
         sidebar = page.locator("#sidebar-nav")
         sidebar_toggle = page.locator("#sidebar-toggle-btn")
-        inline_toggle = page.locator("#chat-sidebar-inline-toggle")
+        info_button = page.locator("#conversation-info-btn")
 
         expect(sidebar).to_be_visible()
         expect(sidebar_toggle).to_be_visible()
-        expect(inline_toggle).to_be_visible()
+        expect(sidebar_toggle).not_to_have_class(re.compile(r".*sidebar-toggle-compact.*"))
+        expect(sidebar_toggle.locator(".sidebar-toggle-label")).to_have_text("Hide navigation")
+        expect(info_button).not_to_have_class(re.compile(r".*btn-outline-secondary.*"))
+        expect(page.locator("#chat-sidebar-inline-toggle")).to_have_count(0)
         expect(page.locator("#floating-expand-btn")).to_have_count(0)
         expect(page.locator("#topNavMobileMenu")).to_have_count(0)
         expect(page.locator(".top-nav-chat-nav")).to_be_visible()
@@ -99,13 +106,54 @@ def test_chat_sidebar_desktop_uses_inline_toggle_without_floating_reopen(playwri
         page.wait_for_function("document.body.classList.contains('sidebar-collapsed')")
 
         expect(sidebar).to_have_class(re.compile(r".*sidebar-collapsed.*"))
-        expect(inline_toggle).to_have_attribute("aria-expanded", "false")
+        expect(sidebar_toggle).to_have_attribute("aria-expanded", "false")
+    finally:
+        if original_settings is not None:
+            _set_user_settings(page, original_settings)
+        context.close()
+        browser.close()
 
-        inline_toggle.click()
-        page.wait_for_function("!document.body.classList.contains('sidebar-collapsed')")
 
-        expect(sidebar_toggle).to_have_attribute("aria-expanded", "true")
-        expect(inline_toggle).to_have_attribute("aria-expanded", "true")
+@pytest.mark.ui
+def test_chat_sidebar_desktop_uses_compact_toggle_preference(playwright):
+    """Validate that desktop chat renders the compact sidebar toggle when selected by the user."""
+    _require_authenticated_chat_env()
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport=DESKTOP_VIEWPORT,
+    )
+    page = context.new_page()
+    original_settings = None
+
+    try:
+        page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        original_settings = _get_user_settings(page)
+        compact_settings = dict(original_settings)
+        compact_settings["navLayout"] = "top"
+        compact_settings["sidebarToggleStyle"] = "compact"
+        assert _set_user_settings(page, compact_settings), "Expected compact sidebar toggle setting update to succeed."
+
+        response = page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        assert response is not None and response.ok, "Expected /chats to load in top-nav mode."
+
+        sidebar = page.locator("#sidebar-nav")
+        sidebar_toggle = page.locator("#sidebar-toggle-btn")
+
+        expect(sidebar).to_be_visible()
+        expect(sidebar_toggle).to_be_visible()
+        expect(sidebar_toggle).to_have_class(re.compile(r".*sidebar-toggle-compact.*"))
+        expect(sidebar_toggle).not_to_have_class(re.compile(r".*btn-outline-secondary.*"))
+        expect(sidebar_toggle.locator("i.bi-layout-sidebar")).to_be_visible()
+        expect(sidebar_toggle.locator(".sidebar-toggle-label")).to_have_count(0)
+        expect(page.locator("#chat-sidebar-inline-toggle")).to_have_count(0)
+
+        sidebar_toggle.click()
+        page.wait_for_function("document.body.classList.contains('sidebar-collapsed')")
+
+        expect(sidebar).to_have_class(re.compile(r".*sidebar-collapsed.*"))
+        expect(sidebar_toggle).to_have_attribute("aria-expanded", "false")
     finally:
         if original_settings is not None:
             _set_user_settings(page, original_settings)

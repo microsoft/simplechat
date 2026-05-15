@@ -3,7 +3,7 @@
 from unittest import result
 from config import *
 from functions_activity_logging import log_user_login, record_user_login_session_activity
-from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, get_requested_oauth_scopes
+from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, create_ci_bearer_session, get_requested_oauth_scopes
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -70,6 +70,11 @@ def register_route_frontend_authentication(app):
         print("Redirecting to Azure AD for authentication.")
         #auth_url= auth_url.replace('https://', 'http://')  # Ensure HTTPS for security
         return redirect(auth_url)
+
+    @app.route('/ci-auth/session', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    def ci_auth_session():
+        return create_ci_bearer_session()
 
     @app.route('/getAToken') # This is your redirect URI path
     @swagger_route(security=get_auth_security())

@@ -1,14 +1,13 @@
 # test_docs_showcase_pages.py
 """
 UI test for docs showcase pages.
-Version: 0.241.010
-Implemented in: 0.241.010
+Version: 0.241.012
+Implemented in: 0.241.012
 
 This test ensures that the redesigned docs landing pages, reference guides,
-how-to guides, tutorials, and troubleshooting pages render the shared
-latest-release-style hero and page-specific content blocks at desktop and
-mobile viewport sizes, and that features page preview images open in the
-shared popup modal.
+how-to guides, tutorials, and troubleshooting pages render the shared GitHub
+Pages navigation shell, responsive sidebar, search experience, page-specific
+content blocks, and shared preview modal at desktop and mobile viewport sizes.
 """
 
 import os
@@ -101,16 +100,26 @@ def test_docs_showcase_pages(playwright, viewport, path, heading, specific_selec
         assert response is not None, f"Expected a navigation response when loading {path}."
         assert response.ok, f"Expected {path} to load successfully, got HTTP {response.status}."
 
-        expect(page.locator(".latest-release-hero")).to_be_visible()
+        expect(page.locator(".docs-topbar")).to_be_visible()
         expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
-        expect(page.locator(".latest-release-hero-actions .btn").first).to_be_visible()
-        expect(page.locator(".latest-release-card-grid").first).to_be_visible()
         expect(page.locator(specific_selector).first).to_be_visible()
+
+        if viewport["width"] >= 992:
+            expect(page.locator("#sidebar-nav")).to_be_visible()
+            expect(page.locator(".docs-topbar-search [data-docs-search='true']")).to_be_visible()
+        else:
+            page.get_by_role("button", name="Open documentation navigation").click()
+            expect(page.locator("#sidebar-nav")).to_be_visible()
+            page.get_by_role("button", name="Close documentation navigation").click()
 
         if path == "/features/":
             page.locator("[data-latest-feature-image-src]").first.click()
             expect(page.locator("#latestFeatureImageModal")).to_be_visible()
             expect(page.locator("#latestFeatureImageModalLabel")).to_have_text("Architecture overview")
+
+        if path == "/":
+            page.locator("#docs-hero-search-input").fill("features")
+            expect(page.locator(".docs-search-result-title", has_text="Features").first).to_be_visible()
     finally:
         context.close()
         browser.close()

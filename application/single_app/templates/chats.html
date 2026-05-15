@@ -134,12 +134,24 @@
         
         /* Conversation info button styling */
         #conversation-info-btn {
-            transition: color 0.2s ease;
+            background: transparent !important;
+            border: 0 !important;
+            box-shadow: none !important;
+            color: var(--bs-secondary-color);
             font-size: 1rem;
+            transition: color 0.2s ease;
         }
         
-        #conversation-info-btn:hover {
+        #conversation-info-btn:hover,
+        #conversation-info-btn:focus {
+            background: transparent !important;
+            box-shadow: none !important;
             color: var(--bs-primary) !important;
+        }
+
+        #conversation-info-btn:focus-visible {
+            outline: 2px solid rgba(var(--bs-primary-rgb), 0.45);
+            outline-offset: 2px;
         }
         
         /* Ensure proper spacing in conversation title area */
@@ -241,13 +253,10 @@
             <div class="p-3 border-bottom flex-shrink-0 chat-shell-header">
                 <div class="d-flex flex-column w-100 chat-shell-header-content">
                     <div class="d-flex align-items-center chat-shell-title-row">
-                        <button type="button" id="chat-sidebar-inline-toggle" class="btn btn-outline-secondary btn-sm d-none d-lg-inline-flex align-items-center justify-content-center me-2" data-sidebar-toggle="toggle" aria-expanded="true" aria-label="Toggle chat navigation" title="Toggle chat navigation">
-                            <i class="bi bi-layout-sidebar"></i>
-                        </button>
                         <h5 id="current-conversation-title" class="mb-0 flex-grow-1 text-truncate">
                         </h5>
                         <div class="chat-shell-title-actions ms-2">
-                            <button id="conversation-info-btn" class="btn btn-outline-secondary btn-sm chat-shell-icon-button d-none" data-bs-toggle="tooltip" data-bs-placement="top" title="View conversation details" aria-label="View conversation details">
+                            <button id="conversation-info-btn" class="btn btn-sm chat-shell-icon-button d-none" data-bs-toggle="tooltip" data-bs-placement="top" title="View conversation details" aria-label="View conversation details">
                                 <i class="bi bi-info-circle"></i>
                             </button>
                         </div>

@@ -1,6 +1,6 @@
 [
   {
-    "allowedMemberTypes": ["User"],
+    "allowedMemberTypes": ["User", "Application"],
     "description": "Allows access to view user feedback admin page.",
     "displayName": "Feedback Admin",
     "id": "12e32860-88a8-421e-8a6f-faf08e3efe2e",

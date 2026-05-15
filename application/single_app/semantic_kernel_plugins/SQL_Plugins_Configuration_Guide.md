@@ -77,7 +77,7 @@ Choose authentication method:
 {
   "name": "azure_sql_schema",
   "database_type": "azure_sql",
-  "connection_string": "DRIVER={ODBC Driver 17 for SQL Server};SERVER=myserver.database.windows.net;DATABASE=mydatabase;Authentication=ActiveDirectoryMsi",
+  "connection_string": "DRIVER={ODBC Driver 18 for SQL Server};SERVER=myserver.database.windows.net;DATABASE=mydatabase;Authentication=ActiveDirectoryMsi",
   "metadata": {
     "description": "Extract schema from Azure SQL database using Managed Identity"
   }
@@ -89,7 +89,7 @@ Choose authentication method:
 {
   "name": "azure_sql_query",
   "database_type": "azure_sql", 
-  "connection_string": "DRIVER={ODBC Driver 17 for SQL Server};SERVER=myserver.database.windows.net;DATABASE=mydatabase;Authentication=ActiveDirectoryMsi",
+  "connection_string": "DRIVER={ODBC Driver 18 for SQL Server};SERVER=myserver.database.windows.net;DATABASE=mydatabase;Authentication=ActiveDirectoryMsi",
   "read_only": true,
   "max_rows": 500,
   "timeout": 30,

@@ -194,24 +194,87 @@ function refreshDocumentsAndTags({ source = null, showLoading = true } = {}) {
     });
 }
 
-function getSearchDocumentsDropdownConfig() {
+const SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING = 10;
+const SEARCH_FILTER_DROPDOWN_FLIP_THRESHOLD = 180;
+
+function getSearchFilterDropdownViewportSpace(buttonEl) {
+  if (!buttonEl) {
+    return {
+      above: 0,
+      below: 0,
+    };
+  }
+
+  const buttonRect = buttonEl.getBoundingClientRect();
+
+  return {
+    above: Math.max(0, buttonRect.top - SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING),
+    below: Math.max(0, window.innerHeight - buttonRect.bottom - SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING),
+  };
+}
+
+function getSearchFilterDropdownPlacement(buttonEl) {
+  const viewportSpace = getSearchFilterDropdownViewportSpace(buttonEl);
+
+  if (
+    viewportSpace.below < SEARCH_FILTER_DROPDOWN_FLIP_THRESHOLD
+    && viewportSpace.above > viewportSpace.below
+  ) {
+    return 'top-start';
+  }
+
+  return 'bottom-start';
+}
+
+function getSearchDocumentsDropdownConfig(buttonEl) {
   return {
     boundary: 'viewport',
     reference: 'toggle',
     autoClose: 'outside',
-    popperConfig: {
-      strategy: 'fixed',
-      modifiers: [
-        {
-          name: 'preventOverflow',
-          options: {
-            boundary: 'viewport',
-            padding: 10,
+    popperConfig: (defaultConfig) => {
+      const placement = getSearchFilterDropdownPlacement(buttonEl);
+      const baseModifiers = Array.isArray(defaultConfig.modifiers)
+        ? defaultConfig.modifiers.filter(modifier => !['flip', 'preventOverflow'].includes(modifier.name))
+        : [];
+
+      return {
+        ...defaultConfig,
+        placement,
+        strategy: 'fixed',
+        modifiers: [
+          ...baseModifiers,
+          {
+            name: 'flip',
+            options: {
+              boundary: 'viewport',
+              fallbackPlacements: placement.startsWith('top') ? ['bottom-start'] : ['top-start'],
+              padding: SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING,
+              rootBoundary: 'viewport',
+            },
           },
-        },
-      ],
+          {
+            name: 'preventOverflow',
+            options: {
+              boundary: 'viewport',
+              padding: SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING,
+              rootBoundary: 'viewport',
+            },
+          },
+        ],
+      };
     },
   };
+}
+
+function getSearchFilterDropdownAvailableHeight(buttonEl, menuEl) {
+  const placement = menuEl.getAttribute('data-popper-placement') || getSearchFilterDropdownPlacement(buttonEl);
+  const viewportSpace = getSearchFilterDropdownViewportSpace(buttonEl);
+
+  if (placement.startsWith('top')) {
+    return viewportSpace.above;
+  }
+
+  return viewportSpace.below;
 }
 
 function sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl) {
@@ -223,22 +286,24 @@ function sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl) {
   const containerWidth = fieldContainer ? fieldContainer.offsetWidth : buttonEl.offsetWidth || 280;
 
   menuEl.style.width = `${containerWidth}px`;
+  menuEl.style.minWidth = `${containerWidth}px`;
   menuEl.style.maxWidth = `${containerWidth}px`;
+  menuEl.style.maxHeight = `${Math.floor(getSearchFilterDropdownAvailableHeight(buttonEl, menuEl))}px`;
+  menuEl.style.overflowY = 'hidden';
   menuEl.style.zIndex = '1060';
-
-  const menuRect = menuEl.getBoundingClientRect();
-  const viewportHeight = window.innerHeight;
-  const maxPossibleHeight = Math.max(180, viewportHeight - menuRect.top - 10);
-
-  menuEl.style.maxHeight = `${maxPossibleHeight}px`;
 
   if (!itemsContainerEl) {
     return;
   }
 
+  const maxMenuHeight = Number.parseFloat(menuEl.style.maxHeight) || 0;
   const searchContainer = menuEl.querySelector('.chat-dropdown-search, .document-search-container');
-  const searchHeight = searchContainer ? searchContainer.offsetHeight : 40;
-  itemsContainerEl.style.maxHeight = `${Math.max(120, maxPossibleHeight - searchHeight - 16)}px`;
+  const searchHeight = searchContainer && !searchContainer.classList.contains('d-none')
+    ? searchContainer.getBoundingClientRect().height
+    : 0;
+  const menuVerticalChrome = searchHeight + 16;
+
+  itemsContainerEl.style.maxHeight = `${Math.max(0, Math.floor(maxMenuHeight - menuVerticalChrome))}px`;
   itemsContainerEl.style.overflowY = 'auto';
 }
 
@@ -246,6 +311,8 @@ function resetSearchFilterDropdownStyles(menuEl, itemsContainerEl) {
   if (menuEl) {
     menuEl.style.maxHeight = '';
     menuEl.style.maxWidth = '';
+    menuEl.style.minWidth = '';
+    menuEl.style.overflowY = '';
     menuEl.style.width = '';
     menuEl.style.zIndex = '';
   }
@@ -269,7 +336,7 @@ function initializeSearchFilterDropdown({
     return;
   }
 
-  new bootstrap.Dropdown(buttonEl, getSearchDocumentsDropdownConfig());
+  new bootstrap.Dropdown(buttonEl, getSearchDocumentsDropdownConfig(buttonEl));
 
   dropdownEl.addEventListener('show.bs.dropdown', function() {
     if (searchInputEl) {
@@ -277,11 +344,18 @@ function initializeSearchFilterDropdown({
     }
 
     searchController?.applyFilter('');
+    sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl);
   });
 
   dropdownEl.addEventListener('shown.bs.dropdown', function() {
     sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl);
     onShown?.();
+
+    const dropdownInstance = bootstrap.Dropdown.getInstance(buttonEl);
+    if (dropdownInstance) {
+      dropdownInstance.update();
+      sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl);
+    }
 
     if (searchInputEl) {
       setTimeout(() => searchInputEl.focus(), 50);
@@ -1298,7 +1372,7 @@ export function loadAllDocs() {
 
 // Function to adjust dropdown sizing when shown
 function initializeDocumentDropdown() {
-  if (!docDropdownMenu) return;
+  if (!docDropdownMenu || !docDropdownButton || !docDropdownItems) return;
 
   // Clear any leftover search-filter state on visible items
   docDropdownItems.querySelectorAll('.dropdown-item').forEach(item => {
@@ -1308,28 +1382,7 @@ function initializeDocumentDropdown() {
   // Re-apply tag filter (DOM removal approach — no CSS issues)
   filterDocumentsBySelectedTags();
   documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');
-
-  // Size the dropdown to fill its parent container
-  const parentContainer = docDropdownButton.closest('.flex-grow-1');
-  const maxWidth = parentContainer ? parentContainer.offsetWidth : 400;
-
-  docDropdownMenu.style.maxWidth = `${maxWidth}px`;
-  docDropdownMenu.style.width = `${maxWidth}px`;
-
-  // Ensure dropdown stays within viewport bounds
-  const menuRect = docDropdownMenu.getBoundingClientRect();
-  const viewportHeight = window.innerHeight;
-
-  if (menuRect.bottom > viewportHeight) {
-    const maxPossibleHeight = viewportHeight - menuRect.top - 10;
-    docDropdownMenu.style.maxHeight = `${maxPossibleHeight}px`;
-
-    if (docDropdownItems) {
-      const searchContainer = docDropdownMenu.querySelector('.document-search-container');
-      const searchHeight = searchContainer ? searchContainer.offsetHeight : 40;
-      docDropdownItems.style.maxHeight = `${maxPossibleHeight - searchHeight}px`;
-    }
-  }
+  sizeSearchFilterDropdown(docDropdownButton, docDropdownMenu, docDropdownItems);
 }
 /* ---------------------------------------------------------------------------
    Load Tags for Selected Scope

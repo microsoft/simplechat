@@ -8,6 +8,7 @@ import os
 import json
 from .sql_schema_plugin import SQLSchemaPlugin
 from .sql_query_plugin import SQLQueryPlugin
+from .sql_odbc_utils import DEFAULT_SQL_SERVER_ODBC_DRIVER
 
 class SQLPluginFactory:
     """Factory class for creating SQL plugins with common configurations"""
@@ -40,7 +41,7 @@ class SQLPluginFactory:
             base_config.update({
                 "username": username,
                 "password": password,
-                "driver": "ODBC Driver 17 for SQL Server"
+                "driver": DEFAULT_SQL_SERVER_ODBC_DRIVER
             })
         
         # Schema plugin config
@@ -227,9 +228,9 @@ class SQLPluginFactory:
             tuple: (schema_plugin, query_plugin)
         """
         if use_managed_identity:
-            connection_string = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={database};Authentication=ActiveDirectoryMsi"
+            connection_string = f"DRIVER={{{DEFAULT_SQL_SERVER_ODBC_DRIVER}}};SERVER={server};DATABASE={database};Authentication=ActiveDirectoryMsi"
         else:
-            connection_string = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}"
+            connection_string = f"DRIVER={{{DEFAULT_SQL_SERVER_ODBC_DRIVER}}};SERVER={server};DATABASE={database};UID={username};PWD={password}"
         
         base_config = {
             "database_type": "sqlserver",

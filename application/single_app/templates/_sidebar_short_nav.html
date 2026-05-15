@@ -1,4 +1,6 @@
 {# Sidebar Navigation Partial - Short version without brand/logo #}
+{% set sidebar_toggle_style = user_settings.get('settings', {}).get('sidebarToggleStyle', 'large') %}
+{% set sidebar_toggle_compact = sidebar_toggle_style == 'compact' %}
 <div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded chat-sidebar-nav offcanvas-lg offcanvas-start" tabindex="-1" aria-labelledby="chatSidebarDrawerLabel" data-navigation-drawer="chat-rail">
 
   <div class="offcanvas-header chat-sidebar-mobile-header">
@@ -13,7 +15,17 @@
     <i class="bi bi-grip-vertical"></i>
   </div>
 
-  <div class="sidebar-short-header chat-sidebar-desktop-header p-3 border-bottom flex-shrink-0">
+  <div class="sidebar-short-header chat-sidebar-desktop-header p-3 border-bottom flex-shrink-0{% if sidebar_toggle_compact %} sidebar-short-header-compact-toggle{% endif %}">
+    {% if sidebar_toggle_compact %}
+    <button type="button" id="sidebar-toggle-btn" class="btn btn-sm sidebar-toggle-control sidebar-toggle-compact"
+            data-sidebar-toggle="toggle"
+            aria-controls="sidebar-nav"
+            aria-expanded="true"
+            aria-label="Hide navigation"
+            title="Hide navigation">
+      <i id="sidebar-toggle-icon" class="bi bi-layout-sidebar" aria-hidden="true"></i>
+    </button>
+    {% else %}
     <button type="button" id="sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary w-100 sidebar-toggle-control"
             data-sidebar-toggle="toggle"
             aria-controls="sidebar-nav"
@@ -23,6 +35,7 @@
       <i id="sidebar-toggle-icon" class="bi bi-chevron-bar-left" aria-hidden="true"></i>
       <span class="sidebar-toggle-label">Hide navigation</span>
     </button>
+    {% endif %}
   </div>
   
   <div id="sidebar-content" class="flex-grow-1 d-flex flex-column overflow-auto">

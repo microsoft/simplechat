@@ -1,234 +1,411 @@
+// main.js
 /**
- * Main JavaScript for SimpleChat Jekyll Theme
- * Handles general functionality and utilities
+ * Main JavaScript for the Simple Chat documentation site.
  */
 
 (function() {
-  'use strict';
+    "use strict";
 
-  // Toast notification system
-  function showToast(message, type = 'info', duration = 5000) {
-    const toastContainer = document.getElementById('toast-container');
-    if (!toastContainer) return;
+    let cachedSearchIndex = null;
 
-    // Create toast element
-    const toastId = 'toast-' + Date.now();
-    const toastHtml = `
-      <div id="${toastId}" class="toast align-items-center text-bg-${type} border-0" role="alert" aria-live="assertive" aria-atomic="true">
-        <div class="d-flex">
-          <div class="toast-body">
-            ${message}
-          </div>
-          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-        </div>
-      </div>
-    `;
+    function createIcon(iconClass) {
+        const icon = document.createElement("i");
+        icon.className = iconClass;
+        icon.setAttribute("aria-hidden", "true");
+        return icon;
+    }
 
-    toastContainer.insertAdjacentHTML('beforeend', toastHtml);
-    
-    const toastElement = document.getElementById(toastId);
-    const toast = new bootstrap.Toast(toastElement, { delay: duration });
-    
-    toast.show();
-    
-    // Clean up after toast is hidden
-    toastElement.addEventListener('hidden.bs.toast', function() {
-      toastElement.remove();
-    });
-  }
+    function showToast(message, type = "info", duration = 5000) {
+        const toastContainer = document.getElementById("toast-container");
+        if (!toastContainer || !window.bootstrap) {
+            return;
+        }
 
-  // Copy to clipboard functionality
-  function copyToClipboard(text, successMessage = 'Copied to clipboard!') {
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(function() {
-        showToast(successMessage, 'success', 2000);
-      }).catch(function() {
-        fallbackCopy(text, successMessage);
-      });
+        const toast = document.createElement("div");
+        toast.className = `toast align-items-center text-bg-${type} border-0`;
+        toast.setAttribute("role", "alert");
+        toast.setAttribute("aria-live", "assertive");
+        toast.setAttribute("aria-atomic", "true");
+
+        const row = document.createElement("div");
+        row.className = "d-flex";
+
+        const body = document.createElement("div");
+        body.className = "toast-body";
+        body.textContent = message;
+
+        const closeButton = document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className = "btn-close btn-close-white me-2 m-auto";
+        closeButton.setAttribute("data-bs-dismiss", "toast");
+        closeButton.setAttribute("aria-label", "Close");
+
+        row.appendChild(body);
+        row.appendChild(closeButton);
+        toast.appendChild(row);
+        toastContainer.appendChild(toast);
+
+        const bootstrapToast = new bootstrap.Toast(toast, { delay: duration });
+        toast.addEventListener("hidden.bs.toast", function() {
+            toast.remove();
+        });
+        bootstrapToast.show();
+    }
+
+    function fallbackCopy(text, successMessage) {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.className = "docs-visually-hidden-copy-field";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+
+        try {
+            document.execCommand("copy");
+            showToast(successMessage, "success", 2000);
+        } catch (error) {
+            showToast("Failed to copy to clipboard", "danger", 3000);
+        }
+
+        textArea.remove();
+    }
+
+    function copyToClipboard(text, successMessage = "Copied to clipboard") {
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(function() {
+                showToast(successMessage, "success", 2000);
+            }).catch(function() {
+                fallbackCopy(text, successMessage);
+            });
+        } else {
+            fallbackCopy(text, successMessage);
+        }
+    }
+
+    function setButtonIcon(button, iconClass) {
+        button.replaceChildren(createIcon(iconClass));
+    }
+
+    function addCopyButtonsToCodeBlocks() {
+        const codeBlocks = document.querySelectorAll("pre[class*='language-'], .docs-prose pre");
+
+        codeBlocks.forEach(function(codeBlock) {
+            if (codeBlock.querySelector(".copy-button")) {
+                return;
+            }
+
+            const code = codeBlock.querySelector("code");
+            if (!code) {
+                return;
+            }
+
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "btn btn-sm btn-outline-secondary copy-button docs-copy-button";
+            button.title = "Copy code";
+            button.setAttribute("aria-label", "Copy code");
+            setButtonIcon(button, "bi bi-clipboard");
+
+            codeBlock.classList.add("docs-code-block");
+            button.addEventListener("click", function() {
+                copyToClipboard(code.textContent, "Code copied");
+                setButtonIcon(button, "bi bi-clipboard-check");
+                setTimeout(function() {
+                    setButtonIcon(button, "bi bi-clipboard");
+                }, 2000);
+            });
+
+            codeBlock.appendChild(button);
+        });
+    }
+
+    function initTooltips() {
+        if (!window.bootstrap) {
+            return;
+        }
+
+        const tooltipTriggerList = Array.from(document.querySelectorAll("[data-bs-toggle='tooltip']"));
+        tooltipTriggerList.forEach(function(tooltipTriggerElement) {
+            new bootstrap.Tooltip(tooltipTriggerElement);
+        });
+    }
+
+    function initPopovers() {
+        if (!window.bootstrap) {
+            return;
+        }
+
+        const popoverTriggerList = Array.from(document.querySelectorAll("[data-bs-toggle='popover']"));
+        popoverTriggerList.forEach(function(popoverTriggerElement) {
+            new bootstrap.Popover(popoverTriggerElement);
+        });
+    }
+
+    function initSmoothScrolling() {
+        document.querySelectorAll("a[href^='#']").forEach(function(anchor) {
+            anchor.addEventListener("click", function(event) {
+                const targetId = anchor.getAttribute("href");
+                if (!targetId || targetId === "#") {
+                    return;
+                }
+
+                const targetElement = document.querySelector(targetId);
+                if (!targetElement) {
+                    return;
+                }
+
+                event.preventDefault();
+                const headerHeight = document.querySelector(".docs-topbar")?.offsetHeight || 0;
+                const targetPosition = targetElement.offsetTop - headerHeight - 20;
+
+                window.scrollTo({
+                    top: targetPosition,
+                    behavior: "smooth"
+                });
+
+                history.pushState(null, "", targetId);
+            });
+        });
+    }
+
+    function addHeadingAnchors() {
+        const headings = document.querySelectorAll(".docs-prose h2[id], .docs-prose h3[id], .docs-prose h4[id]");
+
+        headings.forEach(function(heading) {
+            if (heading.querySelector(".heading-anchor")) {
+                return;
+            }
+
+            const anchor = document.createElement("a");
+            anchor.href = `#${heading.id}`;
+            anchor.className = "heading-anchor";
+            anchor.title = "Link to this heading";
+            anchor.setAttribute("aria-label", "Copy link to this heading");
+            anchor.appendChild(createIcon("bi bi-link-45deg"));
+
+            anchor.addEventListener("click", function(event) {
+                event.preventDefault();
+                const url = `${window.location.origin}${window.location.pathname}${anchor.getAttribute("href")}`;
+                copyToClipboard(url, "Link copied");
+            });
+
+            heading.appendChild(anchor);
+        });
+    }
+
+    function getSearchIndex() {
+        if (cachedSearchIndex) {
+            return cachedSearchIndex;
+        }
+
+        const searchDataElement = document.getElementById("docs-search-data");
+        if (searchDataElement) {
+            try {
+                cachedSearchIndex = JSON.parse(searchDataElement.textContent).filter(function(item) {
+                    return item && item.title && item.url;
+                });
+                return cachedSearchIndex;
+            } catch (error) {
+                cachedSearchIndex = [];
+            }
+        }
+
+        cachedSearchIndex = Array.from(document.querySelectorAll(".docs-sidebar-link, .docs-topbar-link")).map(function(link) {
+            return {
+                title: link.textContent.trim(),
+                description: "",
+                section: "Navigation",
+                url: link.href
+            };
+        });
+        return cachedSearchIndex;
+    }
+
+    function createSearchResult(item) {
+        const result = document.createElement("a");
+        result.className = "docs-search-result";
+        result.href = item.url;
+        result.setAttribute("role", "option");
+
+        const title = document.createElement("span");
+        title.className = "docs-search-result-title";
+        title.textContent = item.title;
+
+        const meta = document.createElement("span");
+        meta.className = "docs-search-result-meta";
+        meta.textContent = item.section || "Docs";
+
+        const description = document.createElement("span");
+        description.className = "docs-search-result-description";
+        description.textContent = item.description || "Open this documentation page.";
+
+        result.appendChild(title);
+        result.appendChild(meta);
+        result.appendChild(description);
+        return result;
+    }
+
+    function renderSearchResults(searchInput, resultsContainer) {
+        const query = searchInput.value.trim().toLowerCase();
+        resultsContainer.replaceChildren();
+
+        if (query.length < 2) {
+            resultsContainer.classList.add("d-none");
+            return;
+        }
+
+        const matches = getSearchIndex().map(function(item) {
+            const title = item.title.toLowerCase();
+            const description = (item.description || "").toLowerCase();
+            const section = (item.section || "").toLowerCase();
+            const searchableText = `${title} ${description} ${section}`;
+            let score = 10;
+
+            if (title === query) {
+                score = 0;
+            } else if (title.startsWith(query)) {
+                score = 1;
+            } else if (title.includes(query)) {
+                score = 2;
+            } else if (section.includes(query)) {
+                score = 3;
+            } else if (description.includes(query)) {
+                score = 4;
+            }
+
+            return { item, score, searchableText };
+        }).filter(function(result) {
+            return result.searchableText.includes(query);
+        }).sort(function(firstResult, secondResult) {
+            if (firstResult.score !== secondResult.score) {
+                return firstResult.score - secondResult.score;
+            }
+            return firstResult.item.title.localeCompare(secondResult.item.title);
+        }).slice(0, 8).map(function(result) {
+            return result.item;
+        });
+
+        if (matches.length === 0) {
+            const emptyState = document.createElement("div");
+            emptyState.className = "docs-search-empty";
+            emptyState.textContent = "No matching docs found.";
+            resultsContainer.appendChild(emptyState);
+        } else {
+            matches.forEach(function(item) {
+                resultsContainer.appendChild(createSearchResult(item));
+            });
+        }
+
+        resultsContainer.classList.remove("d-none");
+    }
+
+    function initSearch() {
+        const searchInputs = document.querySelectorAll("[data-docs-search='true']");
+
+        searchInputs.forEach(function(searchInput) {
+            const searchRoot = searchInput.closest(".docs-search");
+            const resultsContainer = searchRoot ? searchRoot.querySelector("[data-docs-search-results='true']") : null;
+
+            if (!resultsContainer) {
+                return;
+            }
+
+            let searchTimeout;
+
+            searchInput.addEventListener("input", function() {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(function() {
+                    renderSearchResults(searchInput, resultsContainer);
+                }, 120);
+            });
+
+            searchInput.addEventListener("keydown", function(event) {
+                if (event.key === "Escape") {
+                    searchInput.value = "";
+                    resultsContainer.classList.add("d-none");
+                }
+            });
+        });
+
+        document.addEventListener("click", function(event) {
+            if (!event.target.closest(".docs-search")) {
+                document.querySelectorAll("[data-docs-search-results='true']").forEach(function(resultsContainer) {
+                    resultsContainer.classList.add("d-none");
+                });
+            }
+        });
+    }
+
+    function buildOnThisPage() {
+        const tocContainers = document.querySelectorAll("[data-docs-toc='true']");
+        if (tocContainers.length === 0) {
+            return;
+        }
+
+        const headings = Array.from(document.querySelectorAll(".docs-prose h2[id], .docs-prose h3[id]")).filter(function(heading) {
+            return heading.textContent.trim().length > 0;
+        });
+
+        tocContainers.forEach(function(tocContainer) {
+            const linksContainer = tocContainer.querySelector("[data-docs-toc-links='true']");
+            if (!linksContainer) {
+                return;
+            }
+
+            linksContainer.replaceChildren();
+
+            if (headings.length === 0) {
+                tocContainer.classList.add("d-none");
+                return;
+            }
+
+            headings.slice(0, 12).forEach(function(heading) {
+                const link = document.createElement("a");
+                link.href = `#${heading.id}`;
+                link.textContent = heading.textContent.replace("#", "").trim();
+                if (heading.tagName.toLowerCase() === "h3") {
+                    link.classList.add("is-subheading");
+                }
+                linksContainer.appendChild(link);
+            });
+
+            tocContainer.classList.remove("d-none");
+        });
+    }
+
+    function init() {
+        initTooltips();
+        initPopovers();
+        initSmoothScrolling();
+        addHeadingAnchors();
+        addCopyButtonsToCodeBlocks();
+        initSearch();
+        buildOnThisPage();
+
+        document.addEventListener("themeChanged", function() {
+            setTimeout(function() {
+                if (window.Prism) {
+                    Prism.highlightAll();
+                }
+                addCopyButtonsToCodeBlocks();
+            }, 100);
+        });
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", init);
     } else {
-      fallbackCopy(text, successMessage);
+        init();
     }
-  }
 
-  // Fallback clipboard copy for older browsers
-  function fallbackCopy(text, successMessage) {
-    const textArea = document.createElement('textarea');
-    textArea.value = text;
-    textArea.style.position = 'fixed';
-    textArea.style.left = '-999999px';
-    textArea.style.top = '-999999px';
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-    
-    try {
-      document.execCommand('copy');
-      showToast(successMessage, 'success', 2000);
-    } catch (err) {
-      showToast('Failed to copy to clipboard', 'error', 3000);
-    }
-    
-    document.body.removeChild(textArea);
-  }
-
-  // Add copy buttons to code blocks
-  function addCopyButtonsToCodeBlocks() {
-    const codeBlocks = document.querySelectorAll('pre[class*="language-"]');
-    
-    codeBlocks.forEach(function(codeBlock) {
-      // Skip if copy button already exists
-      if (codeBlock.querySelector('.copy-button')) return;
-      
-      const button = document.createElement('button');
-      button.className = 'btn btn-sm btn-outline-secondary copy-button';
-      button.innerHTML = '<i class="bi bi-clipboard"></i>';
-      button.title = 'Copy code';
-      button.style.cssText = 'position: absolute; top: 0.5rem; right: 0.5rem; z-index: 10;';
-      
-      // Make the code block relative positioned
-      codeBlock.style.position = 'relative';
-      
-      button.addEventListener('click', function() {
-        const code = codeBlock.querySelector('code');
-        if (code) {
-          copyToClipboard(code.textContent, 'Code copied!');
-          
-          // Visual feedback
-          button.innerHTML = '<i class="bi bi-clipboard-check"></i>';
-          setTimeout(function() {
-            button.innerHTML = '<i class="bi bi-clipboard"></i>';
-          }, 2000);
-        }
-      });
-      
-      codeBlock.appendChild(button);
-    });
-  }
-
-  // Initialize Bootstrap tooltips
-  function initTooltips() {
-    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-    tooltipTriggerList.map(function(tooltipTriggerEl) {
-      return new bootstrap.Tooltip(tooltipTriggerEl);
-    });
-  }
-
-  // Initialize Bootstrap popovers
-  function initPopovers() {
-    const popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
-    popoverTriggerList.map(function(popoverTriggerEl) {
-      return new bootstrap.Popover(popoverTriggerEl);
-    });
-  }
-
-  // Smooth scrolling for anchor links
-  function initSmoothScrolling() {
-    document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
-      anchor.addEventListener('click', function(e) {
-        const targetId = this.getAttribute('href');
-        if (targetId === '#') return;
-        
-        const targetElement = document.querySelector(targetId);
-        if (targetElement) {
-          e.preventDefault();
-          
-          const headerHeight = document.querySelector('.navbar')?.offsetHeight || 0;
-          const targetPosition = targetElement.offsetTop - headerHeight - 20;
-          
-          window.scrollTo({
-            top: targetPosition,
-            behavior: 'smooth'
-          });
-          
-          // Update URL hash
-          history.pushState(null, null, targetId);
-        }
-      });
-    });
-  }
-
-  // Add heading anchors
-  function addHeadingAnchors() {
-    const headings = document.querySelectorAll('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]');
-    
-    headings.forEach(function(heading) {
-      const anchor = document.createElement('a');
-      anchor.href = '#' + heading.id;
-      anchor.className = 'heading-anchor';
-      anchor.innerHTML = '<i class="bi bi-link-45deg"></i>';
-      anchor.style.cssText = 'margin-left: 0.5rem; opacity: 0; transition: opacity 0.2s; text-decoration: none; color: var(--bs-secondary);';
-      anchor.title = 'Link to this heading';
-      
-      heading.appendChild(anchor);
-      
-      // Show anchor on hover
-      heading.addEventListener('mouseenter', function() {
-        anchor.style.opacity = '1';
-      });
-      
-      heading.addEventListener('mouseleave', function() {
-        anchor.style.opacity = '0';
-      });
-      
-      // Copy link on click
-      anchor.addEventListener('click', function(e) {
-        e.preventDefault();
-        const url = window.location.origin + window.location.pathname + this.getAttribute('href');
-        copyToClipboard(url, 'Link copied!');
-      });
-    });
-  }
-
-  // Initialize search functionality (if search input exists)
-  function initSearch() {
-    const searchInput = document.querySelector('#search-input, .search-input');
-    if (!searchInput) return;
-
-    let searchTimeout;
-    searchInput.addEventListener('input', function() {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(function() {
-        // Implement search functionality based on your needs
-        console.log('Search query:', searchInput.value);
-      }, 300);
-    });
-  }
-
-  // Initialize all functionality
-  function init() {
-    initTooltips();
-    initPopovers();
-    initSmoothScrolling();
-    addHeadingAnchors();
-    addCopyButtonsToCodeBlocks();
-    initSearch();
-    
-    // Re-initialize after theme changes (for syntax highlighting)
-    document.addEventListener('themeChanged', function() {
-      setTimeout(function() {
-        if (window.Prism) {
-          Prism.highlightAll();
-        }
-        addCopyButtonsToCodeBlocks(); // Re-add copy buttons if code blocks are re-rendered
-      }, 100);
-    });
-  }
-
-  // Initialize when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-
-  // Expose utilities globally
-  window.SimpleChat = window.SimpleChat || {};
-  window.SimpleChat.Utils = {
-    showToast,
-    copyToClipboard,
-    addCopyButtonsToCodeBlocks,
-    initTooltips,
-    initPopovers
-  };
-
+    window.SimpleChat = window.SimpleChat || {};
+    window.SimpleChat.Utils = {
+        showToast,
+        copyToClipboard,
+        addCopyButtonsToCodeBlocks,
+        initTooltips,
+        initPopovers,
+        initSearch,
+        buildOnThisPage
+    };
 })();

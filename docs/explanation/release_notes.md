@@ -1,8 +1,87 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.002, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.008, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.008)**
+
+#### New Features
+
+*   **Staging Branch UI Test CI/CD**
+    *   Added a protected GitHub Actions workflow for the `Staging` branch that deploys the Azure Developer CLI staging environment, waits for slow App Service warm-up, and runs live UI smoke coverage before the environment is considered healthy.
+    *   The workflow authenticates to Azure through GitHub OIDC and a staging environment-scoped service principal, avoiding stored Azure client secrets while keeping staging deployment and test configuration admin-controlled.
+    *   Added a reusable staging bootstrap script that creates or updates the GitHub OIDC app, federated credential, Azure role assignments, GitHub Environment variables, App Service CI authentication settings, and Microsoft Playwright Workspace wiring.
+    *   (Ref: `.github/workflows/staging-azd-ui-tests.yml`, `deployers/Initialize-GitHubActionsStaging.ps1`, `docs/explanation/features/v0.241.014/STAGING_UI_CICD.md`, `test_staging_ui_cicd_workflow.py`)
+
+*   **Microsoft Playwright Workspaces Staging Runner**
+    *   Added Azure-hosted Playwright Workspace support for the staging smoke test flow, including a Node-based Playwright runner that uses the Microsoft Playwright service URL and Azure identity credentials in CI.
+    *   Added matching Python and Node smoke tests that open the staging chat experience, create a conversation, submit a prompt, wait for an assistant response, and preserve screenshots or traces when the run fails.
+    *   (Ref: `ui_tests/playwright-workspaces/`, `ui_tests/test_staging_chat_smoke.py`, `PLAYWRIGHT_SERVICE_URL`, staging UI smoke tests)
+
+*   **Service Principal Authentication for CI UI Tests**
+    *   Added a disabled-by-default `/ci-auth/session` endpoint that lets staging UI tests create a Flask session from a fresh Entra access token minted by the GitHub OIDC service principal.
+    *   The CI session path validates token audience, allowed client IDs, and required app roles before setting session state, so normal staging UI test runs no longer need recurring browser storage-state secrets.
+    *   Updated the staging test runners to prefer fresh bearer-session authentication while keeping storage-state input as an optional fallback for manual or transitional runs.
+    *   (Ref: `functions_authentication.py`, `route_frontend_authentication.py`, `config.py`, `appRegistrationRoles.json`, `SIMPLECHAT_UI_AUTH_RESOURCE`, `ENABLE_CI_BEARER_SESSION_AUTH`)
+
+*   **Profile Sidebar Toggle Style Preference**
+    *   Added a profile navigation preference so users can choose between the large sidebar hide control and a compact icon-only control that sits next to the sidebar logo or title.
+    *   Saved the preference in user settings and applied it across full and compact sidebar templates on subsequent page loads.
+    *   Added UI coverage for saving the compact preference and verifying the chat sidebar renders the selected control style.
+    *   (Ref: `profile.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `route_backend_users.py`, `test_profile_sidebar_toggle_style_preference.py`)
+
+#### User Interface Enhancements
+
+*   **GitHub Pages Documentation Redesign**
+    *   Redesigned the GitHub Pages documentation shell with a fixed top navigation, curated sidebar sections, responsive mobile drawer, documentation search, and right-side "On this page" rail.
+    *   Updated the docs landing page to surface guide, API, examples, changelog, feature, and deployment entry points more directly.
+    *   Replaced legacy inline sidebar behavior with shared JavaScript modules that use DOM APIs, ARIA state, and safer search/result rendering.
+    *   (Ref: `docs/_layouts/default.html`, `docs/_includes/sidebar_nav.html`, `docs/_layouts/page.html`, `docs/_layouts/showcase-page.html`, `docs/assets/css/main.scss`, `docs/assets/js/main.js`, `docs/assets/js/sidebar.js`, `docs/index.md`, `ui_tests/test_docs_showcase_pages.py`)
+
+*   **Chat and Sidebar Icon-Only Controls**
+    *   Refined the chat conversation info button and compact sidebar toggle so they render as quiet icon-only actions without persistent Bootstrap outline button edging.
+    *   Preserved accessible focus states and kept the existing large sidebar toggle styling intact for users who prefer the larger control.
+    *   Added UI coverage to prevent the outlined button class from returning on the compact and conversation-info controls.
+    *   (Ref: `chats.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `test_chat_sidebar_toggle_controls.py`, `CHAT_CONVERSATION_INFO_ICON_BUTTON_FIX.md`, `COMPACT_SIDEBAR_TOGGLE_ICON_ONLY_FIX.md`)
+
+#### Bug Fixes
+
+*   **SQL ODBC Driver 18 Container Support**
+    *   Fixed SQL Server and Azure SQL actions failing in container deployments with missing `ODBC Driver 17 for SQL Server` errors even though `pyodbc` was installed.
+    *   The Azure Linux application image now installs Microsoft ODBC Driver 18 from the Microsoft `ms-non-oss` feed and copies the native driver registration and unixODBC libraries into the distroless runtime image.
+    *   New SQL actions now default to `ODBC Driver 18 for SQL Server`, and saved Driver 17 connection strings retry with Driver 18 only when the failure is a missing-driver error.
+    *   (Ref: `Dockerfile`, `sql_odbc_utils.py`, `sql_schema_plugin.py`, `sql_query_plugin.py`, `route_backend_plugins.py`, `test_sql_odbc_driver_18_support.py`, `SQL_ODBC_DRIVER_18_CONTAINER_FIX.md`)
+
+*   **SQL ODBC Driver Registration File Fix**
+    *   Fixed ACR remote builds failing when the ODBC builder stage did not produce `/etc/odbcinst.ini` or unixODBC libraries at the hardcoded copy paths.
+    *   The Docker build now writes a deterministic Driver 18 registration file and stages unixODBC/libltdl runtime libraries from the available Azure Linux library paths before copying them into the distroless runtime image.
+    *   Added focused regression coverage for the Dockerfile registration and runtime-copy behavior.
+    *   (Ref: `Dockerfile`, `test_sql_odbc_driver_18_support.py`, `SQL_ODBC_DRIVER_REGISTRATION_FILE_FIX.md`)
+
+*   **Entra Application Graph MFA Auth Fix**
+    *   Fixed `Initialize-EntraApplication.ps1` failing in tenants where Azure CLI could read ARM account state but still needed a Microsoft Graph MFA or conditional-access challenge before running `az ad` commands.
+    *   The script now preflights Microsoft Graph token access, detects interaction-required Graph failures, and launches a scoped interactive login only when the cached session needs it.
+    *   Added explicit Azure CLI exit-code checks so failed Graph responses are not treated as empty app-registration JSON.
+    *   (Ref: `Initialize-EntraApplication.ps1`, `test_entra_application_graph_mfa_auth.py`, `ENTRA_APPLICATION_GRAPH_MFA_AUTH_FIX.md`)
+
+*   **Entra Application AZD Environment Persistence Fix**
+    *   Fixed the Entra registration setup flow so app registration outputs are saved into the selected AZD environment instead of requiring users to manually copy client IDs, service principal IDs, and client secrets after script execution.
+    *   Added `-AzdEnvironmentName` and `-SkipAzdEnvironmentUpdate` controls, automatic AZD environment resolution, and non-fatal manual recovery guidance when persistence cannot be completed.
+    *   Updated setup documentation to call out Python 3.12 as an AZD hook prerequisite and explain where the script saves the app registration values.
+    *   (Ref: `Initialize-EntraApplication.ps1`, `README.md`, `deployers/bicep/README.md`, `test_entra_application_azd_env_persistence.py`, `ENTRA_APPLICATION_AZD_ENV_PERSISTENCE_FIX.md`)
+
+*   **Public Workspace Manage Script Syntax Fix**
+    *   Fixed a public workspace management page load failure caused by stray user-search template fragments being spliced into the document-ready event binding block.
+    *   Restored the pending request approve/reject handlers while preserving the safe delegated member-search selection handler, so the script parses and the manage page can initialize again.
+    *   Added focused Node.js and Chromium parser regression coverage plus versioned fix documentation for the repaired script block.
+    *   (Ref: `manage_public_workspace.js`, `test_public_workspace_manage_script_syntax_fix.py`, `test_public_workspace_manage_script_parse.py`, `PUBLIC_WORKSPACE_MANAGE_SCRIPT_SYNTAX_FIX.md`)
+
+*   **Chat Document Dropdown Viewport Fit Fix**
+    *   Fixed the chat document selector so it no longer opens downward off-screen when grounded-search controls sit near the bottom of a short or mobile-influenced viewport.
+    *   The grounded-search dropdowns now choose viewport-aware placement, clamp their menu height to visible space, and keep long document lists scrollable inside the menu.
+    *   Added focused Playwright regression coverage plus versioned fix documentation for the dropdown positioning behavior.
+    *   (Ref: `chat-documents.js`, `test_chat_document_dropdown_viewport_fit.py`, `CHAT_DOCUMENT_DROPDOWN_VIEWPORT_FIX.md`)
 
 ### **(v0.241.007)**
 

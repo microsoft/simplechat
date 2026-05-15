@@ -41,10 +41,13 @@ Before deploying, ensure you have:
   Install: https://learn.microsoft.com/cli/azure/install-azure-cli
 3. **Azure Developer CLI (azd)** (version 1.5.0 or later)
   Install: https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd
-4. **Access to Azure Container Registry Tasks** so `azd up` can build the image in ACR with `az acr build`
-5. **PowerShell 7** (for the Entra app registration script on Windows, Linux, or macOS)
+4. **Python 3.12** with `python` available on Windows and `python3` available on Linux/macOS
+  Install: https://www.python.org/downloads/
+  The AZD hooks in `deployers/azure.yaml` run Python during `preprovision` and `postprovision` for prerequisite validation, dependency installation, and post-provision configuration.
+5. **Access to Azure Container Registry Tasks** so `azd up` can build the image in ACR with `az acr build`
+6. **PowerShell 7** (for the Entra app registration script on Windows, Linux, or macOS)
   Install: https://learn.microsoft.com/powershell/scripting/install/installing-powershell
-6. **Permissions to create an Entra ID Application Registration** (or coordinate with your Entra admin)
+7. **Permissions to create an Entra ID Application Registration** (or coordinate with your Entra admin)
 
 Platform note:
 
@@ -116,11 +119,19 @@ pwsh ./Initialize-EntraApplication.ps1 -AppName "$appName" -Environment "$enviro
 
 This script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.  The web service name may be overriden with the `-AppServceName` parameter. A user can also specify a different expiration date for the secret which defaults to 180 days with the `-SecretExpirationDays` parameter.
 
+By default, the script also saves the generated app registration values into the resolved AZD environment using `azd env set`:
+
+- `ENTERPRISE_APP_CLIENT_ID`
+- `ENTERPRISE_APP_SERVICE_PRINCIPAL_ID`
+- `ENTERPRISE_APP_CLIENT_SECRET`
+
+The script resolves the target AZD environment from `AZURE_ENV_NAME`, then `.azure/config.json` `defaultEnvironment`, then the `-Environment` value. Use `-AzdEnvironmentName <name>` to target a specific AZD environment, or `-SkipAzdEnvironmentUpdate` when the script is being run as a standalone/manual registration workflow.
+
 >**Note**: If the script was provided to a different administrator, the -AppRolesJsonPath will need to be edited to the location of the appRegistrationRoles.json file.
 
 The powershell script will report the following information on successful completion.  
 
->**Be sure to save this information as it will not be available after the window is closed.**
+>**If the AZD environment update fails, save this information and set it later with `azd env set`.**
 
 ```========================================
 App Registration Created Successfully!
@@ -278,9 +289,9 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 - Enter a value for the 'existingAppServiceSubnetId' infrastructure parameter: *\<optional subnet resource ID for App Service VNet integration\>*
 - Enter a value for the 'existingPrivateEndpointSubnetId' infrastructure parameter: *\<optional subnet resource ID for private endpoints\>*
 - Enter a value for the 'privateDnsZoneConfigs' infrastructure parameter: *\<optional JSON object for reusing private DNS zones or suppressing VNet link creation\>*
-- Enter a value for the 'enterpriseAppClientId' infrastructure parameter: *\<clientID\>*
-- Enter a value for the 'enterpriseAppClientSecret' infrastructure secured parameter: *\<clientSecret\>*
-- Enter a value for the 'enterpriseAppServicePrincipalId' infrastructure parameter: *\<servicePrincipalId\>*
+- Enter a value for the 'enterpriseAppClientId' infrastructure parameter: *\<clientID\>* (not prompted when `ENTERPRISE_APP_CLIENT_ID` is already saved in the AZD environment)
+- Enter a value for the 'enterpriseAppClientSecret' infrastructure secured parameter: *\<clientSecret\>* (not prompted when `ENTERPRISE_APP_CLIENT_SECRET` is already saved in the AZD environment)
+- Enter a value for the 'enterpriseAppServicePrincipalId' infrastructure parameter: *\<servicePrincipalId\>* (not prompted when `ENTERPRISE_APP_SERVICE_PRINCIPAL_ID` is already saved in the AZD environment)
 - Enter a value for the 'environment' infrastructure parameter: *\<environment\>*
 - Enter a value for the 'imageName' infrastructure parameter: *\<optional imageName\>*
 - Enter a value for the 'location' infrastructure parameter: *\<select from the list provided\>*

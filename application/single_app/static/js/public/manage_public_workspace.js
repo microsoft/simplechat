@@ -219,30 +219,13 @@ $(document).ready(function () {
   });
 
   // Approve / Reject requests (Admin/Owner)
-  $("#searchUsersBtn").on("click", function () {
-          `;
-          }).join("");
-  });
-  $("#userSearchTerm").on("keydown", function (e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      searchUsers();
-    }
-  });
-
-  // Approve / Reject requests (Admin/Owner)
-          const safeUserId = escapeHtml(u.id || "");
-          const safeDisplayName = escapeHtml(u.displayName || "(no name)");
-          const safeEmail = escapeHtml(u.email || "");
   $("#pendingRequestsTable").on("click", ".approve-request-btn", function () {
     approveRequest($(this).data("id"));
-              <td>${safeDisplayName}</td>
-              <td>${safeEmail}</td>
+  });
+  $("#pendingRequestsTable").on("click", ".reject-request-btn", function () {
     rejectRequest($(this).data("id"));
-                <button class="btn btn-sm btn-primary select-user-btn"
-                        data-user-id="${safeUserId}"
-                        data-user-name="${safeDisplayName}"
-                        data-user-email="${safeEmail}">
+  });
+
   // CSV Bulk Upload Events
   $("#addBulkMemberBtn").on("click", function () {
     $("#csvBulkUploadModal").modal("show");

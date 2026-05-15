@@ -12,6 +12,11 @@ from semantic_kernel.functions import kernel_function
 from functions_appinsights import log_event
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from functions_debug import debug_print
+from semantic_kernel_plugins.sql_odbc_utils import (
+    DEFAULT_SQL_SERVER_ODBC_DRIVER,
+    build_sql_server_odbc_connection_string,
+    connect_with_sql_server_odbc_fallback,
+)
 
 # Helper class to wrap results with metadata
 class ResultWithMetadata:
@@ -74,7 +79,7 @@ class SQLSchemaPlugin(BasePlugin):
         self.supported_databases = {
             'sqlserver': {
                 'module': 'pyodbc',
-                'default_driver': 'ODBC Driver 17 for SQL Server',
+                'default_driver': DEFAULT_SQL_SERVER_ODBC_DRIVER,
                 'default_port': 1433
             },
             'postgresql': {
@@ -109,15 +114,24 @@ class SQLSchemaPlugin(BasePlugin):
             if self.database_type == 'sqlserver':
                 import pyodbc
                 if self.connection_string:
-                    return pyodbc.connect(self.connection_string)
+                    return connect_with_sql_server_odbc_fallback(
+                        pyodbc.connect,
+                        self.connection_string,
+                        log_source="SQLSchemaPlugin",
+                    )
                 else:
-                    driver = self.driver or self.supported_databases['sqlserver']['default_driver']
-                    conn_str = f"DRIVER={{{driver}}};SERVER={self.server};DATABASE={self.database}"
-                    if self.username and self.password:
-                        conn_str += f";UID={self.username};PWD={self.password}"
-                    else:
-                        conn_str += ";Trusted_Connection=yes"
-                    return pyodbc.connect(conn_str)
+                    conn_str = build_sql_server_odbc_connection_string(
+                        server=self.server,
+                        database=self.database,
+                        driver=self.driver or self.supported_databases['sqlserver']['default_driver'],
+                        username=self.username,
+                        password=self.password,
+                    )
+                    return connect_with_sql_server_odbc_fallback(
+                        pyodbc.connect,
+                        conn_str,
+                        log_source="SQLSchemaPlugin",
+                    )
                     
             elif self.database_type == 'postgresql':
                 import psycopg2

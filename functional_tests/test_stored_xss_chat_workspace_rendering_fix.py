@@ -1,7 +1,7 @@
 # test_stored_xss_chat_workspace_rendering_fix.py
 """
 Functional test for stored XSS chat and workspace rendering hardening.
-Version: 0.241.017
+Version: 0.241.018
 Implemented in: 0.241.017
 
 This test ensures chat agent display names, workspace member display names,
@@ -192,7 +192,7 @@ def test_fix_documentation_and_version_exist():
     """Verify the version bump and fix documentation landed for this change."""
     print("🔍 Testing stored XSS rendering fix documentation and version...")
 
-    assert read_config_version() == "0.241.017"
+    assert read_config_version() == "0.241.018"
     assert os.path.exists(FIX_DOC), f"Expected fix documentation at {FIX_DOC}"
 
     print("✅ Stored XSS rendering fix documentation and version passed")

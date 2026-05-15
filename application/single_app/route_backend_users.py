@@ -160,6 +160,7 @@ def register_route_backend_users(app):
                     'publicDirectorySavedLists', 'publicDirectorySettings', 'activePublicWorkspaceOid',
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
+                    'sidebarToggleStyle',
                     # Microphone permission settings
                     'microphonePermissionState',
                     # Text-to-speech settings
@@ -182,6 +183,13 @@ def register_route_backend_users(app):
 
 
                 settings_to_update = dict(settings_to_update)
+
+                if "sidebarToggleStyle" in settings_to_update:
+                    sidebar_toggle_style = str(settings_to_update.get("sidebarToggleStyle") or "large").strip().lower()
+                    if sidebar_toggle_style not in {"large", "compact"}:
+                        return jsonify({"error": "Invalid sidebar toggle style"}), 400
+                    settings_to_update["sidebarToggleStyle"] = sidebar_toggle_style
+
                 active_group_updated = False
                 active_public_workspace_updated = False
 

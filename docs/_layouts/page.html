@@ -2,49 +2,74 @@
 layout: default
 ---
 
-<article class="page-content">
-  {% if page.title %}
-    <header class="page-header mb-4">
-      <h1 class="page-title">{{ page.title }}</h1>
-      {% if page.description %}
-        <p class="page-description text-muted">{{ page.description }}</p>
-      {% endif %}
-      {% if page.date %}
-        <p class="page-meta text-muted">
-          <small>
-            <i class="bi bi-calendar-event me-1"></i>
-            {{ page.date | date: "%B %d, %Y" }}
-            {% if page.author %}
-              by {{ page.author }}
+<div class="docs-page-shell">
+    <div class="docs-page-primary">
+        <article class="page-content docs-article">
+            <nav class="docs-breadcrumb" aria-label="Breadcrumb">
+                <a href="{{ '/' | relative_url }}">Docs</a>
+                {% if page.section %}
+                    <i class="bi bi-chevron-right" aria-hidden="true"></i>
+                    <span>{{ page.section }}</span>
+                {% endif %}
+                {% if page.title %}
+                    <i class="bi bi-chevron-right" aria-hidden="true"></i>
+                    <span aria-current="page">{{ page.title }}</span>
+                {% endif %}
+            </nav>
+
+            {% if page.title %}
+                <header class="docs-content-header page-header">
+                    <h1 class="page-title">{{ page.title }}</h1>
+                    {% if page.description %}
+                        <p class="page-description">{{ page.description }}</p>
+                    {% endif %}
+                    {% if page.date %}
+                        <p class="page-meta">
+                            <small>
+                                <i class="bi bi-calendar-event me-1" aria-hidden="true"></i>
+                                {{ page.date | date: "%B %d, %Y" }}
+                                {% if page.author %}
+                                    by {{ page.author }}
+                                {% endif %}
+                            </small>
+                        </p>
+                    {% endif %}
+                </header>
             {% endif %}
-          </small>
-        </p>
-      {% endif %}
-    </header>
-  {% endif %}
 
-  <div class="page-body">
-    {{ content }}
-  </div>
+            <div class="page-body docs-prose">
+                {{ content }}
+            </div>
 
-  {% if page.show_nav and page.nav_links %}
-    <nav class="page-navigation mt-5">
-      <div class="row">
-        {% if page.nav_links.prev %}
-          <div class="col-md-6">
-            <a href="{{ page.nav_links.prev.url | relative_url }}" class="btn btn-outline-primary">
-              <i class="bi bi-arrow-left me-2"></i>{{ page.nav_links.prev.title }}
-            </a>
-          </div>
-        {% endif %}
-        {% if page.nav_links.next %}
-          <div class="col-md-6 text-end">
-            <a href="{{ page.nav_links.next.url | relative_url }}" class="btn btn-outline-primary">
-              {{ page.nav_links.next.title }}<i class="bi bi-arrow-right ms-2"></i>
-            </a>
-          </div>
-        {% endif %}
-      </div>
-    </nav>
-  {% endif %}
-</article>
+            {% if page.show_nav and page.nav_links %}
+                <nav class="page-navigation mt-5" aria-label="Page navigation">
+                    <div class="row g-3">
+                        {% if page.nav_links.prev %}
+                            <div class="col-md-6">
+                                <a href="{{ page.nav_links.prev.url | relative_url }}" class="btn btn-outline-primary">
+                                    <i class="bi bi-arrow-left me-2" aria-hidden="true"></i>{{ page.nav_links.prev.title }}
+                                </a>
+                            </div>
+                        {% endif %}
+                        {% if page.nav_links.next %}
+                            <div class="col-md-6 text-md-end">
+                                <a href="{{ page.nav_links.next.url | relative_url }}" class="btn btn-outline-primary">
+                                    {{ page.nav_links.next.title }}<i class="bi bi-arrow-right ms-2" aria-hidden="true"></i>
+                                </a>
+                            </div>
+                        {% endif %}
+                    </div>
+                </nav>
+            {% endif %}
+        </article>
+    </div>
+
+    {% unless page.hide_toc %}
+        <aside class="docs-on-this-page d-none" data-docs-toc="true" aria-label="On this page">
+            <div class="docs-on-this-page-inner">
+                <h2>On this page</h2>
+                <nav data-docs-toc-links="true"></nav>
+            </div>
+        </aside>
+    {% endunless %}
+</div>

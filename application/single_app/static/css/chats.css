@@ -64,18 +64,6 @@
   min-width: 0;
 }
 
-#chat-sidebar-inline-toggle {
-  border-radius: 999px;
-  flex: 0 0 auto;
-  height: 2.25rem;
-  padding: 0;
-  width: 2.25rem;
-}
-
-body.sidebar-collapsed #chat-sidebar-inline-toggle {
-  color: var(--bs-primary);
-}
-
 .chat-searchable-select .dropdown-menu.show {
   display: block !important;
   opacity: 1 !important;

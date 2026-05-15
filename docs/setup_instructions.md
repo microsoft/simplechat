@@ -187,7 +187,7 @@ If you want the most current, least ambiguous deployment path, start with Azure 
           <span class="latest-release-card-badge">Tooling</span>
         </div>
         <h3 class="latest-release-card-title">Install the local toolchain</h3>
-        <p class="latest-release-card-summary">At minimum, line up Azure CLI, Azure Developer CLI, PowerShell 7, and Visual Studio Code before starting the primary flow.</p>
+        <p class="latest-release-card-summary">At minimum, line up Azure CLI, Azure Developer CLI, Python 3.12, PowerShell 7, and Visual Studio Code before starting the primary flow.</p>
       </div>
     </article>
 
@@ -203,6 +203,11 @@ If you want the most current, least ambiguous deployment path, start with Azure 
     </article>
   </div>
 </section>
+
+<div class="latest-release-note-panel">
+  <h2>Python is part of the AZD toolchain</h2>
+  <p>The repo's AZD workflow runs Python during the <code>preprovision</code> and <code>postprovision</code> hooks defined in <code>deployers/azure.yaml</code>. Install Python 3.12 and confirm <code>python</code> works on Windows or <code>python3</code> works on Linux/macOS before running <code>azd up</code>.</p>
+</div>
 
 <section class="latest-release-section">
   <div class="latest-release-section-header">
