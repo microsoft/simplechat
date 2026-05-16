@@ -338,6 +338,152 @@
                         {% endif %}
                                 </div>
 
+                                <div id="chat-toolbar-desktop-selectors-slot" class="chat-toolbar-selectors-slot">
+                                    <div id="chat-toolbar-selectors-surface" class="chat-toolbar-selectors">
+                                        {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
+                                        <div id="prompt-selection-container" class="chat-toolbar-selector" style="display: none;">
+                                            <label for="prompt-select" class="visually-hidden">Prompt</label>
+                                            <div class="dropdown chat-searchable-select" id="prompt-dropdown">
+                                                <button class="form-select chat-searchable-select-button"
+                                                        type="button"
+                                                        id="prompt-dropdown-button"
+                                                        data-bs-toggle="dropdown"
+                                                        data-bs-auto-close="outside"
+                                                        aria-expanded="false">
+                                                    <span class="chat-searchable-select-text text-truncate">Select a Prompt...</span>
+                                                </button>
+                                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="prompt-dropdown-menu">
+                                                    <div class="chat-searchable-select-search mb-2">
+                                                        <input type="text"
+                                                               class="form-control form-control-sm"
+                                                               placeholder="Search prompts..."
+                                                               id="prompt-search-input">
+                                                    </div>
+                                                    <div class="dropdown-items-container chat-searchable-select-items" id="prompt-dropdown-items"></div>
+                                                </div>
+                                            </div>
+                                            <select class="form-select d-none" id="prompt-select"></select>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <div id="chat-toolbar-desktop-primary-slot" class="chat-toolbar-primary-selector">
+                                    <div id="chat-toolbar-primary-surface" class="chat-toolbar-primary-surface">
+                                        <!-- Model selector -->
+                                        <div id="model-select-container" class="chat-toolbar-selector">
+                                            <label for="model-select" class="visually-hidden">Model</label>
+                                            <div class="dropdown chat-searchable-select" id="model-dropdown">
+                                                <button class="form-select chat-searchable-select-button"
+                                                        type="button"
+                                                        id="model-dropdown-button"
+                                                        data-bs-toggle="dropdown"
+                                                        data-bs-auto-close="outside"
+                                                        aria-expanded="false">
+                                                    <span class="chat-searchable-select-text text-truncate">
+                                                    {% if enable_multi_model_endpoints and initial_chat_model_selection %}
+                                                        {{ initial_chat_model_selection.display_name }}
+                                                    {% elif settings.enable_gpt_apim %}
+                                                        {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                                        {% set apim_list = raw.split(',') %}
+                                                        {% set first_dep = apim_list[0].strip() if apim_list and apim_list[0].strip() else 'Select a Model' %}
+                                                        {{ first_dep }}
+                                                    {% elif settings.gpt_model.selected %}
+                                                        {{ settings.gpt_model.selected[0].modelName }}
+                                                    {% else %}
+                                                        Select a Model
+                                                    {% endif %}
+                                                    </span>
+                                                </button>
+                                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="model-dropdown-menu">
+                                                    <div class="chat-searchable-select-search mb-2">
+                                                        <input type="text"
+                                                               class="form-control form-control-sm"
+                                                               placeholder="Search models..."
+                                                               id="model-search-input">
+                                                    </div>
+                                                    <div class="dropdown-items-container chat-searchable-select-items" id="model-dropdown-items"></div>
+                                                </div>
+                                            </div>
+                                            <select id="model-select" class="form-select d-none">
+                                            {% if enable_multi_model_endpoints and initial_chat_model_selection %}
+                                                <option
+                                                    value="{{ initial_chat_model_selection.option_value }}"
+                                                    selected
+                                                    data-selection-key="{{ initial_chat_model_selection.selection_key }}"
+                                                    data-model-id="{{ initial_chat_model_selection.model_id }}"
+                                                    data-display-name="{{ initial_chat_model_selection.display_name }}"
+                                                    data-deployment-name="{{ initial_chat_model_selection.deployment_name }}"
+                                                    data-endpoint-id="{{ initial_chat_model_selection.endpoint_id }}"
+                                                    data-provider="{{ initial_chat_model_selection.provider }}"
+                                                    data-scope-type="{{ initial_chat_model_selection.scope_type }}"
+                                                    data-scope-id="{{ initial_chat_model_selection.scope_id }}"
+                                                    data-scope-name="{{ initial_chat_model_selection.scope_name }}"
+                                                    data-search-text="{{ initial_chat_model_selection.search_text }}"
+                                                >
+                                                    {{ initial_chat_model_selection.display_name }}
+                                                </option>
+                                            {% elif settings.enable_gpt_apim %}
+                                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                                {% set apim_list = raw.split(',') %}
+                                                {% for dep in apim_list %}
+                                                {% set d = dep.strip() %}
+                                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
+                                                    {{ d }}
+                                                </option>
+                                                {% endfor %}
+                                            {% else %}
+                                                {% if settings.enable_gpt_apim %}
+                                                    {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                                    {% set apim_list = raw.split(',') %}
+                                                    {% for dep in apim_list %}
+                                                    {% set d = dep.strip() %}
+                                                    <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
+                                                        {{ d }}
+                                                    </option>
+                                                    {% endfor %}
+                                                {% else %}
+                                                    {% for model in settings.gpt_model.selected %}
+                                                    <option
+                                                        value="{{ model.deploymentName }}"
+                                                        {% if loop.first %}selected{% endif %}
+                                                    >
+                                                        {{ model.modelName }}
+                                                    </option>
+                                                    {% endfor %}
+                                                {% endif %}
+                                            {% endif %}
+                                            </select>
+                                        </div>
+
+                                        <div id="agent-select-container" class="chat-toolbar-selector" style="display: none;">
+                                            <label for="agent-select" class="visually-hidden">Agent</label>
+                                            <div class="dropdown chat-searchable-select" id="agent-dropdown">
+                                                <button class="form-select chat-searchable-select-button"
+                                                        type="button"
+                                                        id="agent-dropdown-button"
+                                                        data-bs-toggle="dropdown"
+                                                        data-bs-auto-close="outside"
+                                                        aria-expanded="false">
+                                                    <span class="chat-searchable-select-text text-truncate">Select an Agent</span>
+                                                </button>
+                                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="agent-dropdown-menu">
+                                                    <div class="chat-searchable-select-search mb-2">
+                                                        <input type="text"
+                                                               class="form-control form-control-sm"
+                                                               placeholder="Search agents..."
+                                                               id="agent-search-input">
+                                                    </div>
+                                                    <div class="dropdown-items-container chat-searchable-select-items" id="agent-dropdown-items"></div>
+                                                </div>
+                                            </div>
+                                            <select id="agent-select" class="form-select d-none">
+                                                <!-- Agents will be populated dynamically by JS -->
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div class="chat-toolbar-toggles">
 
                                 <!-- Reasoning effort toggle button -->
@@ -375,153 +521,6 @@
                     </div>
 
                     <div class="chat-toolbar-controls">
-                        <div id="chat-toolbar-desktop-primary-slot" class="chat-toolbar-primary-selector">
-                            <div id="chat-toolbar-primary-surface" class="chat-toolbar-primary-surface">
-                            <!-- Model selector - right aligned -->
-                            <div id="model-select-container" class="chat-toolbar-selector">
-                                <label for="model-select" class="visually-hidden">Model</label>
-                                <div class="dropdown chat-searchable-select" id="model-dropdown">
-                                    <button class="form-select chat-searchable-select-button"
-                                            type="button"
-                                            id="model-dropdown-button"
-                                            data-bs-toggle="dropdown"
-                                            data-bs-auto-close="outside"
-                                            aria-expanded="false">
-                                        <span class="chat-searchable-select-text text-truncate">
-                                        {% if enable_multi_model_endpoints and initial_chat_model_selection %}
-                                            {{ initial_chat_model_selection.display_name }}
-                                        {% elif settings.enable_gpt_apim %}
-                                            {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                            {% set apim_list = raw.split(',') %}
-                                            {% set first_dep = apim_list[0].strip() if apim_list and apim_list[0].strip() else 'Select a Model' %}
-                                            {{ first_dep }}
-                                        {% elif settings.gpt_model.selected %}
-                                            {{ settings.gpt_model.selected[0].modelName }}
-                                        {% else %}
-                                            Select a Model
-                                        {% endif %}
-                                        </span>
-                                    </button>
-                                    <div class="dropdown-menu p-2 chat-searchable-select-menu" id="model-dropdown-menu">
-                                        <div class="chat-searchable-select-search mb-2">
-                                            <input type="text"
-                                                   class="form-control form-control-sm"
-                                                   placeholder="Search models..."
-                                                   id="model-search-input">
-                                        </div>
-                                        <div class="dropdown-items-container chat-searchable-select-items" id="model-dropdown-items"></div>
-                                    </div>
-                                </div>
-                                <select id="model-select" class="form-select d-none">
-                                {% if enable_multi_model_endpoints and initial_chat_model_selection %}
-                                    <option
-                                        value="{{ initial_chat_model_selection.option_value }}"
-                                        selected
-                                        data-selection-key="{{ initial_chat_model_selection.selection_key }}"
-                                        data-model-id="{{ initial_chat_model_selection.model_id }}"
-                                        data-display-name="{{ initial_chat_model_selection.display_name }}"
-                                        data-deployment-name="{{ initial_chat_model_selection.deployment_name }}"
-                                        data-endpoint-id="{{ initial_chat_model_selection.endpoint_id }}"
-                                        data-provider="{{ initial_chat_model_selection.provider }}"
-                                        data-scope-type="{{ initial_chat_model_selection.scope_type }}"
-                                        data-scope-id="{{ initial_chat_model_selection.scope_id }}"
-                                        data-scope-name="{{ initial_chat_model_selection.scope_name }}"
-                                        data-search-text="{{ initial_chat_model_selection.search_text }}"
-                                    >
-                                        {{ initial_chat_model_selection.display_name }}
-                                    </option>
-                                {% elif settings.enable_gpt_apim %}
-                                    {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                    {% set apim_list = raw.split(',') %}
-                                    {% for dep in apim_list %}
-                                    {% set d = dep.strip() %}
-                                    <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                        {{ d }}
-                                    </option>
-                                    {% endfor %}
-                                {% else %}
-                                    {% if settings.enable_gpt_apim %}
-                                        {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                        {% set apim_list = raw.split(',') %}
-                                        {% for dep in apim_list %}
-                                        {% set d = dep.strip() %}
-                                        <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                            {{ d }}
-                                        </option>
-                                        {% endfor %}
-                                    {% else %}
-                                        {% for model in settings.gpt_model.selected %}
-                                        <option
-                                            value="{{ model.deploymentName }}"
-                                            {% if loop.first %}selected{% endif %}
-                                        >
-                                            {{ model.modelName }}
-                                        </option>
-                                        {% endfor %}
-                                    {% endif %}
-                                {% endif %}
-                                </select>
-                            </div>
-
-                            <div id="agent-select-container" class="chat-toolbar-selector" style="display: none;">
-                                <label for="agent-select" class="visually-hidden">Agent</label>
-                                <div class="dropdown chat-searchable-select" id="agent-dropdown">
-                                    <button class="form-select chat-searchable-select-button"
-                                            type="button"
-                                            id="agent-dropdown-button"
-                                            data-bs-toggle="dropdown"
-                                            data-bs-auto-close="outside"
-                                            aria-expanded="false">
-                                        <span class="chat-searchable-select-text text-truncate">Select an Agent</span>
-                                    </button>
-                                    <div class="dropdown-menu p-2 chat-searchable-select-menu" id="agent-dropdown-menu">
-                                        <div class="chat-searchable-select-search mb-2">
-                                            <input type="text"
-                                                   class="form-control form-control-sm"
-                                                   placeholder="Search agents..."
-                                                   id="agent-search-input">
-                                        </div>
-                                        <div class="dropdown-items-container chat-searchable-select-items" id="agent-dropdown-items"></div>
-                                    </div>
-                                </div>
-                                <select id="agent-select" class="form-select d-none">
-                                    <!-- Agents will be populated dynamically by JS -->
-                                </select>
-                            </div>
-                            </div>
-                        </div>
-
-                        <div id="chat-toolbar-desktop-selectors-slot" class="chat-toolbar-selectors-slot">
-                            <div id="chat-toolbar-selectors-surface" class="chat-toolbar-selectors">
-                            {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
-                            <div id="prompt-selection-container" class="chat-toolbar-selector" style="display: none;">
-                                <label for="prompt-select" class="visually-hidden">Prompt</label>
-                                <div class="dropdown chat-searchable-select" id="prompt-dropdown">
-                                    <button class="form-select chat-searchable-select-button"
-                                            type="button"
-                                            id="prompt-dropdown-button"
-                                            data-bs-toggle="dropdown"
-                                            data-bs-auto-close="outside"
-                                            aria-expanded="false">
-                                        <span class="chat-searchable-select-text text-truncate">Select a Prompt...</span>
-                                    </button>
-                                    <div class="dropdown-menu p-2 chat-searchable-select-menu" id="prompt-dropdown-menu">
-                                        <div class="chat-searchable-select-search mb-2">
-                                            <input type="text"
-                                                   class="form-control form-control-sm"
-                                                   placeholder="Search prompts..."
-                                                   id="prompt-search-input">
-                                        </div>
-                                        <div class="dropdown-items-container chat-searchable-select-items" id="prompt-dropdown-items"></div>
-                                    </div>
-                                </div>
-                                <select class="form-select d-none" id="prompt-select"></select>
-                            </div>
-                            {% endif %}
-
-                            </div>
-                        </div>
-
                         <button type="button" id="chat-mobile-tools-toggle" class="btn btn-outline-secondary btn-sm d-lg-none chat-mobile-tools-toggle" data-bs-toggle="offcanvas" data-bs-target="#chat-mobile-tools-panel" aria-expanded="false" aria-controls="chat-mobile-tools-panel">
                             <i class="bi bi-sliders2 me-1"></i>
                             <span>Tools</span>
@@ -559,15 +558,15 @@
                              <label class="form-label mb-1 small text-muted" for="document-action-select">Action</label>
                              <select class="form-select form-select-sm" id="document-action-select" title="Find relevant information in the selected documents.">
                                 <option value="none" data-action-description="Find relevant information in the selected documents." title="Find relevant information in the selected documents.">Search</option>
-                                {% if settings.document_action_capabilities.exhaustive_review.enabled %}
-                                <option value="exhaustive_review" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Review</option>
+                                {% if settings.document_action_capabilities.analyze.enabled %}
+                                <option value="analyze" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Analyze</option>
                                 {% endif %}
                                 {% if settings.document_action_capabilities.comparison.enabled %}
                                 <option value="comparison" data-action-description="Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact." title="Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact.">Compare</option>
                                 {% endif %}
                              </select>
                          </div>
-                         <div class="flex-shrink-0 chat-search-panel-field chat-search-panel-field-narrow" style="min-width: 120px; max-width: 250px;">
+                         <div class="flex-shrink-0 chat-search-panel-field chat-search-panel-field-narrow" data-chat-document-picker-field="scope" style="min-width: 120px; max-width: 250px;">
                              <label class="form-label mb-1 small text-muted d-flex align-items-center gap-1">
                                 Scope
                                 <span id="scope-lock-indicator"
@@ -603,7 +602,7 @@
                              <!-- Hidden select kept for backwards compat -->
                              <select class="d-none" id="doc-scope-select" multiple></select>
                          </div>
-                         <div class="flex-shrink-0 chat-search-panel-field chat-search-panel-field-narrow" style="min-width: 150px; max-width: 250px;">
+                         <div class="flex-shrink-0 chat-search-panel-field chat-search-panel-field-narrow" data-chat-document-picker-field="tags" style="min-width: 150px; max-width: 250px;">
                              <label class="form-label mb-1 small text-muted">Tags</label>
                              <div class="dropdown" id="tags-dropdown">
                                 <button class="form-select form-select-sm d-flex justify-content-between align-items-center"
@@ -635,7 +634,7 @@
                              <select class="d-none" id="chat-tags-filter" multiple style="display: none;">
                              </select>
                          </div>
-                             <div class="flex-grow-1 chat-search-panel-field chat-search-panel-field-wide" style="min-width: 250px;">
+                             <div class="flex-grow-1 chat-search-panel-field chat-search-panel-field-wide" data-chat-document-picker-field="document" style="min-width: 250px;">
                              <label for="document-select" class="form-label mb-1 small text-muted">Document</label>
                              <div class="dropdown" id="document-dropdown">
                                 <button class="form-select form-select-sm d-flex justify-content-between align-items-center"
@@ -658,25 +657,25 @@
                                 <select class="d-none" id="document-select" multiple></select>
                              </div>
                          </div>
-                     </div>
-                     <div id="document-comparison-summary-bar" class="mt-2 d-none">
-                         <div class="border rounded-3 px-2 py-2 bg-body-tertiary d-flex flex-wrap align-items-center gap-2">
-                             <div class="small text-uppercase text-muted fw-semibold me-1">Compare</div>
-                             <div class="d-flex align-items-center gap-1 flex-wrap">
-                                 <span class="small text-muted">Source</span>
-                                 <div id="document-comparison-inline-source-tags" class="d-flex flex-wrap gap-1"></div>
+                         <div id="document-comparison-summary-bar" class="chat-search-panel-comparison-row d-none">
+                             <div class="border rounded-3 px-2 py-2 bg-body-tertiary d-flex flex-wrap align-items-center gap-2">
+                                 <div class="small text-uppercase text-muted fw-semibold me-1">Compare</div>
+                                 <div class="d-flex align-items-center gap-1 flex-wrap">
+                                     <span class="small text-muted">Source</span>
+                                     <div id="document-comparison-inline-source-tags" class="d-flex flex-wrap gap-1"></div>
+                                 </div>
+                                 <div class="d-flex align-items-center gap-1 flex-wrap flex-grow-1">
+                                     <span class="small text-muted">Targets</span>
+                                     <div id="document-comparison-inline-target-tags" class="d-flex flex-wrap gap-1"></div>
+                                 </div>
+                                 <button type="button"
+                                         class="btn btn-outline-secondary btn-sm ms-auto"
+                                         id="document-comparison-edit-btn"
+                                         data-bs-toggle="modal"
+                                         data-bs-target="#document-comparison-modal">
+                                     <i class="bi bi-pencil-square me-1"></i><span id="document-comparison-edit-btn-label">Edit Compare</span>
+                                 </button>
                              </div>
-                             <div class="d-flex align-items-center gap-1 flex-wrap flex-grow-1">
-                                 <span class="small text-muted">Targets</span>
-                                 <div id="document-comparison-inline-target-tags" class="d-flex flex-wrap gap-1"></div>
-                             </div>
-                             <button type="button"
-                                     class="btn btn-outline-secondary btn-sm ms-auto"
-                                     id="document-comparison-edit-btn"
-                                     data-bs-toggle="modal"
-                                     data-bs-target="#document-comparison-modal">
-                                 <i class="bi bi-pencil-square me-1"></i><span id="document-comparison-edit-btn-label">Edit Compare</span>
-                             </button>
                          </div>
                      </div>
                     </div>
@@ -757,6 +756,16 @@
             </div>
             <div class="modal-body">
                 <div id="document-comparison-board" class="d-flex flex-column gap-3">
+                    <section id="document-comparison-picker-panel" class="document-comparison-picker-panel d-none" aria-labelledby="document-comparison-picker-heading">
+                        <div class="document-comparison-picker-header">
+                            <div class="min-width-0">
+                                <div class="small text-uppercase text-muted fw-semibold">Workspace Library</div>
+                                <h6 class="mb-0 text-body" id="document-comparison-picker-heading">Choose documents for this comparison</h6>
+                            </div>
+                            <span id="document-comparison-picker-status" class="badge text-bg-light border text-body-secondary">Current filters</span>
+                        </div>
+                        <div id="document-comparison-picker-controls" class="document-comparison-picker-controls" aria-label="Comparison document filters"></div>
+                    </section>
                     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
                         <div id="document-comparison-selection-summary" class="small text-muted">Choose one Source and at least one Target. Workspace versions come from the document picker, and chat uploads appear here after upload.</div>
                         <div class="small text-muted">Source is the baseline. Every Target is compared against it.</div>

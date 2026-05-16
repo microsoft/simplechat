@@ -121,6 +121,11 @@ def get_settings(use_cosmos=False, include_source=False):
         'id': 'app_settings',
         # Control Center settings
         'control_center_last_refresh': None,  # Timestamp of last data refresh
+        'control_center_auto_refresh_enabled': True,
+        'control_center_auto_refresh_time': '06:00',
+        'control_center_auto_refresh_hour': 6,
+        'control_center_auto_refresh_minute': 0,
+        'control_center_auto_refresh_next_run': None,
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
         'landing_page_text': 'You can add text here and it supports Markdown. '

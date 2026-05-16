@@ -173,16 +173,16 @@
                             </a>
                             <hr class="dropdown-divider" />
                             {% if app_settings.enable_group_workspaces %}
-                                <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
+                                <a class="dropdown-item" href="{{ url_for('profile', tab='groups') }}">My Groups</a>
                             {% endif %}
                             {% if app_settings.enable_public_workspaces %}
-                                <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
+                                <a class="dropdown-item" href="{{ url_for('profile', tab='public-workspaces') }}">My Public Workspaces</a>
                             {% endif %}
                             {% if app_settings.enable_user_feedback %}
-                                <a class="dropdown-item" href="{{ url_for('my_feedback') }}">My Feedback</a>
+                                <a class="dropdown-item" href="{{ url_for('profile', tab='feedback') }}">My Feedback</a>
                             {% endif %}
                             {% if app_settings.enable_content_safety %}
-                                <a class="dropdown-item" href="{{ url_for('my_safety_violations') }}">My Safety Violations</a>
+                                <a class="dropdown-item" href="{{ url_for('profile', tab='violations') }}">My Safety Violations</a>
                             {% endif %}
                             {% if 'Admin' in session['user']['roles'] %}
                                 <hr class="dropdown-divider" />

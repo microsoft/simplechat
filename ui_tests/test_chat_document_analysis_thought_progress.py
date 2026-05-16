@@ -1,12 +1,12 @@
-# test_chat_exhaustive_review_thought_progress.py
+# test_chat_document_analysis_thought_progress.py
 """
-UI test for exhaustive review streaming thought progress.
-Version: 0.241.113
+UI test for analysis streaming thought progress.
+Version: 0.241.023
 Implemented in: 0.241.113
 
 This test ensures the streaming thought placeholder keeps the overall
 progress bar below 100 percent while the final reduction step is still
-running, even after the per-document review bars have completed, and
+running, even after the per-document analysis bars have completed, and
 that progress bar geometry stays stable across streaming updates.
 """
 
@@ -28,8 +28,8 @@ def _require_ui_env():
 
 
 @pytest.mark.ui
-def test_chat_exhaustive_review_thought_progress(playwright):
-    """Validate that exhaustive review thought updates render reduction-phase progress."""
+def test_chat_document_analysis_thought_progress(playwright):
+    """Validate that analysis thought updates render reduction-phase progress."""
     _require_ui_env()
 
     browser = playwright.chromium.launch()
@@ -60,14 +60,14 @@ def test_chat_exhaustive_review_thought_progress(playwright):
                 handleStreamingThought({
                     message_id: 'assistant-progress',
                     step_index: 2,
-                    step_type: 'document_review',
-                    content: 'Combining review findings into the final response (1/2)',
+                    step_type: 'document_analysis',
+                    content: 'Combining analysis findings into the final response (1/2)',
                     progress: {
                         overall: {
                             percent: 90,
                             status: 'running',
                             phase: 'reducing',
-                            phase_label: 'Combining review findings',
+                            phase_label: 'Combining analysis findings',
                             phase_detail: 'Reduction batch 1 of 2',
                             completed_chunks: 180,
                             total_chunks: 180,
@@ -122,7 +122,7 @@ def test_chat_exhaustive_review_thought_progress(playwright):
             """
         )
 
-        assert 'Combining review findings into the final response (1/2)' in result['textContent']
+        assert 'Combining analysis findings into the final response (1/2)' in result['textContent']
         assert 'Reduction batch 1 of 2' in result['textContent']
         assert 'Policy Handbook' in result['textContent']
         assert 'Vendor Contract' in result['textContent']
@@ -136,7 +136,7 @@ def test_chat_exhaustive_review_thought_progress(playwright):
 
 
 @pytest.mark.ui
-def test_chat_exhaustive_review_progress_bar_height_stays_stable(playwright):
+def test_chat_document_analysis_progress_bar_height_stays_stable(playwright):
     """Validate that progress bars keep a stable height as streaming progress advances."""
     _require_ui_env()
 
@@ -167,15 +167,15 @@ def test_chat_exhaustive_review_progress_bar_height_stays_stable(playwright):
                 const buildThought = (percent, windowNumber) => ({
                     message_id: 'assistant-progress-height',
                     step_index: 1,
-                    step_type: 'document_review',
-                    content: `Reviewing window ${windowNumber} of 4`,
+                    step_type: 'document_analysis',
+                    content: `Analyzing window ${windowNumber} of 4`,
                     progress: {
                         overall: {
                             percent,
                             status: 'running',
-                            phase: 'reviewing',
-                            phase_label: `Reviewing window ${windowNumber} of 4`,
-                            phase_detail: `Reviewing window ${windowNumber} of 4`,
+                            phase: 'analyzing',
+                            phase_label: `Analyzing window ${windowNumber} of 4`,
+                            phase_detail: `Analyzing window ${windowNumber} of 4`,
                             completed_chunks: percent,
                             total_chunks: 100,
                             completed_windows: Math.max(0, windowNumber - 1),
@@ -190,7 +190,7 @@ def test_chat_exhaustive_review_progress_bar_height_stays_stable(playwright):
                                 document_name: 'Policy Handbook',
                                 percent,
                                 status: 'running',
-                                status_text: `Reviewing window ${windowNumber} of 4`,
+                                status_text: `Analyzing window ${windowNumber} of 4`,
                                 completed_chunks: percent,
                                 total_chunks: 100,
                                 completed_windows: Math.max(0, windowNumber - 1),
@@ -233,7 +233,7 @@ def test_chat_exhaustive_review_progress_bar_height_stays_stable(playwright):
         )
 
         assert 'Policy Handbook' in result['textContent']
-        assert 'Reviewing window 4 of 4' in result['textContent']
+        assert 'Analyzing window 4 of 4' in result['textContent']
         assert len(result['first']) == 2
         assert len(result['second']) == 2
         assert [entry['width'] for entry in result['first']] == ['56%', '56%']

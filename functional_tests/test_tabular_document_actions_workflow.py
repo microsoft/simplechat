@@ -2,11 +2,11 @@
 # test_tabular_document_actions_workflow.py
 """
 Functional test for tabular document-action workflow support.
-Version: 0.241.141
+Version: 0.241.023
 Implemented in: 0.241.140
 
 This test ensures tabular document actions reuse the shared tabular analysis
-path for review and comparison workflows instead of relying only on the
+path for Analyze and comparison workflows instead of relying only on the
 search-grounded chat path, including row-linked related-document evidence.
 """
 
@@ -34,7 +34,7 @@ def test_shared_tabular_document_action_helper_exists() -> None:
         "Expected the shared helper to reuse the tabular analysis runner."
     )
     assert 'def _resolve_tabular_document_action_documents(' in workflow_runner_content, (
-        "Expected functions_workflow_runner.py to resolve selected tabular documents before dispatching review or comparison."
+        "Expected functions_workflow_runner.py to resolve selected tabular documents before dispatching analysis or comparison."
     )
     assert 'augment_tabular_invocations_with_related_document_evidence(' in workflow_runner_content, (
         "Expected the shared helper to reuse row-linked related-document augmentation for tabular workflows."
@@ -46,19 +46,19 @@ def test_shared_tabular_document_action_helper_exists() -> None:
     print("Shared tabular document-action helper checks passed")
 
 
-def test_review_and_compare_dispatch_use_tabular_helper() -> None:
-    print("Testing review and comparison workflow dispatch...")
+def test_analyze_and_compare_dispatch_use_tabular_helper() -> None:
+    print("Testing Analyze and comparison workflow dispatch...")
 
     workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
 
-    assert "DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,\n                    workflow,\n                    review_config," in workflow_runner_content, (
-        "Expected exhaustive review workflow execution to call the shared tabular document-action helper."
+    assert "DOCUMENT_ACTION_TYPE_ANALYZE,\n                    workflow,\n                    analysis_config," in workflow_runner_content, (
+        "Expected analysis workflow execution to call the shared tabular document-action helper."
     )
     assert "DOCUMENT_ACTION_TYPE_COMPARISON,\n                    workflow,\n                    comparison_config," in workflow_runner_content, (
         "Expected document comparison workflow execution to call the shared tabular document-action helper."
     )
     assert "related_document_evidence_summary=tabular_document.get('related_document_evidence_summary') or ''" in workflow_runner_content, (
-        "Expected tabular review prompts to carry resolved related-document evidence into synthesis."
+        "Expected tabular analysis prompts to carry resolved related-document evidence into synthesis."
     )
     assert "related_document_evidence_summary=left_document.get('related_document_evidence_summary') or ''" in workflow_runner_content, (
         "Expected tabular comparison prompts to carry source-document related evidence into synthesis."
@@ -67,13 +67,13 @@ def test_review_and_compare_dispatch_use_tabular_helper() -> None:
         "Expected workflow execution results to expose generated tabular outputs when the shared helper is used."
     )
 
-    print("Review and comparison dispatch checks passed")
+    print("Analyze and comparison dispatch checks passed")
 
 
 def run_tests() -> bool:
     tests = [
         test_shared_tabular_document_action_helper_exists,
-        test_review_and_compare_dispatch_use_tabular_helper,
+        test_analyze_and_compare_dispatch_use_tabular_helper,
     ]
     results = []
 

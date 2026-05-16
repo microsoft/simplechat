@@ -131,7 +131,7 @@ This allows administrators to use the Azure CLI deployment path without building
 Validation performed for this change included:
 
 - PowerShell parser and workspace error checks on the updated script
-- Review of the Azure CLI deployer README and supporting documentation
+- Analyze the Azure CLI deployer README and supporting documentation
 - Cross-checking the Azure CLI logic against the Bicep deployer private networking structure
 
 ### Known Limitations

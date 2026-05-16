@@ -18,7 +18,7 @@ from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
-    build_legacy_exhaustive_review_config,
+    build_analyze_config,
     get_document_action_max_documents_by_type,
     get_enabled_document_action_types,
     normalize_document_action_config,
@@ -90,7 +90,7 @@ def _normalize_document_action_config(workflow_data, existing_workflow=None):
     return normalize_document_action_config(
         action_payload=workflow_data.get('document_action'),
         existing_action=existing_workflow.get('document_action'),
-        legacy_exhaustive_review=workflow_data.get('exhaustive_review') or existing_workflow.get('exhaustive_review'),
+        legacy_analyze=workflow_data.get('analyze') or existing_workflow.get('analyze'),
         max_documents_by_type=get_document_action_max_documents_by_type(
             DOCUMENT_ACTION_CONTEXT_WORKFLOW,
             settings=settings,
@@ -395,7 +395,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
     )
     document_action = _normalize_document_action_config(workflow_data, existing_workflow=existing_workflow)
-    exhaustive_review = build_legacy_exhaustive_review_config(document_action)
+    analyze = build_analyze_config(document_action)
     selected_agent = {}
     model_binding_summary = None
     model_endpoint_id = ''
@@ -435,7 +435,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'alert_priority': alert_priority,
         'schedule': schedule,
         'document_action': document_action,
-        'exhaustive_review': exhaustive_review,
+        'analyze': analyze,
         'selected_agent': selected_agent,
         'model_endpoint_id': model_endpoint_id,
         'model_id': model_id,

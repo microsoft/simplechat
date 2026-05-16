@@ -22,7 +22,7 @@ Code changes summary:
 
 - Added a shared generated-analysis preview block formatter in `chat-messages.js`.
 - Applied `white-space: pre-wrap`, `word-break: break-word`, and `overflow-wrap: anywhere` to generated JSON preview blocks so long lines stay inside the card.
-- Added a UI regression test that injects an exhaustive review JSON artifact with a very long preview token and asserts the preview block wraps instead of overflowing.
+- Added a UI regression test that injects an analysis JSON artifact with a very long preview token and asserts the preview block wraps instead of overflowing.
 - Bumped the application version to `0.241.130`.
 
 Testing approach:
@@ -36,7 +36,7 @@ Testing approach:
 Before:
 
 - Long JSON preview lines could overflow the generated artifact card in Chats.
-- Exhaustive review previews were difficult to read because the preview block preferred horizontal overflow over wrapping.
+- Document analysis previews were difficult to read because the preview block preferred horizontal overflow over wrapping.
 
 After:
 

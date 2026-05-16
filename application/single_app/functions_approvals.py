@@ -66,6 +66,35 @@ def get_approval_roles_for_request_type(request_type: str) -> List[str]:
     return ['Admin', 'ControlCenterAdmin']
 
 
+def _normalize_user_roles(user_roles: Optional[List[str]]) -> List[str]:
+    """Return a safe role list for approval authorization checks."""
+    if not user_roles:
+        return []
+    if isinstance(user_roles, list):
+        return user_roles
+    if isinstance(user_roles, (tuple, set)):
+        return list(user_roles)
+    return [str(user_roles)]
+
+
+def _get_approval_metadata(approval: Dict[str, Any]) -> Dict[str, Any]:
+    """Return approval metadata when it is a dictionary, otherwise an empty dict."""
+    metadata = approval.get('metadata')
+    if isinstance(metadata, dict):
+        return metadata
+    return {}
+
+
+def _get_approval_sort_value(approval: Dict[str, Any]) -> str:
+    """Return a stable created-at value for local approval sorting."""
+    created_at = approval.get('created_at')
+    if isinstance(created_at, datetime):
+        return created_at.isoformat()
+    if isinstance(created_at, str):
+        return created_at
+    return ''
+
+
 def create_approval_request(
     request_type: str,
     group_id: str,
@@ -226,26 +255,27 @@ def get_pending_approvals(
         Dictionary with approvals list, total count, and pagination info
     """
     try:
+        safe_user_roles = _normalize_user_roles(user_roles)
+
         # Build query based on filters
-        query_parts = ["SELECT * FROM c WHERE 1=1"]
+        filter_parts = []
         parameters = []
         
         # Status filter
         if status_filter != 'all':
             # If specific status requested (pending, approved, denied, executed)
-            query_parts.append("AND c.status = @status")
+            filter_parts.append("c.status = @status")
             parameters.append({"name": "@status", "value": status_filter})
         # else: 'all' means no status filter
         
         # Request type filter
         if request_type_filter:
-            query_parts.append("AND c.request_type = @request_type")
+            filter_parts.append("c.request_type = @request_type")
             parameters.append({"name": "@request_type", "value": request_type_filter})
-        
-        # Order by created date descending
-        query_parts.append("ORDER BY c.created_at DESC")
-        
-        query = " ".join(query_parts)
+
+        query = "SELECT * FROM c"
+        if filter_parts:
+            query = f"{query} WHERE {' AND '.join(filter_parts)}"
         
         debug_print(f"📋 [GET_APPROVALS] Query: {query}")
         debug_print(f"📋 [GET_APPROVALS] Parameters: {parameters}")
@@ -257,6 +287,7 @@ def get_pending_approvals(
             parameters=parameters,
             enable_cross_partition_query=True
         ))
+        items.sort(key=_get_approval_sort_value, reverse=True)
         
         debug_print(f"📋 [GET_APPROVALS] Found {len(items)} total items from query")
         
@@ -265,14 +296,21 @@ def get_pending_approvals(
         # For completed requests: check if user has visibility (was involved or is admin/owner)
         eligible_approvals = []
         for approval in items:
-            if status_filter == 'pending':
-                # For pending requests, check if user can approve
-                if _can_user_approve(approval, user_id, user_roles):
-                    eligible_approvals.append(approval)
-            else:
-                # For completed requests, check if user has visibility
-                if _can_user_view(approval, user_id, user_roles):
-                    eligible_approvals.append(approval)
+            try:
+                if status_filter == 'pending':
+                    # For pending requests, check if user can approve
+                    if _can_user_approve(approval, user_id, safe_user_roles):
+                        eligible_approvals.append(approval)
+                else:
+                    # For completed requests, check if user has visibility
+                    if _can_user_view(approval, user_id, safe_user_roles):
+                        eligible_approvals.append(approval)
+            except Exception as ex:
+                log_event("[Approvals] Skipping malformed approval during eligibility check", {
+                    'approval_id': approval.get('id') if isinstance(approval, dict) else None,
+                    'error': str(ex)
+                }, level=logging.WARNING)
+                debug_print(f"Skipping malformed approval during eligibility check: {ex}")
         
         debug_print(f"📋 [GET_APPROVALS] After eligibility filter: {len(eligible_approvals)} approvals")
         
@@ -296,7 +334,7 @@ def get_pending_approvals(
         log_event("[Approvals] Error fetching pending approvals", {
             'error': str(e),
             'user_id': user_id,
-            'user_roles': user_roles
+            'user_roles': _normalize_user_roles(user_roles)
         })
         debug_print(f"Error fetching pending approvals: {e}")
         raise
@@ -686,6 +724,9 @@ def _can_user_view(
     Returns:
         True if user can view, False otherwise
     """
+    safe_user_roles = _normalize_user_roles(user_roles)
+    metadata = _get_approval_metadata(approval)
+
     # Check if user was involved in the request
     is_requester = approval.get('requester_id') == user_id
     is_approver = approval.get('approved_by_id') == user_id
@@ -696,19 +737,19 @@ def _can_user_view(
     # Check if user is the personal workspace owner (for user document deletion)
     is_personal_workspace_owner = False
     if approval.get('request_type') == TYPE_DELETE_USER_DOCUMENTS:
-        target_user_id = approval.get('metadata', {}).get('user_id')
+        target_user_id = metadata.get('user_id')
         is_personal_workspace_owner = target_user_id == user_id
 
     is_affected_user = False
     if approval.get('request_type') in SAFETY_USER_APPROVAL_TYPES:
-        target_user_id = approval.get('metadata', {}).get('user_id')
+        target_user_id = metadata.get('user_id')
         is_affected_user = target_user_id == user_id
     
     # Check if user has admin roles
-    has_control_center_admin = 'ControlCenterAdmin' in user_roles
-    has_admin = 'Admin' in user_roles or 'admin' in user_roles
+    has_control_center_admin = 'ControlCenterAdmin' in safe_user_roles
+    has_admin = 'Admin' in safe_user_roles or 'admin' in safe_user_roles
     has_request_role = any(
-        role in user_roles for role in get_approval_roles_for_request_type(approval.get('request_type'))
+        role in safe_user_roles for role in get_approval_roles_for_request_type(approval.get('request_type'))
     )
     
     # User can view if they meet any of these criteria
@@ -747,6 +788,9 @@ def _can_user_approve(
     Returns:
         True if user can approve, False otherwise
     """
+    safe_user_roles = _normalize_user_roles(user_roles)
+    metadata = _get_approval_metadata(approval)
+
     # Check if user is the group owner (for group-based approvals)
     is_group_owner = approval.get('group_owner_id') == user_id
     
@@ -754,12 +798,12 @@ def _can_user_approve(
     is_personal_workspace_owner = False
     if approval.get('request_type') == TYPE_DELETE_USER_DOCUMENTS:
         # For user document deletion, check if user owns the documents
-        target_user_id = approval.get('metadata', {}).get('user_id')
+        target_user_id = metadata.get('user_id')
         is_personal_workspace_owner = target_user_id == user_id
     
     if approval.get('request_type') in SAFETY_USER_APPROVAL_TYPES:
         has_request_role = any(
-            role in user_roles for role in get_approval_roles_for_request_type(approval.get('request_type'))
+            role in safe_user_roles for role in get_approval_roles_for_request_type(approval.get('request_type'))
         )
         if not has_request_role:
             return False
@@ -770,8 +814,8 @@ def _can_user_approve(
         return True
 
     # Check if user has admin roles (check both capitalized and lowercase)
-    has_control_center_admin = 'ControlCenterAdmin' in user_roles
-    has_admin = 'Admin' in user_roles or 'admin' in user_roles
+    has_control_center_admin = 'ControlCenterAdmin' in safe_user_roles
+    has_admin = 'Admin' in safe_user_roles or 'admin' in safe_user_roles
     
     # User must have at least one eligibility criterion
     if not (is_group_owner or is_personal_workspace_owner or has_control_center_admin or has_admin):

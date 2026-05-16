@@ -17,7 +17,7 @@ function initControlCenterSidebarNav() {
     const controlCenterSearchInput = document.getElementById('control-center-search-input');
     const controlCenterSearchClear = document.getElementById('control-center-search-clear');
     
-    if (controlCenterToggle) {
+    if (controlCenterToggle && !controlCenterToggle.dataset.sidebarMenuKey) {
         controlCenterToggle.addEventListener('click', function(e) {
             // Don't toggle if clicking on search button
             if (e.target.closest('#control-center-search-btn')) {
@@ -39,8 +39,12 @@ function initControlCenterSidebarNav() {
             
             if (!isVisible) {
                 // Ensure control center section is expanded when search is opened
-                controlCenterSection.style.display = 'block';
-                controlCenterCaret.classList.add('rotate-180');
+                if (typeof window.setPersistentSidebarMenuExpanded === 'function') {
+                    window.setPersistentSidebarMenuExpanded('controlCenter', true);
+                } else {
+                    controlCenterSection.classList.remove('d-none');
+                    controlCenterCaret.style.transform = 'rotate(0deg)';
+                }
                 
                 // Focus on search input
                 setTimeout(() => controlCenterSearchInput.focus(), 100);

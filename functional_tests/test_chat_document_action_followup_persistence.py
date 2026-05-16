@@ -1,10 +1,10 @@
 # test_chat_document_action_followup_persistence.py
 """
 Functional test for chat document action follow-up persistence.
-Version: 0.241.095
+Version: 0.241.023
 Implemented in: 0.241.095
 
-This test ensures new chat conversations started with exhaustive review or
+This test ensures new chat conversations started with analysis or
 document comparison update the default title, persist thoughts, and attach
 document citations for the assistant response.
 """
@@ -23,8 +23,8 @@ def test_chat_document_action_followups_are_persisted() -> None:
     route_content = _read_workspace_file('application', 'single_app', 'route_backend_chats.py')
     config_content = _read_workspace_file('application', 'single_app', 'config.py')
 
-    assert 'VERSION = "0.241.095"' in config_content, (
-        'Expected config.py version 0.241.095 for the chat document action follow-up persistence fix.'
+    assert 'VERSION = "0.241.023"' in config_content, (
+        'Expected config.py version 0.241.023 for the chat document action follow-up persistence fix.'
     )
     assert 'def _build_document_action_hybrid_citations(execution_result):' in route_content, (
         'Expected a helper that synthesizes document citations for chat document actions.'
@@ -40,7 +40,7 @@ def test_chat_document_action_followups_are_persisted() -> None:
         'Expected document-action workflow execution to persist thoughts through the ThoughtTracker.'
     )
     assert 'hybrid_citations_list = _build_document_action_hybrid_citations(execution_result)' in route_content, (
-        'Expected document-action chat requests to build hybrid citations from the review coverage.'
+        'Expected document-action chat requests to build hybrid citations from the analysis coverage.'
     )
     assert route_content.count("'hybrid_citations': hybrid_citations_list,") >= 2, (
         'Expected assistant persistence and response payloads to both carry document-action hybrid citations.'

@@ -5505,15 +5505,15 @@ def _build_compact_tabular_preview(df_preview):
             lambda value: _compact_tabular_schema_value(value)
         )
 
-    preview_text = preview_df.to_string(index=False)
+    panalysis_text = preview_df.to_string(index=False)
     omitted_column_count = max(len(df_preview.columns) - TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS, 0)
     if omitted_column_count:
-        preview_text += (
+        panalysis_text += (
             f"\n[Preview truncated to the first {TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS} columns; "
             f"{omitted_column_count} additional columns omitted.]"
         )
 
-    return preview_text
+    return panalysis_text
 
 
 def _build_minimal_tabular_summary(temp_file_path, original_filename, file_ext):

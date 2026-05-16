@@ -112,7 +112,7 @@ $(document).ready(function () {
             method: "DELETE",
             success: function () {
               alert("Workspace deleted.");
-              window.location.href = "/my_public_workspaces";
+              window.location.href = "/profile?tab=public-workspaces";
             },
             error: function (jq) {
               const err = jq.responseJSON?.error || jq.statusText;

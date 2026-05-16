@@ -42,11 +42,11 @@ def test_standard_chat_omits_disabled_document_action_payloads():
     assert 'requestPayload.document_action = documentAction;' in chat_messages_content, (
         "Expected document_action payloads to be attached only when an action is selected."
     )
-    assert 'if (documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {' in chat_messages_content, (
-        "Expected legacy exhaustive review compatibility payloads to be limited to exhaustive review runs."
+    assert 'if (documentActionType === DOCUMENT_ACTION_ANALYZE) {' in chat_messages_content, (
+        "Expected legacy analysis compatibility payloads to be limited to analysis runs."
     )
-    assert 'requestPayload.exhaustive_review = {' in chat_messages_content, (
-        "Expected exhaustive review compatibility payloads to remain available for exhaustive review runs."
+    assert 'requestPayload.analyze = {' in chat_messages_content, (
+        "Expected analysis compatibility payloads to remain available for analysis runs."
     )
     assert 'document_action: documentAction,' not in chat_messages_content, (
         "Standard chat should no longer serialize document_action unconditionally."

@@ -41,15 +41,15 @@ const workflowEnabledToggle = document.getElementById("workflow-enabled");
 const workflowTriggerHelp = document.getElementById("workflow-trigger-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
 const DOCUMENT_ACTION_NONE = "none";
-const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = "exhaustive_review";
+const DOCUMENT_ACTION_ANALYZE = "analyze";
 const DOCUMENT_ACTION_COMPARISON = "comparison";
 const DOCUMENT_ACTION_DESCRIPTIONS = {
     [DOCUMENT_ACTION_NONE]: "Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.",
-    [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: "Perform an in-depth analysis across all selected documents based on your request.",
+    [DOCUMENT_ACTION_ANALYZE]: "Perform an in-depth analysis across all selected documents based on your request.",
     [DOCUMENT_ACTION_COMPARISON]: "Compare one source document against the selected target documents to explain differences, relationships, or downstream impact.",
 };
 const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
-    [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: {
+    [DOCUMENT_ACTION_ANALYZE]: {
         enabled: true,
         chat_max_documents: 3,
         workflow_max_documents: 10,
@@ -63,18 +63,18 @@ const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
 const workflowDocumentActionTypeSelect = document.getElementById("workflow-document-action-type");
 const workflowDocumentActionHelp = document.getElementById("workflow-document-action-help");
 const workflowDocumentTargetsFields = document.getElementById("workflow-document-targets-fields");
-const workflowExhaustiveTargetFields = document.getElementById("workflow-exhaustive-target-fields");
+const workflowAnalysisTargetFields = document.getElementById("workflow-analysis-target-fields");
 const workflowComparisonTargetFields = document.getElementById("workflow-comparison-target-fields");
-const workflowReviewDocScopeSelect = document.getElementById("workflow-review-doc-scope");
-const workflowReviewDocumentIdsInput = document.getElementById("workflow-review-document-ids");
+const workflowAnalysisDocScopeSelect = document.getElementById("workflow-analysis-doc-scope");
+const workflowAnalysisDocumentIdsInput = document.getElementById("workflow-analysis-document-ids");
 const workflowComparisonLeftDocumentIdInput = document.getElementById("workflow-comparison-left-document-id");
 const workflowComparisonRightDocumentIdsInput = document.getElementById("workflow-comparison-target-document-ids");
-const workflowReviewGroupIdsInput = document.getElementById("workflow-review-group-ids");
-const workflowReviewPublicWorkspaceIdsInput = document.getElementById("workflow-review-public-workspace-ids");
-const workflowReviewWindowUnitSelect = document.getElementById("workflow-review-window-unit");
-const workflowReviewWindowSizeInput = document.getElementById("workflow-review-window-size");
-const workflowReviewWindowPercentInput = document.getElementById("workflow-review-window-percent");
-const workflowReviewRetriesInput = document.getElementById("workflow-review-retries");
+const workflowAnalysisGroupIdsInput = document.getElementById("workflow-analysis-group-ids");
+const workflowAnalysisPublicWorkspaceIdsInput = document.getElementById("workflow-analysis-public-workspace-ids");
+const workflowAnalysisWindowUnitSelect = document.getElementById("workflow-analysis-window-unit");
+const workflowAnalysisWindowSizeInput = document.getElementById("workflow-analysis-window-size");
+const workflowAnalysisWindowPercentInput = document.getElementById("workflow-analysis-window-percent");
+const workflowAnalysisRetriesInput = document.getElementById("workflow-analysis-retries");
 const workflowUseSelectedDocumentsBtn = document.getElementById("workflow-use-selected-documents-btn");
 const workflowSelectedDocumentsSummary = document.getElementById("workflow-selected-documents-summary");
 
@@ -114,8 +114,8 @@ function getDocumentActionDisplayLabel(actionType) {
     if (actionType === DOCUMENT_ACTION_COMPARISON) {
         return "Compare";
     }
-    if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
-        return "Review";
+    if (actionType === DOCUMENT_ACTION_ANALYZE) {
+        return "Analyze";
     }
     return "Search";
 }
@@ -505,48 +505,48 @@ function getDocumentActionConfig(workflow) {
     const actionConfig = workflow?.document_action && typeof workflow.document_action === "object"
         ? workflow.document_action
         : {};
-    const legacyReviewConfig = workflow?.exhaustive_review && typeof workflow.exhaustive_review === "object"
-        ? workflow.exhaustive_review
+    const legacyAnalyzeConfig = workflow?.analyze && typeof workflow.analyze === "object"
+        ? workflow.analyze
         : {};
     const actionType = normalizeText(actionConfig.type)
-        || (legacyReviewConfig.enabled ? DOCUMENT_ACTION_EXHAUSTIVE_REVIEW : DOCUMENT_ACTION_NONE);
+        || (legacyAnalyzeConfig.enabled ? DOCUMENT_ACTION_ANALYZE : DOCUMENT_ACTION_NONE);
 
     return {
         type: actionType,
         document_ids: Array.isArray(actionConfig.document_ids)
             ? actionConfig.document_ids
-            : Array.isArray(legacyReviewConfig.document_ids)
-                ? legacyReviewConfig.document_ids
+            : Array.isArray(legacyAnalyzeConfig.document_ids)
+                ? legacyAnalyzeConfig.document_ids
                 : [],
         left_document_id: normalizeText(actionConfig.left_document_id),
         right_document_ids: Array.isArray(actionConfig.right_document_ids) ? actionConfig.right_document_ids : [],
-        doc_scope: normalizeText(actionConfig.doc_scope || legacyReviewConfig.doc_scope) || "personal",
+        doc_scope: normalizeText(actionConfig.doc_scope || legacyAnalyzeConfig.doc_scope) || "personal",
         active_group_ids: Array.isArray(actionConfig.active_group_ids)
             ? actionConfig.active_group_ids
-            : Array.isArray(legacyReviewConfig.active_group_ids)
-                ? legacyReviewConfig.active_group_ids
+            : Array.isArray(legacyAnalyzeConfig.active_group_ids)
+                ? legacyAnalyzeConfig.active_group_ids
                 : [],
         active_public_workspace_id: Array.isArray(actionConfig.active_public_workspace_id)
             ? actionConfig.active_public_workspace_id
-            : Array.isArray(legacyReviewConfig.active_public_workspace_id)
-                ? legacyReviewConfig.active_public_workspace_id
+            : Array.isArray(legacyAnalyzeConfig.active_public_workspace_id)
+                ? legacyAnalyzeConfig.active_public_workspace_id
                 : [],
-        window_unit: normalizeText(actionConfig.window_unit || legacyReviewConfig.window_unit) || "pages",
-        window_size: actionConfig.window_size ?? legacyReviewConfig.window_size ?? "",
-        window_percent: actionConfig.window_percent ?? legacyReviewConfig.window_percent ?? "",
-        max_retries_per_window: actionConfig.max_retries_per_window ?? legacyReviewConfig.max_retries_per_window ?? 1,
+        window_unit: normalizeText(actionConfig.window_unit || legacyAnalyzeConfig.window_unit) || "pages",
+        window_size: actionConfig.window_size ?? legacyAnalyzeConfig.window_size ?? "",
+        window_percent: actionConfig.window_percent ?? legacyAnalyzeConfig.window_percent ?? "",
+        max_retries_per_window: actionConfig.max_retries_per_window ?? legacyAnalyzeConfig.max_retries_per_window ?? 1,
     };
 }
 
 function getWorkflowDocumentActionSummary(workflow) {
     const config = getDocumentActionConfig(workflow);
-    if (config.type === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
+    if (config.type === DOCUMENT_ACTION_ANALYZE) {
         const documentCount = config.document_ids.length;
         const unit = normalizeText(config.window_unit) || "pages";
         if (!documentCount) {
-            return `Review by ${unit}`;
+            return `Analyze by ${unit}`;
         }
-        return `Review of ${documentCount} ${documentCount === 1 ? "document" : "documents"} by ${unit}`;
+        return `Analyze ${documentCount} ${documentCount === 1 ? "document" : "documents"} by ${unit}`;
     }
 
     if (config.type === DOCUMENT_ACTION_COMPARISON) {
@@ -578,7 +578,7 @@ function updateDocumentActionFields() {
     const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
     const hasDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
     setElementVisibility(workflowDocumentTargetsFields, hasDocumentAction);
-    setElementVisibility(workflowExhaustiveTargetFields, actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW);
+    setElementVisibility(workflowAnalysisTargetFields, actionType === DOCUMENT_ACTION_ANALYZE);
     setElementVisibility(workflowComparisonTargetFields, actionType === DOCUMENT_ACTION_COMPARISON);
     syncWorkflowDocumentActionTooltip();
 
@@ -619,11 +619,11 @@ async function applySelectedWorkspaceDocumentsToWorkflow() {
             selectedTargetIds: getSelectedWorkflowComparisonTargetIds(),
             preferredLeftId: normalizeText(workflowComparisonLeftDocumentIdInput.value),
         });
-    } else if (workflowReviewDocumentIdsInput) {
-        workflowReviewDocumentIdsInput.value = limitedSelectedIds.join(", ");
+    } else if (workflowAnalysisDocumentIdsInput) {
+        workflowAnalysisDocumentIdsInput.value = limitedSelectedIds.join(", ");
     }
-    if (workflowReviewDocScopeSelect) {
-        workflowReviewDocScopeSelect.value = "personal";
+    if (workflowAnalysisDocScopeSelect) {
+        workflowAnalysisDocScopeSelect.value = "personal";
     }
 }
 
@@ -1204,11 +1204,11 @@ function resetWorkflowForm() {
     if (workflowDocumentActionTypeSelect) {
         workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_NONE;
     }
-    if (workflowReviewDocScopeSelect) {
-        workflowReviewDocScopeSelect.value = "personal";
+    if (workflowAnalysisDocScopeSelect) {
+        workflowAnalysisDocScopeSelect.value = "personal";
     }
-    if (workflowReviewDocumentIdsInput) {
-        workflowReviewDocumentIdsInput.value = "";
+    if (workflowAnalysisDocumentIdsInput) {
+        workflowAnalysisDocumentIdsInput.value = "";
     }
     if (workflowComparisonLeftDocumentIdInput) {
         workflowComparisonLeftDocumentIdInput.innerHTML = "";
@@ -1218,23 +1218,23 @@ function resetWorkflowForm() {
         workflowComparisonRightDocumentIdsInput.innerHTML = "";
         workflowComparisonRightDocumentIdsInput.disabled = true;
     }
-    if (workflowReviewGroupIdsInput) {
-        workflowReviewGroupIdsInput.value = "";
+    if (workflowAnalysisGroupIdsInput) {
+        workflowAnalysisGroupIdsInput.value = "";
     }
-    if (workflowReviewPublicWorkspaceIdsInput) {
-        workflowReviewPublicWorkspaceIdsInput.value = "";
+    if (workflowAnalysisPublicWorkspaceIdsInput) {
+        workflowAnalysisPublicWorkspaceIdsInput.value = "";
     }
-    if (workflowReviewWindowUnitSelect) {
-        workflowReviewWindowUnitSelect.value = "pages";
+    if (workflowAnalysisWindowUnitSelect) {
+        workflowAnalysisWindowUnitSelect.value = "pages";
     }
-    if (workflowReviewWindowSizeInput) {
-        workflowReviewWindowSizeInput.value = "";
+    if (workflowAnalysisWindowSizeInput) {
+        workflowAnalysisWindowSizeInput.value = "";
     }
-    if (workflowReviewWindowPercentInput) {
-        workflowReviewWindowPercentInput.value = "";
+    if (workflowAnalysisWindowPercentInput) {
+        workflowAnalysisWindowPercentInput.value = "";
     }
-    if (workflowReviewRetriesInput) {
-        workflowReviewRetriesInput.value = "1";
+    if (workflowAnalysisRetriesInput) {
+        workflowAnalysisRetriesInput.value = "1";
     }
     if (workflowSaveBtn) {
         workflowSaveBtn.disabled = false;
@@ -1291,29 +1291,29 @@ async function openWorkflowModal(workflow = null) {
         if (workflowDocumentActionTypeSelect) {
             workflowDocumentActionTypeSelect.value = documentAction.type;
         }
-        if (workflowReviewDocScopeSelect) {
-            workflowReviewDocScopeSelect.value = documentAction.doc_scope;
+        if (workflowAnalysisDocScopeSelect) {
+            workflowAnalysisDocScopeSelect.value = documentAction.doc_scope;
         }
-        if (workflowReviewDocumentIdsInput) {
-            workflowReviewDocumentIdsInput.value = joinCsvList(documentAction.document_ids);
+        if (workflowAnalysisDocumentIdsInput) {
+            workflowAnalysisDocumentIdsInput.value = joinCsvList(documentAction.document_ids);
         }
-        if (workflowReviewGroupIdsInput) {
-            workflowReviewGroupIdsInput.value = joinCsvList(documentAction.active_group_ids);
+        if (workflowAnalysisGroupIdsInput) {
+            workflowAnalysisGroupIdsInput.value = joinCsvList(documentAction.active_group_ids);
         }
-        if (workflowReviewPublicWorkspaceIdsInput) {
-            workflowReviewPublicWorkspaceIdsInput.value = joinCsvList(documentAction.active_public_workspace_id);
+        if (workflowAnalysisPublicWorkspaceIdsInput) {
+            workflowAnalysisPublicWorkspaceIdsInput.value = joinCsvList(documentAction.active_public_workspace_id);
         }
-        if (workflowReviewWindowUnitSelect) {
-            workflowReviewWindowUnitSelect.value = documentAction.window_unit;
+        if (workflowAnalysisWindowUnitSelect) {
+            workflowAnalysisWindowUnitSelect.value = documentAction.window_unit;
         }
-        if (workflowReviewWindowSizeInput) {
-            workflowReviewWindowSizeInput.value = documentAction.window_size;
+        if (workflowAnalysisWindowSizeInput) {
+            workflowAnalysisWindowSizeInput.value = documentAction.window_size;
         }
-        if (workflowReviewWindowPercentInput) {
-            workflowReviewWindowPercentInput.value = documentAction.window_percent;
+        if (workflowAnalysisWindowPercentInput) {
+            workflowAnalysisWindowPercentInput.value = documentAction.window_percent;
         }
-        if (workflowReviewRetriesInput) {
-            workflowReviewRetriesInput.value = String(documentAction.max_retries_per_window);
+        if (workflowAnalysisRetriesInput) {
+            workflowAnalysisRetriesInput.value = String(documentAction.max_retries_per_window);
         }
         if (workflowScheduleValueInput) {
             workflowScheduleValueInput.value = String(workflow.schedule?.value || 10);
@@ -1356,15 +1356,15 @@ function buildWorkflowPayload() {
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
     const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
-    const exhaustiveDocumentIds = parseCsvList(workflowReviewDocumentIdsInput?.value);
+    const analysisDocumentIds = parseCsvList(workflowAnalysisDocumentIdsInput?.value);
     const comparisonLeftDocumentId = normalizeText(workflowComparisonLeftDocumentIdInput?.value);
     const comparisonTargetDocumentIds = getSelectedWorkflowComparisonTargetIds();
     const comparisonRightDocumentIds = comparisonTargetDocumentIds.filter((documentId) => documentId !== comparisonLeftDocumentId);
-    const exhaustiveGroupIds = parseCsvList(workflowReviewGroupIdsInput?.value);
-    const exhaustivePublicWorkspaceIds = parseCsvList(workflowReviewPublicWorkspaceIdsInput?.value);
-    const rawWindowSize = normalizeText(workflowReviewWindowSizeInput?.value);
-    const rawWindowPercent = normalizeText(workflowReviewWindowPercentInput?.value);
-    const rawRetries = normalizeText(workflowReviewRetriesInput?.value) || "1";
+    const analysisGroupIds = parseCsvList(workflowAnalysisGroupIdsInput?.value);
+    const analysisPublicWorkspaceIds = parseCsvList(workflowAnalysisPublicWorkspaceIdsInput?.value);
+    const rawWindowSize = normalizeText(workflowAnalysisWindowSizeInput?.value);
+    const rawWindowPercent = normalizeText(workflowAnalysisWindowPercentInput?.value);
+    const rawRetries = normalizeText(workflowAnalysisRetriesInput?.value) || "1";
     const payload = {
         id: normalizeText(workflowIdInput?.value),
         name: normalizeText(workflowNameInput?.value),
@@ -1380,26 +1380,26 @@ function buildWorkflowPayload() {
         model_id: "",
         document_action: {
             type: documentActionType,
-            document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW
-                ? exhaustiveDocumentIds
+            document_ids: documentActionType === DOCUMENT_ACTION_ANALYZE
+                ? analysisDocumentIds
                 : comparisonTargetDocumentIds,
             left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : "",
             right_document_ids: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonRightDocumentIds : [],
-            doc_scope: normalizeText(workflowReviewDocScopeSelect?.value) || "personal",
-            active_group_ids: documentActionType !== DOCUMENT_ACTION_NONE ? exhaustiveGroupIds : [],
-            active_public_workspace_id: documentActionType !== DOCUMENT_ACTION_NONE ? exhaustivePublicWorkspaceIds : [],
-            window_unit: normalizeText(workflowReviewWindowUnitSelect?.value) || "pages",
+            doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || "personal",
+            active_group_ids: documentActionType !== DOCUMENT_ACTION_NONE ? analysisGroupIds : [],
+            active_public_workspace_id: documentActionType !== DOCUMENT_ACTION_NONE ? analysisPublicWorkspaceIds : [],
+            window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
             window_size: rawWindowSize ? Number(rawWindowSize) : null,
             window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
             max_retries_per_window: Number(rawRetries),
         },
-        exhaustive_review: {
-            enabled: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW,
-            document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? exhaustiveDocumentIds : [],
-            doc_scope: normalizeText(workflowReviewDocScopeSelect?.value) || "personal",
-            active_group_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? exhaustiveGroupIds : [],
-            active_public_workspace_id: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? exhaustivePublicWorkspaceIds : [],
-            window_unit: normalizeText(workflowReviewWindowUnitSelect?.value) || "pages",
+        analyze: {
+            enabled: documentActionType === DOCUMENT_ACTION_ANALYZE,
+            document_ids: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisDocumentIds : [],
+            doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || "personal",
+            active_group_ids: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisGroupIds : [],
+            active_public_workspace_id: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisPublicWorkspaceIds : [],
+            window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
             window_size: rawWindowSize ? Number(rawWindowSize) : null,
             window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
             max_retries_per_window: Number(rawRetries),
@@ -1412,8 +1412,8 @@ function buildWorkflowPayload() {
     if (!payload.task_prompt) {
         throw new Error("Task prompt is required.");
     }
-    if (documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW && !payload.document_action.document_ids.length) {
-        throw new Error("Add one or more document ids for review.");
+    if (documentActionType === DOCUMENT_ACTION_ANALYZE && !payload.document_action.document_ids.length) {
+        throw new Error("Add one or more document ids for analysis.");
     }
     if (documentActionType === DOCUMENT_ACTION_COMPARISON && payload.document_action.document_ids.length < 2) {
         throw new Error("Select at least two document versions for compare.");

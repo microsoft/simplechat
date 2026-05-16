@@ -60,7 +60,7 @@ from functions_message_artifacts import (
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
-    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+    DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_NONE,
     get_document_action_max_documents_by_type,
     get_enabled_document_action_types,
@@ -4839,9 +4839,9 @@ def normalize_tabular_reviewer_function_name(function_name):
     return normalized_function_name.strip()
 
 
-def parse_tabular_reviewer_plan(review_text):
+def parse_tabular_reviewer_plan(analysis_text):
     """Parse a JSON-only LLM reviewer plan into executable call descriptors."""
-    payload = extract_json_object_from_text(review_text)
+    payload = extract_json_object_from_text(analysis_text)
     if not isinstance(payload, dict):
         return []
 
@@ -9059,7 +9059,7 @@ def register_route_backend_chats(app):
             'kernel_fallback_notice': payload.get('kernel_fallback_notice'),
             'thoughts_enabled': payload.get('thoughts_enabled', False),
             'blocked': payload.get('blocked', False),
-            'review_coverage': payload.get('review_coverage', {}),
+            'analysis_coverage': payload.get('analysis_coverage', {}),
             'document_action': payload.get('document_action', {}),
             'metadata': payload.get('metadata', {}),
         })
@@ -9079,9 +9079,9 @@ def register_route_backend_chats(app):
         total_windows = document_progress.get('total_windows') or event.get('window_count') or 0
 
         if event_type == 'document_started':
-            return f'Starting exhaustive review for {document_name}'
+            return f'Starting analysis for {document_name}'
         if event_type == 'window_started' and window_number is not None:
-            return f'Reviewing window {window_number} of {total_windows} for {document_name}'
+            return f'Analyzing window {window_number} of {total_windows} for {document_name}'
         if event_type == 'window_retry' and window_number is not None:
             return f'Retrying window {window_number} for {document_name} (attempt {event.get("attempt_number")})'
         if event_type == 'window_failed' and window_number is not None:
@@ -9089,18 +9089,18 @@ def register_route_backend_chats(app):
         if event_type == 'window_completed' and window_number is not None:
             return f'Completed window {window_number} of {total_windows} for {document_name}'
         if event_type == 'document_completed':
-            return f'Completed exhaustive review for {document_name}'
+            return f'Completed analysis for {document_name}'
         if event_type == 'reduction_started':
             reduction_step_index = event.get('reduction_step_index')
             reduction_step_total = event.get('reduction_step_total')
             if reduction_step_index is not None and reduction_step_total:
                 return (
-                    'Combining review findings into the final response '
+                    'Combining analysis findings into the final response '
                     f'({reduction_step_index}/{reduction_step_total})'
                 )
-            return 'Combining review findings into the final response'
+            return 'Combining analysis findings into the final response'
         if event_type == 'reduction_completed':
-            return 'Completed exhaustive review across the selected documents'
+            return 'Completed analysis across the selected documents'
         if event_type == 'comparison_started':
             right_document_name = str(event.get('right_document_name') or 'Document').strip() or 'Document'
             return f'Comparing {document_name} to {right_document_name}'
@@ -9117,7 +9117,7 @@ def register_route_backend_chats(app):
             if comparison_count:
                 return f'Completed comparison across {comparison_count} document pairs'
             return 'Completed comparison across the selected documents'
-        return 'Running exhaustive review across the selected documents'
+        return 'Running analysis across the selected documents'
 
     def _build_document_action_hybrid_citations(execution_result):
         def _coerce_metric_int(value, default_value=0):
@@ -9126,28 +9126,28 @@ def register_route_backend_chats(app):
             except (TypeError, ValueError):
                 return int(default_value or 0)
 
-        review_result = execution_result.get('review_result') if isinstance(execution_result, dict) else {}
-        review_result = review_result if isinstance(review_result, dict) else {}
-        review_coverage = execution_result.get('review_coverage') if isinstance(execution_result, dict) else {}
-        review_coverage = review_coverage if isinstance(review_coverage, dict) else {}
+        analysis_result = execution_result.get('analysis_result') if isinstance(execution_result, dict) else {}
+        analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
+        analysis_coverage = execution_result.get('analysis_coverage') if isinstance(execution_result, dict) else {}
+        analysis_coverage = analysis_coverage if isinstance(analysis_coverage, dict) else {}
 
-        document_summaries = review_result.get('documents') if isinstance(review_result.get('documents'), list) else []
+        document_summaries = analysis_result.get('documents') if isinstance(analysis_result.get('documents'), list) else []
         if not document_summaries:
-            document_summaries = review_coverage.get('documents') if isinstance(review_coverage.get('documents'), list) else []
+            document_summaries = analysis_coverage.get('documents') if isinstance(analysis_coverage.get('documents'), list) else []
 
         citations = []
-        is_comparison = bool(review_result.get('left_document') or review_result.get('right_documents'))
-        left_document = review_result.get('left_document') if isinstance(review_result.get('left_document'), dict) else {}
-        right_documents = review_result.get('right_documents') if isinstance(review_result.get('right_documents'), list) else []
-        document_count = _coerce_metric_int(review_coverage.get('document_count'), len(document_summaries))
-        total_windows = _coerce_metric_int(review_coverage.get('total_windows'))
-        processed_windows = _coerce_metric_int(review_coverage.get('processed_windows'))
-        failed_windows = _coerce_metric_int(review_coverage.get('failed_windows'))
-        total_chunks = _coerce_metric_int(review_coverage.get('total_chunks'))
-        processed_chunks = _coerce_metric_int(review_coverage.get('processed_chunks'))
-        failed_chunks = _coerce_metric_int(review_coverage.get('failed_chunks'))
-        retries_used = _coerce_metric_int(review_coverage.get('retries'))
-        window_unit = str(review_coverage.get('window_unit') or 'pages').strip() or 'pages'
+        is_comparison = bool(analysis_result.get('left_document') or analysis_result.get('right_documents'))
+        left_document = analysis_result.get('left_document') if isinstance(analysis_result.get('left_document'), dict) else {}
+        right_documents = analysis_result.get('right_documents') if isinstance(analysis_result.get('right_documents'), list) else []
+        document_count = _coerce_metric_int(analysis_coverage.get('document_count'), len(document_summaries))
+        total_windows = _coerce_metric_int(analysis_coverage.get('total_windows'))
+        processed_windows = _coerce_metric_int(analysis_coverage.get('processed_windows'))
+        failed_windows = _coerce_metric_int(analysis_coverage.get('failed_windows'))
+        total_chunks = _coerce_metric_int(analysis_coverage.get('total_chunks'))
+        processed_chunks = _coerce_metric_int(analysis_coverage.get('processed_chunks'))
+        failed_chunks = _coerce_metric_int(analysis_coverage.get('failed_chunks'))
+        retries_used = _coerce_metric_int(analysis_coverage.get('retries'))
+        window_unit = str(analysis_coverage.get('window_unit') or 'pages').strip() or 'pages'
 
         has_coverage_summary = bool(document_summaries) or any([
             document_count,
@@ -9163,7 +9163,7 @@ def register_route_backend_chats(app):
         if has_coverage_summary:
             coverage_lines = [
                 'Coverage',
-                f'Documents reviewed: {document_count}',
+                f'Documents analyzed: {document_count}',
                 f'Total windows: {total_windows}',
                 f'Processed windows: {processed_windows}',
                 f'Failed windows: {failed_windows}',
@@ -9188,7 +9188,7 @@ def register_route_backend_chats(app):
                 'chunk_id': 'document_action_coverage',
                 'chunk_sequence': 20000,
                 'score': 0.0,
-                'metadata_type': 'document_comparison_coverage' if is_comparison else 'document_review_coverage',
+                'metadata_type': 'document_comparison_coverage' if is_comparison else 'document_analysis_coverage',
                 'metadata_content': '\n'.join(coverage_lines),
                 'location_label': 'Coverage',
                 'location_value': 'Overall summary',
@@ -9231,7 +9231,7 @@ def register_route_backend_chats(app):
                 metadata_lines.append(f"Role: {role_label.title()} document")
             if status_text:
                 metadata_lines.append(f"Status: {status_text}")
-            metadata_lines.append(f"Windows reviewed: {processed_windows}/{total_windows}")
+            metadata_lines.append(f"Windows analyzed: {processed_windows}/{total_windows}")
             if total_chunks or processed_chunks or failed_chunks:
                 metadata_lines.append(f"Chunks completed: {processed_chunks}/{total_chunks}")
             if failed_windows:
@@ -9255,7 +9255,7 @@ def register_route_backend_chats(app):
                 'public_workspace_id': document_summary.get('scope_id') if document_summary.get('scope') == 'public' else None,
                 'version': document_summary.get('version'),
                 'classification': document_summary.get('classification'),
-                'metadata_type': 'document_comparison_summary' if role_label else 'document_review_summary',
+                'metadata_type': 'document_comparison_summary' if role_label else 'document_analysis_summary',
                 'metadata_content': '\n'.join(metadata_lines),
                 'location_label': 'Coverage',
                 'location_value': 'Document summary',
@@ -9471,8 +9471,8 @@ def register_route_backend_chats(app):
                 'conversation_id': conversation_id,
                 'chat_type': 'group' if document_scope == 'group' else 'public' if document_scope == 'public' else 'personal',
             },
-            'exhaustive_review': {
-                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+            'analyze': {
+                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE,
                 'document_ids': selected_document_ids,
                 'doc_scope': document_scope,
                 'active_group_ids': active_group_ids,
@@ -9505,7 +9505,7 @@ def register_route_backend_chats(app):
 
         step_index_state = {'value': 0}
 
-        def publish_thought_payload(thought_payload, default_step_type='document_review'):
+        def publish_thought_payload(thought_payload, default_step_type='document_analysis'):
             payload = thought_payload if isinstance(thought_payload, dict) else {}
             payload_step_index = payload.get('step_index')
 
@@ -9540,7 +9540,7 @@ def register_route_backend_chats(app):
 
         def publish_thought(content, progress=None):
             payload = {
-                'step_type': 'document_review',
+                'step_type': 'document_analysis',
                 'content': content,
             }
             if isinstance(progress, dict) and progress:
@@ -9576,7 +9576,7 @@ def register_route_backend_chats(app):
         except Exception:
             return None
 
-    def _load_or_create_exhaustive_review_conversation(user_id, conversation_id=None):
+    def _load_or_create_analyze_conversation(user_id, conversation_id=None):
         if conversation_id:
             try:
                 conversation_item = cosmos_conversations_container.read_item(
@@ -9643,9 +9643,9 @@ def register_route_backend_chats(app):
             f'requested_action_type={requested_action.get("type") or "none"} | '
             f'selected_document_count={len(selected_document_ids)}'
         )
-        if forced_action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW and not requested_action:
+        if forced_action_type == DOCUMENT_ACTION_TYPE_ANALYZE and not requested_action:
             requested_action = {
-                'type': DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                'type': DOCUMENT_ACTION_TYPE_ANALYZE,
                 'document_ids': selected_document_ids,
                 'doc_scope': data.get('doc_scope'),
                 'active_group_ids': data.get('active_group_ids') or data.get('active_group_id'),
@@ -9692,7 +9692,7 @@ def register_route_backend_chats(app):
         )
 
         try:
-            conversation_item = _load_or_create_exhaustive_review_conversation(user_id, conversation_id=conversation_id)
+            conversation_item = _load_or_create_analyze_conversation(user_id, conversation_id=conversation_id)
         except PermissionError as exc:
             return {'error': str(exc)}, 403
 
@@ -9775,7 +9775,7 @@ def register_route_backend_chats(app):
                 )
 
         workflow_like = {
-            'id': f'chat-exhaustive-review:{conversation_id}',
+            'id': f'chat-analyze:{conversation_id}',
             'user_id': user_id,
             'name': 'Chat Document Action',
             'task_prompt': user_message,
@@ -9790,8 +9790,8 @@ def register_route_backend_chats(app):
                 'provider': str(data.get('model_provider') or '').strip(),
             },
             'document_action': normalized_action,
-            'exhaustive_review': {
-                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+            'analyze': {
+                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE,
                 'document_ids': normalized_action.get('document_ids', []),
                 'doc_scope': normalized_action.get('doc_scope'),
                 'active_group_ids': normalized_action.get('active_group_ids', []),
@@ -9830,7 +9830,7 @@ def register_route_backend_chats(app):
                 f'error={exc}'
             )
             log_event(
-                f'[ChatExhaustiveReview] Exhaustive chat review failed: {exc}',
+                f'[ChatDocumentAnalysis] Chat document analysis failed: {exc}',
                 extra={
                     'conversation_id': conversation_id,
                     'user_id': user_id,
@@ -9890,9 +9890,9 @@ def register_route_backend_chats(app):
                     'thread_attempt': assistant_thread_attempt,
                 },
                 **generated_analysis_metadata,
-                'exhaustive_review': {
-                    'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
-                    'coverage': execution_result.get('review_coverage') or {},
+                'analyze': {
+                    'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE,
+                    'coverage': execution_result.get('analysis_coverage') or {},
                 },
                 'document_action': normalized_action,
             },
@@ -9949,7 +9949,7 @@ def register_route_backend_chats(app):
                 model_deployment=execution_result.get('model_deployment_name'),
                 hybrid_search_enabled=False,
                 image_gen_enabled=False,
-                selected_documents=execution_result.get('review_result', {}).get('documents', []),
+                selected_documents=execution_result.get('analysis_result', {}).get('documents', []),
                 selected_agent=execution_result.get('agent_name'),
                 selected_agent_details=request_agent_info,
                 search_results=None,
@@ -9958,7 +9958,7 @@ def register_route_backend_chats(app):
                 active_public_workspace_ids=active_public_workspace_ids,
             )
         except Exception as exc:
-            debug_print(f'[ChatExhaustiveReview] Conversation metadata update failed: {exc}')
+            debug_print(f'[ChatDocumentAnalysis] Conversation metadata update failed: {exc}')
 
         cosmos_conversations_container.upsert_item(conversation_item)
         debug_print(
@@ -9969,8 +9969,8 @@ def register_route_backend_chats(app):
             f'runner_type={runner_type} | '
             f'assistant_message_id={assistant_message_id} | '
             f"model={execution_result.get('model_deployment_name')} | "
-            f"processed_windows={(execution_result.get('review_coverage') or {}).get('processed_windows', 0)} | "
-            f"failed_windows={(execution_result.get('review_coverage') or {}).get('failed_windows', 0)}"
+            f"processed_windows={(execution_result.get('analysis_coverage') or {}).get('processed_windows', 0)} | "
+            f"failed_windows={(execution_result.get('analysis_coverage') or {}).get('failed_windows', 0)}"
         )
 
         return make_json_serializable({
@@ -9995,17 +9995,17 @@ def register_route_backend_chats(app):
             'reload_messages': False,
             'kernel_fallback_notice': None,
             'thoughts_enabled': thought_tracker.enabled,
-            'review_coverage': execution_result.get('review_coverage') or {},
+            'analysis_coverage': execution_result.get('analysis_coverage') or {},
             'document_action': normalized_action,
             'token_usage': execution_result.get('token_usage'),
             'metadata': assistant_doc.get('metadata', {}),
         }), 200
 
-    def execute_exhaustive_review_chat_request(data=None, publish_background_event=None):
+    def execute_analyze_chat_request(data=None, publish_background_event=None):
         return execute_document_action_chat_request(
             data=data,
             publish_background_event=publish_background_event,
-            forced_action_type=DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+            forced_action_type=DOCUMENT_ACTION_TYPE_ANALYZE,
         )
 
     @app.route('/api/chat/document-action', methods=['POST'])
@@ -10052,19 +10052,19 @@ def register_route_backend_chats(app):
 
         return build_background_stream_response(generate_document_action_response, stream_session=stream_session)
 
-    @app.route('/api/chat/exhaustive-review', methods=['POST'])
+    @app.route('/api/chat/analyze', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    def chat_exhaustive_review_api():
-        payload, status_code = execute_exhaustive_review_chat_request()
+    def chat_analyze_api():
+        payload, status_code = execute_analyze_chat_request()
         return jsonify(payload), status_code
 
-    @app.route('/api/chat/exhaustive-review/stream', methods=['POST'])
+    @app.route('/api/chat/analyze/stream', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    def chat_exhaustive_review_stream_api():
+    def chat_analyze_stream_api():
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
@@ -10079,22 +10079,22 @@ def register_route_backend_chats(app):
         g.conversation_id = conversation_id
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)
 
-        def generate_exhaustive_review_response(publish_background_event=None):
+        def generate_analyze_response(publish_background_event=None):
             try:
-                payload, status_code = execute_exhaustive_review_chat_request(
+                payload, status_code = execute_analyze_chat_request(
                     data=data,
                     publish_background_event=publish_background_event,
                 )
                 if status_code >= 400:
-                    error_message = payload.get('error') or f'Exhaustive review failed ({status_code})'
+                    error_message = payload.get('error') or f'Document analysis failed ({status_code})'
                     yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
                     return
 
                 yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
-            except Exception as exhaustive_error:
-                yield f"data: {json.dumps({'error': str(exhaustive_error), 'conversation_id': conversation_id})}\n\n"
+            except Exception as analysis_error:
+                yield f"data: {json.dumps({'error': str(analysis_error), 'conversation_id': conversation_id})}\n\n"
 
-        return build_background_stream_response(generate_exhaustive_review_response, stream_session=stream_session)
+        return build_background_stream_response(generate_analyze_response, stream_session=stream_session)
 
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())

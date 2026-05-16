@@ -4,7 +4,7 @@ UI test for workflow document action modal.
 Version: 0.241.103
 Implemented in: 0.241.103
 
-This test ensures the workflow modal exposes the renamed Search/Review/Compare
+This test ensures the workflow modal exposes the renamed Search/Analyze/Compare
 selector states, uses Source/Target wording, and submits version-aware
 comparison payloads.
 """
@@ -163,7 +163,7 @@ def test_workflow_document_action_modal_comparison(playwright):
         expect(page.locator("#workflowModal")).to_be_visible()
 
         action_options = page.locator("#workflow-document-action-type option").all_text_contents()
-        assert action_options[:3] == ["Search", "Review", "Compare"]
+        assert action_options[:3] == ["Search", "Analyze", "Compare"]
         expect(page.locator("#workflow-document-action-type")).to_have_attribute(
             "title",
             "Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.",
@@ -182,7 +182,7 @@ def test_workflow_document_action_modal_comparison(playwright):
         )
 
         expect(page.locator("#workflow-comparison-target-fields")).to_be_visible()
-        expect(page.locator("#workflow-exhaustive-target-fields")).to_be_hidden()
+        expect(page.locator("#workflow-analysis-target-fields")).to_be_hidden()
         expect(page.get_by_label("Target Versions")).to_be_visible()
         expect(page.get_by_label("Source Version")).to_be_visible()
 
@@ -207,7 +207,7 @@ def test_workflow_document_action_modal_comparison(playwright):
         assert saved_payload["document_action"]["document_ids"] == ["doc-v2", "doc-v1"]
         assert saved_payload["document_action"]["left_document_id"] == "doc-v1"
         assert saved_payload["document_action"]["right_document_ids"] == ["doc-v2"]
-        assert saved_payload["exhaustive_review"]["enabled"] is False
+        assert saved_payload["analyze"]["enabled"] is False
     finally:
         context.close()
         browser.close()

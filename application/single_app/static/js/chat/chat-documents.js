@@ -1771,12 +1771,12 @@ function syncTagsDropdownButtonText() {
 }
 
 
-export async function ensureSearchDocumentsVisible() {
-  if (!searchDocumentsBtn || !searchDocumentsContainer) {
+export async function ensureDocumentPickerReady(options = {}) {
+  const { reload = false, showLoading = !hasResolvedTagsState } = options;
+
+  if (!docSelectEl && !scopeDropdownButton && !tagsDropdownButton && !docDropdownButton) {
     return false;
   }
-
-  await showSearchDocumentsPanel();
 
   if (scopeLocked === true) {
     rebuildScopeDropdownWithLock();
@@ -1784,7 +1784,11 @@ export async function ensureSearchDocumentsVisible() {
     buildScopeDropdown();
   }
 
-  await refreshDocumentsAndTags({ showLoading: !hasResolvedTagsState });
+  if (reload || !hasResolvedTagsState) {
+    await refreshDocumentsAndTags({ showLoading });
+  } else {
+    filterDocumentsBySelectedTags();
+  }
 
   try {
     const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
@@ -1797,6 +1801,16 @@ export async function ensureSearchDocumentsVisible() {
 
   handleDocumentSelectChange();
   return true;
+}
+
+
+export async function ensureSearchDocumentsVisible() {
+  if (!searchDocumentsBtn || !searchDocumentsContainer) {
+    return false;
+  }
+
+  await showSearchDocumentsPanel();
+  return ensureDocumentPickerReady({ reload: true, showLoading: !hasResolvedTagsState });
 }
 
 

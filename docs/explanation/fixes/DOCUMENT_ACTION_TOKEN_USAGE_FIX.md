@@ -4,13 +4,13 @@ Fixed in version: **0.241.116**
 
 ## Overview
 
-Review and comparison document actions were not preserving aggregate token usage across their internal model calls.
+Analyze and comparison document actions were not preserving aggregate token usage across their internal model calls.
 This caused large multi-document runs to under-report usage even when the coverage metadata showed hundreds or thousands of processed windows and chunks.
 
 ## Root Cause
 
 The document action workflow wrapped every model and agent invocation in an `invoke_prompt` adapter that converted responses directly to strings.
-That adapter dropped `usage`, so exhaustive review and comparison only kept text and coverage, not the cumulative prompt and completion totals from all internal calls.
+That adapter dropped `usage`, so analysis and comparison only kept text and coverage, not the cumulative prompt and completion totals from all internal calls.
 
 ## Technical Details
 
@@ -24,7 +24,7 @@ Files modified:
 Code changes summary:
 
 - Added token usage extraction and aggregation helpers in the workflow runner.
-- Aggregated token usage across every internal exhaustive review and comparison model call.
+- Aggregated token usage across every internal analysis and comparison model call.
 - Persisted aggregated token usage on workflow and chat assistant message metadata.
 - Logged aggregated document action token usage to activity logs for reporting.
 
@@ -36,7 +36,7 @@ Functional test:
 
 Validation approach:
 
-- Verifies exhaustive review token totals are summed across multiple internal invokes.
+- Verifies analysis token totals are summed across multiple internal invokes.
 - Verifies comparison token totals are summed across multiple internal invokes.
 - Verifies workflow assistant metadata stores the aggregated token usage.
 - Verifies chat document action persistence includes the aggregated token usage field and activity logging call.
@@ -45,8 +45,8 @@ Validation approach:
 
 Before:
 
-- Large review and comparison runs could report token usage from only a subset of internal model calls.
+- Large analysis and comparison runs could report token usage from only a subset of internal model calls.
 
 After:
 
-- Review and comparison runs store and log aggregate prompt, completion, and total tokens for the full document action execution.
+- Analyze and comparison runs store and log aggregate prompt, completion, and total tokens for the full document action execution.

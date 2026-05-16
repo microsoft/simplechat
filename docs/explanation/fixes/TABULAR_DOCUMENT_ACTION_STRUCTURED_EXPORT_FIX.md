@@ -4,13 +4,13 @@ Fixed in version: **0.241.139**
 
 ## Issue Description
 
-Tabular document review and compare requests could use workbook analysis internally but still return only a short synthesized answer, even when the prompt explicitly asked for exhaustive row-level JSON or CSV output. In large classification runs, users could see thousands of matched rows in tool results but only a handful of final objects in the response.
+Tabular document Analyze and compare requests could use workbook analysis internally but still return only a short synthesized answer, even when the prompt explicitly asked for exhaustive row-level JSON or CSV output. In large classification runs, users could see thousands of matched rows in tool results but only a handful of final objects in the response.
 
 ## Root Cause Analysis
 
 - The shared tabular document-action helper in `functions_workflow_runner.py` stopped after collecting workbook analysis text and never reused the chat tabular generated-output pipeline.
 - That helper also skipped row-linked related-document augmentation, so references resolved from workbook rows were not carried into structured export generation or synthesis prompts.
-- As a result, tabular review/compare behaved like a summary shortcut instead of reusing the more exhaustive tabular export path already available in the main chat/search flow.
+- As a result, tabular analysis/compare behaved like a summary shortcut instead of reusing the more exhaustive tabular export path already available in the main chat/search flow.
 
 ## Version Implemented
 
@@ -25,8 +25,8 @@ Tabular document review and compare requests could use workbook analysis interna
 ## Code Changes Summary
 
 - Reused `augment_tabular_invocations_with_related_document_evidence(...)` inside the shared tabular document-action helper.
-- Reused `maybe_create_tabular_generated_output(...)` so review/compare can attach exhaustive row-level JSON or CSV exports when the prompt asks for them.
-- Passed related-document evidence summaries into the computed-results prompt handoff for review and comparison synthesis.
+- Reused `maybe_create_tabular_generated_output(...)` so analysis/compare can attach exhaustive row-level JSON or CSV exports when the prompt asks for them.
+- Passed related-document evidence summaries into the computed-results prompt handoff for analysis and comparison synthesis.
 - Updated synthesis prompts so the assistant summarizes key findings and points users to attached exports instead of implying the full dataset is inline.
 
 ## Testing Approach
@@ -36,7 +36,7 @@ Tabular document review and compare requests could use workbook analysis interna
 
 ## Impact Analysis
 
-- Tabular document review and compare now behave much closer to the main chat/search tabular flow for exhaustive structured-output requests.
+- Tabular document Analyze and compare now behave much closer to the main chat/search tabular flow for exhaustive structured-output requests.
 - Large per-row classification prompts can now attach downloadable exhaustive exports instead of collapsing everything into one short synthesized answer.
 - Row-linked external-document evidence is now available to both export generation and the final synthesis prompt when the workbook rows reference supporting documents.
 

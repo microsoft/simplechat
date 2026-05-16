@@ -48,7 +48,10 @@ export async function showEnhancedCitationModal(docId, pageNumberOrTimestamp, ci
         console.warn('Document metadata not found, falling back to text citation');
         // Import fetchCitedText dynamically to avoid circular imports
         import('./chat-citations.js').then(module => {
-            module.fetchCitedText(citationId);
+            module.fetchCitedText(citationId, {
+                documentId: docId,
+                pageNumber: pageNumberOrTimestamp,
+            });
         });
         return;
     }
@@ -80,7 +83,10 @@ export async function showEnhancedCitationModal(docId, pageNumberOrTimestamp, ci
         default:
             // Fall back to text citation for unsupported types
             import('./chat-citations.js').then(module => {
-                module.fetchCitedText(citationId);
+                module.fetchCitedText(citationId, {
+                    documentId: docId,
+                    pageNumber: pageNumberOrTimestamp,
+                });
             });
             break;
     }
@@ -127,13 +133,13 @@ export function showImageModal(docId, fileName) {
     modalInstance.show();
 }
 
-function fallBackToTextCitation(citationId) {
+function fallBackToTextCitation(citationId, citationContext = {}) {
     if (!citationId) {
         return;
     }
 
     import('./chat-citations.js').then(module => {
-        module.fetchCitedText(citationId);
+        module.fetchCitedText(citationId, citationContext);
     }).catch(error => {
         console.error('Failed to fall back to text citation:', error);
     });
@@ -234,7 +240,10 @@ export async function showPdfModal(docId, pageNumber, citationId) {
             revokePdfFrameObjectUrl(pdfFrame);
             console.error(`Failed to render PDF frame for docId: ${docId}, page: ${pageNumber}`);
             showToast('Failed to render PDF document.', 'danger');
-            fallBackToTextCitation(citationId);
+            fallBackToTextCitation(citationId, {
+                documentId: docId,
+                pageNumber,
+            });
         };
 
         pdfFrame.src = `${pdfObjectUrl}#page=${encodeURIComponent(viewerPage)}`;
@@ -246,7 +255,10 @@ export async function showPdfModal(docId, pageNumber, citationId) {
         revokePdfFrameObjectUrl(pdfFrame);
         console.error('Failed to load PDF document:', error);
         showToast(error.message || 'Failed to load PDF document.', 'danger');
-        fallBackToTextCitation(citationId);
+        fallBackToTextCitation(citationId, {
+            documentId: docId,
+            pageNumber,
+        });
     }
 }
 

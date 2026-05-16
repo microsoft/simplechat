@@ -241,7 +241,7 @@ def register_route_backend_users(app):
                     'publicDirectorySavedLists', 'publicDirectorySettings', 'activePublicWorkspaceOid',
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
-                    'sidebarToggleStyle',
+                    'sidebarToggleStyle', 'sidebarMenuState',
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
                     # Text-to-speech settings
@@ -275,6 +275,25 @@ def register_route_backend_users(app):
                     if sidebar_toggle_style not in {"large", "compact"}:
                         return jsonify({"error": "Invalid sidebar toggle style"}), 400
                     settings_to_update["sidebarToggleStyle"] = sidebar_toggle_style
+
+                if "sidebarMenuState" in settings_to_update:
+                    sidebar_menu_state = settings_to_update.get("sidebarMenuState")
+                    allowed_sidebar_menu_keys = {
+                        "workspaces", "support", "externalLinks", "adminSettings",
+                        "controlCenter", "conversations"
+                    }
+                    if not isinstance(sidebar_menu_state, dict):
+                        return jsonify({"error": "Invalid sidebar menu state"}), 400
+
+                    invalid_sidebar_menu_state = {
+                        key: value
+                        for key, value in sidebar_menu_state.items()
+                        if key not in allowed_sidebar_menu_keys or not isinstance(value, bool)
+                    }
+                    if invalid_sidebar_menu_state:
+                        return jsonify({"error": "Invalid sidebar menu state"}), 400
+
+                    settings_to_update["sidebarMenuState"] = sidebar_menu_state
 
                 active_group_updated = False
                 active_public_workspace_updated = False

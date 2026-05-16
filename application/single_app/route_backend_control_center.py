@@ -11,6 +11,11 @@ from flask import make_response
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from functions_control_center import (
+    calculate_next_control_center_auto_refresh_run,
+    get_control_center_auto_refresh_schedule,
+    parse_control_center_auto_refresh_datetime,
+)
 from functions_logging import *
 from functions_activity_logging import *
 from functions_approvals import *
@@ -30,6 +35,39 @@ from functions_debug import debug_print
 
 ACTIVITY_LOGS_DEFAULT_PER_PAGE = 50
 ACTIVITY_LOGS_MAX_PER_PAGE = 200
+CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE = 25
+CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE = 250
+
+
+def parse_control_center_management_pagination(request_args):
+    """Parse shared Control Center management pagination query parameters."""
+    try:
+        page = int(request_args.get('page', 1))
+    except (TypeError, ValueError):
+        page = 1
+
+    try:
+        per_page = int(request_args.get('per_page', CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE))
+    except (TypeError, ValueError):
+        per_page = CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE
+
+    page = max(page, 1)
+    per_page = min(max(per_page, 1), CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE)
+
+    return page, per_page
+
+
+def get_control_center_total_pages(total_items, per_page):
+    """Calculate a non-zero total page count for Control Center management tables."""
+    if total_items <= 0:
+        return 1
+
+    return (total_items + per_page - 1) // per_page
+
+
+def clamp_control_center_page(page, total_pages):
+    """Keep requested pages inside available Control Center management ranges."""
+    return min(max(page, 1), max(total_pages, 1))
 
 
 def normalize_token_filter_value(value):
@@ -2485,8 +2523,7 @@ def register_route_backend_control_center(app):
         Supports pagination and filtering.
         """
         try:
-            page = int(request.args.get('page', 1))
-            per_page = min(int(request.args.get('per_page', 50)), 100)  # Max 100 per page
+            page, per_page = parse_control_center_management_pagination(request.args)
             search = request.args.get('search', '').strip()
             access_filter = request.args.get('access_filter', 'all')  # all, allow, deny
             force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
@@ -2543,8 +2580,9 @@ def register_route_backend_control_center(app):
             total_items = total_items_result[0] if total_items_result and isinstance(total_items_result[0], int) else 0
             
             # Calculate pagination
+            total_pages = get_control_center_total_pages(total_items, per_page)
+            page = clamp_control_center_page(page, total_pages)
             offset = (page - 1) * per_page
-            total_pages = (total_items + per_page - 1) // per_page
             
             # Get paginated results
             users_query = f"""
@@ -2865,8 +2903,7 @@ def register_route_backend_control_center(app):
         Supports pagination and filtering.
         """
         try:
-            page = int(request.args.get('page', 1))
-            per_page = min(int(request.args.get('per_page', 50)), 100)  # Max 100 per page
+            page, per_page = parse_control_center_management_pagination(request.args)
             search = request.args.get('search', '').strip()
             status_filter = request.args.get('status_filter', 'all')  # all, active, locked, etc.
             force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
@@ -2880,9 +2917,13 @@ def register_route_backend_control_center(app):
                 query_conditions.append("(CONTAINS(LOWER(c.name), @search) OR CONTAINS(LOWER(c.description), @search))")
                 parameters.append({"name": "@search", "value": search.lower()})
             
-            # Note: status filtering would need to be implemented based on business logic
-            # For now, we'll get all groups and filter client-side if needed
-            
+            if status_filter != 'all':
+                if status_filter == 'active':
+                    query_conditions.append("(NOT IS_DEFINED(c.status) OR IS_NULL(c.status) OR c.status = @status_filter)")
+                else:
+                    query_conditions.append("c.status = @status_filter")
+                parameters.append({"name": "@status_filter", "value": status_filter})
+
             where_clause = " AND ".join(query_conditions) if query_conditions else "1=1"
             
             if export_all:
@@ -2922,8 +2963,9 @@ def register_route_backend_control_center(app):
             total_items = total_items_result[0] if total_items_result and isinstance(total_items_result[0], int) else 0
             
             # Calculate pagination
+            total_pages = get_control_center_total_pages(total_items, per_page)
+            page = clamp_control_center_page(page, total_pages)
             offset = (page - 1) * per_page
-            total_pages = (total_items + per_page - 1) // per_page
             
             # Get paginated results
             groups_query = f"""
@@ -3741,15 +3783,11 @@ def register_route_backend_control_center(app):
         """
         try:
             # Parse request parameters
-            page = int(request.args.get('page', 1))
-            per_page = min(int(request.args.get('per_page', 50)), 100)  # Max 100 per page
+            page, per_page = parse_control_center_management_pagination(request.args)
             search_term = request.args.get('search', '').strip()
             status_filter = request.args.get('status_filter', 'all')
             force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
             export_all = request.args.get('all', 'false').lower() == 'true'  # For CSV export
-            
-            # Calculate offset (only needed if not exporting all)
-            offset = (page - 1) * per_page if not export_all else 0
             
             # Base query for public workspaces
             if search_term:
@@ -3775,14 +3813,17 @@ def register_route_backend_control_center(app):
             
             # Apply status filter if specified
             if status_filter != 'all':
-                # For now, we'll treat all workspaces as 'active'
-                # This can be enhanced later with actual status logic
-                if status_filter != 'active':
-                    all_workspaces = []
+                all_workspaces = [
+                    workspace
+                    for workspace in all_workspaces
+                    if (workspace.get('status') or 'active') == status_filter
+                ]
             
             # Calculate pagination
             total_count = len(all_workspaces)
-            total_pages = math.ceil(total_count / per_page) if per_page > 0 else 0
+            total_pages = get_control_center_total_pages(total_count, per_page)
+            page = clamp_control_center_page(page, total_pages)
+            offset = (page - 1) * per_page if not export_all else 0
             
             # Get the workspaces for current page or all for export
             if export_all:
@@ -3820,6 +3861,7 @@ def register_route_backend_control_center(app):
                         'page': page,
                         'per_page': per_page,
                         'total_count': total_count,
+                        'total_items': total_count,
                         'total_pages': total_pages,
                         'has_next': page < total_pages,
                         'has_prev': page > 1
@@ -5624,10 +5666,29 @@ def register_route_backend_control_center(app):
             
             settings = get_settings()
             last_refresh = settings.get('control_center_last_refresh')
+            auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
+            auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
+            auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
+            auto_refresh_next_run_datetime = parse_control_center_auto_refresh_datetime(auto_refresh_next_run)
+            if auto_refresh_enabled and not auto_refresh_next_run_datetime:
+                auto_refresh_next_run_datetime = calculate_next_control_center_auto_refresh_run(
+                    settings,
+                    current_time=datetime.now(timezone.utc),
+                )
+                auto_refresh_next_run = auto_refresh_next_run_datetime.isoformat()
+
+            last_refresh_datetime = parse_control_center_auto_refresh_datetime(last_refresh)
             
             return jsonify({
                 'last_refresh': last_refresh,
-                'last_refresh_formatted': None if not last_refresh else datetime.fromisoformat(last_refresh.replace('Z', '+00:00') if 'Z' in last_refresh else last_refresh).strftime('%m/%d/%Y %I:%M %p UTC')
+                'last_refresh_formatted': None if not last_refresh_datetime else last_refresh_datetime.strftime('%m/%d/%Y %I:%M %p UTC'),
+                'auto_refresh_enabled': auto_refresh_enabled,
+                'auto_refresh_time': auto_refresh_schedule['time'],
+                'auto_refresh_hour': auto_refresh_schedule['hour'],
+                'auto_refresh_minute': auto_refresh_schedule['minute'],
+                'auto_refresh_hour_formatted': f"{auto_refresh_schedule['hour']:02d}:{auto_refresh_schedule['minute']:02d} UTC",
+                'auto_refresh_next_run': auto_refresh_next_run,
+                'auto_refresh_next_run_formatted': None if not auto_refresh_next_run_datetime else auto_refresh_next_run_datetime.strftime('%m/%d/%Y %I:%M %p UTC'),
             }), 200
             
         except Exception as e:

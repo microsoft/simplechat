@@ -147,6 +147,63 @@
             max-width: 40rem;
         }
 
+        .activity-log-auto-refresh-toolbar {
+            background: rgba(var(--bs-primary-rgb), 0.04);
+            border: 1px solid rgba(var(--bs-primary-rgb), 0.14);
+            border-radius: 0.5rem;
+            padding: 0.85rem 1rem;
+        }
+
+        .activity-log-auto-refresh-toolbar .form-switch .form-check-input {
+            cursor: pointer;
+            height: 1.25rem;
+            width: 2.4rem;
+        }
+
+        .activity-log-refresh-interval-controls {
+            display: grid;
+            grid-template-columns: minmax(14rem, 22rem) minmax(5.5rem, 7rem);
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        .activity-log-refresh-presets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+
+        .activity-log-refresh-presets .btn {
+            min-width: 3rem;
+        }
+
+        .activity-log-refresh-slider-wrap {
+            display: grid;
+            grid-template-columns: minmax(10rem, 1fr) 4.5rem;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        .activity-log-refresh-slider {
+            min-width: 10rem;
+        }
+
+        [data-bs-theme="dark"] .activity-log-auto-refresh-toolbar {
+            background: rgba(var(--bs-primary-rgb), 0.12);
+            border-color: rgba(var(--bs-primary-rgb), 0.28);
+        }
+
+        @media (max-width: 767.98px) {
+            .activity-log-refresh-interval-controls,
+            .activity-log-refresh-slider-wrap {
+                grid-template-columns: 1fr;
+            }
+
+            .activity-log-refresh-presets .btn {
+                flex: 1 1 3.25rem;
+            }
+        }
+
         .activity-logs-table {
             --activity-logs-min-width: 940px;
             --activity-log-timestamp-width: 18%;
@@ -1031,21 +1088,34 @@
                             </div>
 
                             <!-- User Management Controls -->
-                            <div class="row mb-3">
-                                <div class="col-md-6">
+                            <div class="row mb-3 g-2 align-items-center">
+                                <div class="col-lg-5 col-md-12">
                                     <div class="input-group">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
                                         <input type="text" class="form-control" id="userSearchInput" placeholder="Search users by name or email...">
                                     </div>
                                 </div>
-                                <div class="col-md-3">
+                                <div class="col-lg-2 col-md-4">
                                     <select class="form-select" id="accessFilterSelect">
                                         <option value="all">All Users</option>
                                         <option value="allow">Allowed Access</option>
                                         <option value="deny">Denied Access</option>
                                     </select>
                                 </div>
-                                <div class="col-md-3">
+                                <div class="col-lg-2 col-md-4">
+                                    <label class="visually-hidden" for="userManagementPerPageSelect">Users per page</label>
+                                    <div class="input-group">
+                                        <select class="form-select" id="userManagementPerPageSelect">
+                                            <option value="10">10</option>
+                                            <option value="25" selected>25</option>
+                                            <option value="50">50</option>
+                                            <option value="100">100</option>
+                                            <option value="250">250</option>
+                                        </select>
+                                        <span class="input-group-text">per page</span>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-4">
                                     <div class="btn-group w-100" role="group">
                                         <button type="button" class="btn btn-primary" id="bulkActionBtn" disabled>
                                             <i class="bi bi-gear-fill me-1"></i>Bulk
@@ -1147,22 +1217,36 @@
                             </div>
 
                             <!-- Group Management Controls -->
-                            <div class="row mb-3">
-                                <div class="col-md-6">
+                            <div class="row mb-3 g-2 align-items-center">
+                                <div class="col-lg-5 col-md-12">
                                     <div class="input-group">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
                                         <input type="text" class="form-control" id="groupSearchInput" placeholder="Search groups by name or owner...">
                                     </div>
                                 </div>
-                                <div class="col-md-3">
+                                <div class="col-lg-2 col-md-4">
                                     <select class="form-select" id="groupStatusFilterSelect">
                                         <option value="all">All Groups</option>
                                         <option value="active">Active Groups</option>
                                         <option value="locked">Locked Groups</option>
                                         <option value="upload_disabled">Upload Disabled</option>
+                                        <option value="inactive">Inactive Groups</option>
                                     </select>
                                 </div>
-                                <div class="col-md-3">
+                                <div class="col-lg-2 col-md-4">
+                                    <label class="visually-hidden" for="groupManagementPerPageSelect">Groups per page</label>
+                                    <div class="input-group">
+                                        <select class="form-select" id="groupManagementPerPageSelect">
+                                            <option value="10">10</option>
+                                            <option value="25" selected>25</option>
+                                            <option value="50">50</option>
+                                            <option value="100">100</option>
+                                            <option value="250">250</option>
+                                        </select>
+                                        <span class="input-group-text">per page</span>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-4">
                                     <div class="btn-group w-100" role="group">
                                         <button type="button" class="btn btn-primary" id="bulkGroupActionBtn" disabled>
                                             <i class="bi bi-gear-fill me-1"></i>Bulk
@@ -1225,31 +1309,47 @@
                         
                         <!-- Public Workspace Management Tab -->
                         <div class="tab-pane fade" id="workspaces" role="tabpanel">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h5 class="mb-0">
-                    <i class="bi bi-folder2-open me-2"></i>Public Workspace Management
-                </h5>
-            </div>                            <!-- Filters -->
-                            <div class="row mb-3">
-                                <div class="col-md-6">
+                            <div class="d-flex justify-content-between align-items-center mb-4">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-folder2-open me-2"></i>Public Workspace Management
+                                </h5>
+                            </div>
+                            <!-- Filters -->
+                            <div class="row mb-3 g-2 align-items-center">
+                                <div class="col-lg-5 col-md-12">
                                     <div class="input-group">
                                         <span class="input-group-text">
                                             <i class="bi bi-search"></i>
                                         </span>
-                                        <input type="text" 
-                                               class="form-control" 
-                                               id="publicWorkspaceSearchInput" 
-                                               placeholder="Search workspaces by name or description..."
-                                               onkeyup="controlCenter.searchPublicWorkspaces(this.value)">
+                                        <input type="text"
+                                               class="form-control"
+                                               id="publicWorkspaceSearchInput"
+                                               placeholder="Search workspaces by name or description..." />
                                     </div>
                                 </div>
-                                <div class="col-md-3">
-                                    <select class="form-select" id="publicWorkspaceStatusFilter" onchange="controlCenter.filterPublicWorkspacesByStatus(this.value)">
+                                <div class="col-lg-2 col-md-4">
+                                    <select class="form-select" id="publicWorkspaceStatusFilterSelect">
                                         <option value="all">All Statuses</option>
                                         <option value="active">Active</option>
+                                        <option value="locked">Locked</option>
+                                        <option value="upload_disabled">Upload Disabled</option>
+                                        <option value="inactive">Inactive</option>
                                     </select>
                                 </div>
-                                <div class="col-md-3">
+                                <div class="col-lg-2 col-md-4">
+                                    <label class="visually-hidden" for="publicWorkspaceManagementPerPageSelect">Public workspaces per page</label>
+                                    <div class="input-group">
+                                        <select class="form-select" id="publicWorkspaceManagementPerPageSelect">
+                                            <option value="10">10</option>
+                                            <option value="25" selected>25</option>
+                                            <option value="50">50</option>
+                                            <option value="100">100</option>
+                                            <option value="250">250</option>
+                                        </select>
+                                        <span class="input-group-text">per page</span>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-4">
                                     <div class="btn-group w-100" role="group">
                                         <button type="button" class="btn btn-primary" id="bulkPublicWorkspaceActionBtn" disabled>
                                             <i class="bi bi-gear-fill me-1"></i>Bulk
@@ -1298,11 +1398,16 @@
                             </div>
 
                             <!-- Pagination -->
-                            <nav aria-label="Public workspaces pagination" id="publicWorkspacesPagination" style="display: none;">
-                                <ul class="pagination justify-content-center">
-                                    <!-- Pagination buttons will be inserted here -->
-                                </ul>
-                            </nav>
+                            <div class="d-flex justify-content-between align-items-center mt-3">
+                                <div class="text-muted small" id="publicWorkspacesPaginationInfo">
+                                    <!-- Pagination info will be populated by JavaScript -->
+                                </div>
+                                <nav aria-label="Public workspaces pagination">
+                                    <ul class="pagination mb-0" id="publicWorkspacesPagination">
+                                        <!-- Pagination controls will be populated by JavaScript -->
+                                    </ul>
+                                </nav>
+                            </div>
 
                             <!-- No Results Message -->
                             <div id="noPublicWorkspacesMessage" style="display: none;">
@@ -1365,6 +1470,39 @@
                                     <button type="button" class="btn btn-outline-primary" id="refreshActivityLogsBtn">
                                         <i class="bi bi-arrow-clockwise"></i>Reload
                                     </button>
+                                </div>
+                            </div>
+
+                            <div class="activity-log-auto-refresh-toolbar d-flex flex-column flex-xl-row justify-content-between align-items-xl-center gap-3 mb-3" aria-label="Activity log auto-refresh controls">
+                                <div>
+                                    <div class="form-check form-switch mb-1">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="activityLogsAutoRefreshToggle" aria-describedby="activityLogsAutoRefreshStatus" />
+                                        <label class="form-check-label fw-semibold" for="activityLogsAutoRefreshToggle">
+                                            Auto-refresh
+                                        </label>
+                                    </div>
+                                    <div class="small text-muted" id="activityLogsAutoRefreshStatus" aria-live="polite">
+                                        Auto-refresh off
+                                    </div>
+                                </div>
+                                <div class="d-flex flex-column flex-lg-row align-items-lg-center gap-3">
+                                    <div class="activity-log-refresh-presets" role="group" aria-label="Activity log auto-refresh interval presets">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="1">1s</button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="10">10s</button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="30">30s</button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="60">60s</button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="300">5m</button>
+                                    </div>
+                                    <div class="activity-log-refresh-interval-controls">
+                                        <div class="activity-log-refresh-slider-wrap">
+                                            <input type="range" class="form-range activity-log-refresh-slider" id="activityLogsAutoRefreshIntervalRange" min="1" max="300" step="1" value="30" aria-label="Auto-refresh interval in seconds" />
+                                            <output class="small fw-semibold text-nowrap" id="activityLogsAutoRefreshIntervalValue" for="activityLogsAutoRefreshIntervalRange">30 sec</output>
+                                        </div>
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" class="form-control" id="activityLogsAutoRefreshIntervalInput" min="1" max="300" step="1" value="30" aria-label="Auto-refresh interval seconds" />
+                                            <span class="input-group-text">sec</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             
@@ -3423,40 +3561,22 @@ window.GroupManager = {
 
     // Handle search functionality
     handleSearch: function(event) {
-        const searchTerm = event.target.value.toLowerCase();
-        const rows = document.querySelectorAll('#groupsTableBody tr:not([style*="display: none"])');
-        
-        rows.forEach(row => {
-            const text = row.textContent.toLowerCase();
-            row.style.display = text.includes(searchTerm) ? '' : 'none';
-        });
+        if (window.controlCenter && typeof window.controlCenter.handleGroupSearchChange === 'function') {
+            window.controlCenter.handleGroupSearchChange(event);
+        }
     },
 
     // Handle status filter
     handleFilter: function(event) {
-        const filterValue = event.target.value;
-        const rows = document.querySelectorAll('#groupsTableBody tr[data-group-id]');
-        
-        rows.forEach(row => {
-            const statusBadge = row.querySelector('.group-status-badge');
-            if (!statusBadge) return;
-            
-            const status = statusBadge.className.includes('active') ? 'active' :
-                          statusBadge.className.includes('locked') ? 'locked' :
-                          statusBadge.className.includes('upload-disabled') ? 'upload_disabled' : 'inactive';
-            
-            row.style.display = (filterValue === 'all' || status === filterValue) ? '' : 'none';
-        });
+        if (window.controlCenter && typeof window.controlCenter.handleGroupFilterChange === 'function') {
+            window.controlCenter.handleGroupFilterChange(event);
+        }
     },
 
     // Handle select all functionality
     handleSelectAll: function(event) {
-        const checkboxes = document.querySelectorAll('.group-checkbox');
-        checkboxes.forEach(cb => cb.checked = event.target.checked);
-        
-        const bulkButton = document.getElementById('bulkGroupActionBtn');
-        if (bulkButton) {
-            bulkButton.disabled = !event.target.checked;
+        if (window.controlCenter && typeof window.controlCenter.handleSelectAllGroups === 'function') {
+            window.controlCenter.handleSelectAllGroups(event);
         }
     },
 

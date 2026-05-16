@@ -45,7 +45,7 @@ from functions_collaboration import (
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
     DOCUMENT_ACTION_TYPE_COMPARISON,
-    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+    DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_NONE,
     get_document_action_config,
     get_document_action_max_documents,
@@ -54,7 +54,7 @@ from functions_document_actions import (
 )
 from functions_document_comparison import run_document_comparison
 from functions_debug import debug_print
-from functions_exhaustive_document_review import run_exhaustive_document_review
+from functions_document_analysis import run_document_analysis
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_tool_label,
@@ -73,10 +73,10 @@ from semantic_kernel_plugins.plugin_invocation_thoughts import register_plugin_i
 
 
 _workflow_runner_app = None
-EXHAUSTIVE_REVIEW_ARTIFACT_REPLY_CHAR_THRESHOLD = 12000
-EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_ITEM_COUNT = 3
-EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_COUNT = 5
-EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_LENGTH = 220
+DOCUMENT_ANALYSIS_ARTIFACT_REPLY_CHAR_THRESHOLD = 12000
+DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT = 3
+DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT = 5
+DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH = 220
 TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
 
 
@@ -111,8 +111,8 @@ def _parse_json_artifact_payload(text):
         return None
 
 
-def _prompt_explicitly_requests_artifact(review_prompt):
-    prompt_text = str(review_prompt or '').strip().lower()
+def _prompt_explicitly_requests_artifact(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
     if not prompt_text:
         return False
 
@@ -135,8 +135,8 @@ def _normalize_generated_artifact_file_stem(value, fallback_value='analysis-arti
     return normalized_value or fallback_value
 
 
-def _build_exhaustive_review_artifact_file_name(review_result, output_format):
-    document_summaries = review_result.get('documents') if isinstance(review_result.get('documents'), list) else []
+def _build_document_analysis_artifact_file_name(analysis_result, output_format):
+    document_summaries = analysis_result.get('documents') if isinstance(analysis_result.get('documents'), list) else []
     primary_label = ''
     if document_summaries:
         first_document = document_summaries[0] if isinstance(document_summaries[0], dict) else {}
@@ -147,69 +147,69 @@ def _build_exhaustive_review_artifact_file_name(review_result, output_format):
             or ''
         )
 
-    base_name = _normalize_generated_artifact_file_stem(primary_label, fallback_value='exhaustive-review')
+    base_name = _normalize_generated_artifact_file_stem(primary_label, fallback_value='analysis')
     if len(document_summaries) > 1:
         base_name = f'{base_name}-and-{len(document_summaries) - 1}-more'
 
-    return f'{base_name}-exhaustive-review.{output_format}'
+    return f'{base_name}-analysis.{output_format}'
 
 
-def _build_exhaustive_review_preview_lines(review_text):
+def _build_document_analysis_preview_lines(analysis_text):
     preview_lines = []
-    for line in _strip_markdown_code_fence(review_text).splitlines():
+    for line in _strip_markdown_code_fence(analysis_text).splitlines():
         normalized_line = str(line or '').strip()
         if not normalized_line:
             continue
 
-        if len(normalized_line) > EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_LENGTH:
-            normalized_line = f'{normalized_line[:EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_LENGTH - 1]}…'
+        if len(normalized_line) > DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH:
+            normalized_line = f'{normalized_line[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH - 1]}…'
         preview_lines.append(normalized_line)
-        if len(preview_lines) >= EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_LINE_COUNT:
+        if len(preview_lines) >= DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT:
             break
 
     return preview_lines
 
 
-def _build_exhaustive_review_artifact_summary(document_count, output_format):
+def _build_document_analysis_artifact_summary(document_count, output_format):
     normalized_document_count = max(0, int(document_count or 0))
     source_label = f'{normalized_document_count} source' if normalized_document_count == 1 else f'{normalized_document_count} sources'
     return (
-        f'Saved the full exhaustive review for {source_label} in this chat as a downloadable '
+        f'Saved the full analysis for {source_label} in this chat as a downloadable '
         f'{str(output_format or "json").upper()} artifact.'
     )
 
 
-def _build_exhaustive_review_artifact_reply(document_count, output_format):
+def _build_document_analysis_artifact_reply(document_count, output_format):
     normalized_document_count = max(0, int(document_count or 0))
     document_label = f'{normalized_document_count} source document' if normalized_document_count == 1 else f'{normalized_document_count} source documents'
     return (
-        f'I reviewed {document_label} and saved the full results as a downloadable '
+        f'I analyzed {document_label} and saved the full results as a downloadable '
         f'{str(output_format or "json").upper()} artifact attached to this chat. '
         'The card below includes a short preview.'
     )
 
 
-def _maybe_create_exhaustive_review_generated_artifacts(review_result, review_prompt, conversation_id=''):
+def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysis_prompt, conversation_id=''):
     normalized_conversation_id = str(conversation_id or '').strip()
     if not normalized_conversation_id or not has_request_context():
         return {'artifacts': [], 'assistant_reply': None}
 
-    review_result = review_result if isinstance(review_result, dict) else {}
-    analysis_reply = str(review_result.get('analysis_reply') or '').strip()
+    analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
+    analysis_reply = str(analysis_result.get('analysis_reply') or '').strip()
     if not analysis_reply:
         return {'artifacts': [], 'assistant_reply': None}
 
     json_payload = _parse_json_artifact_payload(analysis_reply)
-    explicit_artifact_request = _prompt_explicitly_requests_artifact(review_prompt)
+    explicit_artifact_request = _prompt_explicitly_requests_artifact(analysis_prompt)
     should_generate_artifact = (
         explicit_artifact_request
         or json_payload is not None
-        or len(analysis_reply) >= EXHAUSTIVE_REVIEW_ARTIFACT_REPLY_CHAR_THRESHOLD
+        or len(analysis_reply) >= DOCUMENT_ANALYSIS_ARTIFACT_REPLY_CHAR_THRESHOLD
     )
     if not should_generate_artifact:
         return {'artifacts': [], 'assistant_reply': None}
 
-    document_summaries = review_result.get('documents') if isinstance(review_result.get('documents'), list) else []
+    document_summaries = analysis_result.get('documents') if isinstance(analysis_result.get('documents'), list) else []
     document_count = len(document_summaries)
     output_format = 'json' if json_payload is not None else 'md'
     preview_items = []
@@ -218,34 +218,34 @@ def _maybe_create_exhaustive_review_generated_artifacts(review_result, review_pr
     if output_format == 'json':
         serialized_output = json.dumps(json_payload, indent=2, ensure_ascii=False)
         if isinstance(json_payload, list):
-            preview_items = json_payload[:EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_ITEM_COUNT]
+            preview_items = json_payload[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT]
         elif isinstance(json_payload, dict):
             preview_items = [json_payload]
     else:
         serialized_output = analysis_reply
-        preview_lines = _build_exhaustive_review_preview_lines(analysis_reply)
+        preview_lines = _build_document_analysis_preview_lines(analysis_reply)
 
-    file_name = _build_exhaustive_review_artifact_file_name(review_result, output_format)
-    summary = _build_exhaustive_review_artifact_summary(document_count, output_format)
+    file_name = _build_document_analysis_artifact_file_name(analysis_result, output_format)
+    summary = _build_document_analysis_artifact_summary(document_count, output_format)
 
     try:
         upload_result = upload_generated_analysis_artifact_for_current_user(
             conversation_id=normalized_conversation_id,
             file_name=file_name,
             file_content=serialized_output,
-            capability='exhaustive_review',
+            capability='analyze',
             output_format=output_format,
             summary=summary,
         )
     except Exception as exc:
         debug_print(
-            '[WorkflowExhaustiveReview] Generated artifact upload skipped | '
+            '[WorkflowDocumentAnalysis] Generated artifact upload skipped | '
             f'conversation_id={normalized_conversation_id} | error={exc}'
         )
         return {'artifacts': [], 'assistant_reply': None}
 
     artifact_payload = {
-        'capability': 'exhaustive_review',
+        'capability': 'analyze',
         'artifact_message_id': upload_result.get('message', {}).get('id'),
         'conversation_id': normalized_conversation_id,
         'storage_scope': 'chat',
@@ -260,7 +260,7 @@ def _maybe_create_exhaustive_review_generated_artifacts(review_result, review_pr
 
     return {
         'artifacts': [artifact_payload],
-        'assistant_reply': _build_exhaustive_review_artifact_reply(document_count, output_format),
+        'assistant_reply': _build_document_analysis_artifact_reply(document_count, output_format),
     }
 
 
@@ -311,7 +311,7 @@ def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_p
     should_generate_artifact = (
         explicit_artifact_request
         or json_payload is not None
-        or len(analysis_reply) >= EXHAUSTIVE_REVIEW_ARTIFACT_REPLY_CHAR_THRESHOLD
+        or len(analysis_reply) >= DOCUMENT_ANALYSIS_ARTIFACT_REPLY_CHAR_THRESHOLD
     )
     if not should_generate_artifact:
         return {'artifacts': [], 'assistant_reply': None}
@@ -326,12 +326,12 @@ def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_p
     if output_format == 'json':
         serialized_output = json.dumps(json_payload, indent=2, ensure_ascii=False)
         if isinstance(json_payload, list):
-            preview_items = json_payload[:EXHAUSTIVE_REVIEW_ARTIFACT_PREVIEW_ITEM_COUNT]
+            preview_items = json_payload[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT]
         elif isinstance(json_payload, dict):
             preview_items = [json_payload]
     else:
         serialized_output = analysis_reply
-        preview_lines = _build_exhaustive_review_preview_lines(analysis_reply)
+        preview_lines = _build_document_analysis_preview_lines(analysis_reply)
 
     file_name = _build_comparison_artifact_file_name(comparison_result, output_format)
     summary = _build_comparison_artifact_summary(left_document_name, len(right_documents), output_format)
@@ -567,7 +567,7 @@ def _resolve_tabular_document_action_documents(action_config, user_id, conversat
 
     document_ids = []
     role_by_document_id = {}
-    if action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
+    if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
         document_ids = [
             str(document_id).strip()
             for document_id in list(action_config.get('document_ids') or [])
@@ -709,15 +709,15 @@ def _build_tabular_document_action_coverage(tabular_documents, phase_label):
     }
 
 
-def _build_tabular_review_action_prompt(review_prompt, tabular_documents):
+def _build_tabular_analysis_action_prompt(analysis_prompt, tabular_documents):
     # Import lazily to avoid a circular dependency with route_backend_chats.
     from route_backend_chats import build_tabular_computed_results_system_message
 
     prompt_sections = [
-        'You are completing a deterministic document review using tool-backed tabular analysis.',
+        'You are completing deterministic document analysis using tool-backed tabular analysis.',
         'Use the computed tabular results below as the primary evidence. Do not say the analysis still needs to be run.',
         'If the computed results are insufficient for a conclusion, say so explicitly.',
-        f'Review request:\n{str(review_prompt or "").strip()}',
+        f'Analysis request:\n{str(analysis_prompt or "").strip()}',
     ]
 
     for tabular_document in tabular_documents or []:
@@ -730,7 +730,7 @@ def _build_tabular_review_action_prompt(review_prompt, tabular_documents):
         )
 
     prompt_sections.append(
-        'Write one cohesive review that highlights concrete facts, counts, trends, anomalies, risks, open questions, and recommended follow-up based on the computed results.'
+        'Write one cohesive analysis that highlights concrete facts, counts, trends, anomalies, risks, open questions, and recommended follow-up based on the computed results.'
     )
     return '\n\n'.join(section for section in prompt_sections if section)
 
@@ -790,7 +790,7 @@ def _maybe_execute_tabular_document_action(
     conversation_id='',
     invoke_prompt=None,
 ):
-    if action_type not in {DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW, DOCUMENT_ACTION_TYPE_COMPARISON}:
+    if action_type not in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
         return None
     if not callable(invoke_prompt) or not is_tabular_processing_enabled(settings):
         return None
@@ -922,18 +922,18 @@ def _maybe_execute_tabular_document_action(
         tabular_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
     tabular_agent_citations = _build_agent_citations_from_plugin_invocations(tabular_invocations)
 
-    if action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
-        review_result = {
+    if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        analysis_result = {
             'reply': '',
             'analysis_reply': str(invoke_prompt(
-                _build_tabular_review_action_prompt(workflow.get('task_prompt', ''), tabular_documents),
-                stage='tabular_review',
+                _build_tabular_analysis_action_prompt(workflow.get('task_prompt', ''), tabular_documents),
+                stage='tabular_analysis',
                 metadata={
                     'action_type': action_type,
                     'document_ids': [tabular_document.get('document_id') for tabular_document in tabular_documents],
                 },
             ) or '').strip(),
-            'coverage': _build_tabular_document_action_coverage(tabular_documents, 'Review complete'),
+            'coverage': _build_tabular_document_action_coverage(tabular_documents, 'Analysis complete'),
             'documents': [],
             'document_ids': [tabular_document.get('document_id') for tabular_document in tabular_documents],
             'doc_scope': action_config.get('doc_scope'),
@@ -941,12 +941,12 @@ def _maybe_execute_tabular_document_action(
             'window_size': None,
             'window_percent': None,
         }
-        if not review_result['analysis_reply']:
-            raise RuntimeError('Tabular review synthesis returned an empty response.')
-        review_result['reply'] = review_result['analysis_reply']
-        review_result['documents'] = review_result['coverage'].get('documents', [])
+        if not analysis_result['analysis_reply']:
+            raise RuntimeError('Tabular analysis synthesis returned an empty response.')
+        analysis_result['reply'] = analysis_result['analysis_reply']
+        analysis_result['documents'] = analysis_result['coverage'].get('documents', [])
         return {
-            'result': review_result,
+            'result': analysis_result,
             'agent_citations': tabular_agent_citations,
             'generated_tabular_outputs': generated_tabular_outputs,
         }
@@ -2107,7 +2107,7 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
             'trigger_source': trigger_source,
             'run_id': run_id,
             'document_action': document_action,
-            'exhaustive_review': workflow.get('exhaustive_review') or {},
+            'analyze': workflow.get('analyze') or {},
         },
         'thread_info': {
             'thread_id': current_thread_id,
@@ -2228,8 +2228,8 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 'selected_agent': workflow.get('selected_agent') or {},
                 'model_binding_summary': workflow.get('model_binding_summary') or {},
                 'document_action': document_action,
-                'exhaustive_review': workflow.get('exhaustive_review') or {},
-                'review_coverage': result.get('review_coverage') or {},
+                'analyze': workflow.get('analyze') or {},
+                'analysis_coverage': result.get('analysis_coverage') or {},
             },
             'thread_info': {
                 'thread_id': str(uuid.uuid4()),
@@ -2429,7 +2429,7 @@ def _chain_activity_callbacks(*callbacks):
                 activity_callback(event)
             except Exception as exc:
                 log_event(
-                    f'[WorkflowRunner] Exhaustive review activity callback failed: {exc}',
+                    f'[WorkflowRunner] Document analysis activity callback failed: {exc}',
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -2466,11 +2466,11 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 workflow,
                 run_id,
                 step_type='document',
-                content=f'Started exhaustive review for {document_name}',
+                content=f'Started analysis for {document_name}',
                 detail=f"windows={event.get('window_count', 0)}",
-                activity_key=f'review:{run_id}:{document_id}',
-                kind='document_review',
-                title='Document review',
+                activity_key=f'analysis:{run_id}:{document_id}',
+                kind='document_analysis',
+                title='Document analysis',
                 status='running',
             )
         elif event_type == 'window_started':
@@ -2479,11 +2479,11 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 workflow,
                 run_id,
                 step_type='document',
-                content=f'Reviewing window {window_number} for {document_name}',
+                content=f'Analyzing window {window_number} for {document_name}',
                 detail=f"attempt={event.get('attempt_number', 1)}",
-                activity_key=f'review:{run_id}:{document_id}:window:{window_number}',
-                kind='document_review',
-                title='Document review',
+                activity_key=f'analysis:{run_id}:{document_id}:window:{window_number}',
+                kind='document_analysis',
+                title='Document analysis',
                 status='running',
             )
         elif event_type == 'window_retry':
@@ -2494,9 +2494,9 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 step_type='document',
                 content=f'Retrying window {window_number} for {document_name}',
                 detail=f"attempt={event.get('attempt_number', 1)}",
-                activity_key=f'review:{run_id}:{document_id}:window:{window_number}',
-                kind='document_review',
-                title='Document review',
+                activity_key=f'analysis:{run_id}:{document_id}:window:{window_number}',
+                kind='document_analysis',
+                title='Document analysis',
                 status='running',
             )
         elif event_type == 'window_completed':
@@ -2510,9 +2510,9 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                     f"processed={event.get('processed_windows', 0)} | "
                     f"failed={event.get('failed_windows', 0)}"
                 ),
-                activity_key=f'review:{run_id}:{document_id}:window:{window_number}',
-                kind='document_review',
-                title='Document review',
+                activity_key=f'analysis:{run_id}:{document_id}:window:{window_number}',
+                kind='document_analysis',
+                title='Document analysis',
                 status='completed',
             )
         elif event_type == 'document_completed':
@@ -2521,14 +2521,14 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 workflow,
                 run_id,
                 step_type='document',
-                content=f'Completed exhaustive review for {document_name}',
+                content=f'Completed analysis for {document_name}',
                 detail=(
                     f"processed={event.get('processed_windows', 0)} | "
                     f"failed={event.get('failed_windows', 0)}"
                 ),
-                activity_key=f'review:{run_id}:{document_id}',
-                kind='document_review',
-                title='Document review',
+                activity_key=f'analysis:{run_id}:{document_id}',
+                kind='document_analysis',
+                title='Document analysis',
                 status='completed',
             )
         elif event_type == 'window_failed':
@@ -2537,11 +2537,11 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 workflow,
                 run_id,
                 step_type='document',
-                content=f'Failed review window {window_number} for {document_name}',
-                detail=str(event.get('error') or 'Unknown exhaustive review failure'),
-                activity_key=f'review:{run_id}:{document_id}:window:{window_number}:failed',
-                kind='document_review',
-                title='Document review',
+                content=f'Failed analysis window {window_number} for {document_name}',
+                detail=str(event.get('error') or 'Unknown analysis failure'),
+                activity_key=f'analysis:{run_id}:{document_id}:window:{window_number}:failed',
+                kind='document_analysis',
+                title='Document analysis',
                 status='failed',
             )
         elif event_type == 'reduction_started':
@@ -2556,11 +2556,11 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 workflow,
                 run_id,
                 step_type='document',
-                content='Combining review findings into the final response',
+                content='Combining analysis findings into the final response',
                 detail=reduction_detail,
-                activity_key=f'review:{run_id}:reduction',
-                kind='document_review',
-                title='Document review',
+                activity_key=f'analysis:{run_id}:reduction',
+                kind='document_analysis',
+                title='Document analysis',
                 status='running',
             )
         elif event_type == 'reduction_completed':
@@ -2569,11 +2569,11 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 workflow,
                 run_id,
                 step_type='document',
-                content='Finished combining review findings into the final response',
+                content='Finished combining analysis findings into the final response',
                 detail=f"documents={event.get('document_count', 0)}",
-                activity_key=f'review:{run_id}:reduction',
-                kind='document_review',
-                title='Document review',
+                activity_key=f'analysis:{run_id}:reduction',
+                kind='document_analysis',
+                title='Document analysis',
                 status='completed',
             )
         elif event_type == 'comparison_started':
@@ -2588,7 +2588,7 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                     f"pair={event.get('comparison_index', 0)}/{event.get('comparison_count', 0)}"
                 ),
                 activity_key=f"compare:{run_id}:{document_id}:{event.get('right_document_id')}",
-                kind='document_review',
+                kind='document_analysis',
                 title='Document comparison',
                 status='running',
             )
@@ -2604,7 +2604,7 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                     f"pair={event.get('comparison_index', 0)}/{event.get('comparison_count', 0)}"
                 ),
                 activity_key=f"compare:{run_id}:{document_id}:{event.get('right_document_id')}",
-                kind='document_review',
+                kind='document_analysis',
                 title='Document comparison',
                 status='completed',
             )
@@ -2617,7 +2617,7 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 content='Combining comparison findings across the selected documents',
                 detail=f"pairs={event.get('comparison_count', 0)}",
                 activity_key=f'compare:{run_id}:reduction',
-                kind='document_review',
+                kind='document_analysis',
                 title='Document comparison',
                 status='running',
             )
@@ -2630,7 +2630,7 @@ def _build_document_action_activity_callback(workflow, run_id, thought_tracker=N
                 content='Finished combining comparison findings across the selected documents',
                 detail=f"pairs={event.get('comparison_count', 0)}",
                 activity_key=f'compare:{run_id}:reduction',
-                kind='document_review',
+                kind='document_analysis',
                 title='Document comparison',
                 status='completed',
             )
@@ -2692,7 +2692,7 @@ def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=Non
     }
 
 
-def _execute_exhaustive_review_workflow(
+def _execute_document_analysis_workflow(
     workflow,
     settings,
     conversation_id='',
@@ -2701,11 +2701,11 @@ def _execute_exhaustive_review_workflow(
     external_activity_callback=None,
     action_config=None,
 ):
-    review_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
-    if review_config.get('type') != DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
-        raise ValueError('Exhaustive review is not enabled for this workflow.')
-    workflow_review_max_documents = get_document_action_max_documents(
-        DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+    analysis_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
+    if analysis_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
+        raise ValueError('Document analysis is not enabled for this workflow.')
+    workflow_analysis_max_documents = get_document_action_max_documents(
+        DOCUMENT_ACTION_TYPE_ANALYZE,
         DOCUMENT_ACTION_CONTEXT_WORKFLOW,
         settings=settings,
     )
@@ -2717,13 +2717,13 @@ def _execute_exhaustive_review_workflow(
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     debug_print(
-        '[WorkflowExhaustiveReview] Starting workflow action | '
+        '[WorkflowDocumentAnalysis] Starting workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f"runner_type={workflow.get('runner_type')} | "
         f'conversation_id={conversation_id} | '
-        f"documents={len(review_config.get('document_ids') or [])} | "
-        f'max_documents={workflow_review_max_documents}'
+        f"documents={len(analysis_config.get('document_ids') or [])} | "
+        f'max_documents={workflow_analysis_max_documents}'
     )
     token_usage_aggregate = _create_token_usage_aggregate()
 
@@ -2747,7 +2747,7 @@ def _execute_exhaustive_review_workflow(
                 kernel = Kernel()
                 kernel, agent_objs = load_user_semantic_kernel(kernel, settings, user_id, None)
                 if not agent_objs:
-                    raise ValueError('The selected agent could not be loaded for exhaustive review.')
+                    raise ValueError('The selected agent could not be loaded for analysis.')
 
                 loaded_agent = None
                 requested_name = str(selected_agent.get('name') or '').strip()
@@ -2765,7 +2765,7 @@ def _execute_exhaustive_review_workflow(
                         actor_label='Workflow agent',
                     )
 
-                def invoke_prompt(prompt_text, stage='window_review', metadata=None):
+                def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
                     result = asyncio.run(loaded_agent.invoke([
                         ChatMessageContent(role='user', content=prompt_text),
                     ]))
@@ -2773,33 +2773,33 @@ def _execute_exhaustive_review_workflow(
                     return str(result)
 
                 tabular_action_payload = _maybe_execute_tabular_document_action(
-                    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                    DOCUMENT_ACTION_TYPE_ANALYZE,
                     workflow,
-                    review_config,
+                    analysis_config,
                     settings,
                     conversation_id=conversation_id,
                     invoke_prompt=invoke_prompt,
                 )
                 if tabular_action_payload:
-                    review_result = tabular_action_payload.get('result') or {}
+                    analysis_result = tabular_action_payload.get('result') or {}
                 else:
-                    review_result = run_exhaustive_document_review(
+                    analysis_result = run_document_analysis(
                         user_id=user_id,
-                        review_prompt=workflow.get('task_prompt', ''),
-                        document_ids=review_config.get('document_ids'),
+                        analysis_prompt=workflow.get('task_prompt', ''),
+                        document_ids=analysis_config.get('document_ids'),
                         invoke_prompt=invoke_prompt,
-                        doc_scope=review_config.get('doc_scope'),
-                        active_group_ids=review_config.get('active_group_ids'),
-                        active_public_workspace_id=review_config.get('active_public_workspace_id'),
-                        window_unit=review_config.get('window_unit'),
-                        window_size=review_config.get('window_size'),
-                        window_percent=review_config.get('window_percent'),
-                        max_retries_per_window=review_config.get('max_retries_per_window'),
+                        doc_scope=analysis_config.get('doc_scope'),
+                        active_group_ids=analysis_config.get('active_group_ids'),
+                        active_public_workspace_id=analysis_config.get('active_public_workspace_id'),
+                        window_unit=analysis_config.get('window_unit'),
+                        window_size=analysis_config.get('window_size'),
+                        window_percent=analysis_config.get('window_percent'),
+                        max_retries_per_window=analysis_config.get('max_retries_per_window'),
                         activity_callback=activity_callback,
-                        max_documents=workflow_review_max_documents,
+                        max_documents=workflow_analysis_max_documents,
                     )
-                exhaustive_review_artifact_payload = _maybe_create_exhaustive_review_generated_artifacts(
-                    review_result,
+                document_analysis_artifact_payload = _maybe_create_document_analysis_generated_artifacts(
+                    analysis_result,
                     workflow.get('task_prompt', ''),
                     conversation_id=conversation_id,
                 )
@@ -2811,12 +2811,12 @@ def _execute_exhaustive_review_workflow(
 
                 return {
                     'reply': (
-                        exhaustive_review_artifact_payload.get('assistant_reply')
-                        or _resolve_document_action_reply(review_result)
+                        document_analysis_artifact_payload.get('assistant_reply')
+                        or _resolve_document_action_reply(analysis_result)
                     ),
-                    'review_result': review_result,
-                    'review_coverage': review_result.get('coverage') or {},
-                    'generated_analysis_artifacts': exhaustive_review_artifact_payload.get('artifacts', []),
+                    'analysis_result': analysis_result,
+                    'analysis_coverage': analysis_result.get('coverage') or {},
+                    'generated_analysis_artifacts': document_analysis_artifact_payload.get('artifacts', []),
                     'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
                     'token_usage': token_usage,
                     'provider': 'agent',
@@ -2851,7 +2851,7 @@ def _execute_exhaustive_review_workflow(
 
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
-    def invoke_model_prompt(prompt_text, stage='window_review', metadata=None):
+    def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
         completion = client.chat.completions.create(
             model=deployment_name,
             messages=[{'role': 'user', 'content': prompt_text}],
@@ -2862,55 +2862,55 @@ def _execute_exhaustive_review_workflow(
         return _extract_message_text(completion.choices[0].message.content)
 
     tabular_action_payload = _maybe_execute_tabular_document_action(
-        DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+        DOCUMENT_ACTION_TYPE_ANALYZE,
         workflow,
-        review_config,
+        analysis_config,
         settings,
         conversation_id=conversation_id,
         invoke_prompt=invoke_model_prompt,
     )
     if tabular_action_payload:
-        review_result = tabular_action_payload.get('result') or {}
+        analysis_result = tabular_action_payload.get('result') or {}
     else:
-        review_result = run_exhaustive_document_review(
+        analysis_result = run_document_analysis(
             user_id=user_id,
-            review_prompt=workflow.get('task_prompt', ''),
-            document_ids=review_config.get('document_ids'),
+            analysis_prompt=workflow.get('task_prompt', ''),
+            document_ids=analysis_config.get('document_ids'),
             invoke_prompt=invoke_model_prompt,
-            doc_scope=review_config.get('doc_scope'),
-            active_group_ids=review_config.get('active_group_ids'),
-            active_public_workspace_id=review_config.get('active_public_workspace_id'),
-            window_unit=review_config.get('window_unit'),
-            window_size=review_config.get('window_size'),
-            window_percent=review_config.get('window_percent'),
-            max_retries_per_window=review_config.get('max_retries_per_window'),
+            doc_scope=analysis_config.get('doc_scope'),
+            active_group_ids=analysis_config.get('active_group_ids'),
+            active_public_workspace_id=analysis_config.get('active_public_workspace_id'),
+            window_unit=analysis_config.get('window_unit'),
+            window_size=analysis_config.get('window_size'),
+            window_percent=analysis_config.get('window_percent'),
+            max_retries_per_window=analysis_config.get('max_retries_per_window'),
             activity_callback=activity_callback,
-            max_documents=workflow_review_max_documents,
+            max_documents=workflow_analysis_max_documents,
         )
-    exhaustive_review_artifact_payload = _maybe_create_exhaustive_review_generated_artifacts(
-        review_result,
+    document_analysis_artifact_payload = _maybe_create_document_analysis_generated_artifacts(
+        analysis_result,
         workflow.get('task_prompt', ''),
         conversation_id=conversation_id,
     )
     token_usage = _finalize_token_usage(token_usage_aggregate)
     debug_print(
-        '[WorkflowExhaustiveReview] Completed workflow action | '
+        '[WorkflowDocumentAnalysis] Completed workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'provider={provider} | '
         f'model={deployment_name} | '
         f"total_tokens={(token_usage or {}).get('total_tokens', 0)} | "
-        f"processed_windows={(review_result.get('coverage') or {}).get('processed_windows', 0)} | "
-        f"failed_windows={(review_result.get('coverage') or {}).get('failed_windows', 0)}"
+        f"processed_windows={(analysis_result.get('coverage') or {}).get('processed_windows', 0)} | "
+        f"failed_windows={(analysis_result.get('coverage') or {}).get('failed_windows', 0)}"
     )
     return {
         'reply': (
-            exhaustive_review_artifact_payload.get('assistant_reply')
-            or _resolve_document_action_reply(review_result)
+            document_analysis_artifact_payload.get('assistant_reply')
+            or _resolve_document_action_reply(analysis_result)
         ),
-        'review_result': review_result,
-        'review_coverage': review_result.get('coverage') or {},
-        'generated_analysis_artifacts': exhaustive_review_artifact_payload.get('artifacts', []),
+        'analysis_result': analysis_result,
+        'analysis_coverage': analysis_result.get('coverage') or {},
+        'generated_analysis_artifacts': document_analysis_artifact_payload.get('artifacts', []),
         'model_deployment_name': deployment_name,
         'token_usage': token_usage,
         'provider': provider,
@@ -2987,7 +2987,7 @@ def _execute_document_comparison_workflow(
                         actor_label='Workflow agent',
                     )
 
-                def invoke_prompt(prompt_text, stage='window_review', metadata=None):
+                def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
                     result = asyncio.run(loaded_agent.invoke([
                         ChatMessageContent(role='user', content=prompt_text),
                     ]))
@@ -3029,8 +3029,8 @@ def _execute_document_comparison_workflow(
                         comparison_artifact_payload.get('assistant_reply')
                         or _resolve_document_action_reply(comparison_result)
                     ),
-                    'review_result': comparison_result,
-                    'review_coverage': comparison_result.get('coverage') or {},
+                    'analysis_result': comparison_result,
+                    'analysis_coverage': comparison_result.get('coverage') or {},
                     'generated_analysis_artifacts': comparison_artifact_payload.get('artifacts', []),
                     'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
                     'token_usage': token_usage,
@@ -3066,7 +3066,7 @@ def _execute_document_comparison_workflow(
 
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
-    def invoke_model_prompt(prompt_text, stage='window_review', metadata=None):
+    def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
         completion = client.chat.completions.create(
             model=deployment_name,
             messages=[{'role': 'user', 'content': prompt_text}],
@@ -3116,8 +3116,8 @@ def _execute_document_comparison_workflow(
             comparison_artifact_payload.get('assistant_reply')
             or _resolve_document_action_reply(comparison_result)
         ),
-        'review_result': comparison_result,
-        'review_coverage': comparison_result.get('coverage') or {},
+        'analysis_result': comparison_result,
+        'analysis_coverage': comparison_result.get('coverage') or {},
         'generated_analysis_artifacts': comparison_artifact_payload.get('artifacts', []),
         'model_deployment_name': deployment_name,
         'token_usage': token_usage,
@@ -3147,8 +3147,8 @@ def _execute_document_action_workflow(
     )
 
     try:
-        if action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
-            result = _execute_exhaustive_review_workflow(
+        if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+            result = _execute_document_analysis_workflow(
                 workflow,
                 settings,
                 conversation_id=conversation_id,
@@ -3187,8 +3187,8 @@ def _execute_document_action_workflow(
         f'action_type={action_type} | '
         f"provider={result.get('provider')} | "
         f"model={result.get('model_deployment_name')} | "
-        f"processed_windows={(result.get('review_coverage') or {}).get('processed_windows', 0)} | "
-        f"failed_windows={(result.get('review_coverage') or {}).get('failed_windows', 0)}"
+        f"processed_windows={(result.get('analysis_coverage') or {}).get('processed_windows', 0)} | "
+        f"failed_windows={(result.get('analysis_coverage') or {}).get('failed_windows', 0)}"
     )
     return result
 
@@ -3423,7 +3423,7 @@ def run_personal_workflow(workflow, trigger_source='manual'):
             'model_deployment_name': execution_result.get('model_deployment_name'),
             'agent_name': execution_result.get('agent_name'),
             'agent_display_name': execution_result.get('agent_display_name'),
-            'review_coverage': execution_result.get('review_coverage') or {},
+            'analysis_coverage': execution_result.get('analysis_coverage') or {},
             'response_preview': _build_response_preview(execution_result.get('reply')),
             'error': '',
         })

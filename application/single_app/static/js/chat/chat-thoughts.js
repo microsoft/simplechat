@@ -20,7 +20,7 @@ function getThoughtIcon(stepType) {
         'search': 'bi-search',
         'tabular_analysis': 'bi-table',
         'web_search': 'bi-globe',
-        'document_review': 'bi-journal-richtext',
+        'document_analysis': 'bi-journal-richtext',
         'agent_tool_call': 'bi-robot',
         'generation': 'bi-lightning',
         'content_safety': 'bi-shield-check'
@@ -75,7 +75,7 @@ function renderProgressBar(percent, status, failedWindows, ariaLabel) {
     </div>`;
 }
 
-function renderExhaustiveReviewProgress(thoughtData) {
+function renderDocumentAnalysisProgress(thoughtData) {
     const progress = thoughtData.progress && typeof thoughtData.progress === 'object' ? thoughtData.progress : {};
     const overall = progress.overall && typeof progress.overall === 'object' ? progress.overall : {};
     const documents = Array.isArray(progress.documents) ? progress.documents : [];
@@ -91,7 +91,7 @@ function renderExhaustiveReviewProgress(thoughtData) {
         buildProgressSummaryLabel(overall.completed_windows, overall.total_windows, 'window'),
         buildProgressSummaryLabel(overall.completed_documents, overall.document_count, 'document'),
     ].join(' | ');
-    const overallTitle = String(thoughtData.content || overallPhaseLabel || 'Running exhaustive review across the selected documents').trim();
+    const overallTitle = String(thoughtData.content || overallPhaseLabel || 'Running analysis across the selected documents').trim();
     const overallDetailParts = [];
     if (overallPhaseLabel && overallPhaseLabel.toLowerCase() !== overallTitle.toLowerCase()) {
         overallDetailParts.push(overallPhaseLabel);
@@ -117,7 +117,7 @@ function renderExhaustiveReviewProgress(thoughtData) {
                 <span class="badge text-bg-light border">${documentPercent}%</span>
             </div>
             <div class="text-muted small mb-2">${escapeHtml(documentStatusText)}</div>
-            ${renderProgressBar(documentPercent, document.status, document.failed_windows, `${documentName} exhaustive review progress`)}
+            ${renderProgressBar(documentPercent, document.status, document.failed_windows, `${documentName} analysis progress`)}
         </div>`;
     }).join('');
 
@@ -128,14 +128,14 @@ function renderExhaustiveReviewProgress(thoughtData) {
                     <div class="d-flex align-items-start gap-2 flex-grow-1">
                         <i class="bi bi-journal-richtext text-info mt-1"></i>
                         <div>
-                            <div class="small fw-semibold text-body">${escapeHtml(overallTitle || 'Running exhaustive review across the selected documents')}</div>
+                            <div class="small fw-semibold text-body">${escapeHtml(overallTitle || 'Running analysis across the selected documents')}</div>
                             <div class="text-muted small">${escapeHtml(overallDetailText)}</div>
                         </div>
                     </div>
                     <span class="badge text-bg-light border">${overallPercent}%</span>
                 </div>
                 <div class="mb-3">
-                    ${renderProgressBar(overallPercent, overallStatus, overall.failed_windows, 'Overall exhaustive review progress')}
+                    ${renderProgressBar(overallPercent, overallStatus, overall.failed_windows, 'Overall analysis progress')}
                 </div>
                 ${documentsHtml || '<div class="text-muted small">Preparing document progress...</div>'}
             </div>
@@ -659,7 +659,7 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
     if (!contentElement) return;
 
     if (thoughtData.progress && typeof thoughtData.progress === 'object') {
-        contentElement.innerHTML = renderExhaustiveReviewProgress(thoughtData);
+        contentElement.innerHTML = renderDocumentAnalysisProgress(thoughtData);
         return;
     }
 
@@ -796,7 +796,7 @@ function renderThoughtsList(thoughts) {
     }
 
     if (latestProgressThought) {
-        summaryCards.push(renderExhaustiveReviewProgress(latestProgressThought));
+        summaryCards.push(renderDocumentAnalysisProgress(latestProgressThought));
     }
 
     if (summaryCards.length > 0) {

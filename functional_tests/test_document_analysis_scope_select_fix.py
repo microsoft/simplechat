@@ -1,11 +1,11 @@
-# test_exhaustive_document_review_scope_select_fix.py
+# test_document_analysis_scope_select_fix.py
 """
-Functional test for exhaustive document review scope select fix.
-Version: 0.241.072
+Functional test for document analysis scope select fix.
+Version: 0.241.023
 Implemented in: 0.241.070
 
 This test ensures ordered chunk retrieval only requests the scope field
-available on the active Azure Search index, so exhaustive review works
+available on the active Azure Search index, so analysis works
 for both chat and workflow execution.
 """
 
@@ -19,15 +19,15 @@ def read_text(relative_path):
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def test_exhaustive_review_scope_select_fix_wiring():
+def test_document_analysis_scope_select_fix_wiring():
     config_content = read_text("application/single_app/config.py")
     documents_content = read_text("application/single_app/functions_documents.py")
     chat_route_content = read_text("application/single_app/route_backend_chats.py")
     workflow_runner_content = read_text("application/single_app/functions_workflow_runner.py")
-    fix_doc_content = read_text("docs/explanation/fixes/EXHAUSTIVE_DOCUMENT_REVIEW_SCOPE_SELECT_FIX.md")
+    fix_doc_content = read_text("docs/explanation/fixes/DOCUMENT_ANALYSIS_SCOPE_SELECT_FIX.md")
 
-    assert 'VERSION = "0.241.072"' in config_content, (
-        "Expected config.py version 0.241.072 for the exhaustive review scope-select fix."
+    assert 'VERSION = "0.241.023"' in config_content, (
+        "Expected config.py version 0.241.023 for the analysis scope-select fix."
     )
     assert "scope_field = 'public_workspace_id' if public_workspace_id is not None else ('group_id' if group_id is not None else 'user_id')" in documents_content, (
         "Expected ordered chunk retrieval to choose the scope-specific Azure Search field."
@@ -44,18 +44,18 @@ def test_exhaustive_review_scope_select_fix_wiring():
     assert 'def _execute_document_action_workflow(' in workflow_runner_content, (
         "Expected workflows to continue using the same shared document action executor as chat."
     )
-    assert 'Exhaustive Review Scope Select Fix' in fix_doc_content, (
+    assert 'Analyze Scope Select Fix' in fix_doc_content, (
         "Expected fix documentation for the Azure Search scope-select regression."
     )
     assert 'Fixed/Implemented in version: **0.241.070**' in fix_doc_content, (
         "Expected the fix documentation to include version 0.241.070."
     )
 
-    print("✅ Exhaustive review scope-select fix wiring verified.")
+    print("✅ Document analysis scope-select fix wiring verified.")
 
 
 def run_tests():
-    tests = [test_exhaustive_review_scope_select_fix_wiring]
+    tests = [test_document_analysis_scope_select_fix_wiring]
     results = []
 
     for test in tests:

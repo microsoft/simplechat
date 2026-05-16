@@ -328,7 +328,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     });
   }
 
-  if (btnMyPublics) btnMyPublics.onclick = ()=> window.location.href = '/my_public_workspaces';
+  if (btnMyPublics) btnMyPublics.onclick = ()=> window.location.href = '/profile?tab=public-workspaces';
 
   // Upload functionality - handle both button click and drag-and-drop
   if (uploadBtn) uploadBtn.onclick = () => checkUserAgreementBeforePublicUpload();

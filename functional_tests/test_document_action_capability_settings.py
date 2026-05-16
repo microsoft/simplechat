@@ -5,7 +5,7 @@ Functional test for document action capability settings.
 Version: 0.241.095
 Implemented in: 0.241.084
 
-This test ensures admin settings can enable or disable exhaustive review and
+This test ensures admin settings can enable or disable analysis and
 comparison independently, and that chat/workflow document limits are driven by
 saved settings instead of hard-coded UI and backend constants.
 """
@@ -52,8 +52,8 @@ def test_document_action_capability_settings_wiring() -> None:
     assert "'document_action_capabilities': get_default_document_action_capabilities()" in settings_content, (
         "Expected app settings defaults to persist document action capability settings."
     )
-    assert 'document_action_exhaustive_review_enabled' in admin_route_content, (
-        "Expected the admin settings route to parse the exhaustive review enable toggle."
+    assert 'document_action_analyze_enabled' in admin_route_content, (
+        "Expected the admin settings route to parse the analysis enable toggle."
     )
     assert 'document_action_comparison_workflow_max_documents' in admin_route_content, (
         "Expected the admin settings route to parse the comparison workflow max-documents value."
@@ -80,7 +80,7 @@ def test_document_action_capability_settings_wiring() -> None:
         "Expected workflow save validation to honor admin-enabled document action types."
     )
     assert 'get_document_action_max_documents(' in workflow_runner_content, (
-        "Expected workflow execution to resolve exhaustive review max-documents from saved settings."
+        "Expected workflow execution to resolve analysis max-documents from saved settings."
     )
     assert 'window.documentActionCapabilities' in workflow_template_content, (
         "Expected the workspace template to bootstrap document action capability settings for workflows."

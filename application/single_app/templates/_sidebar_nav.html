@@ -2,6 +2,8 @@
 {% set sidebar_toggle_style = user_settings.get('settings', {}).get('sidebarToggleStyle', 'large') %}
 {% set sidebar_toggle_compact = sidebar_toggle_style == 'compact' %}
 {% set sidebar_brand_visible = app_settings.show_logo or not app_settings.hide_app_title %}
+{% set sidebar_menu_state_raw = user_settings.get('settings', {}).get('sidebarMenuState', {}) %}
+{% set sidebar_menu_state = sidebar_menu_state_raw if sidebar_menu_state_raw is mapping else {} %}
 <div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
 
   <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
@@ -96,12 +98,13 @@
 
     <!-- Workspaces Section - Only show when logged in -->
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+    {% set workspaces_menu_expanded = sidebar_menu_state.get('workspaces', true) %}
     <div class="overflow-auto">
-      <div id="workspaces-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+      <div id="workspaces-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="workspaces-section" aria-expanded="{{ 'true' if workspaces_menu_expanded else 'false' }}" data-sidebar-menu-key="workspaces" data-sidebar-menu-target="workspaces-section" data-sidebar-menu-caret="workspaces-caret">
         <span class="nav-text">Workspaces</span>
-        <i id="workspaces-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        <i id="workspaces-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not workspaces_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
       </div>
-      <div id="workspaces-section">
+      <div id="workspaces-section"{% if not workspaces_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if workspaces_menu_expanded else 'true' }}">
         <ul class="nav flex-column mb-2">
           {% if app_settings.enable_user_workspace %}
           <li class="nav-item">
@@ -114,30 +117,23 @@
             <ul class="nav flex-column ms-3" id="personal-workspace-submenu" style="display: none; visibility: hidden;" data-submenu="personal">
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab">
-                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Documents</span>
+                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Documents</span>
                 </a>
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab">
-                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Prompts</span>
+                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Prompts</span>
                 </a>
               </li>
               {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab">
-                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agents</span>
+                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Agents</span>
                 </a>
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="plugins-tab">
-                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Actions</span>
-                </a>
-              </li>
-              {% endif %}
-              {% if settings.allow_user_workflows %}
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab">
-                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Workflows</span>
+                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Actions</span>
                 </a>
               </li>
               {% endif %}
@@ -168,23 +164,23 @@
             <ul class="nav flex-column ms-3" id="group-workspace-submenu" style="display: none; visibility: hidden;" data-submenu="group">
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab">
-                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Documents</span>
+                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Documents</span>
                 </a>
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab">
-                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Prompts</span>
+                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Prompts</span>
                 </a>
               </li>
               {% if settings.allow_group_agents and settings.enable_semantic_kernel %}
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-agents-tab">
-                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agents</span>
+                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Agents</span>
                   </a>
                 </li>
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-plugins-tab">
-                    <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Actions</span>
+                    <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Actions</span>
                   </a>
                 </li>
               {% endif %}
@@ -222,12 +218,13 @@
     {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
     {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
     {% if show_support_latest_features or show_support_send_feedback %}
+    {% set support_menu_expanded = sidebar_menu_state.get('support', true) %}
     <div class="overflow-auto">
-      <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+      <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="support-menu-links-section" aria-expanded="{{ 'true' if support_menu_expanded else 'false' }}" data-sidebar-menu-key="support" data-sidebar-menu-target="support-menu-links-section" data-sidebar-menu-caret="support-menu-caret">
         <span class="nav-text">{{ app_settings.support_menu_name or 'Support' }}</span>
-        <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not support_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
       </div>
-      <div id="support-menu-links-section">
+      <div id="support-menu-links-section"{% if not support_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if support_menu_expanded else 'true' }}">
         <ul class="nav flex-column mb-2">
           {% if show_support_latest_features %}
           <li class="nav-item">
@@ -258,12 +255,13 @@
       {% set should_force_menu = app_settings.external_links_force_menu %}
       {% set link_count = app_settings.external_links|length %}
       {% if should_force_menu or link_count >= 3 %}
+        {% set external_links_menu_expanded = sidebar_menu_state.get('externalLinks', true) %}
         <!-- Display as collapsible section -->
-        <div id="external-links-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <div id="external-links-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="external-links-section" aria-expanded="{{ 'true' if external_links_menu_expanded else 'false' }}" data-sidebar-menu-key="externalLinks" data-sidebar-menu-target="external-links-section" data-sidebar-menu-caret="external-links-caret">
           <span class="nav-text">{{ app_settings.external_links_menu_name or 'External Links' }}</span>
-          <i id="external-links-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+          <i id="external-links-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not external_links_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
         </div>
-        <div id="external-links-section">
+        <div id="external-links-section"{% if not external_links_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if external_links_menu_expanded else 'true' }}">
           <ul class="nav flex-column mb-2">
             {% for link in app_settings.external_links %}
             <li class="nav-item">
@@ -296,13 +294,14 @@
 
     <!-- Admin Settings Section - Only show when on admin settings page and user is admin -->
     {% if request.endpoint == 'admin_settings' and 'Admin' in session['user']['roles'] %}
+    {% set admin_settings_menu_expanded = sidebar_menu_state.get('adminSettings', true) %}
     <div class="overflow-auto">
-      <div id="admin-settings-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+      <div id="admin-settings-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="admin-settings-section" aria-expanded="{{ 'true' if admin_settings_menu_expanded else 'false' }}" data-sidebar-menu-key="adminSettings" data-sidebar-menu-target="admin-settings-section" data-sidebar-menu-caret="admin-settings-caret">
         <div class="d-flex align-items-center">
           <span class="nav-text">Admin Settings</span>
-          <i id="admin-settings-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+          <i id="admin-settings-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not admin_settings_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
         </div>
-        <button id="admin-search-btn" class="btn btn-sm p-1" style="border: none; background: none; color: inherit;" title="Search Admin Settings">
+        <button id="admin-search-btn" class="btn btn-sm p-1" style="border: none; background: none; color: inherit;" title="Search Admin Settings" data-sidebar-menu-ignore="true">
           <i class="bi bi-search" style="font-size: 0.9em;"></i>
         </button>
       </div>
@@ -316,7 +315,7 @@
           </button>
         </div>
       </div>
-      <div id="admin-settings-section">
+      <div id="admin-settings-section"{% if not admin_settings_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if admin_settings_menu_expanded else 'true' }}">
         <ul class="nav flex-column mb-2">
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="latest-features">
@@ -707,13 +706,14 @@
     <!-- When DISABLED (default), only regular Admin role grants access (ControlCenterAdmin is ignored) -->
     <!-- DashboardReader role grants dashboard-only access when that setting is enabled -->
     {% if request.endpoint == 'control_center' and ((app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles'])) %}
+    {% set control_center_menu_expanded = sidebar_menu_state.get('controlCenter', true) %}
     <div class="overflow-auto">
-      <div id="control-center-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+      <div id="control-center-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="control-center-section" aria-expanded="{{ 'true' if control_center_menu_expanded else 'false' }}" data-sidebar-menu-key="controlCenter" data-sidebar-menu-target="control-center-section" data-sidebar-menu-caret="control-center-caret">
         <div class="d-flex align-items-center">
           <span class="nav-text">Control Center</span>
-          <i id="control-center-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+          <i id="control-center-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not control_center_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
         </div>
-        <button id="control-center-search-btn" class="btn btn-sm p-1" style="border: none; background: none; color: inherit;" title="Search Control Center">
+        <button id="control-center-search-btn" class="btn btn-sm p-1" style="border: none; background: none; color: inherit;" title="Search Control Center" data-sidebar-menu-ignore="true">
           <i class="bi bi-search" style="font-size: 0.9em;"></i>
         </button>
       </div>
@@ -727,7 +727,7 @@
           </button>
         </div>
       </div>
-      <div id="control-center-section">
+      <div id="control-center-section"{% if not control_center_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if control_center_menu_expanded else 'true' }}">
         <ul class="nav flex-column mb-2">
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="dashboard">
@@ -766,17 +766,18 @@
 
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'chats' %}
+    {% set conversations_menu_expanded = sidebar_menu_state.get('conversations', true) %}
     <div id="conversations-section" class="flex-grow-1 overflow-auto">
-      <div id="conversations-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between">
+      <div id="conversations-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="conversations-list-container" aria-expanded="{{ 'true' if conversations_menu_expanded else 'false' }}" data-sidebar-menu-key="conversations" data-sidebar-menu-target="conversations-list-container" data-sidebar-menu-caret="conversations-caret">
         <div class="d-flex align-items-center">
           <span class="nav-text">Conversations</span>
-          <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+          <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not conversations_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
         </div>
         <div class="d-flex align-items-center">
-          <button id="sidebar-search-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Search conversations">
+          <button id="sidebar-search-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Search conversations" data-sidebar-menu-ignore="true">
             <i class="bi bi-search" style="font-size: 0.9em;"></i>
           </button>
-          <button id="sidebar-conversations-settings-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Show/Hide hidden conversations">
+          <button id="sidebar-conversations-settings-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Show/Hide hidden conversations" data-sidebar-menu-ignore="true">
             <i class="bi bi-eye" style="font-size: 0.9em;"></i>
           </button>
           <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
@@ -807,21 +808,9 @@
           </button>
         </div>
       </div>
-      <div id="conversations-list-container" class="px-2">
+      <div id="conversations-list-container" class="px-2{% if not conversations_menu_expanded %} d-none{% endif %}" aria-hidden="{{ 'false' if conversations_menu_expanded else 'true' }}">
         <div id="sidebar-conversations-list" class="list-group list-group-flush">
           <div class="text-center p-2 text-muted small">Loading conversations...</div>
-        </div>
-        <div id="sidebar-workflow-section" class="sidebar-conversation-subsection d-none">
-          <div id="sidebar-workflows-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" role="button" tabindex="0" aria-controls="sidebar-workflow-list-container" aria-expanded="true">
-            <span class="nav-text">Workflows</span>
-            <i id="sidebar-workflows-caret" class="bi bi-caret-down-fill ms-2" style="font-size: 0.9em; transition: transform 0.2s;"></i>
-          </div>
-          <div id="sidebar-workflow-list-container" class="sidebar-workflow-list-container">
-            <div id="sidebar-workflow-conversations-list" class="list-group list-group-flush"></div>
-            <button id="sidebar-workflow-show-more-btn" class="btn btn-link btn-sm sidebar-workflow-show-more-btn d-none" type="button" aria-controls="sidebar-workflow-conversations-list" aria-expanded="false">
-              Show more
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -898,12 +887,12 @@
           <li><hr class="dropdown-divider"></li>
           {% if app_settings.enable_group_workspaces %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
+            <a class="dropdown-item" href="{{ url_for('profile', tab='groups') }}">My Groups</a>
           </li>
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
+            <a class="dropdown-item" href="{{ url_for('profile', tab='public-workspaces') }}">My Public Workspaces</a>
           </li>
           {% endif %}
           {% if app_settings.enable_user_feedback %}
@@ -962,62 +951,7 @@
       <a class="btn btn-outline-primary w-100" href="{{ url_for('login') }}">Login</a>
     {% endif %}
   </div>
-  <script>
-    // Collapsible Workspaces Section
-    document.addEventListener('DOMContentLoaded', function() {
-      var toggle = document.getElementById('workspaces-toggle');
-      var section = document.getElementById('workspaces-section');
-      var caret = document.getElementById('workspaces-caret');
-      var collapsed = false;
-      if (toggle && section && caret) {
-        toggle.addEventListener('click', function() {
-          collapsed = !collapsed;
-          section.style.display = collapsed ? 'none' : '';
-          caret.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-      }
-
-      // Collapsible Conversations Section (for chats page)
-      var conversationsToggle = document.getElementById('conversations-toggle');
-      var conversationsContainer = document.getElementById('conversations-list-container');
-      var conversationsCaret = document.getElementById('conversations-caret');
-      var conversationsCollapsed = false;
-      if (conversationsToggle && conversationsContainer && conversationsCaret) {
-        conversationsToggle.addEventListener('click', function() {
-          conversationsCollapsed = !conversationsCollapsed;
-          conversationsContainer.style.display = conversationsCollapsed ? 'none' : '';
-          conversationsCaret.style.transform = conversationsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-      }
-
-      // Collapsible External Links Section
-      var externalLinksToggle = document.getElementById('external-links-toggle');
-      var externalLinksSection = document.getElementById('external-links-section');
-      var externalLinksCaret = document.getElementById('external-links-caret');
-      var externalLinksCollapsed = false;
-      if (externalLinksToggle && externalLinksSection && externalLinksCaret) {
-        externalLinksToggle.addEventListener('click', function() {
-          externalLinksCollapsed = !externalLinksCollapsed;
-          externalLinksSection.style.display = externalLinksCollapsed ? 'none' : '';
-          externalLinksCaret.style.transform = externalLinksCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-      }
-
-      // Collapsible Support Menu Section
-      var supportMenuToggle = document.getElementById('support-menu-toggle');
-      var supportMenuSection = document.getElementById('support-menu-links-section');
-      var supportMenuCaret = document.getElementById('support-menu-caret');
-      var supportMenuCollapsed = false;
-      if (supportMenuToggle && supportMenuSection && supportMenuCaret) {
-        supportMenuToggle.addEventListener('click', function() {
-          supportMenuCollapsed = !supportMenuCollapsed;
-          supportMenuSection.style.display = supportMenuCollapsed ? 'none' : '';
-          supportMenuCaret.style.transform = supportMenuCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-      }
-    });
-
-  </script>
+  <script type="application/json" id="sidebar-menu-state-data">{{ sidebar_menu_state | tojson }}</script>
 </div>
 <!-- Floating expand button (shown when sidebar is collapsed) -->
 <button type="button" id="floating-expand-btn" class="btn btn-sm btn-outline-secondary d-none"

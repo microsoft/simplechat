@@ -1,11 +1,11 @@
 // chat-messages.js
-import { parseCitations } from "./chat-citations.js";
+import { parseCitations, showCitedTextPopup } from "./chat-citations.js";
 import { renderFeedbackIcons } from "./chat-feedback.js";
 import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -54,22 +54,27 @@ const documentComparisonSourceDropzone = document.getElementById('document-compa
 const documentComparisonLeftSelect = document.getElementById('document-comparison-left-select');
 const documentComparisonSelectionSummary = document.getElementById('document-comparison-selection-summary');
 const documentComparisonSelectionList = document.getElementById('document-comparison-selection-list');
+const documentComparisonPickerPanel = document.getElementById('document-comparison-picker-panel');
+const documentComparisonPickerControls = document.getElementById('document-comparison-picker-controls');
+const documentComparisonPickerStatus = document.getElementById('document-comparison-picker-status');
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
 let comparisonSelectedDocumentIdsSnapshot = [];
 let comparisonDocumentSelectionOrder = [];
 let selectedComparisonTargetIds = [];
+const comparisonPickerPlacements = new Map();
+const COMPARISON_PICKER_FIELD_NAMES = ['scope', 'tags', 'document'];
 const DOCUMENT_ACTION_NONE = 'none';
-const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = 'exhaustive_review';
+const DOCUMENT_ACTION_ANALYZE = 'analyze';
 const DOCUMENT_ACTION_COMPARISON = 'comparison';
 const DOCUMENT_ACTION_DESCRIPTIONS = {
   [DOCUMENT_ACTION_NONE]: 'Find relevant information in the selected documents.',
-  [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: 'Perform an in-depth analysis across all selected documents based on your request.',
+  [DOCUMENT_ACTION_ANALYZE]: 'Perform an in-depth analysis across all selected documents based on your request.',
   [DOCUMENT_ACTION_COMPARISON]: 'Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact.',
 };
 const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
-  [DOCUMENT_ACTION_EXHAUSTIVE_REVIEW]: {
+  [DOCUMENT_ACTION_ANALYZE]: {
     enabled: true,
     chat_max_documents: 3,
     workflow_max_documents: 10,
@@ -113,8 +118,8 @@ function getDocumentActionLabel(actionType) {
   if (actionType === DOCUMENT_ACTION_COMPARISON) {
     return 'compare';
   }
-  if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
-    return 'review';
+  if (actionType === DOCUMENT_ACTION_ANALYZE) {
+    return 'analyze';
   }
   return 'search';
 }
@@ -391,6 +396,97 @@ function buildComparisonEmptyState(messageText) {
   return `<div class="h-100 d-flex align-items-center justify-content-center text-center text-muted small px-3">${escapeHtml(messageText)}</div>`;
 }
 
+function getComparisonPickerField(fieldName) {
+  return document.querySelector(`[data-chat-document-picker-field="${fieldName}"]`);
+}
+
+function setComparisonPickerStatus(statusText, statusClass = 'text-bg-light') {
+  if (!documentComparisonPickerStatus) {
+    return;
+  }
+
+  documentComparisonPickerStatus.textContent = statusText;
+  documentComparisonPickerStatus.className = `badge border text-body-secondary ${statusClass}`;
+}
+
+function mountComparisonDocumentPickerControls() {
+  if (!documentComparisonPickerPanel || !documentComparisonPickerControls) {
+    return false;
+  }
+
+  const fields = COMPARISON_PICKER_FIELD_NAMES
+    .map(fieldName => ({ fieldName, element: getComparisonPickerField(fieldName) }))
+    .filter(field => field.element);
+
+  if (!fields.length) {
+    documentComparisonPickerPanel.classList.add('d-none');
+    return false;
+  }
+
+  fields.forEach(({ fieldName, element }) => {
+    if (!comparisonPickerPlacements.has(fieldName)) {
+      const placeholder = document.createComment(`document-comparison-picker-${fieldName}`);
+      element.parentNode?.insertBefore(placeholder, element);
+      comparisonPickerPlacements.set(fieldName, { placeholder });
+    }
+
+    element.classList.add('document-comparison-picker-field');
+    documentComparisonPickerControls.appendChild(element);
+  });
+
+  documentComparisonPickerPanel.classList.remove('d-none');
+  return true;
+}
+
+function restoreComparisonDocumentPickerControls() {
+  COMPARISON_PICKER_FIELD_NAMES.forEach(fieldName => {
+    const placement = comparisonPickerPlacements.get(fieldName);
+    const element = getComparisonPickerField(fieldName);
+
+    if (!placement?.placeholder || !element) {
+      return;
+    }
+
+    element.classList.remove('document-comparison-picker-field');
+    placement.placeholder.parentNode?.insertBefore(element, placement.placeholder);
+    placement.placeholder.remove();
+    comparisonPickerPlacements.delete(fieldName);
+  });
+}
+
+function refreshComparisonPickerDropdownLayouts() {
+  if (typeof bootstrap === 'undefined' || !bootstrap.Dropdown) {
+    return;
+  }
+
+  ['scope-dropdown-button', 'tags-dropdown-button', 'document-dropdown-button'].forEach(buttonId => {
+    const button = document.getElementById(buttonId);
+    if (!button) {
+      return;
+    }
+
+    bootstrap.Dropdown.getInstance(button)?.update();
+  });
+}
+
+function prepareComparisonModalPicker() {
+  if (!mountComparisonDocumentPickerControls()) {
+    return;
+  }
+
+  setComparisonPickerStatus('Loading', 'text-bg-light');
+  ensureDocumentPickerReady({ reload: false })
+    .then(() => {
+      setComparisonPickerStatus('Current filters', 'text-bg-light');
+      refreshComparisonPickerDropdownLayouts();
+      return updateDocumentActionControls();
+    })
+    .catch(error => {
+      console.error('Failed to prepare comparison document picker:', error);
+      setComparisonPickerStatus('Unavailable', 'text-bg-warning');
+    });
+}
+
 function truncateComparisonSummaryLabel(label, maxLength = 28) {
   const normalizedLabel = String(label || '').trim();
   if (normalizedLabel.length <= maxLength) {
@@ -527,7 +623,7 @@ function renderComparisonAvailableList() {
 
   if (!candidateGroups.length) {
     documentComparisonAvailableList.innerHTML = buildComparisonEmptyState(
-      'Select workspace documents or upload files to this chat to start building a comparison.'
+      'No workspace documents or chat uploads selected yet.'
     );
     return;
   }
@@ -837,6 +933,19 @@ documentActionSelect?.addEventListener('change', () => {
     console.error('Failed to update document action controls:', error);
   });
 });
+
+documentComparisonModalEl?.addEventListener('show.bs.modal', () => {
+  prepareComparisonModalPicker();
+});
+
+documentComparisonModalEl?.addEventListener('shown.bs.modal', () => {
+  refreshComparisonPickerDropdownLayouts();
+});
+
+documentComparisonModalEl?.addEventListener('hidden.bs.modal', () => {
+  restoreComparisonDocumentPickerControls();
+});
+
 documentComparisonBoard?.addEventListener('click', event => {
   const sourceButton = event.target.closest('[data-comparison-set-source-id]');
   if (sourceButton) {
@@ -1275,6 +1384,21 @@ function resolveMessageConversationId(fullMessageObject = null) {
   return '';
 }
 
+function resolveHybridCitationId(cite, index) {
+  const directCitationId = String(cite?.citation_id || '').trim();
+  if (directCitationId) {
+    return directCitationId;
+  }
+
+  const documentId = String(cite?.document_id || '').trim();
+  const chunkLocator = String(cite?.chunk_id || cite?.page_number || index).trim();
+  if (documentId && chunkLocator) {
+    return `${documentId}_${chunkLocator}`;
+  }
+
+  return `${cite?.chunk_id || ''}_${cite?.page_number || index}`;
+}
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
@@ -1288,8 +1412,7 @@ function createCitationsHtml(
   if (hybridCitations && hybridCitations.length > 0) {
     hasCitations = true;
     hybridCitations.forEach((cite, index) => {
-      const citationId =
-        cite.citation_id || `${cite.chunk_id}_${cite.page_number || index}`; // Fallback ID
+      const citationId = resolveHybridCitationId(cite, index);
       const fileName = cite.file_name || 'Document';
       const documentId = cite.document_id || '';
       const locationLabel = cite.location_label || (cite.sheet_name ? 'Sheet' : 'Page');
@@ -1311,6 +1434,12 @@ function createCitationsHtml(
       const documentIdAttribute = documentId
         ? `data-document-id="${escapeHtml(documentId)}"`
         : '';
+      const chunkIdAttribute = cite.chunk_id !== undefined && cite.chunk_id !== null
+        ? `data-chunk-id="${escapeHtml(String(cite.chunk_id))}"`
+        : '';
+      const pageNumberAttribute = cite.page_number !== undefined && cite.page_number !== null
+        ? `data-page-number="${escapeHtml(String(cite.page_number))}"`
+        : '';
       const fileNameAttribute = `data-file-name="${escapeHtml(fileName)}"`;
 
       if (isMetadata && documentId) {
@@ -1322,6 +1451,8 @@ function createCitationsHtml(
                  ${sheetNameAttribute}
                  ${enhancedTargetAttribute}
                  ${documentIdAttribute}
+                 ${chunkIdAttribute}
+                 ${pageNumberAttribute}
                  ${fileNameAttribute}
                  data-is-metadata="false"
                  title="Open source document: ${escapeHtml(fileName)}">
@@ -1333,6 +1464,8 @@ function createCitationsHtml(
                  ${sheetNameAttribute}
                  ${enhancedTargetAttribute}
                  ${documentIdAttribute}
+                 ${chunkIdAttribute}
+                 ${pageNumberAttribute}
                  ${fileNameAttribute}
                  data-is-metadata="true"
                  data-metadata-type="${escapeHtml(metadataType)}"
@@ -1347,9 +1480,11 @@ function createCitationsHtml(
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
-                  ${sheetNameAttribute}
+                 ${sheetNameAttribute}
                  ${enhancedTargetAttribute}
                  ${documentIdAttribute}
+                 ${chunkIdAttribute}
+                 ${pageNumberAttribute}
                  ${fileNameAttribute}
                  data-is-metadata="${isMetadata}"
                  data-metadata-type="${escapeHtml(metadataType)}"
@@ -2239,12 +2374,38 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return tableWrapper;
   }
 
-  function formatGeneratedAnalysisPreviewBlock(previewBlock) {
+  function formatGeneratedAnalysisPreviewBlock(previewBlock, options = {}) {
+    const preserveWhitespace = options.preserveWhitespace !== false;
     previewBlock.className = 'generated-analysis-preview-block small bg-light border rounded p-2 mb-0 overflow-auto text-break';
-    previewBlock.style.whiteSpace = 'pre-wrap';
+    previewBlock.style.whiteSpace = preserveWhitespace ? 'pre-wrap' : 'normal';
     previewBlock.style.wordBreak = 'break-word';
     previewBlock.style.overflowWrap = 'anywhere';
     previewBlock.style.maxWidth = '100%';
+    return previewBlock;
+  }
+
+  function isGeneratedMarkdownArtifact(outputMetadata, outputFormat) {
+    const normalizedOutputFormat = String(outputFormat || outputMetadata?.output_format || '').trim().toLowerCase();
+    if (normalizedOutputFormat === 'md' || normalizedOutputFormat === 'markdown') {
+      return true;
+    }
+
+    const fileName = String(outputMetadata?.file_name || '').trim().toLowerCase();
+    return fileName.endsWith('.md') || fileName.endsWith('.markdown');
+  }
+
+  function buildGeneratedAnalysisMarkdownPreview(previewText) {
+    const previewBlock = formatGeneratedAnalysisPreviewBlock(document.createElement('div'), { preserveWhitespace: false });
+    previewBlock.classList.add('generated-analysis-markdown-preview');
+
+    const normalizedPreviewText = String(previewText || '').trim();
+    if (!normalizedPreviewText) {
+      return previewBlock;
+    }
+
+    const sanitizedHtml = DOMPurify.sanitize(marked.parse(normalizedPreviewText));
+    const linkedHtml = addTargetBlankToExternalLinks(sanitizedHtml);
+    previewBlock.innerHTML = DOMPurify.sanitize(linkedHtml);
     return previewBlock;
   }
 
@@ -2260,7 +2421,11 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return previewBlock;
   }
 
-  function buildGeneratedAnalysisPreviewText(previewText) {
+  function buildGeneratedAnalysisPreviewText(previewText, outputMetadata = null, outputFormat = '') {
+    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat)) {
+      return buildGeneratedAnalysisMarkdownPreview(previewText);
+    }
+
     const previewBlock = formatGeneratedAnalysisPreviewBlock(document.createElement('pre'));
     previewBlock.textContent = String(previewText || '').trim();
     return previewBlock;
@@ -2268,8 +2433,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
   function getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat) {
     const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
-    if (capability === 'exhaustive_review') {
-      return `Exhaustive Review ${outputFormat.toUpperCase()} artifact`;
+    if (capability === 'analyze') {
+      return `Analyze ${outputFormat.toUpperCase()} artifact`;
     }
     if (capability === 'comparison') {
       return `Comparison ${outputFormat.toUpperCase()} artifact`;
@@ -2278,17 +2443,24 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return `Generated ${outputFormat.toUpperCase()} export`;
   }
 
-  function triggerGeneratedTabularOutputDownload(outputMetadata) {
+  function buildGeneratedArtifactDownloadUrl(outputMetadata) {
     const normalizedDocId = String(outputMetadata?.document_id || '').trim();
     const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
     const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
 
-    let downloadHref = '';
     if (normalizedArtifactMessageId && normalizedConversationId) {
-      downloadHref = `/api/chat_artifacts/download?conversation_id=${encodeURIComponent(normalizedConversationId)}&message_id=${encodeURIComponent(normalizedArtifactMessageId)}`;
-    } else if (normalizedDocId) {
-      downloadHref = `/api/workspace_documents/download?doc_id=${encodeURIComponent(normalizedDocId)}`;
+      return `/api/chat_artifacts/download?conversation_id=${encodeURIComponent(normalizedConversationId)}&message_id=${encodeURIComponent(normalizedArtifactMessageId)}`;
     }
+
+    if (normalizedDocId) {
+      return `/api/workspace_documents/download?doc_id=${encodeURIComponent(normalizedDocId)}`;
+    }
+
+    return '';
+  }
+
+  function triggerGeneratedTabularOutputDownload(outputMetadata) {
+    const downloadHref = buildGeneratedArtifactDownloadUrl(outputMetadata);
 
     if (!downloadHref) {
       showToast('Generated export is missing download metadata.', 'warning');
@@ -2302,6 +2474,48 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     document.body.appendChild(downloadLink);
     downloadLink.click();
     downloadLink.remove();
+  }
+
+  async function viewGeneratedMarkdownArtifact(outputMetadata, viewButton) {
+    const downloadHref = buildGeneratedArtifactDownloadUrl(outputMetadata);
+    const fileName = String(outputMetadata?.file_name || 'generated-artifact.md').trim() || 'generated-artifact.md';
+
+    if (!downloadHref) {
+      showToast('Generated Markdown artifact is missing view metadata.', 'warning');
+      return;
+    }
+
+    const originalButtonText = viewButton?.textContent || 'View MD';
+    if (viewButton) {
+      viewButton.disabled = true;
+      viewButton.textContent = 'Opening...';
+    }
+
+    try {
+      const response = await fetch(downloadHref, {
+        method: 'GET',
+        headers: {
+          'Accept': 'text/markdown, text/plain, */*',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server responded with status ${response.status}`);
+      }
+
+      const markdownContent = await response.text();
+      showCitedTextPopup(markdownContent, fileName, 'Markdown', {
+        renderMarkdown: true,
+        title: `Markdown artifact: ${fileName}`,
+      });
+    } catch (error) {
+      showToast(error.message || 'Could not open the generated Markdown artifact.', 'danger');
+    } finally {
+      if (viewButton) {
+        viewButton.disabled = false;
+        viewButton.textContent = originalButtonText;
+      }
+    }
   }
 
   function resolveGeneratedArtifactPromotionTarget() {
@@ -2442,7 +2656,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const previewRows = Array.isArray(outputMetadata?.preview_rows) ? outputMetadata.preview_rows : [];
     const previewItems = Array.isArray(outputMetadata?.preview_items) ? outputMetadata.preview_items : [];
     const previewLines = Array.isArray(outputMetadata?.preview_lines) ? outputMetadata.preview_lines : [];
-    const previewText = String(outputMetadata?.preview_text || '').trim();
+    const previewText = String(
+      outputMetadata?.preview_text || outputMetadata?.analysis_text || outputMetadata?.panalysis_text || ''
+    ).trim();
 
     const header = document.createElement('div');
     header.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2';
@@ -2506,9 +2722,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       } else if (previewItems.length) {
         previewContent = buildGeneratedTabularPreviewFallback(previewItems);
       } else if (previewLines.length) {
-        previewContent = buildGeneratedAnalysisPreviewText(previewLines.join('\n'));
+        previewContent = buildGeneratedAnalysisPreviewText(previewLines.join('\n'), outputMetadata, outputFormat);
       } else if (previewText) {
-        previewContent = buildGeneratedAnalysisPreviewText(previewText);
+        previewContent = buildGeneratedAnalysisPreviewText(previewText, outputMetadata, outputFormat);
       }
 
       card.appendChild(previewContent);
@@ -2525,6 +2741,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       triggerGeneratedTabularOutputDownload(outputMetadata);
     });
     actions.appendChild(downloadButton);
+
+    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat)) {
+      const viewButton = document.createElement('button');
+      viewButton.type = 'button';
+      viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-md-btn';
+      viewButton.textContent = 'View MD';
+      viewButton.addEventListener('click', () => {
+        viewGeneratedMarkdownArtifact(outputMetadata, viewButton);
+      });
+      actions.appendChild(viewButton);
+    }
 
     const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
     const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
@@ -3985,7 +4212,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     : [];
   const documentAction = {
     type: documentActionType,
-    document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW
+    document_ids: documentActionType === DOCUMENT_ACTION_ANALYZE
       ? selectedDocumentIds
       : comparisonTargetIds,
     left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : '',
@@ -4026,8 +4253,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     requestPayload.document_action = documentAction;
   }
 
-  if (documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
-    requestPayload.exhaustive_review = {
+  if (documentActionType === DOCUMENT_ACTION_ANALYZE) {
+    requestPayload.analyze = {
       enabled: true,
       document_ids: selectedDocumentIds,
       doc_scope: effectiveDocScope,
@@ -4162,8 +4389,8 @@ export function actuallySendMessage(finalMessageToSend) {
     ? (Array.isArray(messageData.document_action?.document_ids) ? messageData.document_action.document_ids.length : 0)
     : (Array.isArray(messageData.selected_document_ids) ? messageData.selected_document_ids.length : 0);
 
-  if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW && totalSelectedDocuments === 0) {
-    showToast('Select one or more documents before starting a review.', 'warning');
+  if (actionType === DOCUMENT_ACTION_ANALYZE && totalSelectedDocuments === 0) {
+    showToast('Select one or more documents before starting analysis.', 'warning');
     return;
   }
   if (actionType === DOCUMENT_ACTION_COMPARISON && totalSelectedDocuments < 2) {

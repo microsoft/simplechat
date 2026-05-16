@@ -14,6 +14,12 @@ from azure.core import MatchConditions
 
 from config import cosmos_settings_container, exceptions
 from functions_appinsights import log_event
+from functions_control_center import (
+    calculate_next_control_center_auto_refresh_run,
+    execute_control_center_refresh,
+    get_control_center_auto_refresh_schedule,
+    parse_control_center_auto_refresh_datetime,
+)
 from functions_debug import debug_print
 from functions_personal_workflows import (
     compute_next_run_at,
@@ -274,6 +280,59 @@ def check_retention_policy_once():
     return results
 
 
+def _seed_control_center_auto_refresh_next_run(settings, current_time):
+    """Persist the next Control Center auto-refresh run when schedule fields are missing."""
+    schedule = get_control_center_auto_refresh_schedule(settings)
+    next_run = calculate_next_control_center_auto_refresh_run(settings, current_time=current_time)
+    update_settings({
+        'control_center_auto_refresh_enabled': settings.get('control_center_auto_refresh_enabled', True),
+        'control_center_auto_refresh_time': schedule['time'],
+        'control_center_auto_refresh_hour': schedule['hour'],
+        'control_center_auto_refresh_minute': schedule['minute'],
+        'control_center_auto_refresh_next_run': next_run.isoformat(),
+    })
+    return next_run
+
+
+def check_control_center_auto_refresh_once():
+    """Run the scheduled Control Center refresh when its daily UTC schedule is due."""
+    settings = get_settings()
+    if not settings.get('control_center_auto_refresh_enabled', True):
+        return None
+
+    current_time = datetime.now(timezone.utc)
+    next_run = parse_control_center_auto_refresh_datetime(settings.get('control_center_auto_refresh_next_run'))
+    if not next_run:
+        _seed_control_center_auto_refresh_next_run(settings, current_time)
+        return None
+
+    if current_time < next_run:
+        return None
+
+    lock_document = acquire_distributed_task_lock('control_center_auto_refresh', lease_seconds=7200)
+    if not lock_document:
+        debug_print('Skipping Control Center auto-refresh because another worker holds the lease.')
+        return None
+
+    try:
+        settings = get_settings()
+        if not settings.get('control_center_auto_refresh_enabled', True):
+            return None
+
+        current_time = datetime.now(timezone.utc)
+        next_run = parse_control_center_auto_refresh_datetime(settings.get('control_center_auto_refresh_next_run'))
+        if not next_run:
+            _seed_control_center_auto_refresh_next_run(settings, current_time)
+            return None
+        if current_time < next_run:
+            return None
+
+        print(f"Executing scheduled Control Center auto-refresh at {current_time.isoformat()}")
+        return execute_control_center_refresh(manual_execution=False)
+    finally:
+        release_distributed_task_lock(lock_document)
+
+
 def run_logging_timer_loop():
     """Run the logging timer monitor forever."""
     while True:
@@ -306,6 +365,18 @@ def run_retention_policy_loop():
         except Exception as exc:
             print(f"Error in retention policy check: {exc}")
             log_event(f"Error in retention policy check: {exc}", level=logging.ERROR)
+
+        time.sleep(300)
+
+
+def run_control_center_auto_refresh_loop():
+    """Run Control Center auto-refresh scheduling checks forever."""
+    while True:
+        try:
+            check_control_center_auto_refresh_once()
+        except Exception as exc:
+            print(f"Error in Control Center auto-refresh check: {exc}")
+            log_event(f"Error in Control Center auto-refresh check: {exc}", level=logging.ERROR)
 
         time.sleep(300)
 
@@ -412,6 +483,7 @@ def start_background_task_threads():
         ('Logging timer background task started.', run_logging_timer_loop),
         ('Approval expiration background task started.', run_approval_expiration_loop),
         ('Retention policy background task started.', run_retention_policy_loop),
+        ('Control Center auto-refresh background task started.', run_control_center_auto_refresh_loop),
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
     ]
 

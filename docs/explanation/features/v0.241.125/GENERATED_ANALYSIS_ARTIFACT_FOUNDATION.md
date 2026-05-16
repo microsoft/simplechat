@@ -31,9 +31,9 @@ Implemented phases
   - Added generic artifact UI hydration and preview rendering
   - Added configurable size cap support through `max_generated_chat_artifact_size_mb`
 
-- **Phase 2**: Exhaustive review artifacts
-  - Exhaustive review now creates a chat artifact from the final review output when the result is explicitly requested as an artifact, is already structured JSON, or is large enough to justify a downloadable file.
-  - The assistant reply is shortened to a narrative summary when an exhaustive review artifact is created.
+- **Phase 2**: Document analysis artifacts
+  - Document analysis now creates a chat artifact from the final analysis output when the result is explicitly requested as an artifact, is already structured JSON, or is large enough to justify a downloadable file.
+  - The assistant reply is shortened to a narrative summary when an analysis artifact is created.
 
 - **Phase 3**: Comparison artifacts
   - Document comparison now creates a chat artifact from the final comparison output under the same artifact-trigger rules.
@@ -49,14 +49,14 @@ Usage Instructions
 
 User workflow
 
-- Ask for a large tabular export, exhaustive review, or document comparison.
+- Ask for a large tabular export, analysis, or document comparison.
 - When the response is structured or large enough, the assistant stores the full result as a hidden chat artifact.
 - The assistant renders a short summary plus a preview card with a download button.
 - The full artifact downloads through `/api/chat_artifacts/download` after conversation ownership checks.
 
 Artifact metadata
 
-- `capability`: `tabular`, `exhaustive_review`, or `comparison`
+- `capability`: `tabular`, `analyze`, or `comparison`
 - `artifact_message_id`: hidden chat file message id
 - `conversation_id`: owning chat id
 - `storage_scope`: currently `chat`
@@ -68,14 +68,14 @@ Testing and Validation
 Functional coverage
 
 - `functional_tests/test_tabular_generated_output_exports.py`
-- `functional_tests/test_exhaustive_review_generated_artifacts.py`
+- `functional_tests/test_document_analysis_generated_artifacts.py`
 - `functional_tests/test_document_comparison_generated_artifacts.py`
 
 Validation performed
 
 - Python compile checks for the touched backend files
 - JavaScript parse check for `chat-messages.js`
-- Focused functional regressions for tabular, exhaustive review, and comparison artifact plumbing
+- Focused functional regressions for tabular, analysis, and comparison artifact plumbing
 
 Known limitations
 

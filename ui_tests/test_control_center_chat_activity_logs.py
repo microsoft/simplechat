@@ -58,7 +58,7 @@ def test_control_center_chat_activity_logs_surface_filter_and_details(playwright
                         "workspace_type": "personal",
                         "additional_context": {
                             "conversation_source": "document_action_chat",
-                            "document_action_type": "exhaustive_review"
+                            "document_action_type": "analyze"
                         }
                     }
                 ],
@@ -88,7 +88,7 @@ def test_control_center_chat_activity_logs_surface_filter_and_details(playwright
 
         expect(page.locator("#activityTypeFilterSelect option[value='chat_activity']")).to_be_attached()
         expect(page.locator("#activityLogsTableBody")).to_contain_text("Chat Activity")
-        expect(page.locator("#activityLogsTableBody")).to_contain_text("Exhaustive Review")
+        expect(page.locator("#activityLogsTableBody")).to_contain_text("Analyze")
         expect(page.locator("#activityLogsTableBody")).to_contain_text("Conversation: conversation-123")
 
         with page.expect_response(lambda response: "/api/admin/control-center/activity-logs?" in response.url):

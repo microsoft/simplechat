@@ -1,6 +1,8 @@
 {# Sidebar Navigation Partial - Short version without brand/logo #}
 {% set sidebar_toggle_style = user_settings.get('settings', {}).get('sidebarToggleStyle', 'large') %}
 {% set sidebar_toggle_compact = sidebar_toggle_style == 'compact' %}
+{% set sidebar_menu_state_raw = user_settings.get('settings', {}).get('sidebarMenuState', {}) %}
+{% set sidebar_menu_state = sidebar_menu_state_raw if sidebar_menu_state_raw is mapping else {} %}
 <div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded chat-sidebar-nav offcanvas-lg offcanvas-start" tabindex="-1" aria-labelledby="chatSidebarDrawerLabel" data-navigation-drawer="chat-rail">
 
   <div class="offcanvas-header chat-sidebar-mobile-header">
@@ -102,12 +104,13 @@
     {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
     {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
     {% if show_support_latest_features or show_support_send_feedback %}
+    {% set support_menu_expanded = sidebar_menu_state.get('support', true) %}
     <div class="overflow-auto">
-      <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+      <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="support-menu-links-section" aria-expanded="{{ 'true' if support_menu_expanded else 'false' }}" data-sidebar-menu-key="support" data-sidebar-menu-target="support-menu-links-section" data-sidebar-menu-caret="support-menu-caret">
         <span class="nav-text">{{ app_settings.support_menu_name or 'Support' }}</span>
-        <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not support_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
       </div>
-      <div id="support-menu-links-section">
+      <div id="support-menu-links-section"{% if not support_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if support_menu_expanded else 'true' }}">
         <ul class="nav flex-column mb-2">
           {% if show_support_latest_features %}
           <li class="nav-item">
@@ -134,17 +137,18 @@
 
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'chats' %}
+    {% set conversations_menu_expanded = sidebar_menu_state.get('conversations', true) %}
     <div id="conversations-section" class="flex-grow-1 overflow-auto">
-      <div id="conversations-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+      <div id="conversations-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="conversations-list-container" aria-expanded="{{ 'true' if conversations_menu_expanded else 'false' }}" data-sidebar-menu-key="conversations" data-sidebar-menu-target="conversations-list-container" data-sidebar-menu-caret="conversations-caret">
         <div class="d-flex align-items-center">
           <span class="nav-text">Conversations</span>
-          <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+          <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not conversations_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
         </div>
         <div class="d-flex align-items-center">
-          <button id="sidebar-search-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Search conversations">
+          <button id="sidebar-search-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Search conversations" data-sidebar-menu-ignore="true">
             <i class="bi bi-search" style="font-size: 0.9em;"></i>
           </button>
-          <button id="sidebar-conversations-settings-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Show/Hide hidden conversations">
+          <button id="sidebar-conversations-settings-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Show/Hide hidden conversations" data-sidebar-menu-ignore="true">
             <i class="bi bi-eye" style="font-size: 0.9em;"></i>
           </button>
           <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
@@ -175,21 +179,9 @@
           </button>
         </div>
       </div>
-      <div id="conversations-list-container" class="px-2">
+      <div id="conversations-list-container" class="px-2{% if not conversations_menu_expanded %} d-none{% endif %}" aria-hidden="{{ 'false' if conversations_menu_expanded else 'true' }}">
         <div id="sidebar-conversations-list" class="list-group list-group-flush">
           <div class="text-center p-2 text-muted small">Loading conversations...</div>
-        </div>
-        <div id="sidebar-workflow-section" class="sidebar-conversation-subsection d-none">
-          <div id="sidebar-workflows-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" role="button" tabindex="0" aria-controls="sidebar-workflow-list-container" aria-expanded="true">
-            <span class="nav-text">Workflows</span>
-            <i id="sidebar-workflows-caret" class="bi bi-caret-down-fill ms-2" style="font-size: 0.9em; transition: transform 0.2s;"></i>
-          </div>
-          <div id="sidebar-workflow-list-container" class="sidebar-workflow-list-container">
-            <div id="sidebar-workflow-conversations-list" class="list-group list-group-flush"></div>
-            <button id="sidebar-workflow-show-more-btn" class="btn btn-link btn-sm sidebar-workflow-show-more-btn d-none" type="button" aria-controls="sidebar-workflow-conversations-list" aria-expanded="false">
-              Show more
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -244,12 +236,12 @@
           <li><hr class="dropdown-divider"></li>
           {% if app_settings.enable_group_workspaces %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
+            <a class="dropdown-item" href="{{ url_for('profile', tab='groups') }}">My Groups</a>
           </li>
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
+            <a class="dropdown-item" href="{{ url_for('profile', tab='public-workspaces') }}">My Public Workspaces</a>
           </li>
           {% endif %}
           {% if app_settings.enable_user_feedback %}
@@ -297,33 +289,5 @@
       <a class="btn btn-outline-primary w-100" href="{{ url_for('login') }}">Login</a>
     {% endif %}
   </div>
-  <script>
-    // Collapsible Conversations Section (for chats page)
-    document.addEventListener('DOMContentLoaded', function() {
-      var supportMenuToggle = document.getElementById('support-menu-toggle');
-      var supportMenuSection = document.getElementById('support-menu-links-section');
-      var supportMenuCaret = document.getElementById('support-menu-caret');
-      var supportMenuCollapsed = false;
-      if (supportMenuToggle && supportMenuSection && supportMenuCaret) {
-        supportMenuToggle.addEventListener('click', function() {
-          supportMenuCollapsed = !supportMenuCollapsed;
-          supportMenuSection.style.display = supportMenuCollapsed ? 'none' : '';
-          supportMenuCaret.style.transform = supportMenuCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-      }
-
-      var conversationsToggle = document.getElementById('conversations-toggle');
-      var conversationsContainer = document.getElementById('conversations-list-container');
-      var conversationsCaret = document.getElementById('conversations-caret');
-      var conversationsCollapsed = false;
-      if (conversationsToggle && conversationsContainer && conversationsCaret) {
-        conversationsToggle.addEventListener('click', function() {
-          conversationsCollapsed = !conversationsCollapsed;
-          conversationsContainer.style.display = conversationsCollapsed ? 'none' : '';
-          conversationsCaret.style.transform = conversationsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-      }
-    });
-
-  </script>
+  <script type="application/json" id="sidebar-menu-state-data">{{ sidebar_menu_state | tojson }}</script>
 </div>

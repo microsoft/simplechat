@@ -6,9 +6,9 @@ import logging
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_document_actions import DOCUMENT_ACTION_TYPE_COMPARISON
-from functions_exhaustive_document_review import (
-    build_document_review_progress_snapshot,
-    run_exhaustive_document_review,
+from functions_document_analysis import (
+    build_document_analysis_progress_snapshot,
+    run_document_analysis,
 )
 
 
@@ -168,7 +168,7 @@ def _build_document_summary_prompt(comparison_prompt, role_label, document_name)
 
 def _build_pairwise_comparison_prompt(comparison_prompt, left_name, right_name, left_summary, right_summary):
     return (
-        'You are comparing two documents that were summarized from exhaustive review. '
+        'You are comparing two documents that were summarized from analysis. '
         'Treat the left document as the primary baseline and compare the right document against it.\n\n'
         f'Comparison request:\n{comparison_prompt}\n\n'
         f'Left document: {left_name}\n'
@@ -324,12 +324,12 @@ def run_document_comparison(
             if callable(activity_callback):
                 forwarded_event = dict(event or {})
                 forwarded_event['comparison_role'] = current_document_state.get('role_label')
-                forwarded_event['progress'] = build_document_review_progress_snapshot(coverage)
+                forwarded_event['progress'] = build_document_analysis_progress_snapshot(coverage)
                 activity_callback(forwarded_event)
 
-        summary_result = run_exhaustive_document_review(
+        summary_result = run_document_analysis(
             user_id=user_id,
-            review_prompt=_build_document_summary_prompt(
+            analysis_prompt=_build_document_summary_prompt(
                 normalized_prompt,
                 role_label,
                 document_state.get('document_name'),
@@ -398,7 +398,7 @@ def run_document_comparison(
                 'right_document_name': right_document_name,
                 'comparison_index': comparison_index,
                 'comparison_count': len(right_document_ids),
-                'progress': build_document_review_progress_snapshot(coverage),
+                'progress': build_document_analysis_progress_snapshot(coverage),
             })
 
         pairwise_text = str(invoke_prompt(
@@ -460,7 +460,7 @@ def run_document_comparison(
                 'right_document_name': right_document_name,
                 'comparison_index': comparison_index,
                 'comparison_count': len(right_document_ids),
-                'progress': build_document_review_progress_snapshot(coverage),
+                'progress': build_document_analysis_progress_snapshot(coverage),
             })
 
     if len(comparison_items) == 1:
@@ -487,7 +487,7 @@ def run_document_comparison(
                 'left_document_id': left_document_id,
                 'left_document_name': left_document_name,
                 'comparison_count': len(comparison_items),
-                'progress': build_document_review_progress_snapshot(coverage),
+                'progress': build_document_analysis_progress_snapshot(coverage),
             })
         final_reply = str(invoke_prompt(
             _build_comparison_reduction_prompt(
@@ -537,7 +537,7 @@ def run_document_comparison(
             'left_document_id': left_document_id,
             'left_document_name': left_document_name,
             'comparison_count': len(comparison_items),
-            'progress': build_document_review_progress_snapshot(coverage),
+            'progress': build_document_analysis_progress_snapshot(coverage),
         })
 
     log_event(

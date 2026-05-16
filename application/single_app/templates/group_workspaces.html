@@ -3034,7 +3034,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       .getElementById("btn-my-groups")
       .addEventListener(
         "click",
-        () => (window.location.href = "{{ url_for('my_groups') }}")
+        () => (window.location.href = "{{ url_for('profile', tab='groups') }}")
       );
     // --- Event Listeners (Group Documents Tab) ---
     if (groupUploadBtn)

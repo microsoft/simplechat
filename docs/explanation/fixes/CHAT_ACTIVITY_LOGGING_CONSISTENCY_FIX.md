@@ -7,7 +7,7 @@ Fixed/Implemented in version: **0.241.102**
 Chat activity logging was inconsistent across message flows that should be tracked the same way for reporting and downstream UI surfaces.
 
 - Standard chat messages emitted `chat_activity` telemetry but did not create a matching record in the `activity_logs` Cosmos container.
-- Document review and compare requests saved the user message but skipped the shared chat activity logger entirely.
+- Document analysis and compare requests saved the user message but skipped the shared chat activity logger entirely.
 - Multi-user collaboration messages saved successfully but did not emit the shared chat activity event used by the rest of chat.
 - Control Center Activity Logs did not expose `chat_activity` as a first-class filter or render document-action and collaboration rows with useful message context.
 
@@ -39,7 +39,7 @@ Code changes summary:
 
 - Updated `log_chat_activity(...)` to persist a `chat_activity` record to the `activity_logs` Cosmos container and keep emitting App Insights telemetry.
 - Added workspace and source context fields so standard chat, document-action chat, and collaboration chat records can be filtered consistently later.
-- Wired the document review/compare request path to call the shared chat activity helper immediately after the user message is saved.
+- Wired the document analysis/compare request path to call the shared chat activity helper immediately after the user message is saved.
 - Wired collaborative multi-user message persistence to call the same shared helper for saved user messages.
 - Extended the Control Center Activity Logs search path, filter dropdown, and row formatter so `chat_activity` records can be surfaced and identified as document-action or multi-user chat activity.
 - Kept existing personal SimpleChat message logging aligned with the expanded helper signature.
@@ -54,14 +54,14 @@ Testing approach:
 
 Before:
 
-- Review and compare user messages were not routed through the shared chat activity logger.
+- Analyze and compare user messages were not routed through the shared chat activity logger.
 - Multi-user collaboration user messages were not creating matching chat activity records.
 - Standard chat activity could not be surfaced from `activity_logs` because it only existed in telemetry.
 
 After:
 
 - Standard chat messages now create `chat_activity` records in `activity_logs` and continue emitting telemetry.
-- Review and compare messages now use the same shared logger right after the user message is persisted.
+- Analyze and compare messages now use the same shared logger right after the user message is persisted.
 - Collaboration user messages now use the same shared logger after collaborative persistence succeeds.
 - Control Center Activity Logs now exposes `chat_activity` directly and renders document-action or collaboration message context instead of generic `N/A` details.
 

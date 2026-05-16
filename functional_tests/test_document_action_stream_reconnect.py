@@ -2,10 +2,10 @@
 # test_document_action_stream_reconnect.py
 """
 Functional test for document action stream reconnect support.
-Version: 0.241.095
+Version: 0.241.023
 Implemented in: 0.241.090
 
-This test ensures exhaustive review and document comparison streaming
+This test ensures analysis and document comparison streaming
 requests register replayable chat stream sessions so reconnecting to an
 active conversation resumes progress updates after navigation.
 """
@@ -42,16 +42,16 @@ def test_document_action_stream_reconnect_wiring() -> None:
     document_action_stream_block = slice_between(
         route_content,
         "@app.route('/api/chat/document-action/stream', methods=['POST'])",
-        "@app.route('/api/chat/exhaustive-review', methods=['POST'])",
+        "@app.route('/api/chat/analyze', methods=['POST'])",
     )
-    exhaustive_review_stream_block = slice_between(
+    analyze_stream_block = slice_between(
         route_content,
-        "@app.route('/api/chat/exhaustive-review/stream', methods=['POST'])",
+        "@app.route('/api/chat/analyze/stream', methods=['POST'])",
         "@app.route('/api/chat', methods=['POST'])",
     )
 
-    assert 'VERSION = "0.241.095"' in config_content, (
-        "Expected config.py version 0.241.095 for the document action reconnect fix."
+    assert 'VERSION = "0.241.023"' in config_content, (
+        "Expected config.py version 0.241.023 for the document action reconnect fix."
     )
     assert "@app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream status endpoint to exist for reconnect support."
@@ -70,14 +70,14 @@ def test_document_action_stream_reconnect_wiring() -> None:
         "Expected the document action streaming route to publish events through the reconnectable stream session."
     )
 
-    assert "user_id = get_current_user_id()" in exhaustive_review_stream_block, (
-        "Expected the exhaustive review streaming route to resolve the current user before creating a reconnectable stream session."
+    assert "user_id = get_current_user_id()" in analyze_stream_block, (
+        "Expected the analysis streaming route to resolve the current user before creating a reconnectable stream session."
     )
-    assert "stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)" in exhaustive_review_stream_block, (
-        "Expected the exhaustive review streaming route to register a replayable stream session."
+    assert "stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)" in analyze_stream_block, (
+        "Expected the analysis streaming route to register a replayable stream session."
     )
-    assert "return build_background_stream_response(generate_exhaustive_review_response, stream_session=stream_session)" in exhaustive_review_stream_block, (
-        "Expected the exhaustive review streaming route to publish events through the reconnectable stream session."
+    assert "return build_background_stream_response(generate_analyze_response, stream_session=stream_session)" in analyze_stream_block, (
+        "Expected the analysis streaming route to publish events through the reconnectable stream session."
     )
 
     print("✅ Document action stream reconnect wiring verified")

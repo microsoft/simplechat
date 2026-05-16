@@ -5,6 +5,10 @@ from functions_documents import *
 from functions_authentication import *
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_control_center import (
+    calculate_next_control_center_auto_refresh_run,
+    get_control_center_auto_refresh_schedule,
+)
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
@@ -119,6 +123,12 @@ def register_route_frontend_admin_settings(app):
             settings['require_member_of_control_center_admin'] = False
         if 'require_member_of_feedback_admin' not in settings:
             settings['require_member_of_feedback_admin'] = False
+        if 'control_center_auto_refresh_enabled' not in settings:
+            settings['control_center_auto_refresh_enabled'] = True
+        control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
+        settings['control_center_auto_refresh_time'] = control_center_auto_refresh_schedule['time']
+        settings['control_center_auto_refresh_hour'] = control_center_auto_refresh_schedule['hour']
+        settings['control_center_auto_refresh_minute'] = control_center_auto_refresh_schedule['minute']
         # --- End NEW Default Checks ---
 
         # Ensure classification fields exist with defaults if missing in DB
@@ -513,6 +523,38 @@ def register_route_frontend_admin_settings(app):
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
 
+            control_center_auto_refresh_enabled = form_data.get('control_center_auto_refresh_enabled') == 'on'
+            incoming_control_center_auto_refresh_time = form_data.get(
+                'control_center_auto_refresh_time',
+                settings.get('control_center_auto_refresh_time', '06:00')
+            )
+            control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule({
+                'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
+                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 6),
+                'control_center_auto_refresh_minute': settings.get('control_center_auto_refresh_minute', 0),
+            })
+            existing_control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
+            existing_control_center_auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
+            existing_control_center_auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
+            control_center_auto_refresh_schedule_changed = (
+                control_center_auto_refresh_enabled != existing_control_center_auto_refresh_enabled or
+                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time']
+            )
+            if control_center_auto_refresh_enabled:
+                if control_center_auto_refresh_schedule_changed or not existing_control_center_auto_refresh_next_run:
+                    control_center_auto_refresh_next_run = calculate_next_control_center_auto_refresh_run(
+                        {
+                            'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
+                            'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
+                            'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                        },
+                        current_time=datetime.now(timezone.utc),
+                    ).isoformat()
+                else:
+                    control_center_auto_refresh_next_run = existing_control_center_auto_refresh_next_run
+            else:
+                control_center_auto_refresh_next_run = None
+
             web_search_consent_message = (
                 "When you use Grounding with Bing Search, your customer data is transferred "
                 "outside of the Azure compliance boundary to the Grounding with Bing Search service. "
@@ -636,18 +678,18 @@ def register_route_frontend_admin_settings(app):
             current_document_action_capabilities = normalize_document_action_capabilities(settings)
             document_action_capabilities = normalize_document_action_capabilities({
                 'document_action_capabilities': {
-                    'exhaustive_review': {
-                        'enabled': form_data.get('document_action_exhaustive_review_enabled') == 'on',
+                    'analyze': {
+                        'enabled': form_data.get('document_action_analyze_enabled') == 'on',
                         'chat_max_documents': parse_admin_int(
-                            form_data.get('document_action_exhaustive_review_chat_max_documents'),
-                            current_document_action_capabilities.get('exhaustive_review', {}).get('chat_max_documents', 3),
-                            'document_action_exhaustive_review_chat_max_documents',
+                            form_data.get('document_action_analyze_chat_max_documents'),
+                            current_document_action_capabilities.get('analyze', {}).get('chat_max_documents', 3),
+                            'document_action_analyze_chat_max_documents',
                             3,
                         ),
                         'workflow_max_documents': parse_admin_int(
-                            form_data.get('document_action_exhaustive_review_workflow_max_documents'),
-                            current_document_action_capabilities.get('exhaustive_review', {}).get('workflow_max_documents', 10),
-                            'document_action_exhaustive_review_workflow_max_documents',
+                            form_data.get('document_action_analyze_workflow_max_documents'),
+                            current_document_action_capabilities.get('analyze', {}).get('workflow_max_documents', 10),
+                            'document_action_analyze_workflow_max_documents',
                             10,
                         ),
                     },
@@ -1447,7 +1489,12 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_text_color': classification_banner_text_color,
 
                 'require_member_of_control_center_admin': require_member_of_control_center_admin,
-                'require_member_of_control_center_dashboard_reader': require_member_of_control_center_dashboard_reader
+                'require_member_of_control_center_dashboard_reader': require_member_of_control_center_dashboard_reader,
+                'control_center_auto_refresh_enabled': control_center_auto_refresh_enabled,
+                'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
+                'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
+                'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                'control_center_auto_refresh_next_run': control_center_auto_refresh_next_run,
             }
             
             # --- Prevent Legacy Fields from Being Created/Updated ---

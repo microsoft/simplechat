@@ -1,5 +1,5 @@
-# functions_exhaustive_document_review.py
-"""Shared exhaustive document review services."""
+# functions_document_analysis.py
+"""Shared document analysis services."""
 
 import json
 import logging
@@ -15,8 +15,8 @@ DEFAULT_WINDOW_UNIT = 'pages'
 DEFAULT_MAX_RETRIES_PER_WINDOW = 1
 DEFAULT_REDUCTION_BATCH_SIZE = 5
 DEFAULT_MAX_REDUCTION_ROUNDS = 4
-CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 3
-WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10
+CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS = 3
+WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS = 10
 
 
 def _get_search_service_helpers():
@@ -116,7 +116,7 @@ def _set_progress_meta(
 
     progress_meta = {
         'phase': str(phase or '').strip().lower() or 'running',
-        'phase_label': str(phase_label or '').strip() or 'Running document review',
+        'phase_label': str(phase_label or '').strip() or 'Running document analysis',
         'phase_detail': str(phase_detail or '').strip() or None,
         'status': str(status or '').strip().lower() or 'running',
         'percent_override': None if percent_override is None else _normalize_progress_percent(percent_override),
@@ -266,11 +266,11 @@ def _build_progress_snapshot(coverage):
     }
 
 
-def build_document_review_progress_snapshot(coverage):
+def build_document_analysis_progress_snapshot(coverage):
     return _build_progress_snapshot(coverage)
 
 
-def normalize_exhaustive_review_targets(
+def normalize_document_analysis_targets(
     document_ids,
     doc_scope='all',
     active_group_ids=None,
@@ -283,10 +283,10 @@ def normalize_exhaustive_review_targets(
 ):
     normalized_document_ids = normalize_search_id_list(document_ids)
     if not normalized_document_ids:
-        raise ValueError('At least one document id is required for exhaustive review.')
+        raise ValueError('At least one document id is required for analysis.')
     if max_documents is not None and len(normalized_document_ids) > max_documents:
         raise ValueError(
-            f'Exhaustive review supports up to {max_documents} '
+            f'Document analysis supports up to {max_documents} '
             f"document{'s' if max_documents != 1 else ''} at a time."
         )
 
@@ -363,7 +363,7 @@ def _build_window_label(document_name, window_range):
     return f"{document_name} - window {window_range.get('window_number')} ({range_label})"
 
 
-def _build_window_review_prompt(review_prompt, document_payload, window_payload, window_range):
+def _build_window_analysis_prompt(analysis_prompt, document_payload, window_payload, window_range):
     document_file_name = _resolve_document_file_name(document_payload)
     document_title = _resolve_document_title(document_payload)
     document_name = _resolve_document_name(document_payload)
@@ -373,7 +373,7 @@ def _build_window_review_prompt(review_prompt, document_payload, window_payload,
         display_title_line = f'Display title: {document_title}\n'
 
     return (
-        'You are completing a deterministic document review. Review only the supplied document excerpt. '
+        'You are completing deterministic document analysis. Analyze only the supplied document excerpt. '
         'Do not assume that missing details appear elsewhere in the document. If the excerpt is insufficient '
         'for a conclusion, say so explicitly. When you need to name the source document in a table, '
         'summary, or citation, use the preferred source name below and do not substitute an internal GUID '\
@@ -386,15 +386,15 @@ def _build_window_review_prompt(review_prompt, document_payload, window_payload,
         f'Chunk count in slice: {window_range.get("chunk_count", 0)}\n'
         f'Page count in slice: {window_range.get("page_count", 0)}\n\n'
         'Task instructions:\n'
-        f'{review_prompt}\n\n'
-        'Write a focused review of this slice. Preserve concrete facts, decisions, comments, action items, '
+        f'{analysis_prompt}\n\n'
+        'Write a focused analysis of this slice. Preserve concrete facts, decisions, comments, action items, '
         'and open questions. Call out anything that still needs follow-up.\n\n'
         f'<DocumentSlice>\n{_render_window_source_text(window_payload)}\n</DocumentSlice>'
     )
 
 
-def _prompt_requests_per_source_output(review_prompt):
-    prompt_text = str(review_prompt or '').strip().lower()
+def _prompt_requests_per_source_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
     if not prompt_text:
         return False
 
@@ -415,8 +415,8 @@ def _prompt_requests_per_source_output(review_prompt):
     return any(marker in prompt_text for marker in source_output_markers)
 
 
-def _prompt_requests_json_array_output(review_prompt):
-    prompt_text = str(review_prompt or '').strip().lower()
+def _prompt_requests_json_array_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
     if not prompt_text:
         return False
 
@@ -440,8 +440,8 @@ def _prompt_requests_json_array_output(review_prompt):
     )
 
 
-def _prompt_requests_json_code_block(review_prompt):
-    prompt_text = str(review_prompt or '').strip().lower()
+def _prompt_requests_json_code_block(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
     if not prompt_text:
         return False
 
@@ -458,8 +458,8 @@ def _clean_json_code_fence(response_content):
     return cleaned.strip()
 
 
-def _try_parse_json_review_output(review_text):
-    cleaned = _clean_json_code_fence(review_text)
+def _try_parse_json_analysis_output(analysis_text):
+    cleaned = _clean_json_code_fence(analysis_text)
     if not cleaned:
         return None
 
@@ -482,7 +482,7 @@ def _try_parse_json_review_output(review_text):
     return None
 
 
-def _coerce_json_review_entries(parsed_value):
+def _coerce_json_analysis_entries(parsed_value):
     if isinstance(parsed_value, dict):
         return [parsed_value]
     if isinstance(parsed_value, list) and all(isinstance(item, dict) for item in parsed_value):
@@ -490,11 +490,11 @@ def _coerce_json_review_entries(parsed_value):
     return None
 
 
-def _merge_json_review_items(items, wrap_in_code_block=False):
+def _merge_json_analysis_items(items, wrap_in_code_block=False):
     combined_entries = []
     for item in items:
-        parsed_value = _try_parse_json_review_output(item.get('text', ''))
-        entries = _coerce_json_review_entries(parsed_value)
+        parsed_value = _try_parse_json_analysis_output(item.get('text', ''))
+        entries = _coerce_json_analysis_entries(parsed_value)
         if entries is None:
             return ''
         combined_entries.extend(entries)
@@ -508,7 +508,7 @@ def _merge_json_review_items(items, wrap_in_code_block=False):
     return json_text
 
 
-def _build_reduction_prompt(review_prompt, items, stage_label, failed_range_labels, preserve_source_outputs=False):
+def _build_reduction_prompt(analysis_prompt, items, stage_label, failed_range_labels, preserve_source_outputs=False):
     combined_sections = []
     for item in items:
         combined_sections.append(
@@ -525,7 +525,7 @@ def _build_reduction_prompt(review_prompt, items, stage_label, failed_range_labe
         )
 
     preservation_note = ''
-    combine_instruction = 'Combine the review notes below into one coherent answer.'
+    combine_instruction = 'Combine the analysis notes below into one coherent answer.'
     if preserve_source_outputs:
         preservation_note = (
             'This is a lossless consolidation step. Every distinct source document or comment represented '
@@ -534,23 +534,23 @@ def _build_reduction_prompt(review_prompt, items, stage_label, failed_range_labe
             'drop represented entries.\n\n'
         )
         combine_instruction = (
-            'Combine the review notes below into one coherent answer without dropping or collapsing represented '
+            'Combine the analysis notes below into one coherent answer without dropping or collapsing represented '
             'source entries.'
         )
 
     return (
-        'You are consolidating exhaustive document review outputs. Preserve material findings, unresolved '
+        'You are consolidating document analysis outputs. Preserve material findings, unresolved '
         'questions, and any coverage caveats. Do not drop important issues just to make the answer shorter.\n\n'
         f'Stage: {stage_label}\n'
-        f'Task instructions:\n{review_prompt}\n\n'
+        f'Task instructions:\n{analysis_prompt}\n\n'
         f'{failed_note}'
         f'{preservation_note}'
         f'{combine_instruction}\n\n'
-        f'<WindowReviews>\n{combined_text}\n</WindowReviews>'
+        f'<WindowAnalyses>\n{combined_text}\n</WindowAnalyses>'
     )
 
 
-def _build_document_reduction_prompt(review_prompt, document_name, items, stage_label, failed_range_labels):
+def _build_document_reduction_prompt(analysis_prompt, document_name, items, stage_label, failed_range_labels):
     combined_sections = []
     for item in items:
         combined_sections.append(
@@ -567,7 +567,7 @@ def _build_document_reduction_prompt(review_prompt, document_name, items, stage_
 
     combined_text = '\n\n'.join(combined_sections)
     return (
-        'You are consolidating exhaustive document review outputs for a single source document. Every slice '
+        'You are consolidating document analysis outputs for a single source document. Every slice '
         'below belongs to the same source document or comment submission. Preserve material findings, '
         'unresolved questions, required fields, and any coverage caveats. Keep the output format required by '
         'the original task. If the task expects one object or row per comment or submission, return the '
@@ -575,10 +575,10 @@ def _build_document_reduction_prompt(review_prompt, document_name, items, stage_
         'summary.\n\n'
         f'Stage: {stage_label}\n'
         f'Source document: {document_name}\n'
-        f'Task instructions:\n{review_prompt}\n\n'
+        f'Task instructions:\n{analysis_prompt}\n\n'
         f'{failed_note}'
-        'Combine the slice reviews below into one document-level answer.\n\n'
-        f'<DocumentWindowReviews>\n{combined_text}\n</DocumentWindowReviews>'
+        'Combine the slice analyses below into one document-level answer.\n\n'
+        f'<DocumentWindowAnalyses>\n{combined_text}\n</DocumentWindowAnalyses>'
     )
 
 
@@ -589,8 +589,8 @@ def _build_reduction_batches(items, batch_size):
     return reduction_batches
 
 
-def _reduce_document_review_items(
-    review_prompt,
+def _reduce_document_analysis_items(
+    analysis_prompt,
     document_name,
     items,
     invoke_prompt,
@@ -606,7 +606,7 @@ def _reduce_document_review_items(
         batches = _build_reduction_batches(current_items, reduction_batch_size)
         for batch_index, batch_items in enumerate(batches, start=1):
             reduction_prompt = _build_document_reduction_prompt(
-                review_prompt,
+                analysis_prompt,
                 document_name,
                 batch_items,
                 stage_label=f'document-reduction-{reduction_round}.{batch_index}',
@@ -625,7 +625,7 @@ def _reduce_document_review_items(
             ) or '').strip()
             if not reduced_text:
                 raise RuntimeError(
-                    f'Exhaustive review document reduction returned an empty response for {document_name} '
+                    f'Document analysis document reduction returned an empty response for {document_name} '
                     f'at round {reduction_round}, batch {batch_index}.'
                 )
             next_items.append({
@@ -639,7 +639,7 @@ def _reduce_document_review_items(
 
     if len(current_items) > 1:
         raise RuntimeError(
-            f'Exhaustive review document reduction exceeded the configured round limit for {document_name} '
+            f'Document analysis document reduction exceeded the configured round limit for {document_name} '
             f'with {len(current_items)} intermediate items remaining.'
         )
 
@@ -649,7 +649,7 @@ def _reduce_document_review_items(
 def _format_coverage_summary(coverage):
     lines = [
         '## Coverage',
-        f"- Documents reviewed: {coverage.get('document_count', 0)}",
+        f"- Documents analyzed: {coverage.get('document_count', 0)}",
         f"- Total windows: {coverage.get('total_windows', 0)}",
         f"- Processed windows: {coverage.get('processed_windows', 0)}",
         f"- Failed windows: {coverage.get('failed_windows', 0)}",
@@ -684,9 +684,9 @@ def _format_coverage_summary(coverage):
     return '\n'.join(lines)
 
 
-def run_exhaustive_document_review(
+def run_document_analysis(
     user_id,
-    review_prompt,
+    analysis_prompt,
     document_ids,
     invoke_prompt,
     doc_scope='all',
@@ -703,15 +703,15 @@ def run_exhaustive_document_review(
     max_documents=None,
     include_coverage_summary=True,
 ):
-    normalized_review_prompt = str(review_prompt or '').strip()
-    if not normalized_review_prompt:
-        raise ValueError('A review prompt is required for exhaustive document review.')
+    normalized_analysis_prompt = str(analysis_prompt or '').strip()
+    if not normalized_analysis_prompt:
+        raise ValueError('An analysis prompt is required for document analysis.')
     if not callable(invoke_prompt):
-        raise ValueError('A callable invoke_prompt handler is required for exhaustive document review.')
+        raise ValueError('A callable invoke_prompt handler is required for document analysis.')
 
     build_document_chunk_windows, get_document_chunks_payload = _get_search_service_helpers()
 
-    targets = normalize_exhaustive_review_targets(
+    targets = normalize_document_analysis_targets(
         document_ids=document_ids,
         doc_scope=doc_scope,
         active_group_ids=active_group_ids,
@@ -737,7 +737,7 @@ def run_exhaustive_document_review(
     )
 
     debug_print(
-        '[ExhaustiveReview] Starting review | '
+        '[DocumentAnalysis] Starting analysis | '
         f'user_id={user_id} | '
         f"documents={len(targets.get('document_ids', []))} | "
         f"doc_scope={targets.get('doc_scope')} | "
@@ -745,7 +745,7 @@ def run_exhaustive_document_review(
         f"window_size={targets.get('window_size')} | "
         f"window_percent={targets.get('window_percent')} | "
         f"max_retries={targets.get('max_retries_per_window')} | "
-        f'prompt_chars={len(normalized_review_prompt)}'
+        f'prompt_chars={len(normalized_analysis_prompt)}'
     )
 
     coverage = {
@@ -763,7 +763,7 @@ def run_exhaustive_document_review(
     _set_progress_meta(
         coverage,
         phase='queued',
-        phase_label='Queued for review',
+        phase_label='Queued for analysis',
         phase_detail='Preparing selected documents',
         status='running',
         percent_override=1,
@@ -771,9 +771,9 @@ def run_exhaustive_document_review(
     document_runs = []
     reduction_items = []
     failed_range_labels = []
-    preserve_source_outputs = _prompt_requests_per_source_output(normalized_review_prompt)
-    json_array_output_requested = _prompt_requests_json_array_output(normalized_review_prompt)
-    json_code_block_requested = _prompt_requests_json_code_block(normalized_review_prompt)
+    preserve_source_outputs = _prompt_requests_per_source_output(normalized_analysis_prompt)
+    json_array_output_requested = _prompt_requests_json_array_output(normalized_analysis_prompt)
+    json_code_block_requested = _prompt_requests_json_code_block(normalized_analysis_prompt)
 
     for document_index, document_id in enumerate(targets.get('document_ids', []), start=1):
         document_payload = get_document_chunks_payload(
@@ -841,7 +841,7 @@ def run_exhaustive_document_review(
         windows = document_run.get('windows') or []
         document_index = document_run.get('document_index') or 1
         debug_print(
-            '[ExhaustiveReview] Starting document | '
+            '[DocumentAnalysis] Starting document | '
             f'document_index={document_index} | '
             f"document_count={coverage.get('document_count', 0)} | "
             f'document_id={document_id} | '
@@ -855,8 +855,8 @@ def run_exhaustive_document_review(
         document_reduction_items = []
         _set_progress_meta(
             coverage,
-            phase='reviewing',
-            phase_label='Reviewing document windows',
+            phase='analyzing',
+            phase_label='Analyzing document windows',
             phase_detail=f'Document {document_index} of {coverage.get("document_count", 0)}: {document_name}',
             status='running',
             percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
@@ -879,7 +879,7 @@ def run_exhaustive_document_review(
             document_summary['ranges'].append(window_range)
             window_label = _build_window_label(document_name, window_range)
             debug_print(
-                '[ExhaustiveReview] Starting window | '
+                '[DocumentAnalysis] Starting window | '
                 f'document_id={document_id} | '
                 f'document_name={document_name} | '
                 f"window={window_range.get('window_number')} | "
@@ -889,12 +889,12 @@ def run_exhaustive_document_review(
             document_summary['active_window_number'] = window_range.get('window_number')
             document_summary['active_attempt_number'] = 1
             document_summary['status_text'] = (
-                f"Reviewing window {window_range.get('window_number')} of {document_summary.get('total_windows', 0)}"
+                f"Analyzing window {window_range.get('window_number')} of {document_summary.get('total_windows', 0)}"
             )
             _set_progress_meta(
                 coverage,
-                phase='reviewing',
-                phase_label='Reviewing document windows',
+                phase='analyzing',
+                phase_label='Analyzing document windows',
                 phase_detail=(
                     f'{document_name} window {window_range.get("window_number")} '
                     f'of {document_summary.get("total_windows", 0)}'
@@ -912,7 +912,7 @@ def run_exhaustive_document_review(
                     'progress': _build_progress_snapshot(coverage),
                 })
 
-            review_text = ''
+            analysis_text = ''
             last_error = ''
             max_attempts = targets.get('max_retries_per_window', DEFAULT_MAX_RETRIES_PER_WINDOW) + 1
             for attempt_number in range(1, max_attempts + 1):
@@ -920,15 +920,15 @@ def run_exhaustive_document_review(
                     coverage['retries'] += 1
 
                 try:
-                    prompt_text = _build_window_review_prompt(
-                        normalized_review_prompt,
+                    prompt_text = _build_window_analysis_prompt(
+                        normalized_analysis_prompt,
                         document_payload.get('document', {}),
                         window_payload,
                         window_range,
                     )
-                    review_text = str(invoke_prompt(
+                    analysis_text = str(invoke_prompt(
                         prompt_text,
-                        stage='window_review',
+                        stage='window_analysis',
                         metadata={
                             'document_id': document_id,
                             'document_name': document_name,
@@ -936,13 +936,13 @@ def run_exhaustive_document_review(
                             'attempt_number': attempt_number,
                         },
                     ) or '').strip()
-                    if not review_text:
-                        raise ValueError('The review runner returned an empty response.')
+                    if not analysis_text:
+                        raise ValueError('The analysis runner returned an empty response.')
                     break
                 except Exception as exc:
                     last_error = str(exc)
                     debug_print(
-                        '[ExhaustiveReview] Window attempt failed | '
+                        '[DocumentAnalysis] Window attempt failed | '
                         f'document_id={document_id} | '
                         f'document_name={document_name} | '
                         f"window={window_range.get('window_number')} | "
@@ -959,8 +959,8 @@ def run_exhaustive_document_review(
                     )
                     _set_progress_meta(
                         coverage,
-                        phase='reviewing',
-                        phase_label='Reviewing document windows',
+                        phase='analyzing',
+                        phase_label='Analyzing document windows',
                         phase_detail=(
                             f'{document_name} window {window_range.get("window_number")} '
                             f'of {document_summary.get("total_windows", 0)} '
@@ -982,9 +982,9 @@ def run_exhaustive_document_review(
                     if attempt_number >= max_attempts:
                         break
 
-            if review_text:
+            if analysis_text:
                 debug_print(
-                    '[ExhaustiveReview] Completed window | '
+                    '[DocumentAnalysis] Completed window | '
                     f'document_id={document_id} | '
                     f'document_name={document_name} | '
                     f"window={window_range.get('window_number')} | "
@@ -1000,8 +1000,8 @@ def run_exhaustive_document_review(
                 document_summary['active_attempt_number'] = None
                 _set_progress_meta(
                     coverage,
-                    phase='reviewing',
-                    phase_label='Reviewing document windows',
+                    phase='analyzing',
+                    phase_label='Analyzing document windows',
                     phase_detail=(
                         f'{document_name} window {window_range.get("window_number")} '
                         f'of {document_summary.get("total_windows", 0)} completed'
@@ -1011,7 +1011,7 @@ def run_exhaustive_document_review(
                 )
                 document_reduction_items.append({
                     'label': window_label,
-                    'text': review_text,
+                    'text': analysis_text,
                     'document_id': document_id,
                     'document_name': document_name,
                     'window_range': window_range,
@@ -1026,7 +1026,7 @@ def run_exhaustive_document_review(
                     })
             else:
                 debug_print(
-                    '[ExhaustiveReview] Window failed | '
+                    '[DocumentAnalysis] Window failed | '
                     f'document_id={document_id} | '
                     f'document_name={document_name} | '
                     f"window={window_range.get('window_number')} | "
@@ -1043,8 +1043,8 @@ def run_exhaustive_document_review(
                 document_summary['active_attempt_number'] = None
                 _set_progress_meta(
                     coverage,
-                    phase='reviewing',
-                    phase_label='Reviewing document windows',
+                    phase='analyzing',
+                    phase_label='Analyzing document windows',
                     phase_detail=(
                         f'{document_name} window {window_range.get("window_number")} '
                         f'of {document_summary.get("total_windows", 0)} failed'
@@ -1057,8 +1057,8 @@ def run_exhaustive_document_review(
         if document_reduction_items:
             document_result = document_reduction_items[0]
             if len(document_reduction_items) > 1:
-                document_result = _reduce_document_review_items(
-                    normalized_review_prompt,
+                document_result = _reduce_document_analysis_items(
+                    normalized_analysis_prompt,
                     document_name,
                     document_reduction_items,
                     invoke_prompt,
@@ -1087,8 +1087,8 @@ def run_exhaustive_document_review(
         )
         _set_progress_meta(
             coverage,
-            phase='reviewing',
-            phase_label='Reviewing document windows',
+            phase='analyzing',
+            phase_label='Analyzing document windows',
             phase_detail=f'Completed document {document_index} of {coverage.get("document_count", 0)}: {document_name}',
             status='running',
             percent_override=max(1, _scale_progress_percent(_calculate_coverage_completion_percent(coverage), 5, 90)),
@@ -1105,7 +1105,7 @@ def run_exhaustive_document_review(
                 'progress': _build_progress_snapshot(coverage),
             })
         debug_print(
-            '[ExhaustiveReview] Completed document | '
+            '[DocumentAnalysis] Completed document | '
             f'document_index={document_index} | '
             f'document_id={document_id} | '
             f'document_name={document_name} | '
@@ -1117,10 +1117,10 @@ def run_exhaustive_document_review(
 
     if not reduction_items:
         debug_print(
-            '[ExhaustiveReview] Review failed | '
-            f'user_id={user_id} | error=No document windows were reviewed successfully'
+            '[DocumentAnalysis] Analysis failed | '
+            f'user_id={user_id} | error=No document windows were analyzed successfully'
         )
-        raise RuntimeError('No document windows were reviewed successfully.')
+        raise RuntimeError('No document windows were analyzed successfully.')
 
     current_items = reduction_items
     final_analysis_reply = ''
@@ -1129,20 +1129,20 @@ def run_exhaustive_document_review(
         _set_progress_meta(
             coverage,
             phase='reducing',
-            phase_label='Combining review findings',
-            phase_detail='Merging structured review output',
+            phase_label='Combining analysis findings',
+            phase_detail='Merging structured analysis output',
             status='running',
             percent_override=96,
             phase_step=1,
             phase_total_steps=1,
         )
-        final_analysis_reply = _merge_json_review_items(
+        final_analysis_reply = _merge_json_analysis_items(
             current_items,
             wrap_in_code_block=json_code_block_requested,
         )
         if final_analysis_reply:
             debug_print(
-                '[ExhaustiveReview] Completed structured merge | '
+                '[DocumentAnalysis] Completed structured merge | '
                 f'items={len(current_items)}'
             )
 
@@ -1169,7 +1169,7 @@ def run_exhaustive_document_review(
                 _set_progress_meta(
                     coverage,
                     phase='reducing',
-                    phase_label='Combining review findings',
+                    phase_label='Combining analysis findings',
                     phase_detail=f'Reduction batch {reduction_step_index} of {reduction_step_total}',
                     status='running',
                     percent_override=reduction_progress_percent,
@@ -1177,7 +1177,7 @@ def run_exhaustive_document_review(
                     phase_total_steps=reduction_step_total,
                 )
                 debug_print(
-                    '[ExhaustiveReview] Starting reduction batch | '
+                    '[DocumentAnalysis] Starting reduction batch | '
                     f'round={reduction_round} | '
                     f'batch={batch_index}/{len(batches)} | '
                     f'items={len(batch_items)}'
@@ -1194,7 +1194,7 @@ def run_exhaustive_document_review(
                         'progress': _build_progress_snapshot(coverage),
                     })
                 reduction_prompt = _build_reduction_prompt(
-                    normalized_review_prompt,
+                    normalized_analysis_prompt,
                     batch_items,
                     stage_label=f'reduction-{reduction_round}.{batch_index}',
                     failed_range_labels=failed_range_labels,
@@ -1212,17 +1212,17 @@ def run_exhaustive_document_review(
                 ) or '').strip()
                 if not reduced_text:
                     debug_print(
-                        '[ExhaustiveReview] Reduction failed | '
+                        '[DocumentAnalysis] Reduction failed | '
                         f'round={reduction_round} | '
                         f'batch={batch_index} | error=empty reduction response'
                     )
                     raise RuntimeError(
-                        f'Exhaustive review reduction returned an empty response at round {reduction_round}, batch {batch_index}.'
+                        f'Document analysis reduction returned an empty response at round {reduction_round}, batch {batch_index}.'
                     )
 
                 source_labels = [item.get('label') for item in batch_items]
                 debug_print(
-                    '[ExhaustiveReview] Completed reduction batch | '
+                    '[DocumentAnalysis] Completed reduction batch | '
                     f'round={reduction_round} | '
                     f'batch={batch_index}/{len(batches)} | '
                     f'sources={len(source_labels)}'
@@ -1238,7 +1238,7 @@ def run_exhaustive_document_review(
 
         if len(current_items) > 1:
             raise RuntimeError(
-                'Exhaustive review reduction exceeded the configured round limit '
+                'Document analysis reduction exceeded the configured round limit '
                 f'with {len(current_items)} intermediate items remaining.'
             )
 
@@ -1247,7 +1247,7 @@ def run_exhaustive_document_review(
     _set_progress_meta(
         coverage,
         phase='completed',
-        phase_label='Review complete',
+        phase_label='Analysis complete',
         phase_detail='Preparing final response',
         status='completed',
         percent_override=100,
@@ -1266,7 +1266,7 @@ def run_exhaustive_document_review(
         })
 
     log_event(
-        '[ExhaustiveReview] Completed exhaustive document review',
+        '[DocumentAnalysis] Completed document analysis',
         extra={
             'user_id': user_id,
             'document_count': coverage.get('document_count', 0),
@@ -1278,7 +1278,7 @@ def run_exhaustive_document_review(
         level=logging.INFO,
     )
     debug_print(
-        '[ExhaustiveReview] Completed review | '
+        '[DocumentAnalysis] Completed analysis | '
         f"documents={coverage.get('document_count', 0)} | "
         f"windows={coverage.get('total_windows', 0)} | "
         f"processed={coverage.get('processed_windows', 0)} | "

@@ -1,14 +1,17 @@
 # test_chat_generated_tabular_output_card.py
 """
 UI test for chat generated tabular output cards.
-Version: 0.241.130
+Version: 0.241.023
 Implemented in: 0.241.130
 
 This test ensures assistant replies with generic generated analysis artifact
 metadata render a reusable export card, preserve untrusted values as text,
 keep long JSON preview lines wrapped inside the chat card, and trigger the chat
 artifact download endpoint plus the workspace-promotion action when the user
-clicks the card buttons without introducing page-level JavaScript errors.
+clicks the card buttons without introducing page-level JavaScript errors. It
+also validates Markdown artifact previews render as sanitized Markdown instead
+of raw source text and that generated Markdown files can be viewed in a rendered
+modal from the artifact card.
 """
 
 import json
@@ -16,7 +19,7 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -38,6 +41,15 @@ def _fulfill_json(route, payload, status=200):
     )
 
 
+def _wait_for_chatbox_or_skip(page):
+    try:
+        page.wait_for_selector("#chatbox", timeout=10000)
+    except PlaywrightTimeoutError:
+        if "login" in page.url.lower():
+            pytest.skip("Generated artifact card UI tests require an authenticated chat session.")
+        raise
+
+
 @pytest.mark.ui
 def test_chat_generated_tabular_output_card(playwright):
     """Validate generated tabular output cards render preview data and trigger downloads."""
@@ -52,6 +64,7 @@ def test_chat_generated_tabular_output_card(playwright):
         storage_state=STORAGE_STATE,
         viewport={"width": 1440, "height": 900},
         accept_downloads=True,
+        ignore_https_errors=True,
     )
     page = context.new_page()
     page.on("pageerror", lambda error: page_errors.append(str(error)))
@@ -96,7 +109,7 @@ def test_chat_generated_tabular_output_card(playwright):
 
     try:
         page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
-        page.wait_for_selector("#chatbox")
+        _wait_for_chatbox_or_skip(page)
         page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
 
         page.evaluate(
@@ -135,7 +148,7 @@ def test_chat_generated_tabular_output_card(playwright):
                                     row_count: 124,
                                     source_file_name: 'feedback_comments.xlsx',
                                     selected_sheet: 'Comments',
-                                    summary: 'The full export is saved separately so the reply can stay concise. <review>',
+                                    summary: 'The full export is saved separately so the reply can stay concise. <analysis>',
                                     preview_rows: [
                                         {
                                             comment_id: '001',
@@ -165,7 +178,7 @@ def test_chat_generated_tabular_output_card(playwright):
         expect(card).to_contain_text('124 rows')
         expect(card).to_contain_text('Source: feedback_comments.xlsx | Sheet: Comments')
         expect(card).to_contain_text('comments<script>alert(1)</script>.json')
-        expect(card).to_contain_text('The full export is saved separately so the reply can stay concise. <review>')
+        expect(card).to_contain_text('The full export is saved separately so the reply can stay concise. <analysis>')
         expect(card).to_contain_text('Alicia <Admin>')
         expect(card).to_contain_text('First <tag> comment')
 
@@ -200,13 +213,13 @@ def test_chat_generated_analysis_json_preview_wraps_long_lines(playwright):
 
     long_reason_token = "analysis" * 160
     artifact_payload = {
-        "capability": "exhaustive_review",
+        "capability": "analyze",
         "artifact_message_id": "generated-wrap-123",
         "conversation_id": "generated-json-wrap-test",
         "storage_scope": "chat",
-        "file_name": "exhaustive-review.json",
+        "file_name": "analysis.json",
         "output_format": "json",
-        "summary": "Saved the full review as a JSON artifact for follow-up.",
+        "summary": "Saved the full analysis as a JSON artifact for follow-up.",
         "preview_items": [
             {
                 "comment_id": "115562TroyHammer.pdf",
@@ -222,6 +235,7 @@ def test_chat_generated_analysis_json_preview_wraps_long_lines(playwright):
     context = browser.new_context(
         storage_state=STORAGE_STATE,
         viewport={"width": 900, "height": 900},
+        ignore_https_errors=True,
     )
     page = context.new_page()
     page.on("pageerror", lambda error: page_errors.append(str(error)))
@@ -234,7 +248,7 @@ def test_chat_generated_analysis_json_preview_wraps_long_lines(playwright):
 
     try:
         page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
-        page.wait_for_selector("#chatbox")
+        _wait_for_chatbox_or_skip(page)
         page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
 
         page.evaluate(
@@ -248,7 +262,7 @@ def test_chat_generated_analysis_json_preview_wraps_long_lines(playwright):
 
                 messagesModule.appendMessage(
                     'AI',
-                    'Saved the exhaustive review JSON artifact.',
+                    'Saved the analysis JSON artifact.',
                     null,
                     'assistant-generated-wrap',
                     false,
@@ -260,7 +274,7 @@ def test_chat_generated_analysis_json_preview_wraps_long_lines(playwright):
                     {
                         id: 'assistant-generated-wrap',
                         role: 'assistant',
-                        content: 'Saved the exhaustive review JSON artifact.',
+                        content: 'Saved the analysis JSON artifact.',
                         metadata: {
                             generated_analysis_artifacts: [artifactPayload],
                         },
@@ -274,7 +288,7 @@ def test_chat_generated_analysis_json_preview_wraps_long_lines(playwright):
 
         card = page.locator('.generated-tabular-output-card')
         expect(card).to_be_visible()
-        expect(card).to_contain_text('Exhaustive Review JSON artifact')
+        expect(card).to_contain_text('Analyze JSON artifact')
 
         preview_block = card.locator('.generated-analysis-preview-block')
         expect(preview_block).to_be_visible()
@@ -300,6 +314,160 @@ def test_chat_generated_analysis_json_preview_wraps_long_lines(playwright):
             "Expected generated JSON preview lines to wrap within the preview block instead of "
             "overflowing horizontally."
         )
+        assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_generated_analysis_markdown_preview_renders_markdown(playwright):
+    """Validate generated Markdown artifact previews and modal view render sanitized Markdown."""
+    _require_ui_env()
+
+    full_markdown_body = "\n".join(
+        [
+            "# Full Circular A-4 Analysis",
+            "",
+            "**Document-level summary:** Circular A-4 provides government-wide guidance.",
+            "",
+            "## Core framework and analytical orientation",
+            "",
+            "The Circular makes **benefit-cost analysis (BCA)** the primary analytic tool.",
+            "",
+            '<img src=x onerror="window.__markdownViewXss = true">',
+        ]
+    )
+    artifact_payload = {
+        "capability": "analyze",
+        "artifact_message_id": "generated-markdown-123",
+        "conversation_id": "generated-markdown-preview-test",
+        "storage_scope": "chat",
+        "file_name": "circular-a-4-analysis.md",
+        "output_format": "md",
+        "summary": "Saved the full analysis as a Markdown artifact for follow-up.",
+        "preview_lines": [
+            "**Document-level summary: Circular A-4 (OMB), consolidated from pages 1-93**",
+            "OMB Circular A-4 provides government-wide guidance on regulatory analyses.",
+            "## Core framework and analytical orientation",
+            "The Circular makes **benefit-cost analysis (BCA)** the primary analytic tool.",
+            "<img src=x onerror=\"window.__markdownPreviewXss = true\">",
+        ],
+    }
+    page_errors = []
+    view_requests = []
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 1440, "height": 900},
+        ignore_https_errors=True,
+    )
+    page = context.new_page()
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    page.route(
+        "**/api/user/settings",
+        lambda route: _fulfill_json(route, {"selected_agent": None, "settings": {"enable_agents": False}}),
+    )
+    page.route("**/api/get_conversations", lambda route: _fulfill_json(route, {"conversations": []}))
+    page.route(
+        "**/api/chat_artifacts/download?conversation_id=generated-markdown-preview-test&message_id=generated-markdown-123",
+        lambda route: (
+            view_requests.append(route.request.url),
+            route.fulfill(
+                status=200,
+                headers={
+                    "Content-Type": "text/markdown; charset=utf-8",
+                    "Content-Disposition": 'attachment; filename="circular-a-4-analysis.md"',
+                },
+                body=full_markdown_body,
+            ),
+        ),
+    )
+
+    try:
+        page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        _wait_for_chatbox_or_skip(page)
+
+        page.evaluate(
+            """
+            async (artifactPayload) => {
+                const conversationId = 'generated-markdown-preview-test';
+                currentConversationId = conversationId;
+                window.currentConversationId = conversationId;
+                window.__markdownPreviewXss = false;
+                window.__markdownViewXss = false;
+
+                const messagesModule = await import('/static/js/chat/chat-messages.js');
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'Saved the Markdown analysis artifact.',
+                    null,
+                    'assistant-generated-markdown',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-generated-markdown',
+                        role: 'assistant',
+                        content: 'Saved the Markdown analysis artifact.',
+                        metadata: {
+                            generated_analysis_artifacts: [artifactPayload],
+                        },
+                    },
+                    true
+                );
+            }
+            """,
+            artifact_payload,
+        )
+
+        card = page.locator('.generated-tabular-output-card')
+        expect(card).to_be_visible()
+        expect(card).to_contain_text('Analyze MD artifact')
+
+        preview_block = card.locator('.generated-analysis-markdown-preview')
+        expect(preview_block).to_be_visible()
+        expect(preview_block.locator('strong').filter(has_text='Document-level summary')).to_be_visible()
+        expect(preview_block.locator('h2').filter(has_text='Core framework')).to_be_visible()
+        expect(preview_block.locator('strong').filter(has_text='benefit-cost analysis')).to_be_visible()
+        expect(preview_block).not_to_contain_text('**Document-level summary')
+        expect(preview_block).not_to_contain_text('## Core framework')
+        expect(preview_block.locator('script')).to_have_count(0)
+        expect(preview_block.locator('[onerror]')).to_have_count(0)
+
+        view_button = card.get_by_role('button', name='View MD')
+        expect(view_button).to_be_visible()
+
+        with page.expect_response(
+            "**/api/chat_artifacts/download?conversation_id=generated-markdown-preview-test&message_id=generated-markdown-123"
+        ):
+            view_button.click()
+
+        citation_modal = page.locator('#citation-modal')
+        expect(citation_modal).to_be_visible()
+        expect(citation_modal.locator('.modal-title')).to_have_text(
+            'Markdown artifact: circular-a-4-analysis.md'
+        )
+
+        modal_content = citation_modal.locator('#cited-text-content')
+        expect(modal_content.locator('h1')).to_have_text('Full Circular A-4 Analysis')
+        expect(modal_content.locator('h2')).to_have_text('Core framework and analytical orientation')
+        expect(modal_content.locator('strong').filter(has_text='benefit-cost analysis')).to_be_visible()
+        expect(modal_content).not_to_contain_text('# Full Circular A-4 Analysis')
+        expect(modal_content).not_to_contain_text('## Core framework')
+        expect(modal_content.locator('[onerror]')).to_have_count(0)
+
+        assert view_requests == [
+            f'{BASE_URL}/api/chat_artifacts/download?conversation_id=generated-markdown-preview-test&message_id=generated-markdown-123'
+        ]
+        assert page.evaluate("() => window.__markdownPreviewXss") is False
+        assert page.evaluate("() => window.__markdownViewXss") is False
         assert page_errors == []
     finally:
         context.close()

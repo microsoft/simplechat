@@ -17,7 +17,7 @@ function initAdminSidebarNav() {
     const adminSearchInput = document.getElementById('admin-search-input');
     const adminSearchClear = document.getElementById('admin-search-clear');
     
-    if (adminToggle) {
+    if (adminToggle && !adminToggle.dataset.sidebarMenuKey) {
         adminToggle.addEventListener('click', function(e) {
             // Don't toggle if clicking on search button
             if (e.target.closest('#admin-search-btn')) {
@@ -39,8 +39,12 @@ function initAdminSidebarNav() {
             
             if (!isVisible) {
                 // Ensure admin section is expanded when search is opened
-                adminSection.style.display = 'block';
-                adminCaret.classList.add('rotate-180');
+                if (typeof window.setPersistentSidebarMenuExpanded === 'function') {
+                    window.setPersistentSidebarMenuExpanded('adminSettings', true);
+                } else {
+                    adminSection.classList.remove('d-none');
+                    adminCaret.style.transform = 'rotate(0deg)';
+                }
                 
                 // Focus on search input
                 setTimeout(() => adminSearchInput.focus(), 100);

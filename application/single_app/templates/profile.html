@@ -242,6 +242,96 @@
         text-align: center;
     }
 
+    .profile-workspace-toolbar {
+        align-items: end;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+    }
+
+    .profile-workspace-search {
+        flex: 1 1 320px;
+        min-width: 220px;
+    }
+
+    .profile-workspace-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+
+    .profile-workspace-table th,
+    .profile-workspace-table td {
+        vertical-align: middle;
+    }
+
+    .profile-workspace-name-cell,
+    .profile-workspace-description {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .profile-workspace-card {
+        background: var(--bs-body-bg);
+        border: 1px solid var(--bs-border-color);
+        border-radius: 8px;
+        height: 100%;
+        padding: 1rem;
+    }
+
+    .profile-workspace-card-media {
+        align-items: center;
+        border-radius: 8px;
+        color: #fff;
+        display: inline-flex;
+        font-size: 1.25rem;
+        font-weight: 700;
+        height: 44px;
+        justify-content: center;
+        overflow: hidden;
+        width: 44px;
+    }
+
+    .profile-workspace-card-media img {
+        height: 100%;
+        object-fit: cover;
+        width: 100%;
+    }
+
+    .profile-workspace-card-title {
+        font-size: 1rem;
+        font-weight: 700;
+        margin-bottom: 0.15rem;
+        overflow-wrap: anywhere;
+    }
+
+    .profile-workspace-card-description {
+        color: var(--bs-secondary-color);
+        display: -webkit-box;
+        font-size: 0.9rem;
+        min-height: 2.7rem;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+    }
+
+    .profile-workspace-card-meta {
+        color: var(--bs-secondary-color);
+        font-size: 0.85rem;
+    }
+
+    .profile-workspace-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .profile-workspace-actions .btn {
+        min-height: 2rem;
+    }
+
     .fact-memory-delete-modal-stacked {
         --bs-modal-zindex: 1065;
     }
@@ -318,6 +408,40 @@
                 <i class="bi bi-sliders"></i>Settings
             </button>
         </li>
+        {% if app_settings.enable_group_workspaces %}
+        <li class="nav-item" role="presentation">
+            <button
+                class="nav-link {% if initial_tab == 'groups' %}active{% endif %}"
+                id="profile-groups-tab"
+                data-bs-toggle="tab"
+                data-bs-target="#profile-groups-pane"
+                data-profile-tab="groups"
+                type="button"
+                role="tab"
+                aria-controls="profile-groups-pane"
+                aria-selected="{% if initial_tab == 'groups' %}true{% else %}false{% endif %}"
+            >
+                <i class="bi bi-people"></i>Groups
+            </button>
+        </li>
+        {% endif %}
+        {% if app_settings.enable_public_workspaces %}
+        <li class="nav-item" role="presentation">
+            <button
+                class="nav-link {% if initial_tab == 'public-workspaces' %}active{% endif %}"
+                id="profile-public-workspaces-tab"
+                data-bs-toggle="tab"
+                data-bs-target="#profile-public-workspaces-pane"
+                data-profile-tab="public-workspaces"
+                type="button"
+                role="tab"
+                aria-controls="profile-public-workspaces-pane"
+                aria-selected="{% if initial_tab == 'public-workspaces' %}true{% else %}false{% endif %}"
+            >
+                <i class="bi bi-globe-americas"></i>Public Workspaces
+            </button>
+        </li>
+        {% endif %}
         <li class="nav-item" role="presentation">
             <button
                 class="nav-link {% if initial_tab == 'feedback' %}active{% endif %}"
@@ -824,6 +948,190 @@
 
         </div>
 
+        {% if app_settings.enable_group_workspaces %}
+        <div
+            class="tab-pane fade {% if initial_tab == 'groups' %}show active{% endif %}"
+            id="profile-groups-pane"
+            role="tabpanel"
+            aria-labelledby="profile-groups-tab"
+        >
+            <div class="section-card">
+                <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+                    <div>
+                        <h5 class="mb-2"><i class="bi bi-people me-2"></i>My Groups</h5>
+                        <p class="text-muted mb-0">View groups you belong to, set your active group workspace, and find groups to join.</p>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        {% if can_create_groups %}
+                        <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#profileCreateGroupModal">
+                            <i class="bi bi-plus-circle-fill me-1"></i>Create Group
+                        </button>
+                        {% endif %}
+                        <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#profileFindGroupModal">
+                            <i class="bi bi-search me-1"></i>Find Group
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-section-card">
+                <div class="profile-workspace-toolbar">
+                    <div class="profile-workspace-search">
+                        <label for="profile-groups-search-input" class="form-label mb-1">Search groups</label>
+                        <div class="input-group input-group-sm">
+                            <input class="form-control" type="search" placeholder="Search by name or description" id="profile-groups-search-input" />
+                            <button class="btn btn-primary" type="button" id="profile-groups-search-btn">Search</button>
+                            <button class="btn btn-outline-secondary" type="button" id="profile-groups-clear-search-btn">Clear</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="form-label mb-1 d-block" id="profile-groups-view-label">View</label>
+                        <div class="btn-group btn-group-sm" role="group" aria-labelledby="profile-groups-view-label">
+                            <input type="radio" class="btn-check" name="profile-groups-view-mode" id="profile-groups-view-list" autocomplete="off" checked />
+                            <label class="btn btn-outline-secondary" for="profile-groups-view-list" title="List view" aria-label="List view">
+                                <i class="bi bi-list-ul"></i>
+                            </label>
+                            <input type="radio" class="btn-check" name="profile-groups-view-mode" id="profile-groups-view-cards" autocomplete="off" />
+                            <label class="btn btn-outline-secondary" for="profile-groups-view-cards" title="Card view" aria-label="Card view">
+                                <i class="bi bi-grid-3x3-gap"></i>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="profile-groups-list-view" class="table-responsive">
+                    <table class="table table-striped table-hover align-middle profile-workspace-table" id="profile-groups-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Your Role</th>
+                                <th>Status</th>
+                                <th>Active Workspace</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-loading-row">
+                                <td colspan="5">
+                                    <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                                    Loading your groups...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="profile-groups-card-view" class="row g-3 d-none"></div>
+
+                <div class="d-flex align-items-center gap-3 mt-3">
+                    <div>
+                        <label for="profile-groups-page-size" class="visually-hidden">Groups per page</label>
+                        <select id="profile-groups-page-size" class="form-select form-select-sm d-inline-block" style="width:auto;">
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                        <span class="ms-1 small text-muted">items per page</span>
+                    </div>
+                    <div id="profile-groups-pagination" class="d-flex gap-1 ms-auto"></div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if app_settings.enable_public_workspaces %}
+        <div
+            class="tab-pane fade {% if initial_tab == 'public-workspaces' %}show active{% endif %}"
+            id="profile-public-workspaces-pane"
+            role="tabpanel"
+            aria-labelledby="profile-public-workspaces-tab"
+        >
+            <div class="section-card">
+                <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+                    <div>
+                        <h5 class="mb-2"><i class="bi bi-globe-americas me-2"></i>My Public Workspaces</h5>
+                        <p class="text-muted mb-0">Browse public workspaces, set your active public workspace, and request access where needed.</p>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        {% if can_create_public_workspaces %}
+                        <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#profileCreatePublicWorkspaceModal">
+                            <i class="bi bi-plus-circle-fill me-1"></i>Create Public Workspace
+                        </button>
+                        {% endif %}
+                        <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#profileFindPublicWorkspaceModal">
+                            <i class="bi bi-search me-1"></i>Find Public Workspace
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-section-card">
+                <div class="profile-workspace-toolbar">
+                    <div class="profile-workspace-search">
+                        <label for="profile-public-workspaces-search-input" class="form-label mb-1">Search public workspaces</label>
+                        <div class="input-group input-group-sm">
+                            <input class="form-control" type="search" placeholder="Search by name or description" id="profile-public-workspaces-search-input" />
+                            <button class="btn btn-primary" type="button" id="profile-public-workspaces-search-btn">Search</button>
+                            <button class="btn btn-outline-secondary" type="button" id="profile-public-workspaces-clear-search-btn">Clear</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="form-label mb-1 d-block" id="profile-public-workspaces-view-label">View</label>
+                        <div class="btn-group btn-group-sm" role="group" aria-labelledby="profile-public-workspaces-view-label">
+                            <input type="radio" class="btn-check" name="profile-public-workspaces-view-mode" id="profile-public-workspaces-view-list" autocomplete="off" checked />
+                            <label class="btn btn-outline-secondary" for="profile-public-workspaces-view-list" title="List view" aria-label="List view">
+                                <i class="bi bi-list-ul"></i>
+                            </label>
+                            <input type="radio" class="btn-check" name="profile-public-workspaces-view-mode" id="profile-public-workspaces-view-cards" autocomplete="off" />
+                            <label class="btn btn-outline-secondary" for="profile-public-workspaces-view-cards" title="Card view" aria-label="Card view">
+                                <i class="bi bi-grid-3x3-gap"></i>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="profile-public-workspaces-list-view" class="table-responsive">
+                    <table class="table table-striped table-hover align-middle profile-workspace-table" id="profile-public-workspaces-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Your Role</th>
+                                <th>Status</th>
+                                <th>Active Workspace</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-loading-row">
+                                <td colspan="5">
+                                    <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                                    Loading public workspaces...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="profile-public-workspaces-card-view" class="row g-3 d-none"></div>
+
+                <div class="d-flex align-items-center gap-3 mt-3">
+                    <div>
+                        <label for="profile-public-workspaces-page-size" class="visually-hidden">Public workspaces per page</label>
+                        <select id="profile-public-workspaces-page-size" class="form-select form-select-sm d-inline-block" style="width:auto;">
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                        <span class="ms-1 small text-muted">items per page</span>
+                    </div>
+                    <div id="profile-public-workspaces-pagination" class="d-flex gap-1 ms-auto"></div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <div
             class="tab-pane fade {% if initial_tab == 'feedback' %}show active{% endif %}"
             id="profile-feedback-pane"
@@ -1068,6 +1376,146 @@
 
     <p class="text-muted mt-4 text-center">Version: {{ config['VERSION'] }}</p>
 </div>
+
+{% if app_settings.enable_group_workspaces %}
+{% if can_create_groups %}
+<div class="modal fade" id="profileCreateGroupModal" tabindex="-1" aria-labelledby="profileCreateGroupModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="profileCreateGroupModalLabel">Create Group</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="profile-create-group-form">
+                <div class="modal-body">
+                    <div id="profile-create-group-status" class="alert d-none" role="status"></div>
+                    <div class="mb-3">
+                        <label class="form-label" for="profile-create-group-name">Group Name</label>
+                        <input type="text" class="form-control" id="profile-create-group-name" maxlength="80" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="profile-create-group-description">Description</label>
+                        <textarea class="form-control" id="profile-create-group-description" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success">Create Group</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="modal fade" id="profileFindGroupModal" tabindex="-1" aria-labelledby="profileFindGroupModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="profileFindGroupModalLabel">Find Group</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="profile-find-groups-status" class="alert d-none" role="status"></div>
+                <div class="input-group mb-3">
+                    <input type="search" class="form-control" id="profile-find-groups-search" placeholder="Search public groups" />
+                    <button class="btn btn-primary" type="button" id="profile-find-groups-search-btn">Search</button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Description</th>
+                                <th>Owner</th>
+                                <th>Members</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="profile-find-groups-tbody">
+                            <tr>
+                                <td colspan="5" class="text-muted text-center py-3">Search for groups to request access.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if app_settings.enable_public_workspaces %}
+{% if can_create_public_workspaces %}
+<div class="modal fade" id="profileCreatePublicWorkspaceModal" tabindex="-1" aria-labelledby="profileCreatePublicWorkspaceModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="profileCreatePublicWorkspaceModalLabel">Create Public Workspace</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="profile-create-public-workspace-form">
+                <div class="modal-body">
+                    <div id="profile-create-public-workspace-status" class="alert d-none" role="status"></div>
+                    <div class="mb-3">
+                        <label class="form-label" for="profile-create-public-workspace-name">Workspace Name</label>
+                        <input type="text" class="form-control" id="profile-create-public-workspace-name" maxlength="80" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="profile-create-public-workspace-description">Description</label>
+                        <textarea class="form-control" id="profile-create-public-workspace-description" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success">Create Public Workspace</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="modal fade" id="profileFindPublicWorkspaceModal" tabindex="-1" aria-labelledby="profileFindPublicWorkspaceModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="profileFindPublicWorkspaceModalLabel">Find Public Workspace</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="profile-find-public-workspaces-status" class="alert d-none" role="status"></div>
+                <div class="input-group mb-3">
+                    <input type="search" class="form-control" id="profile-find-public-workspaces-search" placeholder="Search public workspaces" />
+                    <button class="btn btn-primary" type="button" id="profile-find-public-workspaces-search-btn">Search</button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Description</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="profile-find-public-workspaces-tbody">
+                            <tr>
+                                <td colspan="3" class="text-muted text-center py-3">Search for public workspaces to request access.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <div class="modal fade" id="profileFeedbackDetailModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -1415,7 +1863,11 @@
 window.profilePageConfig = {
     initialTab: {{ initial_tab|tojson }},
     feedbackEnabled: {{ app_settings.enable_user_feedback|tojson }},
-    contentSafetyEnabled: {{ app_settings.enable_content_safety|tojson }}
+    contentSafetyEnabled: {{ app_settings.enable_content_safety | tojson }},
+    groupWorkspacesEnabled: {{ app_settings.enable_group_workspaces | tojson }},
+    publicWorkspacesEnabled: {{ app_settings.enable_public_workspaces | tojson }},
+    canCreateGroups: {{ can_create_groups | tojson }},
+    canCreatePublicWorkspaces: {{ can_create_public_workspaces | tojson }}
 };
 
 // Initialize charts
@@ -1601,8 +2053,9 @@ function loadUserMetrics() {
             document.getElementById('stat-logins').textContent = formatNumber(loginMetrics.total_logins || 0);
             
             // Update last login
-            if (loginMetrics.last_login) {
-                document.getElementById('last-login').textContent = formatRelativeTime(loginMetrics.last_login);
+            const lastLoginElement = document.getElementById('last-login');
+            if (lastLoginElement) {
+                lastLoginElement.textContent = loginMetrics.last_login ? formatRelativeTime(loginMetrics.last_login) : 'Never';
             }
             
             // Update cached metrics date

@@ -3,22 +3,22 @@
 
 import copy
 
-from functions_exhaustive_document_review import (
-    CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
-    WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
-    normalize_exhaustive_review_targets,
+from functions_document_analysis import (
+    CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
+    WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
+    normalize_document_analysis_targets,
 )
 from functions_search import normalize_search_id_list
 
 
 DOCUMENT_ACTION_TYPE_NONE = 'none'
-DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW = 'exhaustive_review'
+DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
 DOCUMENT_ACTION_CONTEXT_CHAT = 'chat'
 DOCUMENT_ACTION_CONTEXT_WORKFLOW = 'workflow'
 VALID_DOCUMENT_ACTION_TYPES = {
     DOCUMENT_ACTION_TYPE_NONE,
-    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+    DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON,
 }
 DOCUMENT_ACTION_LIMIT_BOUNDS = {
@@ -32,15 +32,15 @@ DOCUMENT_ACTION_LIMIT_BOUNDS = {
     },
 }
 DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
-    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW: {
+    DOCUMENT_ACTION_TYPE_ANALYZE: {
         'enabled': True,
-        'chat_max_documents': CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
-        'workflow_max_documents': WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+        'chat_max_documents': CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
+        'workflow_max_documents': WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
     },
     DOCUMENT_ACTION_TYPE_COMPARISON: {
         'enabled': True,
-        'chat_max_documents': CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
-        'workflow_max_documents': WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+        'chat_max_documents': CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
+        'workflow_max_documents': WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
     },
 }
 
@@ -83,12 +83,12 @@ def normalize_document_action_capabilities(settings_or_capabilities=None):
             'enabled': bool(raw_capability.get('enabled', default_capability.get('enabled', True))),
             'chat_max_documents': _coerce_document_action_limit(
                 raw_capability.get('chat_max_documents'),
-                default_capability.get('chat_max_documents', CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS),
+                default_capability.get('chat_max_documents', CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS),
                 DOCUMENT_ACTION_CONTEXT_CHAT,
             ),
             'workflow_max_documents': _coerce_document_action_limit(
                 raw_capability.get('workflow_max_documents'),
-                default_capability.get('workflow_max_documents', WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS),
+                default_capability.get('workflow_max_documents', WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS),
                 DOCUMENT_ACTION_CONTEXT_WORKFLOW,
             ),
         }
@@ -114,7 +114,7 @@ def is_document_action_enabled(action_type, settings=None):
 
 def get_enabled_document_action_types(settings=None):
     enabled_action_types = {DOCUMENT_ACTION_TYPE_NONE}
-    for action_type in (DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW, DOCUMENT_ACTION_TYPE_COMPARISON):
+    for action_type in (DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON):
         if is_document_action_enabled(action_type, settings=settings):
             enabled_action_types.add(action_type)
     return enabled_action_types
@@ -125,14 +125,14 @@ def get_document_action_max_documents(action_type, execution_context, settings=N
     capability = get_document_action_capability(normalized_action_type, settings=settings)
     field_name = 'workflow_max_documents' if execution_context == DOCUMENT_ACTION_CONTEXT_WORKFLOW else 'chat_max_documents'
     default_capability = get_default_document_action_capabilities().get(normalized_action_type, {})
-    default_value = default_capability.get(field_name, CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS)
+    default_value = default_capability.get(field_name, CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS)
     return _coerce_document_action_limit(capability.get(field_name, default_value), default_value, execution_context)
 
 
 def get_document_action_max_documents_by_type(execution_context, settings=None):
     return {
-        DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW: get_document_action_max_documents(
-            DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+        DOCUMENT_ACTION_TYPE_ANALYZE: get_document_action_max_documents(
+            DOCUMENT_ACTION_TYPE_ANALYZE,
             execution_context,
             settings=settings,
         ),
@@ -153,42 +153,42 @@ def _resolve_max_documents(action_type, max_documents=None, max_documents_by_typ
 
 
 def _build_document_action_disabled_message(action_type):
-    if action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
-        return 'Exhaustive review is currently disabled in admin settings.'
+    if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        return 'Document analysis is currently disabled in admin settings.'
     if action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
         return 'Document comparison is currently disabled in admin settings.'
     return 'The selected document action is currently disabled in admin settings.'
 
 
-def _build_legacy_exhaustive_action(legacy_exhaustive_review=None):
-    legacy_exhaustive_review = legacy_exhaustive_review if isinstance(legacy_exhaustive_review, dict) else {}
-    if not legacy_exhaustive_review.get('enabled'):
+def _build_analyze_action(legacy_analyze=None):
+    legacy_analyze = legacy_analyze if isinstance(legacy_analyze, dict) else {}
+    if not legacy_analyze.get('enabled'):
         return {}
 
     return {
-        'type': DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
-        'doc_scope': legacy_exhaustive_review.get('doc_scope', 'all'),
-        'active_group_ids': legacy_exhaustive_review.get('active_group_ids'),
-        'active_public_workspace_id': legacy_exhaustive_review.get('active_public_workspace_id'),
-        'window_unit': legacy_exhaustive_review.get('window_unit'),
-        'window_size': legacy_exhaustive_review.get('window_size'),
-        'window_percent': legacy_exhaustive_review.get('window_percent'),
-        'max_retries_per_window': legacy_exhaustive_review.get('max_retries_per_window'),
-        'document_ids': legacy_exhaustive_review.get('document_ids'),
+        'type': DOCUMENT_ACTION_TYPE_ANALYZE,
+        'doc_scope': legacy_analyze.get('doc_scope', 'all'),
+        'active_group_ids': legacy_analyze.get('active_group_ids'),
+        'active_public_workspace_id': legacy_analyze.get('active_public_workspace_id'),
+        'window_unit': legacy_analyze.get('window_unit'),
+        'window_size': legacy_analyze.get('window_size'),
+        'window_percent': legacy_analyze.get('window_percent'),
+        'max_retries_per_window': legacy_analyze.get('max_retries_per_window'),
+        'document_ids': legacy_analyze.get('document_ids'),
     }
 
 
 def normalize_document_action_config(
     action_payload=None,
     existing_action=None,
-    legacy_exhaustive_review=None,
+    legacy_analyze=None,
     max_documents=None,
     max_documents_by_type=None,
     allowed_action_types=None,
 ):
     action_payload = action_payload if isinstance(action_payload, dict) else {}
     existing_action = existing_action if isinstance(existing_action, dict) else {}
-    source_action = action_payload or existing_action or _build_legacy_exhaustive_action(legacy_exhaustive_review)
+    source_action = action_payload or existing_action or _build_analyze_action(legacy_analyze)
     action_type = normalize_document_action_type(source_action.get('type'))
 
     normalized_action = {
@@ -222,8 +222,8 @@ def normalize_document_action_config(
         max_documents_by_type=max_documents_by_type,
     )
 
-    if action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
-        normalized_targets = normalize_exhaustive_review_targets(
+    if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        normalized_targets = normalize_document_analysis_targets(
             document_ids=source_action.get('document_ids'),
             doc_scope=source_action.get('doc_scope', 'all'),
             active_group_ids=source_action.get('active_group_ids'),
@@ -249,7 +249,7 @@ def normalize_document_action_config(
     if not right_document_ids:
         raise ValueError('Select one or more Target documents for comparison.')
 
-    normalized_targets = normalize_exhaustive_review_targets(
+    normalized_targets = normalize_document_analysis_targets(
         document_ids=[left_document_id, *right_document_ids],
         doc_scope=source_action.get('doc_scope', 'all'),
         active_group_ids=source_action.get('active_group_ids'),
@@ -275,16 +275,16 @@ def get_document_action_config(document_source, max_documents=None, max_document
     return normalize_document_action_config(
         action_payload=document_source.get('document_action'),
         existing_action=document_source.get('document_action'),
-        legacy_exhaustive_review=document_source.get('exhaustive_review'),
+        legacy_analyze=document_source.get('analyze'),
         max_documents=max_documents,
         max_documents_by_type=max_documents_by_type,
         allowed_action_types=allowed_action_types,
     )
 
 
-def build_legacy_exhaustive_review_config(action_config=None):
+def build_analyze_config(action_config=None):
     action_config = action_config if isinstance(action_config, dict) else {}
-    if action_config.get('type') != DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
+    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
         return {
             'enabled': False,
             'document_ids': [],

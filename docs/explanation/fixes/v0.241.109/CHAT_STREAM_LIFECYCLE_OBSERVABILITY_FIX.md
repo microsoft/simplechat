@@ -6,7 +6,7 @@ Fixed/Implemented in version: **0.241.109**
 Related config update: `application/single_app/config.py` now reports `VERSION = "0.241.109"`.
 Related functional test: `functional_tests/test_chat_stream_lifecycle_observability.py`
 
-This change improves diagnostics for long-running chat streams, including document review runs that can stay active for 30 to 40 minutes.
+This change improves diagnostics for long-running chat streams, including document analysis runs that can stay active for 30 to 40 minutes.
 
 ## Issue Description
 

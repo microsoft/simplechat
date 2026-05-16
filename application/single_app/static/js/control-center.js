@@ -30,6 +30,13 @@ const ACTIVITY_LOGS_LAYOUT_HINTS = {
     'details-focus': 'Details Focus widens the Details column for longer entries. Click a row for the full raw log.',
     compact: 'Compact view prioritizes faster scanning. Click a row for the full raw log when details are truncated.'
 };
+const ACTIVITY_LOGS_AUTO_REFRESH_ENABLED_STORAGE_KEY = 'simplechat_activityLogsAutoRefreshEnabled';
+const ACTIVITY_LOGS_AUTO_REFRESH_INTERVAL_STORAGE_KEY = 'simplechat_activityLogsAutoRefreshIntervalSeconds';
+const ACTIVITY_LOGS_AUTO_REFRESH_MIN_SECONDS = 1;
+const ACTIVITY_LOGS_AUTO_REFRESH_MAX_SECONDS = 300;
+const ACTIVITY_LOGS_AUTO_REFRESH_DEFAULT_SECONDS = 30;
+const CONTROL_CENTER_MANAGEMENT_DEFAULT_PAGE_SIZE = 25;
+const CONTROL_CENTER_MANAGEMENT_MAX_PAGE_SIZE = 250;
 
 // Group Table Sorter - similar to user table but for groups
 class GroupTableSorter {
@@ -167,9 +174,17 @@ class GroupTableSorter {
 class ControlCenter {
     constructor() {
         this.currentPage = 1;
-        this.usersPerPage = 50;
+        this.usersPerPage = CONTROL_CENTER_MANAGEMENT_DEFAULT_PAGE_SIZE;
         this.searchTerm = '';
         this.accessFilter = 'all';
+        this.groupPage = 1;
+        this.groupsPerPage = CONTROL_CENTER_MANAGEMENT_DEFAULT_PAGE_SIZE;
+        this.groupSearchTerm = '';
+        this.groupStatusFilter = 'all';
+        this.publicWorkspacePage = 1;
+        this.publicWorkspacesPerPage = CONTROL_CENTER_MANAGEMENT_DEFAULT_PAGE_SIZE;
+        this.publicWorkspaceSearchTerm = '';
+        this.publicWorkspaceStatusFilter = 'all';
         this.selectedUsers = new Set();
         this.selectedGroups = new Set();
         this.selectedPublicWorkspaces = new Set();
@@ -189,6 +204,13 @@ class ControlCenter {
         this.activityLogsLayoutPreset = 'balanced';
         this.currentActivityLogUserMap = {};
         this.currentRawLogJson = '';
+        this.activityLogsAutoRefreshEnabled = false;
+        this.activityLogsAutoRefreshIntervalSeconds = ACTIVITY_LOGS_AUTO_REFRESH_DEFAULT_SECONDS;
+        this.activityLogsAutoRefreshTimerId = null;
+        this.activityLogsRefreshInFlight = false;
+        this.activityLogsLastRefreshAt = null;
+        this.activityLogsAutoRefreshFailureCount = 0;
+        this.activityLogsAutoRefreshPauseMessage = '';
         
         this.init();
     }
@@ -196,7 +218,9 @@ class ControlCenter {
     init() {
         this.bindEvents();
         this.loadActivityLogsLayoutPreset();
+        this.loadActivityLogsAutoRefreshSettings();
         this.applyActivityLogsLayoutPreset(this.activityLogsLayoutPreset);
+        this.syncActivityLogsAutoRefreshControls();
         
         // Check if user has admin role (passed from backend)
         const hasAdminRole = window.hasControlCenterAdmin === true;
@@ -235,18 +259,29 @@ class ControlCenter {
         document.getElementById('activity-logs-tab')?.addEventListener('shown.bs.tab', () => {
             this.loadActivityLogs();
         });
+
+        document.getElementById('activity-logs-tab')?.addEventListener('hidden.bs.tab', () => {
+            this.clearActivityLogsAutoRefreshTimer();
+            this.updateActivityLogsAutoRefreshStatus();
+        });
         
         // Search and filter controls
         document.getElementById('userSearchInput')?.addEventListener('input', 
             this.debounce(() => this.handleSearchChange(), 300));
         document.getElementById('accessFilterSelect')?.addEventListener('change', 
             () => this.handleFilterChange());
+        document.getElementById('userManagementPerPageSelect')?.addEventListener('change',
+            (e) => this.handleUserPerPageChange(e));
+        document.getElementById('groupManagementPerPageSelect')?.addEventListener('change',
+            (e) => this.handleGroupPerPageChange(e));
         
         // Public workspace search and filter controls
         document.getElementById('publicWorkspaceSearchInput')?.addEventListener('input', 
-            this.debounce((e) => this.searchPublicWorkspaces(e.target.value), 300));
+            this.debounce(() => this.handlePublicWorkspaceSearchChange(), 300));
         document.getElementById('publicWorkspaceStatusFilterSelect')?.addEventListener('change', 
-            (e) => this.filterPublicWorkspacesByStatus(e.target.value));
+            () => this.handlePublicWorkspaceFilterChange());
+        document.getElementById('publicWorkspaceManagementPerPageSelect')?.addEventListener('change',
+            (e) => this.handlePublicWorkspacePerPageChange(e));
         
         // Export buttons
         document.getElementById('exportGroupsBtn')?.addEventListener('click', 
@@ -368,6 +403,18 @@ class ControlCenter {
         document.querySelectorAll('input[name="activityLogsLayoutPreset"]').forEach((presetInput) => {
             presetInput.addEventListener('change', (event) => this.handleActivityLogsLayoutPresetChange(event));
         });
+        document.getElementById('activityLogsAutoRefreshToggle')?.addEventListener('change',
+            (event) => this.handleActivityLogsAutoRefreshToggle(event));
+        document.getElementById('activityLogsAutoRefreshIntervalRange')?.addEventListener('input',
+            (event) => this.handleActivityLogsAutoRefreshIntervalChange(event.target.value));
+        document.getElementById('activityLogsAutoRefreshIntervalInput')?.addEventListener('input',
+            (event) => this.handleActivityLogsAutoRefreshIntervalChange(event.target.value));
+        document.querySelectorAll('[data-activity-logs-refresh-preset]').forEach((presetButton) => {
+            presetButton.addEventListener('click', () => {
+                this.handleActivityLogsAutoRefreshIntervalChange(presetButton.dataset.activityLogsRefreshPreset);
+            });
+        });
+        document.addEventListener('visibilitychange', () => this.handleActivityLogsVisibilityChange());
     }
     
     debounce(func, wait) {
@@ -397,6 +444,7 @@ class ControlCenter {
             const data = await response.json();
             
             if (response.ok) {
+                this.currentPage = Number(data.pagination?.page || this.currentPage);
                 this.renderUsers(data.users);
                 this.renderPagination(data.pagination);
             } else {
@@ -614,77 +662,154 @@ class ControlCenter {
     }
     
     renderPagination(pagination) {
-        const paginationInfo = document.getElementById('usersPaginationInfo');
-        const paginationNav = document.getElementById('usersPagination');
-        
+        this.renderManagementPagination(pagination, {
+            infoId: 'usersPaginationInfo',
+            paginationId: 'usersPagination',
+            itemLabel: 'users',
+            onPageSelected: (page) => this.goToPage(page)
+        });
+    }
+
+    renderGroupsPagination(pagination) {
+        this.renderManagementPagination(pagination, {
+            infoId: 'groupsPaginationInfo',
+            paginationId: 'groupsPagination',
+            itemLabel: 'groups',
+            onPageSelected: (page) => this.goToGroupsPage(page)
+        });
+    }
+
+    renderPublicWorkspacesPagination(pagination) {
+        const totalItems = Number(pagination?.total_items ?? pagination?.total_count ?? 0);
+        const publicWorkspaceCount = document.getElementById('publicWorkspaceCount');
+        if (publicWorkspaceCount) {
+            publicWorkspaceCount.textContent = `${totalItems.toLocaleString()} public workspace${totalItems === 1 ? '' : 's'}`;
+        }
+
+        this.renderManagementPagination(pagination, {
+            infoId: 'publicWorkspacesPaginationInfo',
+            paginationId: 'publicWorkspacesPagination',
+            itemLabel: 'public workspaces',
+            onPageSelected: (page) => this.goToPublicWorkspacesPage(page)
+        });
+    }
+
+    renderManagementPagination(pagination, options) {
+        const paginationInfo = document.getElementById(options.infoId);
+        const paginationNav = document.getElementById(options.paginationId);
+        const totalItems = Number(pagination?.total_items ?? pagination?.total_count ?? 0);
+        const perPage = Math.max(Number(pagination?.per_page ?? CONTROL_CENTER_MANAGEMENT_DEFAULT_PAGE_SIZE), 1);
+        const totalPages = Math.max(Number(pagination?.total_pages ?? 1), 1);
+        const currentPage = Math.min(Math.max(Number(pagination?.page ?? 1), 1), totalPages);
+
         if (paginationInfo) {
-            const start = (pagination.page - 1) * pagination.per_page + 1;
-            const end = Math.min(pagination.page * pagination.per_page, pagination.total_items);
-            paginationInfo.textContent = `Showing ${start}-${end} of ${pagination.total_items} users`;
+            const start = totalItems === 0 ? 0 : ((currentPage - 1) * perPage) + 1;
+            const end = totalItems === 0 ? 0 : Math.min(currentPage * perPage, totalItems);
+            paginationInfo.textContent = `Showing ${start}-${end} of ${totalItems} ${options.itemLabel}`;
         }
-        
-        if (paginationNav) {
-            let paginationHtml = '';
-            
-            // Previous button
-            paginationHtml += `
-                <li class="page-item ${!pagination.has_prev ? 'disabled' : ''}">
-                    <a class="page-link" href="#" onclick="controlCenter.goToPage(${pagination.page - 1}); return false;">
-                        <i class="bi bi-chevron-left"></i>
-                    </a>
-                </li>
-            `;
-            
-            // Page numbers
-            const startPage = Math.max(1, pagination.page - 2);
-            const endPage = Math.min(pagination.total_pages, pagination.page + 2);
-            
-            if (startPage > 1) {
-                paginationHtml += `
-                    <li class="page-item">
-                        <a class="page-link" href="#" onclick="controlCenter.goToPage(1); return false;">1</a>
-                    </li>
-                `;
-                if (startPage > 2) {
-                    paginationHtml += '<li class="page-item disabled"><span class="page-link">...</span></li>';
-                }
-            }
-            
-            for (let i = startPage; i <= endPage; i++) {
-                paginationHtml += `
-                    <li class="page-item ${i === pagination.page ? 'active' : ''}">
-                        <a class="page-link" href="#" onclick="controlCenter.goToPage(${i}); return false;">${i}</a>
-                    </li>
-                `;
-            }
-            
-            if (endPage < pagination.total_pages) {
-                if (endPage < pagination.total_pages - 1) {
-                    paginationHtml += '<li class="page-item disabled"><span class="page-link">...</span></li>';
-                }
-                paginationHtml += `
-                    <li class="page-item">
-                        <a class="page-link" href="#" onclick="controlCenter.goToPage(${pagination.total_pages}); return false;">${pagination.total_pages}</a>
-                    </li>
-                `;
-            }
-            
-            // Next button
-            paginationHtml += `
-                <li class="page-item ${!pagination.has_next ? 'disabled' : ''}">
-                    <a class="page-link" href="#" onclick="controlCenter.goToPage(${pagination.page + 1}); return false;">
-                        <i class="bi bi-chevron-right"></i>
-                    </a>
-                </li>
-            `;
-            
-            paginationNav.innerHTML = paginationHtml;
+
+        if (!paginationNav) {
+            return;
         }
+
+        paginationNav.replaceChildren();
+
+        const appendPageButton = ({ label, page, disabled = false, active = false, iconClass = null, ariaLabel = null }) => {
+            const item = document.createElement('li');
+            item.className = `page-item${disabled ? ' disabled' : ''}${active ? ' active' : ''}`;
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'page-link';
+            button.disabled = disabled;
+            if (ariaLabel) {
+                button.setAttribute('aria-label', ariaLabel);
+            }
+            if (active) {
+                button.setAttribute('aria-current', 'page');
+            }
+
+            if (iconClass) {
+                const icon = document.createElement('i');
+                icon.className = iconClass;
+                button.appendChild(icon);
+            } else {
+                button.textContent = label;
+            }
+
+            if (!disabled && !active) {
+                button.addEventListener('click', () => options.onPageSelected(page));
+            }
+
+            item.appendChild(button);
+            paginationNav.appendChild(item);
+        };
+
+        const appendEllipsis = () => {
+            const item = document.createElement('li');
+            item.className = 'page-item disabled';
+            const span = document.createElement('span');
+            span.className = 'page-link';
+            span.textContent = '...';
+            item.appendChild(span);
+            paginationNav.appendChild(item);
+        };
+
+        appendPageButton({
+            label: 'Previous',
+            page: currentPage - 1,
+            disabled: currentPage <= 1,
+            iconClass: 'bi bi-chevron-left',
+            ariaLabel: 'Previous page'
+        });
+
+        const startPage = Math.max(1, currentPage - 2);
+        const endPage = Math.min(totalPages, currentPage + 2);
+
+        if (startPage > 1) {
+            appendPageButton({ label: '1', page: 1 });
+            if (startPage > 2) {
+                appendEllipsis();
+            }
+        }
+
+        for (let page = startPage; page <= endPage; page += 1) {
+            appendPageButton({
+                label: String(page),
+                page,
+                active: page === currentPage
+            });
+        }
+
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+                appendEllipsis();
+            }
+            appendPageButton({ label: String(totalPages), page: totalPages });
+        }
+
+        appendPageButton({
+            label: 'Next',
+            page: currentPage + 1,
+            disabled: currentPage >= totalPages,
+            iconClass: 'bi bi-chevron-right',
+            ariaLabel: 'Next page'
+        });
     }
     
     goToPage(page) {
         this.currentPage = page;
         this.loadUsers();
+    }
+
+    goToGroupsPage(page) {
+        this.groupPage = page;
+        this.loadGroups();
+    }
+
+    goToPublicWorkspacesPage(page) {
+        this.publicWorkspacePage = page;
+        this.loadPublicWorkspaces();
     }
     
     handleSearchChange() {
@@ -698,6 +823,58 @@ class ControlCenter {
         this.currentPage = 1;
         this.loadUsers();
     }
+
+    handleUserPerPageChange(event) {
+        this.usersPerPage = this.getManagementPageSize(event.target.value, this.usersPerPage);
+        this.currentPage = 1;
+        this.loadUsers();
+    }
+
+    handleGroupSearchChange() {
+        this.groupSearchTerm = document.getElementById('groupSearchInput')?.value || '';
+        this.groupPage = 1;
+        clearTimeout(this.groupSearchTimeout);
+        this.groupSearchTimeout = setTimeout(() => this.loadGroups(), 300);
+    }
+
+    handleGroupFilterChange() {
+        this.groupStatusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
+        this.groupPage = 1;
+        this.loadGroups();
+    }
+
+    handleGroupPerPageChange(event) {
+        this.groupsPerPage = this.getManagementPageSize(event.target.value, this.groupsPerPage);
+        this.groupPage = 1;
+        this.loadGroups();
+    }
+
+    handlePublicWorkspaceSearchChange() {
+        this.publicWorkspaceSearchTerm = document.getElementById('publicWorkspaceSearchInput')?.value || '';
+        this.publicWorkspacePage = 1;
+        this.loadPublicWorkspaces();
+    }
+
+    handlePublicWorkspaceFilterChange() {
+        this.publicWorkspaceStatusFilter = document.getElementById('publicWorkspaceStatusFilterSelect')?.value || 'all';
+        this.publicWorkspacePage = 1;
+        this.loadPublicWorkspaces();
+    }
+
+    handlePublicWorkspacePerPageChange(event) {
+        this.publicWorkspacesPerPage = this.getManagementPageSize(event.target.value, this.publicWorkspacesPerPage);
+        this.publicWorkspacePage = 1;
+        this.loadPublicWorkspaces();
+    }
+
+    getManagementPageSize(value, fallback) {
+        const pageSize = Number.parseInt(value, 10);
+        if (!Number.isInteger(pageSize) || pageSize < 1) {
+            return fallback || CONTROL_CENTER_MANAGEMENT_DEFAULT_PAGE_SIZE;
+        }
+
+        return Math.min(pageSize, CONTROL_CENTER_MANAGEMENT_MAX_PAGE_SIZE);
+    }
     
     handleSelectAll(e) {
         const checkboxes = document.querySelectorAll('.user-checkbox');
@@ -710,6 +887,52 @@ class ControlCenter {
             }
         });
         this.updateBulkActionButton();
+    }
+
+    handleSelectAllGroups(e) {
+        const checkboxes = document.querySelectorAll('.group-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = e.target.checked;
+            if (e.target.checked) {
+                this.selectedGroups.add(checkbox.value);
+            } else {
+                this.selectedGroups.delete(checkbox.value);
+            }
+        });
+        this.updateGroupBulkActionButton();
+    }
+
+    handleSelectAllPublicWorkspaces(e) {
+        const checkboxes = document.querySelectorAll('.public-workspace-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = e.target.checked;
+            if (e.target.checked) {
+                this.selectedPublicWorkspaces.add(checkbox.value);
+            } else {
+                this.selectedPublicWorkspaces.delete(checkbox.value);
+            }
+        });
+        this.updatePublicWorkspaceBulkActionButton();
+    }
+
+    updateVisibleSelectionState(checkboxSelector, selectAllId) {
+        const allCheckboxes = document.querySelectorAll(checkboxSelector);
+        const checkedCheckboxes = document.querySelectorAll(`${checkboxSelector}:checked`);
+        const selectAllCheckbox = document.getElementById(selectAllId);
+
+        if (!selectAllCheckbox) {
+            return;
+        }
+
+        if (checkedCheckboxes.length === 0) {
+            selectAllCheckbox.indeterminate = false;
+            selectAllCheckbox.checked = false;
+        } else if (checkedCheckboxes.length === allCheckboxes.length) {
+            selectAllCheckbox.indeterminate = false;
+            selectAllCheckbox.checked = true;
+        } else {
+            selectAllCheckbox.indeterminate = true;
+        }
     }
     
     handleUserSelection(e) {
@@ -752,7 +975,7 @@ class ControlCenter {
     }
     
     updatePublicWorkspaceBulkActionButton() {
-        const bulkActionBtn = document.getElementById('publicWorkspaceBulkActionBtn');
+        const bulkActionBtn = document.getElementById('bulkPublicWorkspaceActionBtn');
         if (bulkActionBtn) {
             bulkActionBtn.disabled = this.selectedPublicWorkspaces.size === 0;
         }
@@ -764,7 +987,7 @@ class ControlCenter {
     }
     
     updateGroupBulkActionButton() {
-        const bulkActionBtn = document.getElementById('groupBulkActionBtn');
+        const bulkActionBtn = document.getElementById('bulkGroupActionBtn');
         if (bulkActionBtn) {
             bulkActionBtn.disabled = this.selectedGroups.size === 0;
         }
@@ -2500,7 +2723,200 @@ class ControlCenter {
         this.saveActivityLogsLayoutPreset();
     }
 
+    normalizeActivityLogsAutoRefreshInterval(value) {
+        const parsedValue = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsedValue)) {
+            return ACTIVITY_LOGS_AUTO_REFRESH_DEFAULT_SECONDS;
+        }
+
+        return Math.min(
+            ACTIVITY_LOGS_AUTO_REFRESH_MAX_SECONDS,
+            Math.max(ACTIVITY_LOGS_AUTO_REFRESH_MIN_SECONDS, parsedValue)
+        );
+    }
+
+    formatActivityLogsAutoRefreshInterval(seconds = this.activityLogsAutoRefreshIntervalSeconds) {
+        const normalizedSeconds = this.normalizeActivityLogsAutoRefreshInterval(seconds);
+        if (normalizedSeconds === 60) {
+            return '1 min';
+        }
+        if (normalizedSeconds > 60 && normalizedSeconds % 60 === 0) {
+            return `${normalizedSeconds / 60} min`;
+        }
+
+        return `${normalizedSeconds} sec`;
+    }
+
+    loadActivityLogsAutoRefreshSettings() {
+        try {
+            this.activityLogsAutoRefreshEnabled = window.localStorage.getItem(ACTIVITY_LOGS_AUTO_REFRESH_ENABLED_STORAGE_KEY) === 'true';
+            this.activityLogsAutoRefreshIntervalSeconds = this.normalizeActivityLogsAutoRefreshInterval(
+                window.localStorage.getItem(ACTIVITY_LOGS_AUTO_REFRESH_INTERVAL_STORAGE_KEY)
+            );
+        } catch (error) {
+            console.warn('Unable to load Activity Logs auto-refresh settings:', error);
+            this.activityLogsAutoRefreshEnabled = false;
+            this.activityLogsAutoRefreshIntervalSeconds = ACTIVITY_LOGS_AUTO_REFRESH_DEFAULT_SECONDS;
+        }
+    }
+
+    saveActivityLogsAutoRefreshSettings() {
+        try {
+            window.localStorage.setItem(
+                ACTIVITY_LOGS_AUTO_REFRESH_ENABLED_STORAGE_KEY,
+                this.activityLogsAutoRefreshEnabled ? 'true' : 'false'
+            );
+            window.localStorage.setItem(
+                ACTIVITY_LOGS_AUTO_REFRESH_INTERVAL_STORAGE_KEY,
+                String(this.activityLogsAutoRefreshIntervalSeconds)
+            );
+        } catch (error) {
+            console.warn('Unable to save Activity Logs auto-refresh settings:', error);
+        }
+    }
+
+    syncActivityLogsAutoRefreshControls() {
+        const toggle = document.getElementById('activityLogsAutoRefreshToggle');
+        const rangeInput = document.getElementById('activityLogsAutoRefreshIntervalRange');
+        const numberInput = document.getElementById('activityLogsAutoRefreshIntervalInput');
+        const valueOutput = document.getElementById('activityLogsAutoRefreshIntervalValue');
+
+        if (toggle) {
+            toggle.checked = this.activityLogsAutoRefreshEnabled;
+        }
+        if (rangeInput) {
+            rangeInput.value = String(this.activityLogsAutoRefreshIntervalSeconds);
+        }
+        if (numberInput) {
+            numberInput.value = String(this.activityLogsAutoRefreshIntervalSeconds);
+        }
+        if (valueOutput) {
+            valueOutput.textContent = this.formatActivityLogsAutoRefreshInterval();
+        }
+
+        document.querySelectorAll('[data-activity-logs-refresh-preset]').forEach((presetButton) => {
+            const presetValue = this.normalizeActivityLogsAutoRefreshInterval(presetButton.dataset.activityLogsRefreshPreset);
+            const isActivePreset = presetValue === this.activityLogsAutoRefreshIntervalSeconds;
+            presetButton.classList.toggle('active', isActivePreset);
+            presetButton.setAttribute('aria-pressed', isActivePreset ? 'true' : 'false');
+        });
+
+        this.updateActivityLogsAutoRefreshStatus();
+    }
+
+    updateActivityLogsAutoRefreshStatus(message = '') {
+        const statusElement = document.getElementById('activityLogsAutoRefreshStatus');
+        if (!statusElement) {
+            return;
+        }
+
+        if (message) {
+            statusElement.textContent = message;
+            return;
+        }
+
+        if (!this.activityLogsAutoRefreshEnabled && this.activityLogsAutoRefreshPauseMessage) {
+            statusElement.textContent = this.activityLogsAutoRefreshPauseMessage;
+            return;
+        }
+
+        if (!this.activityLogsAutoRefreshEnabled) {
+            statusElement.textContent = 'Auto-refresh off';
+            return;
+        }
+
+        if (this.activityLogsRefreshInFlight) {
+            statusElement.textContent = 'Refreshing...';
+            return;
+        }
+
+        if (!this.isActivityLogsTabActive() || document.hidden) {
+            statusElement.textContent = 'Auto-refresh paused';
+            return;
+        }
+
+        const lastRefreshText = this.activityLogsLastRefreshAt
+            ? ` Last updated ${this.activityLogsLastRefreshAt.toLocaleTimeString()}.`
+            : '';
+        statusElement.textContent = `Every ${this.formatActivityLogsAutoRefreshInterval()}.${lastRefreshText}`;
+    }
+
+    handleActivityLogsAutoRefreshToggle(event) {
+        this.activityLogsAutoRefreshEnabled = Boolean(event.target?.checked);
+        this.activityLogsAutoRefreshFailureCount = 0;
+        this.activityLogsAutoRefreshPauseMessage = '';
+        this.saveActivityLogsAutoRefreshSettings();
+        this.syncActivityLogsAutoRefreshControls();
+
+        if (this.activityLogsAutoRefreshEnabled) {
+            this.loadActivityLogs();
+            return;
+        }
+
+        this.clearActivityLogsAutoRefreshTimer();
+        this.updateActivityLogsAutoRefreshStatus();
+    }
+
+    handleActivityLogsAutoRefreshIntervalChange(value) {
+        this.activityLogsAutoRefreshIntervalSeconds = this.normalizeActivityLogsAutoRefreshInterval(value);
+        this.saveActivityLogsAutoRefreshSettings();
+        this.syncActivityLogsAutoRefreshControls();
+        this.scheduleActivityLogsAutoRefresh();
+    }
+
+    isActivityLogsTabActive() {
+        const activityLogsPane = document.getElementById('activity-logs');
+        return activityLogsPane ? activityLogsPane.classList.contains('active') : false;
+    }
+
+    clearActivityLogsAutoRefreshTimer() {
+        if (this.activityLogsAutoRefreshTimerId) {
+            window.clearTimeout(this.activityLogsAutoRefreshTimerId);
+            this.activityLogsAutoRefreshTimerId = null;
+        }
+    }
+
+    scheduleActivityLogsAutoRefresh() {
+        this.clearActivityLogsAutoRefreshTimer();
+
+        if (!this.activityLogsAutoRefreshEnabled || !this.isActivityLogsTabActive() || document.hidden) {
+            this.updateActivityLogsAutoRefreshStatus();
+            return;
+        }
+
+        this.activityLogsAutoRefreshTimerId = window.setTimeout(() => {
+            this.loadActivityLogs();
+        }, this.activityLogsAutoRefreshIntervalSeconds * 1000);
+        this.updateActivityLogsAutoRefreshStatus();
+    }
+
+    pauseActivityLogsAutoRefresh(message) {
+        this.activityLogsAutoRefreshEnabled = false;
+        this.activityLogsAutoRefreshPauseMessage = message || '';
+        this.clearActivityLogsAutoRefreshTimer();
+        this.saveActivityLogsAutoRefreshSettings();
+        this.syncActivityLogsAutoRefreshControls();
+        this.updateActivityLogsAutoRefreshStatus(message);
+    }
+
+    handleActivityLogsVisibilityChange() {
+        if (document.hidden) {
+            this.clearActivityLogsAutoRefreshTimer();
+            this.updateActivityLogsAutoRefreshStatus();
+            return;
+        }
+
+        this.scheduleActivityLogsAutoRefresh();
+    }
+
     async loadActivityLogs() {
+        if (this.activityLogsRefreshInFlight) {
+            return;
+        }
+
+        this.activityLogsRefreshInFlight = true;
+        this.updateActivityLogsAutoRefreshStatus();
+
         try {
             const params = new URLSearchParams({
                 page: this.activityLogsPage,
@@ -2518,15 +2934,32 @@ class ControlCenter {
             }
             
             if (!response.ok) {
-                throw new Error(data?.error || 'Failed to load activity logs');
+                const loadError = new Error(data?.error || 'Failed to load activity logs');
+                loadError.status = response.status;
+                throw loadError;
             }
             
             this.renderActivityLogs(data.logs, data.user_map);
             this.renderActivityLogsPagination(data.pagination);
+            this.activityLogsLastRefreshAt = new Date();
+            this.activityLogsAutoRefreshFailureCount = 0;
+            this.activityLogsAutoRefreshPauseMessage = '';
             
         } catch (error) {
             console.error('Error loading activity logs:', error);
             this.showActivityLogsError(error.message || 'Failed to load activity logs. Please try again.');
+            if (this.activityLogsAutoRefreshEnabled && (error.status === 401 || error.status === 403)) {
+                this.pauseActivityLogsAutoRefresh('Auto-refresh paused because access changed.');
+            } else if (this.activityLogsAutoRefreshEnabled) {
+                this.activityLogsAutoRefreshFailureCount += 1;
+                if (this.activityLogsAutoRefreshFailureCount >= 3) {
+                    this.pauseActivityLogsAutoRefresh('Auto-refresh paused after repeated refresh errors.');
+                }
+            }
+        } finally {
+            this.activityLogsRefreshInFlight = false;
+            this.syncActivityLogsAutoRefreshControls();
+            this.scheduleActivityLogsAutoRefresh();
         }
     }
 
@@ -3754,16 +4187,20 @@ class ControlCenter {
         
         try {
             // Get current filter values like users do
-            const searchTerm = document.getElementById('groupSearchInput')?.value || '';
-            const statusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
+            this.groupSearchTerm = document.getElementById('groupSearchInput')?.value || '';
+            this.groupStatusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
+            this.groupsPerPage = this.getManagementPageSize(
+                document.getElementById('groupManagementPerPageSelect')?.value,
+                this.groupsPerPage
+            );
             
             // Build API URL with filters - same pattern as loadUsers
             // Use cached metrics by default (force_refresh=false) to get pre-calculated data
             const params = new URLSearchParams({
-                page: 1,
-                per_page: 100,
-                search: searchTerm,
-                status_filter: statusFilter,
+                page: this.groupPage,
+                per_page: this.groupsPerPage,
+                search: this.groupSearchTerm,
+                status_filter: this.groupStatusFilter,
                 force_refresh: 'false'  // Use cached metrics for performance
             });
             
@@ -3787,7 +4224,9 @@ class ControlCenter {
             });
             
             // Render groups data directly like users
+            this.groupPage = Number(data.pagination?.page || this.groupPage);
             this.renderGroups(data.groups || []);
+            this.renderGroupsPagination(data.pagination);
             
             console.log('✅ Groups loaded and rendered successfully');
             
@@ -3824,6 +4263,8 @@ class ControlCenter {
                     </td>
                 </tr>
             `;
+            this.updateVisibleSelectionState('.group-checkbox', 'selectAllGroups');
+            this.updateGroupBulkActionButton();
             return;
         }
         
@@ -3839,11 +4280,13 @@ class ControlCenter {
                 } else {
                     this.selectedGroups.delete(e.target.value);
                 }
+                this.updateVisibleSelectionState('.group-checkbox', 'selectAllGroups');
                 this.updateGroupBulkActionButton();
             });
         });
         
         // Update bulk action button state
+        this.updateVisibleSelectionState('.group-checkbox', 'selectAllGroups');
         this.updateGroupBulkActionButton();
         
         // Initialize sorting after data is loaded
@@ -3878,11 +4321,12 @@ class ControlCenter {
             'inactive': { class: 'bg-secondary', text: 'Inactive' }
         };
         const statusInfo = statusConfig[status] || statusConfig['active'];
+        const isSelected = this.selectedGroups.has(group.id);
         
         return `
             <tr>
                 <td>
-                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
+                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}" ${isSelected ? 'checked' : ''}>
                 </td>
                 <td>
                     <div class="fw-semibold">${this.escapeHtml(group.name || 'Unnamed Group')}</div>
@@ -3959,16 +4403,20 @@ class ControlCenter {
         
         try {
             // Get current filter values like groups do
-            const searchTerm = document.getElementById('publicWorkspaceSearchInput')?.value || '';
-            const statusFilter = document.getElementById('publicWorkspaceStatusFilterSelect')?.value || 'all';
+            this.publicWorkspaceSearchTerm = document.getElementById('publicWorkspaceSearchInput')?.value || '';
+            this.publicWorkspaceStatusFilter = document.getElementById('publicWorkspaceStatusFilterSelect')?.value || 'all';
+            this.publicWorkspacesPerPage = this.getManagementPageSize(
+                document.getElementById('publicWorkspaceManagementPerPageSelect')?.value,
+                this.publicWorkspacesPerPage
+            );
             
             // Build API URL with filters - same pattern as loadGroups
             // Use cached metrics by default (force_refresh=false) to get pre-calculated data
             const params = new URLSearchParams({
-                page: 1,
-                per_page: 100,
-                search: searchTerm,
-                status_filter: statusFilter,
+                page: this.publicWorkspacePage,
+                per_page: this.publicWorkspacesPerPage,
+                search: this.publicWorkspaceSearchTerm,
+                status_filter: this.publicWorkspaceStatusFilter,
                 force_refresh: 'false'  // Use cached metrics for performance
             });
             
@@ -3992,7 +4440,9 @@ class ControlCenter {
             });
             
             // Render workspaces data directly like groups
+            this.publicWorkspacePage = Number(data.pagination?.page || this.publicWorkspacePage);
             this.renderPublicWorkspaces(data.workspaces || []);
+            this.renderPublicWorkspacesPagination(data.pagination);
             
             console.log('✅ Public workspaces loaded and rendered successfully');
             
@@ -4029,6 +4479,8 @@ class ControlCenter {
                     </td>
                 </tr>
             `;
+            this.updateVisibleSelectionState('.public-workspace-checkbox', 'selectAllPublicWorkspaces');
+            this.updatePublicWorkspaceBulkActionButton();
             return;
         }
         
@@ -4044,11 +4496,13 @@ class ControlCenter {
                 } else {
                     this.selectedPublicWorkspaces.delete(e.target.value);
                 }
+                this.updateVisibleSelectionState('.public-workspace-checkbox', 'selectAllPublicWorkspaces');
                 this.updatePublicWorkspaceBulkActionButton();
             });
         });
         
         // Update bulk action button state
+        this.updateVisibleSelectionState('.public-workspace-checkbox', 'selectAllPublicWorkspaces');
         this.updatePublicWorkspaceBulkActionButton();
     }
     
@@ -4078,11 +4532,12 @@ class ControlCenter {
             'inactive': { class: 'bg-secondary', text: 'Inactive' }
         };
         const statusInfo = statusConfig[status] || statusConfig['active'];
+        const isSelected = this.selectedPublicWorkspaces.has(workspace.id);
         
         return `
             <tr>
                 <td>
-                    <input type="checkbox" class="form-check-input public-workspace-checkbox" value="${workspace.id}">
+                    <input type="checkbox" class="form-check-input public-workspace-checkbox" value="${workspace.id}" ${isSelected ? 'checked' : ''}>
                 </td>
                 <td>
                     <div class="fw-semibold">${this.escapeHtml(workspace.name || 'Unnamed Workspace')}</div>
@@ -4126,7 +4581,8 @@ class ControlCenter {
     }
 
     searchPublicWorkspaces(searchTerm) {
-        // Debounce search like groups
+        this.publicWorkspaceSearchTerm = searchTerm || '';
+        this.publicWorkspacePage = 1;
         clearTimeout(this.publicWorkspaceSearchTimeout);
         this.publicWorkspaceSearchTimeout = setTimeout(() => {
             this.loadPublicWorkspaces();
@@ -4134,7 +4590,8 @@ class ControlCenter {
     }
 
     filterPublicWorkspacesByStatus(status) {
-        // Reload with new filter
+        this.publicWorkspaceStatusFilter = status || 'all';
+        this.publicWorkspacePage = 1;
         this.loadPublicWorkspaces();
     }
 
@@ -4145,15 +4602,19 @@ class ControlCenter {
         const searchInput = document.getElementById('publicWorkspaceSearchInput');
         const statusSelect = document.getElementById('publicWorkspaceStatusFilterSelect');
         
-        const searchTerm = searchInput ? searchInput.value.trim() : '';
-        const statusFilter = statusSelect ? statusSelect.value : 'all';
+        this.publicWorkspaceSearchTerm = searchInput ? searchInput.value.trim() : '';
+        this.publicWorkspaceStatusFilter = statusSelect ? statusSelect.value : 'all';
+        this.publicWorkspacesPerPage = this.getManagementPageSize(
+            document.getElementById('publicWorkspaceManagementPerPageSelect')?.value,
+            this.publicWorkspacesPerPage
+        );
         
         // Build API URL with force_refresh=true
         const params = new URLSearchParams({
-            page: 1,
-            per_page: 100,
-            search: searchTerm,
-            status_filter: statusFilter,
+            page: this.publicWorkspacePage,
+            per_page: this.publicWorkspacesPerPage,
+            search: this.publicWorkspaceSearchTerm,
+            status_filter: this.publicWorkspaceStatusFilter,
             force_refresh: 'true'  // Force fresh calculation
         });
         
@@ -4166,7 +4627,9 @@ class ControlCenter {
             })
             .then(data => {
                 console.log('🌍 Refreshed public workspaces data received:', data);
+                this.publicWorkspacePage = Number(data.pagination?.page || this.publicWorkspacePage);
                 this.renderPublicWorkspaces(data.workspaces || []);
+                this.renderPublicWorkspacesPagination(data.pagination);
                 
                 // Show success message
                 this.showAlert('success', 'Public workspaces refreshed successfully');

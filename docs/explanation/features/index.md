@@ -14,6 +14,7 @@ category: Version History
 ## Admin Experience Features
 
 - [AI Voice Conversations Setup Guide](AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
+- [Activity Log Auto-Refresh](CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md)
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
 
 ## Versioned Features
@@ -23,8 +24,8 @@ category: Version History
 - [Deployer Version Tracking](v0.241.082/DEPLOYER_VERSION_TRACKING.md)
 - [Azure CLI Upgrade Script](v0.241.079/AZURECLI_UPGRADE_SCRIPT.md)
 - [Core Document Search And Summarization](v0.241.007/CORE_DOCUMENT_SEARCH_AND_SUMMARIZATION.md)
-- [Exhaustive Document Review](v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md)
-- [Exhaustive Review Progress And Limits](v0.241.071/EXHAUSTIVE_REVIEW_PROGRESS_AND_LIMITS.md)
+- [Document Analysis](v0.241.069/DOCUMENT_ANALYSIS.md)
+- [Analyze Progress And Limits](v0.241.071/DOCUMENT_ANALYSIS_PROGRESS_AND_LIMITS.md)
 - [Document Actions And Comparison](v0.241.072/DOCUMENT_ACTIONS_AND_COMPARISON.md)
 - [Document Version Comparison](v0.241.097/DOCUMENT_VERSION_COMPARISON.md)
 - [Chat Comparison Source/Target And Uploads](v0.241.103/CHAT_COMPARISON_SOURCE_TARGET_AND_UPLOADS.md)

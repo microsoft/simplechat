@@ -207,7 +207,7 @@ Goals should be:
 
 4. **Performance Review Meeting**:
    - Structured discussion of performance evaluation
-   - Review of employee self-assessment and manager evaluation
+   - Analyze employee self-assessment and manager evaluation
    - Discussion of achievements, challenges, and growth areas
    - Agreement on final performance rating and development priorities
 

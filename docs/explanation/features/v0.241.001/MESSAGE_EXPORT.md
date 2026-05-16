@@ -4,7 +4,7 @@
 The Per-Message Export feature adds export and action options directly to the three-dots dropdown menu on individual chat messages. Users can export a single message to Markdown or Word, insert it into the chat prompt, or open it in their default email client — all without leaving the chat interface.
 
 **Version Implemented:** 0.239.005–0.239.007
-**Latest export formatting update:** 0.240.079
+**Latest export formatting update:** 0.241.019
 
 ## Dependencies
 - Flask (backend route for Word export)
@@ -65,6 +65,7 @@ The server verifies user ownership of the conversation, fetches the specific mes
   - **Subject:** An explicit subject from the message when present, otherwise a generated subject from the same GPT initialization path used by conversation summary generation
   - **Body:** Word-style plain text derived from the message markdown so headings, lists, tables, code blocks, and citations are no longer pasted as raw markdown
   - **Body Scope:** Starts directly with the formatted message content instead of a leading export metadata block
+  - **Chart PNGs:** Inline SimpleChat chart blocks are rendered through the same PNG conversion path used by Word and PowerPoint. The mailto body references the exported chart filenames, and the browser downloads the PNG files before opening the email draft.
 - Uses `encodeURIComponent` for safe URL encoding of the subject and body.
 
 ## Dropdown Menu Structure
@@ -113,6 +114,7 @@ Both AI and user messages now have export options below a divider:
 ### Known Limitations
 - Word export requires a round-trip to the backend; offline use is not supported for Word format
 - `mailto:` URL length is limited by the email client/OS; very long messages may be truncated
+- `mailto:` cannot attach files automatically, so chart PNGs are downloaded and referenced by filename in the draft body for manual attachment.
 - `mailto:` does not guarantee rich HTML or RTF composition, so the email body preserves Word-like structure in plain text rather than forcing true rich-text formatting
 - Markdown export for user messages uses `innerText` rather than original markdown source
 

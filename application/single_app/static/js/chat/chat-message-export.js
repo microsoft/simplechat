@@ -54,6 +54,65 @@ function downloadBlob(blob, filename) {
     URL.revokeObjectURL(url);
 }
 
+function dataUriToBlob(dataUri, fallbackContentType = 'application/octet-stream') {
+    const candidate = String(dataUri || '').trim();
+    const commaIndex = candidate.indexOf(',');
+    if (commaIndex === -1 || !candidate.startsWith('data:')) {
+        return null;
+    }
+
+    const metadata = candidate.slice(5, commaIndex);
+    const encodedPayload = candidate.slice(commaIndex + 1);
+    const contentType = metadata.split(';')[0] || fallbackContentType;
+    const isBase64 = metadata.toLowerCase().includes(';base64');
+    let binaryString = '';
+    try {
+        binaryString = isBase64 ? atob(encodedPayload) : decodeURIComponent(encodedPayload);
+    } catch (err) {
+        console.warn('Unable to decode email draft attachment data URI:', err);
+        return null;
+    }
+
+    const bytes = new Uint8Array(binaryString.length);
+    for (let index = 0; index < binaryString.length; index += 1) {
+        bytes[index] = binaryString.charCodeAt(index);
+    }
+    return new Blob([bytes], { type: contentType || fallbackContentType });
+}
+
+function safeDownloadFilename(filename, fallbackFilename) {
+    const candidate = String(filename || '').trim() || fallbackFilename;
+    return candidate.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+}
+
+function downloadEmailDraftAttachments(attachments) {
+    if (!Array.isArray(attachments) || attachments.length === 0) {
+        return 0;
+    }
+
+    let downloadedCount = 0;
+    attachments.forEach((attachment, index) => {
+        const dataUri = String(attachment?.data_uri || '').trim();
+        if (!dataUri.startsWith('data:image/png;base64,')) {
+            return;
+        }
+
+        const blob = dataUriToBlob(dataUri, attachment?.content_type || 'image/png');
+        if (!blob) {
+            return;
+        }
+
+        const filename = safeDownloadFilename(
+            attachment?.filename,
+            `message_chart_${index + 1}.png`
+        );
+        downloadBlob(blob, filename);
+        downloadedCount += 1;
+    });
+
+    return downloadedCount;
+}
+
 /**
  * Build a formatted timestamp string for filenames.
  */
@@ -226,7 +285,14 @@ export async function openInEmail(messageDiv, messageId, role) {
 
         const subject = data?.subject || 'Shared chat message';
         const body = data?.body || content;
+        const downloadedAttachmentCount = downloadEmailDraftAttachments(data?.attachments);
         const mailtoUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        if (downloadedAttachmentCount > 0) {
+            showToast(
+                `${downloadedAttachmentCount} chart PNG ${downloadedAttachmentCount === 1 ? 'file' : 'files'} downloaded for the email draft.`,
+                'success'
+            );
+        }
         window.location.href = mailtoUrl;
     } catch (err) {
         console.error('Error exporting message to email:', err);

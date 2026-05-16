@@ -28,6 +28,162 @@ def _extract_citation_document_id(chunk, citation_id):
     return citation_id
 
 
+def _normalize_citation_lookup_value(value):
+    if value is None:
+        return ''
+
+    normalized_value = str(value).strip()
+    if normalized_value.startswith('#'):
+        normalized_value = normalized_value[1:].strip()
+
+    return normalized_value
+
+
+def _append_unique_lookup_value(values, seen_values, value):
+    normalized_value = _normalize_citation_lookup_value(value)
+    if not normalized_value or normalized_value in seen_values:
+        return
+
+    seen_values.add(normalized_value)
+    values.append(normalized_value)
+
+
+def _get_citation_id_suffix(citation_id):
+    normalized_citation_id = _normalize_citation_lookup_value(citation_id)
+    if '_' not in normalized_citation_id:
+        return ''
+
+    return normalized_citation_id.rsplit('_', 1)[1]
+
+
+def _build_citation_locator_values(citation_id, page_number=None, chunk_id=None):
+    locator_values = []
+    seen_values = set()
+
+    _append_unique_lookup_value(locator_values, seen_values, chunk_id)
+    _append_unique_lookup_value(locator_values, seen_values, page_number)
+    _append_unique_lookup_value(locator_values, seen_values, _get_citation_id_suffix(citation_id))
+
+    return locator_values
+
+
+def _build_citation_key_candidates(citation_id, document_id=None, page_number=None, chunk_id=None):
+    candidates = []
+    seen_values = set()
+    normalized_document_id = _normalize_citation_lookup_value(document_id)
+    locator_values = _build_citation_locator_values(citation_id, page_number=page_number, chunk_id=chunk_id)
+
+    _append_unique_lookup_value(candidates, seen_values, citation_id)
+
+    if normalized_document_id:
+        for locator_value in locator_values:
+            if locator_value == normalized_document_id:
+                continue
+            _append_unique_lookup_value(candidates, seen_values, f'{normalized_document_id}_{locator_value}')
+
+    return candidates
+
+
+def _escape_citation_odata_literal(value):
+    return _normalize_citation_lookup_value(value).replace("'", "''")
+
+
+def _parse_citation_integer(value):
+    normalized_value = _normalize_citation_lookup_value(value)
+    if not normalized_value:
+        return None
+
+    try:
+        return int(normalized_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_citation_metadata_filter(document_id, locator_values):
+    normalized_document_id = _normalize_citation_lookup_value(document_id)
+    if not normalized_document_id:
+        return ''
+
+    document_filter = f"document_id eq '{_escape_citation_odata_literal(normalized_document_id)}'"
+    locator_filters = []
+    seen_filters = set()
+
+    for locator_value in locator_values:
+        normalized_locator = _normalize_citation_lookup_value(locator_value)
+        if not normalized_locator:
+            continue
+
+        chunk_id_filter = f"chunk_id eq '{_escape_citation_odata_literal(normalized_locator)}'"
+        if chunk_id_filter not in seen_filters:
+            seen_filters.add(chunk_id_filter)
+            locator_filters.append(chunk_id_filter)
+
+        integer_locator = _parse_citation_integer(normalized_locator)
+        if integer_locator is None:
+            continue
+
+        for numeric_filter in (
+            f'page_number eq {integer_locator}',
+            f'chunk_sequence eq {integer_locator}',
+        ):
+            if numeric_filter in seen_filters:
+                continue
+            seen_filters.add(numeric_filter)
+            locator_filters.append(numeric_filter)
+
+    if not locator_filters:
+        return ''
+
+    return f"{document_filter} and ({' or '.join(locator_filters)})"
+
+
+def _as_citation_chunk_dict(chunk):
+    if isinstance(chunk, dict):
+        return chunk
+
+    try:
+        return dict(chunk)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_citation_search_result(search_results):
+    for result in search_results:
+        return _as_citation_chunk_dict(result)
+
+    return None
+
+
+def _find_citation_chunk_by_metadata(search_client, document_id, locator_values):
+    filter_expression = _build_citation_metadata_filter(document_id, locator_values)
+    if not filter_expression:
+        return None
+
+    search_results = search_client.search(
+        search_text='*',
+        filter=filter_expression,
+        top=1,
+    )
+    return _first_citation_search_result(search_results)
+
+
+def _resolve_citation_chunk(search_client, citation_id, document_id=None, page_number=None, chunk_id=None):
+    for candidate_key in _build_citation_key_candidates(
+        citation_id,
+        document_id=document_id,
+        page_number=page_number,
+        chunk_id=chunk_id,
+    ):
+        try:
+            chunk = search_client.get_document(key=candidate_key)
+            return _as_citation_chunk_dict(chunk)
+        except ResourceNotFoundError:
+            continue
+
+    locator_values = _build_citation_locator_values(citation_id, page_number=page_number, chunk_id=chunk_id)
+    return _find_citation_chunk_by_metadata(search_client, document_id, locator_values)
+
+
 def _try_get_document_json(user_id, document_id, group_id=None, public_workspace_id=None):
     try:
         doc_response, status_code = get_document(
@@ -836,9 +992,12 @@ def register_route_backend_documents(app):
     @login_required
     @user_required
     def get_citation():
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         user_id = get_current_user_id()
         citation_id = data.get("citation_id")
+        document_id = data.get("document_id")
+        page_number = data.get("page_number")
+        chunk_id = data.get("chunk_id")
 
         if not user_id:
             return jsonify({"error": "User not authenticated"}), 401
@@ -854,38 +1013,44 @@ def register_route_backend_documents(app):
             }), 200
 
         def get_citation_for_scope(search_client, scope_name):
-            chunk = search_client.get_document(key=citation_id)
-            document_id = _extract_citation_document_id(chunk, citation_id)
-            accessible_document = _find_accessible_citation_document(user_id, document_id, scope_name)
+            chunk = _resolve_citation_chunk(
+                search_client,
+                citation_id,
+                document_id=document_id,
+                page_number=page_number,
+                chunk_id=chunk_id,
+            )
+            if not chunk:
+                return None
+
+            resolved_document_id = _extract_citation_document_id(chunk, citation_id)
+            accessible_document = _find_accessible_citation_document(user_id, resolved_document_id, scope_name)
 
             if not accessible_document:
                 return jsonify({"error": "Unauthorized access to citation"}), 403
 
             return build_citation_response(chunk)
 
-        try:
-            search_client_user = CLIENTS['search_client_user']
-            return get_citation_for_scope(search_client_user, 'personal')
+        for scope_name, client_key in (
+            ('personal', 'search_client_user'),
+            ('group', 'search_client_group'),
+            ('public', 'search_client_public'),
+        ):
+            search_client = CLIENTS.get(client_key)
+            if not search_client:
+                continue
 
-        except ResourceNotFoundError:
-            pass
+            try:
+                citation_response = get_citation_for_scope(search_client, scope_name)
+            except ResourceNotFoundError:
+                continue
+            except Exception as e:
+                return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
-        try:
-            search_client_group = CLIENTS['search_client_group']
-            return get_citation_for_scope(search_client_group, 'group')
+            if citation_response:
+                return citation_response
 
-        except ResourceNotFoundError:
-            pass
-        
-        try:
-            search_client_public = CLIENTS['search_client_public']
-            return get_citation_for_scope(search_client_public, 'public')
-        
-        except ResourceNotFoundError:
-            return jsonify({"error": "Citation not found in user, group, or public docs"}), 404
-
-        except Exception as e:
-            return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+        return jsonify({"error": "Citation not found in user, group, or public docs"}), 404
         
     @app.route('/api/documents/upgrade_legacy', methods=['POST'])
     @swagger_route(security=get_auth_security())

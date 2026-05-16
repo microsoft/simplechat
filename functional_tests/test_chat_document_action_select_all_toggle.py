@@ -55,7 +55,7 @@ def test_chat_document_action_select_all_toggle_wiring() -> None:
     assert 'documentActionSelect.addEventListener("change", function() {' in chat_documents_content, (
         "Expected document action changes to resync the picker labels immediately."
     )
-    assert 'const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = \'exhaustive_review\';' in chat_messages_content, (
+    assert 'const DOCUMENT_ACTION_ANALYZE = \'analyze\';' in chat_messages_content, (
         "Expected chat message handling to keep using the deterministic document action mode that drives the picker toggle."
     )
     assert 'id="document-action-select"' in chat_template_content, (

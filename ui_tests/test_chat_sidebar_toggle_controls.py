@@ -1,8 +1,8 @@
 # test_chat_sidebar_toggle_controls.py
 """
 UI test for the unified chat navigation shell.
-Version: 0.241.017
-Implemented in: 0.241.017
+Version: 0.241.018
+Implemented in: 0.241.018
 
 This test ensures that chats in top-nav mode use the adaptive conversation
 rail, preserve compact desktop top-nav links, and become the hamburger drawer
@@ -11,7 +11,8 @@ close-button crash while preserving direct workspace navigation in the mobile
 drawer. It also prevents the duplicate desktop inline sidebar toggle from
 returning in the chat header and verifies the user-selected sidebar toggle
 style. It also checks that the conversation details icon remains an unoutlined
-icon button and that compact sidebar controls render as icon-only buttons.
+icon button and that compact sidebar controls align to the normal sidebar icon
+slot.
 """
 
 import os
@@ -148,6 +149,11 @@ def test_chat_sidebar_desktop_uses_compact_toggle_preference(playwright):
         expect(sidebar_toggle.locator("i.bi-layout-sidebar")).to_be_visible()
         expect(sidebar_toggle.locator(".sidebar-toggle-label")).to_have_count(0)
         expect(page.locator("#chat-sidebar-inline-toggle")).to_have_count(0)
+
+        toggle_box = sidebar_toggle.bounding_box()
+        assert toggle_box is not None, "Expected compact sidebar toggle to be measurable."
+        assert toggle_box["width"] <= 24, "Expected compact sidebar toggle to match the sidebar icon slot width."
+        assert toggle_box["height"] <= 24, "Expected compact sidebar toggle to match the sidebar icon slot height."
 
         sidebar_toggle.click()
         page.wait_for_function("document.body.classList.contains('sidebar-collapsed')")

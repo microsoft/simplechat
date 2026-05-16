@@ -4,19 +4,27 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.241.142)**
-
-#### Bug Fixes
-
-*   **Authenticated Request Login Activity Tracking**
-    *   Fixed login analytics so passive authenticated browser visits now contribute to login activity even when the user does not explicitly trigger the OAuth callback during that session.
-    *   Added throttled authenticated-request tracking to avoid inflating counts on every page load, while still preserving the explicit `azure_ad` login signal and avoiding an immediate duplicate on the post-login redirect.
-    *   This improves Control Center and profile login visibility for seamless SSO and session-reuse scenarios without changing the user-facing login flow.
-    *   (Ref: authenticated request login activity, `functions_activity_logging.py`, `app.py`, `route_frontend_authentication.py`, `test_authenticated_request_login_activity.py`, `AUTHENTICATED_REQUEST_LOGIN_ACTIVITY_FIX.md`)
-
-### **(v0.241.137)**
+### **(v0.241.028)**
 
 #### New Features
+
+*   **Profile Workspace Tabs**
+    *   Moved My Groups and My Public Workspaces into dedicated Profile tabs, matching the existing Profile deep-link pattern used by feedback and safety violations.
+    *   Added list and card views for both tabs, with search, pagination, create/find modals, request access actions, active workspace selection, and direct manage links.
+    *   Legacy `/my_groups` and `/my_public_workspaces` routes now redirect to the corresponding Profile tabs, and top/sidebar menus point users directly to the new locations.
+    *   (Ref: `profile.html`, `profile-tabs.js`, `route_frontend_profile.py`, `route_frontend_groups.py`, `route_frontend_public_workspaces.py`, `PROFILE_WORKSPACE_TABS.md`)
+
+*   **Control Center Auto-Refresh Schedule**
+    *   Added an Admin Settings > Control Center option to automatically refresh Control Center metrics on a daily UTC schedule.
+    *   Auto-refresh is enabled by default and scheduled for 06:00 UTC, with admins able to adjust or disable the schedule from the Control Center settings tab.
+    *   The background scheduler uses the existing distributed lock pattern and updates the Control Center refresh status metadata after scheduled runs.
+    *   (Ref: `functions_control_center.py`, `background_tasks.py`, `route_frontend_admin_settings.py`, `route_backend_control_center.py`, `admin_settings.html`, `test_control_center_auto_refresh_schedule.py`)
+
+*   **Generated Markdown Artifact Viewer**
+    *   Added a `View MD` action beside `Download MD` on generated Markdown artifact cards so users can inspect rendered Markdown directly in Chats before downloading the file.
+    *   Reused the citation modal for the rendered view and improved Markdown citation handling so `.md` and `.markdown` citations display as sanitized rendered Markdown instead of raw source text.
+    *   Added UI regression coverage for rendered previews, rendered artifact modal content, and unsafe attribute stripping.
+    *   (Ref: generated Markdown artifacts, citation modal Markdown rendering, `chat-messages.js`, `chat-citations.js`, `test_chat_generated_tabular_output_card.py`, `GENERATED_ARTIFACT_MARKDOWN_VIEW.md`)
 
 *   **Tabular Related Document Evidence**
     *   Added generic row-level related-document resolution for workspace tabular analysis, so when a CSV or workbook row explicitly references a supporting non-tabular file, the tabular path can pull excerpts from that document and use them alongside the computed row results.
@@ -24,15 +32,43 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added focused regression coverage and versioned feature documentation for the related-document matching, evidence summary, and export prompt wiring.
     *   (Ref: tabular related-document evidence, `route_backend_chats.py`, `functions_search_service.py`, `test_tabular_related_document_evidence.py`, `test_tabular_computed_results_prompt_priority.py`, `test_tabular_generated_output_exports.py`, `TABULAR_RELATED_DOCUMENT_EVIDENCE.md`)
 
-### **(v0.241.127)**
-
-#### New Features
+*   **Chat Clipboard Paste Uploads**
+    *   Added direct clipboard upload support in Chats so users can paste copied images and browser-exposed files straight into the main chat message box instead of opening the file picker first.
+    *   The pasted upload flow now reuses the existing chat upload pipeline, including automatic conversation creation, upload consent checks, and backend file processing.
+    *   Clipboard files with empty names are normalized before upload so pasted screenshots still reach the existing extension-based processing path.
+    *   (Ref: chat paste uploads, `chat-input-actions.js`, `test_chat_clipboard_paste_upload_support.py`, `test_chat_clipboard_paste_upload_workflow.py`, `CHAT_CLIPBOARD_PASTE_UPLOADS.md`)
 
 *   **Generated Artifact Workspace Promotion Approval**
     *   Added an `Add to Workspace` action to generated analysis artifact cards in Chats so users can move reusable exports out of the conversation and into workspace documents.
     *   Personal promotions now queue immediately, while group and public promotions create a visible pending workspace file that must be approved before it becomes usable for search and chat.
     *   Group and public workspace document lists now show an `Approve` action for pending generated artifacts, and the requester receives approval workflow notifications as the file moves through review and processing.
     *   (Ref: generated artifact promotion, `route_enhanced_citations.py`, `route_backend_group_documents.py`, `route_backend_public_documents.py`, `chat-messages.js`, `group_workspaces.html`, `public_workspace.js`, `test_generated_artifact_workspace_promotion.py`, `test_chat_generated_tabular_output_card.py`)
+
+#### User Interface Enhancements
+
+*   **Control Center Activity Logs Auto-Refresh**
+    *   Added an Auto-refresh switch to Control Center Activity Logs so admins can keep recent activity visible without repeatedly clicking Reload.
+    *   Admins can choose quick intervals or set any refresh cadence from 1 to 300 seconds with the slider and seconds input; the default is 30 seconds.
+    *   The browser remembers the enabled state and interval per device, pauses polling when the Activity Logs tab is hidden, and stops after access changes or repeated refresh errors.
+    *   (Ref: `control_center.html`, `control-center.js`, `CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md`, `test_control_center_activity_logs_auto_refresh.py`)
+
+*   **Persistent Sidebar Menu State**
+    *   The left sidebar now remembers whether users left collapsible menu sections open or closed, so Workspaces, Support, external links, Admin Settings, Control Center, and Conversations no longer reset to open on each navigation.
+    *   Menu state is saved in the existing per-user settings flow and restored on both the full left sidebar and compact chat sidebar experiences.
+    *   Added UI regression coverage for preserving sidebar menu state while navigating between pages.
+    *   (Ref: `sidebarMenuState`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.js`, `route_backend_users.py`, `test_sidebar_menu_state_preference.py`)
+
+*   **Control Center Management Pagination**
+    *   Added consistent page-size selectors to User Management, Group Management, and Public Workspace Management in Control Center, with 10, 25, 50, 100, and 250 item options.
+    *   Group and public workspace management now use server-driven pagination instead of loading a fixed first page, so admins can navigate larger result sets with accurate filtered totals.
+    *   Added regression coverage and fix documentation for the shared management pagination behavior.
+    *   (Ref: `route_backend_control_center.py`, `control_center.html`, `control-center.js`, `test_control_center_management_pagination.py`, `CONTROL_CENTER_MANAGEMENT_PAGINATION_FIX.md`)
+
+*   **Workspace Branding Heroes and Shortcuts**
+    *   Added logo upload support for group and public workspace manage pages so owners can brand those spaces with a persistent hero image in addition to the hero color.
+    *   Group and public workspace pages now show the active workspace hero card with the selected color, owner metadata, optional logo, and a direct manage button for the selected workspace.
+    *   Added focused functional and UI regression coverage for the branding metadata, hero rendering, and manage-page flows.
+    *   (Ref: `functions_workspace_branding.py`, `group_workspaces.html`, `public_workspaces.html`, `test_workspace_branding_hero_and_logo.py`, `test_workspace_active_hero_shortcuts.py`, `test_manage_group_page_branding.py`, `test_manage_public_workspace_page_load.py`)
 
 #### Bug Fixes
 
@@ -42,36 +78,22 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The safety review modal and shared approvals page now expose the notification details, suspension restore date, and explicit warn/suspend/block approval labels needed to review and execute those requests cleanly.
     *   (Ref: `route_backend_safety.py`, `route_backend_control_center.py`, `functions_approvals.py`, `functions_safety_remediation.py`, `functions_notifications.py`, `admin_safety_violations.html`, `admin-safety-violations.js`, `approvals.html`, `test_safety_violation_remediation_approvals.py`)
 
-### **(v0.241.125)**
-
-#### Bug Fixes
+*   **Authenticated Request Login Activity Tracking**
+    *   Fixed login analytics so passive authenticated browser visits now contribute to login activity even when the user does not explicitly trigger the OAuth callback during that session.
+    *   Added throttled authenticated-request tracking to avoid inflating counts on every page load, while still preserving the explicit `azure_ad` login signal and avoiding an immediate duplicate on the post-login redirect.
+    *   This improves Control Center and profile login visibility for seamless SSO and session-reuse scenarios without changing the user-facing login flow.
+    *   (Ref: authenticated request login activity, `functions_activity_logging.py`, `app.py`, `route_frontend_authentication.py`, `test_authenticated_request_login_activity.py`, `AUTHENTICATED_REQUEST_LOGIN_ACTIVITY_FIX.md`)
 
 *   **Group and Public Workspace Hero Color Editing**
     *   Fixed the group and public workspace manage pages so hero color selections now apply to the saved workspace branding instead of leaving those selectors effectively non-functional.
     *   The manage-page hero preview now stays in sync with the selected color, and the saved branding metadata flows back through the workspace APIs for consistent rendering.
     *   (Ref: workspace branding, `manage_group.js`, `manage_public_workspace.js`, `route_backend_groups.py`, `route_backend_public_workspaces.py`)
 
-#### User Interface Enhancements
-
-*   **Workspace Branding Heroes and Shortcuts**
-    *   Added logo upload support for group and public workspace manage pages so owners can brand those spaces with a persistent hero image in addition to the hero color.
-    *   Group and public workspace pages now show the active workspace hero card with the selected color, owner metadata, optional logo, and a direct manage button for the selected workspace.
-    *   Added focused functional and UI regression coverage for the branding metadata, hero rendering, and manage-page flows.
-    *   (Ref: `functions_workspace_branding.py`, `group_workspaces.html`, `public_workspaces.html`, `test_workspace_branding_hero_and_logo.py`, `test_workspace_active_hero_shortcuts.py`, `test_manage_group_page_branding.py`, `test_manage_public_workspace_page_load.py`)
-
-### **(v0.241.122)**
-
-#### Bug Fixes
-
 *   **Chat-Scoped Generated Tabular Exports**
     *   Fixed large tabular JSON and CSV export requests so the generated file now stays attached to the active chat instead of being pushed through the personal workspace document pipeline.
     *   Assistant replies now keep the exhaustive dataset in a downloadable chat artifact with the existing preview card, which makes large structured outputs more reliable while keeping the visible answer concise.
     *   Personal conversation deletion and retention cleanup now remove blob-backed generated chat files when archiving is disabled, closing the lifecycle gap for conversation-scoped exports.
     *   (Ref: generated tabular exports, `route_backend_chats.py`, `functions_simplechat_operations.py`, `route_enhanced_citations.py`, `route_backend_conversations.py`, `functions_retention_policy.py`, `chat-messages.js`)
-
-### **(v0.241.114)**
-
-#### Bug Fixes
 
 *   **Fact Memory Delete Confirmation Layering**
     *   Fixed the profile fact-memory workflow so the delete confirmation now opens above the Manage Fact Memories editor instead of appearing underneath it.
@@ -85,37 +107,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added focused UI regression coverage for the live tabular progress card and kept the adjacent agent-progress behavior covered.
     *   (Ref: tabular analysis streaming, `route_backend_chats.py`, `chat-thoughts.js`, `test_chat_tabular_thought_progress.py`, `test_chat_agent_thought_progress.py`)
 
-### **(v0.241.111)**
-
-#### Bug Fixes
-
 *   **Workspace Search Document Action Gating**
     *   Fixed chat document actions so Review and Compare now only apply while Workspace Search is enabled.
     *   Turning Workspace Search off now ignores any previously selected Review or Compare mode instead of routing the request through document-action validation and showing stale "select documents before starting a review" warnings.
     *   Added a focused UI regression test for the workspace-toggle flow so normal chat sends continue using the standard chat stream when workspace search is disabled.
     *   (Ref: workspace search toggle, `chat-messages.js`, `test_chat_document_action_workspace_toggle.py`)
 
-### **(v0.241.110)**
-
-#### New Features
-
-*   **Chat Clipboard Paste Uploads**
-    *   Added direct clipboard upload support in Chats so users can paste copied images and browser-exposed files straight into the main chat message box instead of opening the file picker first.
-    *   The pasted upload flow now reuses the existing chat upload pipeline, including automatic conversation creation, upload consent checks, and backend file processing.
-    *   Clipboard files with empty names are normalized before upload so pasted screenshots still reach the existing extension-based processing path.
-    *   (Ref: chat paste uploads, `chat-input-actions.js`, `test_chat_clipboard_paste_upload_support.py`, `test_chat_clipboard_paste_upload_workflow.py`, `CHAT_CLIPBOARD_PASTE_UPLOADS.md`)
-
-### **(v0.241.109)**
-
-#### Bug Fixes
-
 *   **Chat Stream Lifecycle Observability**
     *   Improved diagnostics for long-running chat streams so backend status now distinguishes active, detached-but-running, completed, and errored stream states during the replay window.
     *   Added backend lifecycle logging for keepalive, detach, reattach, queue backpressure, and terminal stream outcomes, plus frontend best-effort telemetry for request failures, read failures, premature endings, aborts, and recovery attempts.
     *   Added focused regression coverage and versioned fix documentation for the new stream observability path.
     *   (Ref: `route_backend_chats.py`, `chat-streaming.js`, `test_chat_stream_lifecycle_observability.py`, `CHAT_STREAM_LIFECYCLE_OBSERVABILITY_FIX.md`)
-
-### **(v0.241.022)**
 
 *   **Uploaded File Preview Body XSS Hardening (`f044`)**
     *   Fixed the uploaded-file preview modal so stored file bodies no longer reach the preview pane through raw HTML sinks.

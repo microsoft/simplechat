@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # test_per_message_export.py
 """
-Functional tests for the per-message export feature and Word route regression fix.
-Version: 0.240.079
-Implemented in: 0.240.079
+Functional tests for the per-message export feature and export route regressions.
+Version: 0.241.019
+Implemented in: 0.241.019
 
 Covers:
  - Happy path: Word document built successfully from a valid message.
  - Word-native formatting: markdown content is converted into DOCX headings, lists, tables, and styled runs.
  - Email export: mailto drafts use word-style plain text and smarter subject selection.
+ - Email chart export: inline charts are converted to PNG download payloads for mail drafts.
  - Markdown export logic: correct header, timestamp and content rendered.
  - Route regression: backend source defines POST /api/message/export-word.
  - Auth failure: unauthenticated caller receives 401.
@@ -16,6 +17,7 @@ Covers:
 """
 
 import ast
+import base64
 import io
 import os
 import re
@@ -169,6 +171,9 @@ def _load_email_export_helpers():
     tree = ast.parse(source)
     helper_names = {
         '_message_to_email_draft_payload',
+        '_extract_email_chart_png_attachments',
+        '_safe_email_chart_attachment_filename',
+        '_format_email_chart_attachment_reference',
         '_render_markdown_to_email_lines',
         '_append_html_block_to_email_lines',
         '_append_html_list_to_email_lines',
@@ -205,9 +210,12 @@ def _load_email_export_helpers():
         'NavigableString': NavigableString,
         'Tag': Tag,
         'DOCX_MARKDOWN_EXTRAS': ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike'],
+        'EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX': 'message_chart',
         'EMAIL_SUBJECT_CHAR_LIMIT': 120,
         'EMAIL_SUBJECT_SOURCE_CHAR_LIMIT': 12000,
         '_normalize_content': _normalize_content,
+        'replace_inline_chart_blocks_with_export_html': lambda content: content,
+        'decode_base64_image_data_uri': _decode_base64_image_data_uri,
         '_role_to_label': lambda role: {
             'assistant': 'Assistant',
             'user': 'User',
@@ -224,6 +232,18 @@ def _load_email_export_helpers():
 
     exec(compile(module, route_file, 'exec'), namespace)
     return namespace, None
+
+
+def _decode_base64_image_data_uri(data_uri):
+    candidate = str(data_uri or '').strip()
+    if not candidate.startswith('data:image/') or ';base64,' not in candidate:
+        return None
+
+    try:
+        _, encoded_payload = candidate.split(',', 1)
+        return base64.b64decode(encoded_payload)
+    except (ValueError, TypeError, base64.binascii.Error):
+        return None
 
 
 class _FakeSubjectClient:
@@ -481,6 +501,65 @@ def test_email_export_generates_subject_with_summary_model_helper():
     return True
 
 
+def test_email_export_converts_inline_charts_to_png_download_payload():
+    """Email export should convert inline chart blocks to downloadable PNG payloads."""
+    print("🔍 Testing email export converts inline charts to PNG payloads...")
+
+    helpers, import_error = _load_email_export_helpers()
+    if import_error is not None:
+        print(f"  ⚠️  Required email formatter dependency missing, skipping check: {import_error}")
+        print("✅ test_email_export_converts_inline_charts_to_png_download_payload skipped (dependency missing)")
+        return True
+
+    sample_chart_data_uri = (
+        'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+    )
+    chart_block = '```simplechart\n{"kind":"bar"}\n```'
+
+    def fake_chart_export(content):
+        return str(content or '').replace(
+            chart_block,
+            (
+                '<div class="export-inline-chart">'
+                f'<p><img src="{sample_chart_data_uri}" alt="Quarterly Revenue" /></p>'
+                '<p class="export-inline-chart-caption"><em>Quarterly Revenue - Q1 summary</em></p>'
+                '</div>'
+            )
+        )
+
+    helpers['replace_inline_chart_blocks_with_export_html'] = fake_chart_export
+
+    draft = helpers['_message_to_email_draft_payload'](
+        message={
+            'role': 'assistant',
+            'content': f'Here is the chart.\n\n{chart_block}\n\nRevenue increased.',
+            'citations': [],
+        },
+        settings={},
+        summary_model_deployment=''
+    )
+
+    attachments = draft.get('attachments')
+    assert isinstance(attachments, list), draft
+    assert len(attachments) == 1, attachments
+    attachment = attachments[0]
+    assert attachment['content_type'] == 'image/png', attachment
+    assert attachment['data_uri'] == sample_chart_data_uri, attachment
+    assert attachment['filename'].startswith('message_chart_1_'), attachment
+    assert attachment['filename'].endswith('.png'), attachment
+
+    body = draft['body']
+    assert 'Chart image exported as' in body, body
+    assert attachment['filename'] in body, body
+    assert 'Quarterly Revenue - Q1 summary' in body, body
+    assert '```simplechart' not in body, body
+    assert 'data:image/png;base64' not in body, body
+
+    print("✅ test_email_export_converts_inline_charts_to_png_download_payload passed!")
+    return True
+
+
 def test_happy_path_markdown_export():
     """Happy path: Markdown file content is correctly formatted."""
     print("🔍 Testing happy path – Markdown export...")
@@ -659,6 +738,7 @@ def test_email_export_frontend_uses_mailto_draft_endpoint():
         source = handle.read()
 
     assert "fetch('/api/message/export-email-draft'" in source, 'Expected frontend to fetch the backend email draft endpoint'
+    assert 'downloadEmailDraftAttachments(data?.attachments)' in source, 'Expected frontend to download chart PNG attachments from the draft payload'
     assert 'mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}' in source, 'Expected frontend to build a mailto URL from the draft payload'
     assert 'window.location.href = mailtoUrl;' in source, 'Expected frontend to continue using a mailto navigation'
 
@@ -770,6 +850,7 @@ if __name__ == "__main__":
         test_word_export_uses_word_formatting,
         test_email_export_uses_word_style_plain_text_and_message_subject,
         test_email_export_generates_subject_with_summary_model_helper,
+        test_email_export_converts_inline_charts_to_png_download_payload,
         test_happy_path_markdown_export,
         test_export_word_route_definition_present,
         test_export_email_route_definition_present,

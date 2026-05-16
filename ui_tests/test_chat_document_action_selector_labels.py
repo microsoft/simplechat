@@ -1,13 +1,14 @@
 # test_chat_document_action_selector_labels.py
 """
 UI test for chat document action selector labels.
-Version: 0.241.104
-Implemented in: 0.241.104
+Version: 0.241.019
+Implemented in: 0.241.019
 
 This test ensures the chat document action selector renders before scope,
-uses the Search/Review/Compare labels, updates the hover description for
+uses the Search/Analyze/Compare labels, updates the hover description for
 each selected action, and exposes the compact Source/Target comparison summary
-plus the modal editor with both version history and uploaded chat files.
+as a full-width row below the dropdowns plus the modal editor with both version
+history and uploaded chat files.
 """
 
 import json
@@ -153,13 +154,13 @@ def test_chat_document_action_selector_labels(playwright):
         page.locator("#search-documents-btn").click()
         expect(page.locator("#search-documents-container")).to_be_visible()
 
-        field_labels = page.locator("#search-documents-container > .d-flex > div > label").evaluate_all(
+        field_labels = page.locator("#search-documents-container .chat-search-panel-grid > .chat-search-panel-field > label").evaluate_all(
             "elements => elements.map(element => element.textContent.replace(/\\s+/g, ' ').trim())"
         )
         assert field_labels[:4] == ["Action", "Scope", "Tags", "Document"]
 
         action_options = page.locator("#document-action-select option").all_text_contents()
-        assert action_options[:3] == ["Search", "Review", "Compare"]
+        assert action_options[:3] == ["Search", "Analyze", "Compare"]
 
         action_select = page.locator("#document-action-select")
         expect(action_select).to_have_attribute(
@@ -167,7 +168,7 @@ def test_chat_document_action_selector_labels(playwright):
             "Find relevant information in the selected documents.",
         )
 
-        page.select_option("#document-action-select", "exhaustive_review")
+        page.select_option("#document-action-select", "analyze")
         expect(action_select).to_have_attribute(
             "title",
             "Perform an in-depth analysis across all selected documents based on your request.",
@@ -196,6 +197,30 @@ def test_chat_document_action_selector_labels(playwright):
 
         comparison_summary_bar = page.locator("#document-comparison-summary-bar")
         expect(comparison_summary_bar).to_be_visible()
+        comparison_summary_layout = page.locator("#search-documents-container").evaluate(
+            """
+            container => {
+                const grid = container.querySelector('.chat-search-panel-grid');
+                const summary = container.querySelector('#document-comparison-summary-bar');
+                const fieldRects = Array.from(grid.querySelectorAll(':scope > .chat-search-panel-field:not(.chat-search-panel-comparison-row)'))
+                    .map(element => element.getBoundingClientRect());
+                const summaryRect = summary.getBoundingClientRect();
+                const gridRect = grid.getBoundingClientRect();
+                const maxFieldBottom = Math.max(...fieldRects.map(rect => rect.bottom));
+
+                return {
+                    summaryParentIsGrid: summary.parentElement === grid,
+                    summaryStartsBelowFields: summaryRect.top >= maxFieldBottom - 1,
+                    summaryNearlyFullWidth: summaryRect.width >= gridRect.width * 0.95,
+                };
+            }
+            """
+        )
+        assert comparison_summary_layout == {
+            "summaryParentIsGrid": True,
+            "summaryStartsBelowFields": True,
+            "summaryNearlyFullWidth": True,
+        }
         expect(page.locator("#document-comparison-inline-source-tags")).to_contain_text("Alpha Brief v2")
         expect(page.locator("#document-comparison-inline-target-tags")).to_contain_text("None selected")
         expect(page.locator("#document-comparison-edit-btn-label")).to_have_text("Edit Compare")

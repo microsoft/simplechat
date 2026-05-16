@@ -4,7 +4,7 @@ Functional test for document-action user message metadata enrichment.
 Version: 0.241.095
 Implemented in: 0.241.095
 
-This test ensures exhaustive review and document comparison user messages
+This test ensures analysis and document comparison user messages
 persist the same metadata categories that standard search messages expose
 in the metadata drawer.
 """

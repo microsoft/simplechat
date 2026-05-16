@@ -54,6 +54,7 @@ SUMMARY_SOURCE_CHAR_LIMIT = 60000
 DOCX_MARKDOWN_EXTRAS = ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike']
 EMAIL_SUBJECT_CHAR_LIMIT = 120
 EMAIL_SUBJECT_SOURCE_CHAR_LIMIT = 12000
+EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX = 'message_chart'
 POWERPOINT_PLAN_SOURCE_CHAR_LIMIT = 24000
 POWERPOINT_MAX_SLIDES = 7
 POWERPOINT_MAX_BULLETS_PER_SLIDE = 5
@@ -2417,11 +2418,21 @@ def _message_to_email_draft_payload(
         requested_model=summary_model_deployment
     )
     body_content = _strip_explicit_message_email_subject(content)
+    rendered_body_content = replace_inline_chart_blocks_with_export_html(body_content)
+    chart_attachments = _extract_email_chart_png_attachments(rendered_body_content)
+    image_labels_by_src = {
+        attachment['data_uri']: _format_email_chart_attachment_reference(attachment)
+        for attachment in chart_attachments
+        if attachment.get('data_uri')
+    }
 
     body_lines = []
 
-    if body_content.strip():
-        body_lines.extend(_render_markdown_to_email_lines(body_content))
+    if rendered_body_content.strip():
+        body_lines.extend(_render_markdown_to_email_lines(
+            rendered_body_content,
+            image_labels_by_src=image_labels_by_src,
+        ))
     else:
         body_lines.append('No content recorded.')
 
@@ -2438,11 +2449,81 @@ def _message_to_email_draft_payload(
     return {
         'subject': subject_payload['subject'],
         'subject_source': subject_payload['source'],
-        'body': body
+        'body': body,
+        'attachments': chart_attachments,
     }
 
 
-def _render_markdown_to_email_lines(content: str) -> List[str]:
+def _extract_email_chart_png_attachments(rendered_content: str) -> List[Dict[str, str]]:
+    if not str(rendered_content or '').strip():
+        return []
+
+    html = markdown2.markdown(rendered_content, extras=DOCX_MARKDOWN_EXTRAS)
+    soup = BeautifulSoup(f'<div>{html}</div>', 'html.parser')
+    root = soup.div if soup.div else soup
+    attachments: List[Dict[str, str]] = []
+    seen_keys = set()
+
+    for image_node in root.find_all('img'):
+        chart_wrapper = image_node.find_parent(class_='export-inline-chart')
+        if not chart_wrapper:
+            continue
+
+        data_uri = str(image_node.get('src') or '').strip()
+        image_bytes = decode_base64_image_data_uri(data_uri)
+        if not image_bytes:
+            continue
+
+        image_key = (len(image_bytes), image_bytes[:24])
+        if image_key in seen_keys:
+            continue
+        seen_keys.add(image_key)
+
+        caption_node = chart_wrapper.find(class_='export-inline-chart-caption')
+        caption = (
+            caption_node.get_text(' ', strip=True)
+            if caption_node and caption_node.get_text(' ', strip=True)
+            else ''
+        )
+        alt_text = str(image_node.get('alt') or '').strip()
+        attachment_label = caption or alt_text or f'Chart {len(attachments) + 1}'
+        filename = _safe_email_chart_attachment_filename(
+            attachment_label,
+            len(attachments) + 1,
+        )
+        attachments.append({
+            'filename': filename,
+            'content_type': 'image/png',
+            'data_uri': data_uri,
+            'caption': caption,
+            'alt': alt_text or attachment_label,
+        })
+
+    return attachments
+
+
+def _safe_email_chart_attachment_filename(label: str, sequence_number: int) -> str:
+    stem = re.sub(r'[^A-Za-z0-9._-]+', '_', str(label or '').lower())
+    stem = stem.strip('_.-')
+    if len(stem) > 48:
+        stem = stem[:48].strip('_.-')
+    if not stem:
+        stem = f'chart_{sequence_number}'
+    return f'{EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX}_{sequence_number}_{stem}.png'
+
+
+def _format_email_chart_attachment_reference(attachment: Dict[str, str]) -> str:
+    filename = str(attachment.get('filename') or 'chart.png').strip()
+    caption = str(attachment.get('caption') or attachment.get('alt') or '').strip()
+    if caption and caption != filename:
+        return f'Chart image exported as {filename}: {caption}'
+    return f'Chart image exported as {filename}'
+
+
+def _render_markdown_to_email_lines(
+    content: str,
+    image_labels_by_src: Optional[Dict[str, str]] = None,
+) -> List[str]:
     html = markdown2.markdown(content, extras=DOCX_MARKDOWN_EXTRAS)
     soup = BeautifulSoup(f'<div>{html}</div>', 'html.parser')
     root = soup.div if soup.div else soup
@@ -2457,16 +2538,28 @@ def _render_markdown_to_email_lines(content: str) -> List[str]:
             continue
 
         if isinstance(child, Tag):
-            _append_html_block_to_email_lines(lines, child)
+            _append_html_block_to_email_lines(
+                lines,
+                child,
+                image_labels_by_src=image_labels_by_src,
+            )
 
     return lines
 
 
-def _append_html_block_to_email_lines(lines: List[str], node: Tag, list_level: int = 0):
+def _append_html_block_to_email_lines(
+    lines: List[str],
+    node: Tag,
+    list_level: int = 0,
+    image_labels_by_src: Optional[Dict[str, str]] = None,
+):
     tag_name = node.name.lower()
 
     if tag_name in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
-        heading_text = _extract_email_inline_text(node).strip()
+        heading_text = _extract_email_inline_text(
+            node,
+            image_labels_by_src=image_labels_by_src,
+        ).strip()
         if heading_text:
             underline_char = '=' if tag_name in {'h1', 'h2'} else '-'
             lines.append(heading_text)
@@ -2475,14 +2568,26 @@ def _append_html_block_to_email_lines(lines: List[str], node: Tag, list_level: i
         return
 
     if tag_name == 'p':
-        paragraph_text = _extract_email_inline_text(node).strip()
+        if image_labels_by_src and 'export-inline-chart-caption' in (node.get('class') or []):
+            return
+
+        paragraph_text = _extract_email_inline_text(
+            node,
+            image_labels_by_src=image_labels_by_src,
+        ).strip()
         if paragraph_text:
             lines.extend(paragraph_text.splitlines())
             lines.append('')
         return
 
     if tag_name in {'ul', 'ol'}:
-        _append_html_list_to_email_lines(lines, node, ordered=(tag_name == 'ol'), level=list_level)
+        _append_html_list_to_email_lines(
+            lines,
+            node,
+            ordered=(tag_name == 'ol'),
+            level=list_level,
+            image_labels_by_src=image_labels_by_src,
+        )
         lines.append('')
         return
 
@@ -2495,7 +2600,10 @@ def _append_html_block_to_email_lines(lines: List[str], node: Tag, list_level: i
         return
 
     if tag_name == 'blockquote':
-        quote_text = _extract_email_inline_text(node).strip()
+        quote_text = _extract_email_inline_text(
+            node,
+            image_labels_by_src=image_labels_by_src,
+        ).strip()
         if quote_text:
             for quote_line in quote_text.splitlines():
                 lines.append(f'    {quote_line}')
@@ -2503,7 +2611,11 @@ def _append_html_block_to_email_lines(lines: List[str], node: Tag, list_level: i
         return
 
     if tag_name == 'table':
-        _append_html_table_to_email_lines(lines, node)
+        _append_html_table_to_email_lines(
+            lines,
+            node,
+            image_labels_by_src=image_labels_by_src,
+        )
         lines.append('')
         return
 
@@ -2522,16 +2634,30 @@ def _append_html_block_to_email_lines(lines: List[str], node: Tag, list_level: i
                 continue
 
             if isinstance(child, Tag):
-                _append_html_block_to_email_lines(lines, child, list_level=list_level)
+                _append_html_block_to_email_lines(
+                    lines,
+                    child,
+                    list_level=list_level,
+                    image_labels_by_src=image_labels_by_src,
+                )
         return
 
-    fallback_text = _extract_email_inline_text(node).strip()
+    fallback_text = _extract_email_inline_text(
+        node,
+        image_labels_by_src=image_labels_by_src,
+    ).strip()
     if fallback_text:
         lines.extend(fallback_text.splitlines())
         lines.append('')
 
 
-def _append_html_list_to_email_lines(lines: List[str], list_node: Tag, ordered: bool, level: int = 0):
+def _append_html_list_to_email_lines(
+    lines: List[str],
+    list_node: Tag,
+    ordered: bool,
+    level: int = 0,
+    image_labels_by_src: Optional[Dict[str, str]] = None,
+):
     item_number = 1
     indent = '  ' * level
 
@@ -2542,7 +2668,10 @@ def _append_html_list_to_email_lines(lines: List[str], list_node: Tag, ordered: 
         for child in item.children:
             if isinstance(child, Tag) and child.name.lower() in {'ul', 'ol'}:
                 continue
-            item_parts.append(_extract_email_inline_text(child))
+            item_parts.append(_extract_email_inline_text(
+                child,
+                image_labels_by_src=image_labels_by_src,
+            ))
 
         item_text = ''.join(item_parts).strip()
         if item_text:
@@ -2555,14 +2684,19 @@ def _append_html_list_to_email_lines(lines: List[str], list_node: Tag, ordered: 
                 lines,
                 nested_list,
                 ordered=(nested_list.name.lower() == 'ol'),
-                level=level + 1
+                level=level + 1,
+                image_labels_by_src=image_labels_by_src,
             )
 
         if ordered:
             item_number += 1
 
 
-def _append_html_table_to_email_lines(lines: List[str], table_node: Tag):
+def _append_html_table_to_email_lines(
+    lines: List[str],
+    table_node: Tag,
+    image_labels_by_src: Optional[Dict[str, str]] = None,
+):
     rows = table_node.find_all('tr')
     if not rows:
         return
@@ -2576,7 +2710,14 @@ def _append_html_table_to_email_lines(lines: List[str], table_node: Tag):
         if row_index == 0 and all(cell.name.lower() == 'th' for cell in cells):
             header_present = True
         parsed_rows.append([
-            re.sub(r'\s+', ' ', _extract_email_inline_text(cell)).strip()
+            re.sub(
+                r'\s+',
+                ' ',
+                _extract_email_inline_text(
+                    cell,
+                    image_labels_by_src=image_labels_by_src,
+                ),
+            ).strip()
             for cell in cells
         ])
 
@@ -2612,7 +2753,10 @@ def _append_html_table_to_email_lines(lines: List[str], table_node: Tag):
         lines.append(format_row(row_values))
 
 
-def _extract_email_inline_text(node: Any) -> str:
+def _extract_email_inline_text(
+    node: Any,
+    image_labels_by_src: Optional[Dict[str, str]] = None,
+) -> str:
     if isinstance(node, NavigableString):
         return str(node)
 
@@ -2623,9 +2767,18 @@ def _extract_email_inline_text(node: Any) -> str:
     if tag_name == 'br':
         return '\n'
     if tag_name == 'img':
-        return f"[{node.get('alt') or 'Image'}]"
+        src = str(node.get('src') or '').strip()
+        image_label = (
+            image_labels_by_src.get(src)
+            if image_labels_by_src and src in image_labels_by_src
+            else str(node.get('alt') or 'Image').strip() or 'Image'
+        )
+        return f'[{image_label}]'
     if tag_name == 'a':
-        label = ''.join(_extract_email_inline_text(child) for child in node.children).strip()
+        label = ''.join(
+            _extract_email_inline_text(child, image_labels_by_src=image_labels_by_src)
+            for child in node.children
+        ).strip()
         href = str(node.get('href') or '').strip()
         if href and href != label:
             if label:
@@ -2633,7 +2786,10 @@ def _extract_email_inline_text(node: Any) -> str:
             return href
         return label
 
-    return ''.join(_extract_email_inline_text(child) for child in node.children)
+    return ''.join(
+        _extract_email_inline_text(child, image_labels_by_src=image_labels_by_src)
+        for child in node.children
+    )
 
 
 def _finalize_email_body_text(lines: List[str]) -> str:

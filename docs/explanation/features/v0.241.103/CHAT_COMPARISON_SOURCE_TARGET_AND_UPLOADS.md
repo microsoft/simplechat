@@ -12,7 +12,7 @@ Dependencies:
 
 - Chat comparison UI in `templates/chats.html`
 - Chat comparison state in `static/js/chat/chat-messages.js`
-- Conversation-aware review/comparison resolution in `functions_search_service.py`, `functions_exhaustive_document_review.py`, and `functions_document_comparison.py`
+- Conversation-aware analysis/comparison resolution in `functions_search_service.py`, `functions_document_analysis.py`, and `functions_document_comparison.py`
 
 ## Technical Specifications
 
@@ -20,14 +20,14 @@ Dependencies:
 
 The chat comparison flow still submits the existing backend contract with `left_document_id` and `right_document_ids`, but the user-facing experience now uses Source and Target terminology.
 
-When a comparison request includes an active `conversation_id`, the document review/search layer can now resolve uploaded chat files from conversation messages and load their content for comparison alongside workspace documents.
+When a comparison request includes an active `conversation_id`, the document analysis/search layer can now resolve uploaded chat files from conversation messages and load their content for comparison alongside workspace documents.
 
 ### File Structure
 
 - `application/single_app/templates/chats.html`
 - `application/single_app/static/js/chat/chat-messages.js`
 - `application/single_app/functions_search_service.py`
-- `application/single_app/functions_exhaustive_document_review.py`
+- `application/single_app/functions_document_analysis.py`
 - `application/single_app/functions_document_comparison.py`
 - `application/single_app/route_backend_chats.py`
 

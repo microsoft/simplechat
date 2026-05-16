@@ -1,10 +1,10 @@
 # test_document_action_token_usage_aggregation.py
 """
 Functional test for document action token usage aggregation.
-Version: 0.241.116
+Version: 0.241.023
 Implemented in: 0.241.116
 
-This test ensures exhaustive review and comparison aggregate tokens across
+This test ensures analysis and comparison aggregate tokens across
 all internal model calls and persist the aggregate usage on assistant metadata.
 """
 
@@ -98,8 +98,8 @@ class FakeContainer:
         self.items.append(item)
 
 
-def test_exhaustive_review_token_aggregation():
-    print('Testing exhaustive review token aggregation...')
+def test_document_analysis_token_aggregation():
+    print('Testing analysis token aggregation...')
 
     fake_client = FakeClient([
         ('window one', 110, 25, 135),
@@ -114,20 +114,22 @@ def test_exhaustive_review_token_aggregation():
             '_create_token_usage_aggregate',
             '_accumulate_token_usage',
             '_finalize_token_usage',
-            '_execute_exhaustive_review_workflow',
+            '_execute_document_analysis_workflow',
         },
         extra_globals={
-            'DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW': 'exhaustive_review',
+            'DOCUMENT_ACTION_TYPE_ANALYZE': 'analyze',
             'DOCUMENT_ACTION_CONTEXT_WORKFLOW': 'workflow',
             'get_document_action_max_documents': lambda *args, **kwargs: 10,
             '_chain_activity_callbacks': lambda *callbacks: None,
             '_build_document_action_activity_callback': lambda *args, **kwargs: None,
+            '_maybe_execute_tabular_document_action': lambda *args, **kwargs: None,
+            '_maybe_create_document_analysis_generated_artifacts': lambda *args, **kwargs: {'artifacts': [], 'assistant_reply': None},
             '_resolve_model_workflow_client': lambda *args, **kwargs: (fake_client, 'gpt-5.4', 'aoai'),
-            'run_exhaustive_document_review': lambda **kwargs: (
-                kwargs['invoke_prompt']('review window 1', stage='window_review'),
-                kwargs['invoke_prompt']('review window 2', stage='reduction'),
+            'run_document_analysis': lambda **kwargs: (
+                kwargs['invoke_prompt']('analysis window 1', stage='window_analysis'),
+                kwargs['invoke_prompt']('analysis window 2', stage='reduction'),
                 {
-                    'reply': 'Aggregated review answer',
+                    'reply': 'Aggregated analysis answer',
                     'coverage': {
                         'processed_windows': 2,
                         'failed_windows': 0,
@@ -140,18 +142,18 @@ def test_exhaustive_review_token_aggregation():
         },
     )
 
-    result = namespace['_execute_exhaustive_review_workflow'](
+    result = namespace['_execute_document_analysis_workflow'](
         {
-            'id': 'workflow-review-1',
+            'id': 'workflow-analysis-1',
             'user_id': 'user-1',
             'runner_type': 'model',
-            'task_prompt': 'Review the selected documents',
+            'task_prompt': 'Analyze the selected documents',
         },
         settings={},
         conversation_id='conversation-1',
-        run_id='run-review-1',
+        run_id='run-analysis-1',
         action_config={
-            'type': 'exhaustive_review',
+            'type': 'analyze',
             'document_ids': ['doc-1', 'doc-2'],
         },
     )
@@ -164,9 +166,9 @@ def test_exhaustive_review_token_aggregation():
             'total_tokens': 240,
             'request_count': 2,
         },
-        'exhaustive review token aggregation',
+        'analysis token aggregation',
     )
-    print('Exhaustive review token aggregation passed.')
+    print('Document analysis token aggregation passed.')
     return True
 
 
@@ -193,6 +195,8 @@ def test_document_comparison_token_aggregation():
             'DOCUMENT_ACTION_TYPE_COMPARISON': 'comparison',
             '_chain_activity_callbacks': lambda *callbacks: None,
             '_build_document_action_activity_callback': lambda *args, **kwargs: None,
+            '_maybe_execute_tabular_document_action': lambda *args, **kwargs: None,
+            '_maybe_create_comparison_generated_artifacts': lambda *args, **kwargs: {'artifacts': [], 'assistant_reply': None},
             '_resolve_model_workflow_client': lambda *args, **kwargs: (fake_client, 'gpt-5.4', 'aoai'),
             'run_document_comparison': lambda **kwargs: (
                 kwargs['invoke_prompt']('summary left', stage='summary'),
@@ -274,8 +278,8 @@ def test_workflow_assistant_persists_token_usage():
             'runner_type': 'model',
             'selected_agent': {},
             'model_binding_summary': {},
-            'exhaustive_review': {},
-            'document_action': {'type': 'exhaustive_review'},
+            'analyze': {},
+            'document_action': {'type': 'analyze'},
         },
         result={
             'reply': 'Done',
@@ -286,7 +290,7 @@ def test_workflow_assistant_persists_token_usage():
                 'total_tokens': 240,
                 'request_count': 2,
             },
-            'review_coverage': {'processed_windows': 2},
+            'analysis_coverage': {'processed_windows': 2},
             'agent_citations': [],
         },
         trigger_source='manual',
@@ -328,7 +332,7 @@ def test_version_update():
     with open(CONFIG_PATH, 'r', encoding='utf-8') as handle:
         content = handle.read()
 
-    assert_in('VERSION = "0.241.116"', content, 'config version update')
+    assert_in('VERSION = "0.241.023"', content, 'config version update')
     print('Version update passed.')
     return True
 
@@ -338,7 +342,7 @@ def run_tests():
     print('=' * 72)
 
     tests = [
-        test_exhaustive_review_token_aggregation,
+        test_document_analysis_token_aggregation,
         test_document_comparison_token_aggregation,
         test_workflow_assistant_persists_token_usage,
         test_chat_document_action_persists_token_usage,

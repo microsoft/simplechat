@@ -1,10 +1,10 @@
 # test_chat_document_action_workspace_toggle.py
 """
 UI test for chat document action workspace toggle gating.
-Version: 0.241.111
+Version: 0.241.023
 Implemented in: 0.241.111
 
-This test ensures Review and Compare are ignored once workspace search is
+This test ensures Analyze and Compare are ignored once workspace search is
 turned off, even if the document action selector still holds one of those
 values from an earlier workspace-enabled state.
 """
@@ -39,8 +39,8 @@ def _fulfill_stream(route, payload, status=200):
 
 
 @pytest.mark.ui
-def test_workspace_toggle_disables_review_and_uses_standard_chat_stream(playwright):
-    """Validate that Review is ignored after workspace search is turned off."""
+def test_workspace_toggle_disables_analyze_and_uses_standard_chat_stream(playwright):
+    """Validate that Analyze is ignored after workspace search is turned off."""
     if not BASE_URL:
         pytest.skip("Set SIMPLECHAT_UI_BASE_URL to run this UI test.")
     if not STORAGE_STATE or not Path(STORAGE_STATE).exists():
@@ -103,8 +103,8 @@ def test_workspace_toggle_disables_review_and_uses_standard_chat_stream(playwrig
                 "documents": [
                     {
                         "id": "personal-doc-1",
-                        "title": "Workspace Review Doc",
-                        "file_name": "workspace-review-doc.md",
+                        "title": "Workspace Analysis Doc",
+                        "file_name": "workspace-analysis-doc.md",
                         "tags": [],
                         "document_classification": "",
                     }
@@ -179,16 +179,16 @@ def test_workspace_toggle_disables_review_and_uses_standard_chat_stream(playwrig
             }
             """
         )
-        page.select_option("#document-action-select", "exhaustive_review")
+        page.select_option("#document-action-select", "analyze")
 
         workspace_toggle.click()
         expect(page.locator("#search-documents-container")).to_be_hidden()
 
-        page.locator("#user-input").fill("Send without workspace review")
+        page.locator("#user-input").fill("Send without workspace analysis")
         page.locator("#send-btn").click()
 
         expect(page.locator("[data-message-id='assistant-standard-msg-1']")).to_be_visible()
-        expect(page.locator("body")).not_to_contain_text("Select one or more documents before starting a review.")
+        expect(page.locator("body")).not_to_contain_text("Select one or more documents before starting analysis.")
 
         assert stream_calls["standard"] == 1, "Expected the standard chat stream to run after workspace search was disabled."
         assert stream_calls["document_action"] == 0, "Document-action streaming should be skipped when workspace search is off."

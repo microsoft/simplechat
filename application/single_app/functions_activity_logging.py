@@ -1,3 +1,4 @@
+# functions_activity_logging.py
 """
 Activity logging functions for tracking chat and user interactions.
 This module provides functions to log various types of user activity
@@ -7,7 +8,7 @@ for analytics and monitoring purposes.
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from functions_appinsights import log_event
 from functions_debug import debug_print
@@ -107,6 +108,115 @@ def maybe_log_authenticated_request_login(
     )
     record_user_login_session_activity(session_state, resolved_epoch)
     return True
+
+
+def _parse_activity_timestamp_sort_value(timestamp_value: Any) -> Optional[float]:
+    """Convert an activity timestamp string into a comparable UTC epoch value."""
+    if not timestamp_value:
+        return None
+
+    try:
+        parsed_timestamp = datetime.fromisoformat(str(timestamp_value).replace('Z', '+00:00'))
+        if parsed_timestamp.tzinfo is None:
+            parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+        return parsed_timestamp.timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _select_latest_activity_timestamp(activity_records: list) -> Optional[str]:
+    """Return the newest timestamp or created_at value from activity records."""
+    fallback_timestamp = None
+    latest_timestamp = None
+    latest_sort_value = None
+
+    for record in activity_records:
+        if not isinstance(record, dict):
+            continue
+
+        for timestamp_value in (record.get('timestamp'), record.get('created_at')):
+            if not timestamp_value:
+                continue
+
+            timestamp_text = str(timestamp_value)
+            if fallback_timestamp is None:
+                fallback_timestamp = timestamp_text
+
+            sort_value = _parse_activity_timestamp_sort_value(timestamp_text)
+            if sort_value is None:
+                continue
+
+            if latest_sort_value is None or sort_value > latest_sort_value:
+                latest_sort_value = sort_value
+                latest_timestamp = timestamp_text
+
+    return latest_timestamp or fallback_timestamp
+
+
+def get_user_login_activity_summary(user_id: Any) -> Dict[str, Any]:
+    """Return live login activity metrics from activity_logs for one user."""
+    normalized_user_id = coerce_activity_log_user_id(user_id)
+    summary = {
+        'total_logins': 0,
+        'last_login': None,
+        'total_logins_lookup_succeeded': False,
+        'last_login_lookup_succeeded': False,
+    }
+
+    if not normalized_user_id:
+        return summary
+
+    login_params = [{'name': '@user_id', 'value': normalized_user_id}]
+
+    try:
+        total_logins_query = """
+            SELECT VALUE COUNT(1) FROM c
+            WHERE c.user_id = @user_id AND c.activity_type = 'user_login'
+        """
+        total_logins = list(cosmos_activity_logs_container.query_items(
+            query=total_logins_query,
+            parameters=login_params,
+            partition_key=normalized_user_id
+        ))
+        summary['total_logins'] = int(total_logins[0] or 0) if total_logins else 0
+        summary['total_logins_lookup_succeeded'] = True
+    except Exception as ex:
+        debug_print(f"[ActivityLogging] Could not query login count for user {normalized_user_id}: {ex}")
+        log_event(
+            message=f"[ActivityLogging] Error querying user login count: {ex}",
+            extra={'user_id': normalized_user_id, 'error': str(ex)},
+            level=logging.ERROR,
+            debug_only=True
+        )
+
+    try:
+        latest_login_records = []
+        for order_by_field in ('timestamp', 'created_at'):
+            latest_login_query = f"""
+                SELECT TOP 1 c.timestamp, c.created_at FROM c
+                WHERE c.user_id = @user_id
+                AND c.activity_type = 'user_login'
+                AND IS_DEFINED(c.{order_by_field})
+                ORDER BY c.{order_by_field} DESC
+            """
+            latest_login_records.extend(list(cosmos_activity_logs_container.query_items(
+                query=latest_login_query,
+                parameters=login_params,
+                partition_key=normalized_user_id
+            )))
+
+        summary['last_login'] = _select_latest_activity_timestamp(latest_login_records)
+        summary['last_login_lookup_succeeded'] = True
+    except Exception as ex:
+        debug_print(f"[ActivityLogging] Could not query latest login for user {normalized_user_id}: {ex}")
+        log_event(
+            message=f"[ActivityLogging] Error querying latest user login: {ex}",
+            extra={'user_id': normalized_user_id, 'error': str(ex)},
+            level=logging.ERROR,
+            debug_only=True
+        )
+
+    return summary
 
 
 def _get_email_domain(email: str) -> str:

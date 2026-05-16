@@ -1,7 +1,7 @@
 # test_document_actions_and_comparison_feature.py
 """
 Functional test for document actions and comparison.
-Version: 0.241.104
+Version: 0.241.023
 Implemented in: 0.241.104
 
 This test ensures chat and workflows share the generic backend document action
@@ -38,8 +38,8 @@ def test_document_actions_and_comparison_wiring():
     search_service_content = read_text("application/single_app/functions_search_service.py")
     latest_feature_doc_content = read_text("docs/explanation/features/v0.241.104/CHAT_COMPARISON_MODAL_SUMMARY.md")
 
-    assert 'VERSION = "0.241.104"' in config_content, (
-        "Expected config.py version 0.241.104 for document actions and comparison."
+    assert 'VERSION = "0.241.023"' in config_content, (
+        "Expected config.py version 0.241.023 for document actions and comparison."
     )
     assert "DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'" in document_actions_content, (
         "Expected shared document action helpers to define the comparison action type."
@@ -60,7 +60,7 @@ def test_document_actions_and_comparison_wiring():
         "Expected the comparison service to retain pairwise comparison results."
     )
     assert 'def _resolve_chat_upload_context(' in search_service_content, (
-        "Expected search helpers to resolve uploaded chat files for comparison and review."
+        "Expected search helpers to resolve uploaded chat files for comparison and analysis."
     )
     assert "/api/documents/<document_id>/versions" in documents_route_content, (
         "Expected personal document routes to expose a versions endpoint for comparison target selection."

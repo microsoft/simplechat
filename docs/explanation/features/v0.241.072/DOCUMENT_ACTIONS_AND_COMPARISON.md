@@ -8,12 +8,12 @@ Dependencies: `functions_document_actions.py`, `functions_document_comparison.py
 
 ## Overview
 
-This feature turns exhaustive review into a generic backend document action model and adds deterministic document comparison on top of the same ordered retrieval path.
+This feature turns analysis into a generic backend document action model and adds deterministic document comparison on top of the same ordered retrieval path.
 
 Chat and workflows now use the same action shape:
 
 - `none` for standard prompt runs
-- `exhaustive_review` for full ordered review across fixed documents
+- `analyze` for full ordered review across fixed documents
 - `comparison` for one-left-to-many-right comparison runs
 
 ## Technical Specifications
@@ -22,7 +22,7 @@ The backend now normalizes shared document action payloads in `functions_documen
 
 Comparison is implemented in `functions_document_comparison.py` as a backend action, not as a plugin. The service:
 
-- builds exhaustive summaries for the left document and each right-side document
+- builds full analysis summaries for the left document and each right-side document
 - compares each right document against the left baseline
 - reduces multiple pairwise comparisons into one final response when needed
 - preserves coverage and progress reporting through the existing thought stream model
@@ -34,12 +34,12 @@ Workflow execution and chat execution both dispatch through the shared document 
 In chat, choose an action from the `Action` selector beside document selection.
 
 - `Search Documents` keeps the normal prompt flow while searching the selected documents for relevant context.
-- `Exhaustive Review` reviews every ordered page or chunk from the selected documents.
+- `Analyze` reviews every ordered page or chunk from the selected documents.
 - `Compare Documents` treats one selected document as the left baseline and compares every other selected document against it.
 
 In workflows, choose `Action Type` in the workflow modal.
 
-- `Exhaustive Review` accepts a fixed list of document ids.
+- `Analyze` accepts a fixed list of document ids.
 - `Compare Documents` accepts one left document id and one or more right document ids.
 - Chat currently caps document actions at 3 documents and workflows cap them at 10 documents.
 
@@ -48,7 +48,7 @@ In workflows, choose `Action Type` in the workflow modal.
 Coverage for this feature includes:
 
 - functional wiring tests for the shared document action model and comparison service
-- updated exhaustive review regression tests for the new shared action routes and selectors
+- updated analysis regression tests for the new shared action routes and selectors
 - a UI workflow modal test that verifies comparison payload submission
 
 Known limitation:

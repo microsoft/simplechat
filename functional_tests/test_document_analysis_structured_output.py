@@ -1,12 +1,12 @@
-# test_exhaustive_review_structured_output.py
+# test_document_analysis_structured_output.py
 """
-Functional test for exhaustive review structured output preservation.
-Version: 0.241.117
+Functional test for analysis structured output preservation.
+Version: 0.241.023
 Implemented in: 0.241.117
 
-This test ensures exhaustive document review preserves one structured JSON
-result per reviewed document instead of making a lossy global reduction call
-that can collapse a large per-comment review into only a few final objects.
+This test ensures document analysis preserves one structured JSON
+result per analyzed document instead of making a lossy global reduction call
+that can collapse a large per-comment analysis into only a few final objects.
 """
 
 import ast
@@ -22,7 +22,7 @@ MODULE_PATH = os.path.join(
     REPO_ROOT,
     'application',
     'single_app',
-    'functions_exhaustive_document_review.py',
+    'functions_document_analysis.py',
 )
 CONFIG_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'config.py')
 
@@ -94,7 +94,7 @@ class FakeInvokePrompt:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, prompt_text, stage='window_review', metadata=None):
+    def __call__(self, prompt_text, stage='window_analysis', metadata=None):
         metadata = metadata or {}
         self.calls.append({
             'stage': stage,
@@ -102,7 +102,7 @@ class FakeInvokePrompt:
             'prompt_text': prompt_text,
         })
 
-        if stage == 'window_review':
+        if stage == 'window_analysis':
             document_id = metadata.get('document_id')
             window_number = (metadata.get('window_range') or {}).get('window_number')
             responses = {
@@ -220,8 +220,8 @@ class FakeInvokePrompt:
         raise AssertionError(f'Unexpected invoke_prompt call: stage={stage!r}, metadata={metadata!r}')
 
 
-def test_structured_exhaustive_review_skips_lossy_global_reduction():
-    print('Testing structured exhaustive review preservation...')
+def test_structured_analyze_skips_lossy_global_reduction():
+    print('Testing structured analysis preservation...')
 
     document_windows = {
         'doc-1': [build_window(1, 1, 1, 'Doc 1 window 1')],
@@ -257,8 +257,8 @@ def test_structured_exhaustive_review_skips_lossy_global_reduction():
             'DEFAULT_MAX_RETRIES_PER_WINDOW': 1,
             'DEFAULT_REDUCTION_BATCH_SIZE': 5,
             'DEFAULT_MAX_REDUCTION_ROUNDS': 4,
-            'CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS': 3,
-            'WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS': 10,
+            'CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS': 3,
+            'WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS': 10,
             'log_event': lambda *args, **kwargs: None,
             'debug_print': lambda *args, **kwargs: None,
             'normalize_search_id_list': lambda value: list(value or []),
@@ -271,7 +271,7 @@ def test_structured_exhaustive_review_skips_lossy_global_reduction():
     )
 
     invoke_prompt = FakeInvokePrompt()
-    review_prompt = (
+    analysis_prompt = (
         'Treat each standalone document as one comment. '
         'Return one JSON array containing one object per comment. '
         'Each object must contain exactly these fields: comment_id, classification, themes, '
@@ -279,9 +279,9 @@ def test_structured_exhaustive_review_skips_lossy_global_reduction():
         'substantive_score, confidence, and reason. Return only valid JSON in a code block.'
     )
 
-    result = namespace['run_exhaustive_document_review'](
+    result = namespace['run_document_analysis'](
         user_id='user-1',
-        review_prompt=review_prompt,
+        analysis_prompt=analysis_prompt,
         document_ids=['doc-1', 'doc-2', 'doc-3'],
         invoke_prompt=invoke_prompt,
         include_coverage_summary=False,
@@ -289,11 +289,11 @@ def test_structured_exhaustive_review_skips_lossy_global_reduction():
     )
 
     parsed_output = json.loads(namespace['_clean_json_code_fence'](result['analysis_reply']))
-    assert_equal(len(parsed_output), 3, 'structured exhaustive review result count')
+    assert_equal(len(parsed_output), 3, 'structured analysis result count')
     assert_equal(
         [entry.get('comment_id') for entry in parsed_output],
         ['doc-1.json', 'doc-2.json', 'doc-3.json'],
-        'structured exhaustive review comment ordering',
+        'structured analysis comment ordering',
     )
 
     document_reduction_calls = [
@@ -308,23 +308,23 @@ def test_structured_exhaustive_review_skips_lossy_global_reduction():
     assert_equal(len(global_reduction_calls), 0, 'global reduction call count')
     assert_equal(result['coverage']['document_count'], 3, 'coverage document count')
     assert_equal(result['coverage']['processed_windows'], 4, 'coverage processed windows')
-    print('Structured exhaustive review preservation passed.')
+    print('Structured analysis preservation passed.')
     return True
 
 
 def test_version_alignment():
     print('Testing version alignment...')
-    assert_equal(read_config_version(), '0.241.117', 'config version')
+    assert_equal(read_config_version(), '0.241.023', 'config version')
     print('Version alignment passed.')
     return True
 
 
 def run_tests():
-    print('Running exhaustive review structured output tests...')
+    print('Running analysis structured output tests...')
     print('=' * 72)
 
     tests = [
-        test_structured_exhaustive_review_skips_lossy_global_reduction,
+        test_structured_analyze_skips_lossy_global_reduction,
         test_version_alignment,
     ]
 

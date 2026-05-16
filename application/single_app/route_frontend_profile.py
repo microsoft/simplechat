@@ -1,6 +1,7 @@
 # route_frontend_profile.py
 
 from config import *
+from functions_activity_logging import get_user_login_activity_summary
 from functions_appinsights import log_event
 from functions_authentication import *
 from functions_debug import debug_print
@@ -14,12 +15,37 @@ def register_route_frontend_profile(app):
     @swagger_route(security=get_auth_security())
     @login_required
     def profile():
-        user = session.get('user')
+        user = session.get('user', {})
+        settings = get_settings()
         initial_tab = str(request.args.get('tab', 'stats') or 'stats').strip().lower()
-        if initial_tab not in {'stats', 'settings', 'feedback', 'violations'}:
+        valid_tabs = {'stats', 'settings', 'feedback', 'violations'}
+        if settings.get('enable_group_workspaces', False):
+            valid_tabs.add('groups')
+        if settings.get('enable_public_workspaces', False):
+            valid_tabs.add('public-workspaces')
+
+        if initial_tab not in valid_tabs:
             initial_tab = 'stats'
 
-        return render_template('profile.html', user=user, initial_tab=initial_tab)
+        user_roles = user.get('roles') or []
+        enable_group_creation = settings.get('enable_group_creation', True)
+        require_member_of_create_group = settings.get('require_member_of_create_group', False)
+        can_create_groups = bool(settings.get('enable_group_workspaces', False) and enable_group_creation)
+        if can_create_groups and require_member_of_create_group:
+            can_create_groups = 'CreateGroups' in user_roles
+
+        require_member_of_create_public_workspace = settings.get('require_member_of_create_public_workspace', False)
+        can_create_public_workspaces = bool(settings.get('enable_public_workspaces', False))
+        if can_create_public_workspaces and require_member_of_create_public_workspace:
+            can_create_public_workspaces = 'CreatePublicWorkspaces' in user_roles
+
+        return render_template(
+            'profile.html',
+            user=user,
+            initial_tab=initial_tab,
+            can_create_groups=can_create_groups,
+            can_create_public_workspaces=can_create_public_workspaces,
+        )
 
     def serialize_fact_memory_item(fact_item):
         return {
@@ -366,23 +392,36 @@ def register_route_frontend_profile(app):
             
             # Extract relevant data for frontend
             settings = user_settings.get('settings', {})
-            metrics = settings.get('metrics', {})
+            if not isinstance(settings, dict):
+                settings = {}
+            response_settings = settings.copy()
+            metrics = response_settings.get('metrics', {})
+            metrics = metrics.copy() if isinstance(metrics, dict) else {}
+
+            login_metrics = metrics.get('login_metrics', {})
+            login_metrics = login_metrics.copy() if isinstance(login_metrics, dict) else {}
+            login_activity_summary = get_user_login_activity_summary(user_id)
+            if login_activity_summary.get('last_login_lookup_succeeded'):
+                login_metrics['last_login'] = login_activity_summary.get('last_login')
+                login_metrics['last_login_source'] = 'activity_logs'
+            metrics['login_metrics'] = login_metrics
+            response_settings['metrics'] = metrics
             
             # Return ALL settings from Cosmos for backwards compatibility
             # This matches the old API behavior: return jsonify(user_settings_data), 200
             response_data = {
                 "success": True,
-                "settings": settings,  # Return entire settings object
+                "settings": response_settings,  # Return entire settings object
                 "metrics": metrics,
                 "retention_policy": {
-                    "enabled": settings.get('retention_policy_enabled', False),
-                    "days": settings.get('retention_policy_days', 30)
+                    "enabled": response_settings.get('retention_policy_enabled', False),
+                    "days": response_settings.get('retention_policy_days', 30)
                 },
                 "display_name": user_settings.get('display_name'),
                 "email": user_settings.get('email'),
                 "lastUpdated": user_settings.get('lastUpdated'),
                 # Add at root level for backwards compatibility with agents code
-                "selected_agent": settings.get('selected_agent')
+                "selected_agent": response_settings.get('selected_agent')
             }
             
             return jsonify(response_data), 200

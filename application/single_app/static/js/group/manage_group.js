@@ -264,7 +264,7 @@ $(document).ready(function () {
           method: "DELETE",
           success: function (resp) {
             alert("Group deleted successfully!");
-            window.location.href = "/my_groups";
+            window.location.href = "/profile?tab=groups";
           },
           error: function (err) {
             console.error(err);
@@ -379,7 +379,7 @@ function leaveGroup() {
     method: "DELETE",
     success: function (resp) {
       alert("You have left the group.");
-      window.location.href = "/my_groups";
+      window.location.href = "/profile?tab=groups";
     },
     error: function (err) {
       console.error(err);

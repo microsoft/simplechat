@@ -1293,8 +1293,8 @@
                 <label for="workflow-document-action-type" class="form-label">Action Type</label>
                 <select class="form-select" id="workflow-document-action-type" title="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.">
                   <option value="none" data-action-description="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets." title="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.">Search</option>
-                  {% if settings.document_action_capabilities.exhaustive_review.enabled %}
-                  <option value="exhaustive_review" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Review</option>
+                  {% if settings.document_action_capabilities.analyze.enabled %}
+                  <option value="analyze" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Analyze</option>
                   {% endif %}
                   {% if settings.document_action_capabilities.comparison.enabled %}
                   <option value="comparison" data-action-description="Compare one source document against the selected target documents to explain differences, relationships, or downstream impact." title="Compare one source document against the selected target documents to explain differences, relationships, or downstream impact.">Compare</option>
@@ -1302,8 +1302,8 @@
                 </select>
               </div>
               <div class="col-md-6">
-                <label for="workflow-review-retries" class="form-label">Retries Per Window</label>
-                <input type="number" class="form-control" id="workflow-review-retries" min="0" max="5" value="1" />
+                <label for="workflow-analysis-retries" class="form-label">Retries Per Window</label>
+                <input type="number" class="form-control" id="workflow-analysis-retries" min="0" max="5" value="1" />
               </div>
             </div>
             <div class="form-text mt-2" id="workflow-document-action-help">Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.</div>
@@ -1311,8 +1311,8 @@
             <div id="workflow-document-targets-fields" class="mt-3 d-none">
               <div class="row g-3 mb-3">
                 <div class="col-md-6">
-                  <label for="workflow-review-doc-scope" class="form-label">Document Scope</label>
-                  <select class="form-select" id="workflow-review-doc-scope">
+                  <label for="workflow-analysis-doc-scope" class="form-label">Document Scope</label>
+                  <select class="form-select" id="workflow-analysis-doc-scope">
                     <option value="personal">Personal Workspace</option>
                     <option value="group">Group Workspace</option>
                     <option value="public">Public Workspace</option>
@@ -1329,9 +1329,9 @@
                 <button type="button" class="btn btn-sm btn-outline-primary" id="workflow-use-selected-documents-btn">Use selected workspace documents</button>
               </div>
 
-              <div id="workflow-exhaustive-target-fields" class="mb-3 d-none">
-                <label for="workflow-review-document-ids" class="form-label mb-2">Document IDs</label>
-                <textarea class="form-control" id="workflow-review-document-ids" rows="3" placeholder="Enter one or more document ids separated by commas."></textarea>
+              <div id="workflow-analysis-target-fields" class="mb-3 d-none">
+                <label for="workflow-analysis-document-ids" class="form-label mb-2">Document IDs</label>
+                <textarea class="form-control" id="workflow-analysis-document-ids" rows="3" placeholder="Enter one or more document ids separated by commas."></textarea>
               </div>
 
               <div id="workflow-comparison-target-fields" class="d-none">
@@ -1350,30 +1350,30 @@
 
               <div class="row g-3 mb-3">
                 <div class="col-md-6">
-                  <label for="workflow-review-group-ids" class="form-label">Group Scope Hints</label>
-                  <input type="text" class="form-control" id="workflow-review-group-ids" placeholder="Optional group ids, separated by commas." />
+                  <label for="workflow-analysis-group-ids" class="form-label">Group Scope Hints</label>
+                  <input type="text" class="form-control" id="workflow-analysis-group-ids" placeholder="Optional group ids, separated by commas." />
                 </div>
                 <div class="col-md-6">
-                  <label for="workflow-review-public-workspace-ids" class="form-label">Public Workspace Hints</label>
-                  <input type="text" class="form-control" id="workflow-review-public-workspace-ids" placeholder="Optional public workspace ids, separated by commas." />
+                  <label for="workflow-analysis-public-workspace-ids" class="form-label">Public Workspace Hints</label>
+                  <input type="text" class="form-control" id="workflow-analysis-public-workspace-ids" placeholder="Optional public workspace ids, separated by commas." />
                 </div>
               </div>
 
               <div class="row g-3">
                 <div class="col-md-4">
-                  <label for="workflow-review-window-unit" class="form-label">Window Unit</label>
-                  <select class="form-select" id="workflow-review-window-unit">
+                  <label for="workflow-analysis-window-unit" class="form-label">Window Unit</label>
+                  <select class="form-select" id="workflow-analysis-window-unit">
                     <option value="pages">Pages</option>
                     <option value="chunks">Chunks</option>
                   </select>
                 </div>
                 <div class="col-md-4">
-                  <label for="workflow-review-window-size" class="form-label">Window Size</label>
-                  <input type="number" class="form-control" id="workflow-review-window-size" min="1" max="100" placeholder="Optional fixed size" />
+                  <label for="workflow-analysis-window-size" class="form-label">Window Size</label>
+                  <input type="number" class="form-control" id="workflow-analysis-window-size" min="1" max="100" placeholder="Optional fixed size" />
                 </div>
                 <div class="col-md-4">
-                  <label for="workflow-review-window-percent" class="form-label">Window Percent</label>
-                  <input type="number" class="form-control" id="workflow-review-window-percent" min="1" max="100" placeholder="Optional percent" />
+                  <label for="workflow-analysis-window-percent" class="form-label">Window Percent</label>
+                  <input type="number" class="form-control" id="workflow-analysis-window-percent" min="1" max="100" placeholder="Optional percent" />
                 </div>
               </div>
               <div class="form-text mt-2">Set either a fixed window size or a percentage. Leave both blank to use the ordered retrieval defaults.</div>
