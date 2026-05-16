@@ -1,11 +1,13 @@
 # test_control_center_management_pagination.py
 """
 UI test for Control Center management pagination controls.
-Version: 0.241.024
-Implemented in: 0.241.024
+Version: 0.241.030
+Implemented in: 0.241.030
 
 This test ensures the user, group, and public workspace management views expose
-consistent page-size controls and send the selected per-page value to the API.
+consistent page-size controls, send the selected per-page value to the API, and
+keep public workspace table controls aligned with group management. It also
+validates ID-aware management search placeholders.
 """
 
 import json
@@ -130,6 +132,14 @@ def test_control_center_management_page_size_controls(playwright):
         if page.locator("#userManagementPerPageSelect").count() == 0:
             pytest.skip("Authenticated test user cannot access Control Center management tabs.")
 
+        expected_placeholders = {
+            "#userSearchInput": "Search users by name, email, or ID...",
+            "#groupSearchInput": "Search groups by name, owner, or ID...",
+            "#publicWorkspaceSearchInput": "Search workspaces by name, description, owner, or ID...",
+        }
+        for selector, expected_placeholder in expected_placeholders.items():
+            expect(page.locator(selector)).to_have_attribute("placeholder", expected_placeholder)
+
         for select_id in [
             "userManagementPerPageSelect",
             "groupManagementPerPageSelect",
@@ -159,6 +169,9 @@ def test_control_center_management_page_size_controls(playwright):
         assert captured_queries["public_workspaces"][-1].get("per_page") == ["50"]
         assert captured_queries["public_workspaces"][-1].get("page") == ["1"]
         expect(page.locator("#publicWorkspacesPaginationInfo")).to_contain_text("of 260 public workspaces")
+        expect(page.locator("#workspaces .card #publicWorkspacesTable.group-table")).to_be_visible()
+        assert page.locator("#publicWorkspacesTable th.sortable").count() == 5
+        assert page.locator("#workspaces >> text=Disable Public Workspace Creation").count() == 0
     finally:
         context.close()
         browser.close()

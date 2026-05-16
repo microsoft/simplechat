@@ -2,12 +2,13 @@
 # test_conversations_read_ownership_authorization.py
 """
 Functional test for personal conversation read authorization hardening.
-Version: 0.241.022
-Implemented in: 0.241.011; 0.241.022
+Version: 0.241.032
+Implemented in: 0.241.011; 0.241.022; 0.241.032
 
 This test ensures authenticated users can only read messages and images from
 their own personal conversations, and that foreign conversation reads fail with
-403 without querying the message container.
+403 without querying the message container. It also validates blob-backed image
+messages stream only after conversation authorization succeeds.
 """
 
 import copy
@@ -52,6 +53,14 @@ class FakeMessageContainer:
         self.items = [copy.deepcopy(item) for item in (items or [])]
         self.query_count = 0
 
+    def read_item(self, item=None, partition_key=None, *args, **kwargs):
+        self.query_count += 1
+        item_id = item if item is not None else args[0]
+        for stored_item in self.items:
+            if stored_item.get('id') == item_id and stored_item.get('conversation_id') == partition_key:
+                return copy.deepcopy(stored_item)
+        raise DummyNotFoundError(item_id)
+
     def query_items(self, query=None, partition_key=None, *args, **kwargs):
         self.query_count += 1
         matching_items = [
@@ -61,6 +70,49 @@ class FakeMessageContainer:
         ]
         matching_items.sort(key=lambda item: item.get('timestamp', ''))
         return matching_items
+
+
+class FakeBlobProperties:
+    """Minimal blob properties object for streaming tests."""
+
+    def __init__(self, content_bytes):
+        self.size = len(content_bytes)
+
+
+class FakeBlobDownload:
+    """Minimal blob downloader that yields stored bytes as one chunk."""
+
+    def __init__(self, content_bytes):
+        self.content_bytes = content_bytes
+
+    def chunks(self):
+        yield self.content_bytes
+
+
+class FakeBlobClient:
+    """Minimal blob client for image route streaming tests."""
+
+    def __init__(self, content_bytes):
+        self.content_bytes = content_bytes
+
+    def get_blob_properties(self):
+        return FakeBlobProperties(self.content_bytes)
+
+    def download_blob(self):
+        return FakeBlobDownload(self.content_bytes)
+
+
+class FakeBlobServiceClient:
+    """In-memory blob service keyed by container and blob path."""
+
+    def __init__(self, blob_items=None):
+        self.blob_items = dict(blob_items or {})
+
+    def get_blob_client(self, container=None, blob=None, *args, **kwargs):
+        blob_key = (container, blob)
+        if blob_key not in self.blob_items:
+            raise DummyNotFoundError(blob_key)
+        return FakeBlobClient(self.blob_items[blob_key])
 
 
 def _passthrough_decorator(*args, **kwargs):
@@ -78,7 +130,16 @@ def _install_route_import_stubs():
     config_module.cosmos_conversations_container = None
     config_module.cosmos_messages_container = None
     config_module.CosmosResourceNotFoundError = DummyNotFoundError
+    config_module.CLIENTS = {}
     stub_modules['config'] = config_module
+
+    collaboration_module = types.ModuleType('functions_collaboration')
+    collaboration_module.assert_user_can_view_collaboration_conversation = lambda *args, **kwargs: None
+    collaboration_module.assert_user_can_participate_in_collaboration_conversation = lambda *args, **kwargs: None
+    collaboration_module.ensure_collaboration_source_conversation = lambda *args, **kwargs: None
+    collaboration_module.get_collaboration_conversation = lambda *args, **kwargs: (_ for _ in ()).throw(DummyNotFoundError('missing'))
+    collaboration_module.list_collaboration_messages = lambda *args, **kwargs: []
+    stub_modules['functions_collaboration'] = collaboration_module
 
     auth_module = types.ModuleType('functions_authentication')
     auth_module.login_required = _passthrough_decorator
@@ -110,8 +171,15 @@ def _install_route_import_stubs():
     stub_modules['functions_debug'] = debug_module
 
     artifacts_module = types.ModuleType('functions_message_artifacts')
+    artifacts_module.build_message_artifact_payload_map = lambda items: {}
     artifacts_module.filter_assistant_artifact_items = lambda items: items
+    artifacts_module.hydrate_agent_citations_from_artifacts = lambda items, artifact_map: items
     stub_modules['functions_message_artifacts'] = artifacts_module
+
+    simplechat_operations_module = types.ModuleType('functions_simplechat_operations')
+    simplechat_operations_module.create_personal_conversation_for_current_user = lambda *args, **kwargs: {}
+    simplechat_operations_module.delete_blob_backed_chat_message_files = lambda *args, **kwargs: None
+    stub_modules['functions_simplechat_operations'] = simplechat_operations_module
 
     swagger_module = types.ModuleType('swagger_wrapper')
     swagger_module.swagger_route = lambda **kwargs: (lambda func: func)
@@ -141,7 +209,7 @@ def _load_route_backend_conversations_module():
     return importlib.import_module('route_backend_conversations')
 
 
-def build_test_app(test_user_id, conversation_items, message_items):
+def build_test_app(test_user_id, conversation_items, message_items, blob_items=None):
     """Register the conversation routes with fake auth and fake Cosmos containers."""
     route_backend_conversations = _load_route_backend_conversations_module()
 
@@ -158,6 +226,9 @@ def build_test_app(test_user_id, conversation_items, message_items):
     route_backend_conversations.debug_print = lambda *args, **kwargs: None
     route_backend_conversations.filter_assistant_artifact_items = lambda items: items
     route_backend_conversations.CosmosResourceNotFoundError = DummyNotFoundError
+    route_backend_conversations.CLIENTS = {
+        'storage_account_office_docs_client': FakeBlobServiceClient(blob_items),
+    }
 
     app = Flask(__name__)
     app.config['TESTING'] = True
@@ -336,6 +407,68 @@ def test_owner_can_read_image():
         restore()
 
 
+def test_owner_can_stream_blob_backed_image():
+    """Verify an owner can fetch blob-backed image bytes from their own conversation."""
+    print("🔍 Testing owner blob-backed image streaming...")
+
+    image_id = 'conversation-owner_file_20260505_random'
+    blob_path = 'user-owner/conversation-owner/images/conversation-owner_file_20260505_random/image.png'
+    image_bytes = b'fake-png-bytes'
+    app, message_container, restore = build_test_app(
+        'user-owner',
+        [
+            {
+                'id': 'conversation-owner',
+                'user_id': 'user-owner',
+            }
+        ],
+        [
+            {
+                'id': image_id,
+                'conversation_id': 'conversation-owner',
+                'role': 'image',
+                'content': f'/api/image/{image_id}',
+                'file_content_source': 'blob',
+                'blob_container': 'personal-chat',
+                'blob_path': blob_path,
+                'mime_type': 'image/png',
+                'timestamp': '2026-05-05T12:00:00Z',
+                'metadata': {
+                    'is_blob_backed': True,
+                },
+            }
+        ],
+        blob_items={
+            ('personal-chat', blob_path): image_bytes,
+        },
+    )
+
+    try:
+        with app.test_client() as client:
+            response = client.get(f'/api/image/{image_id}')
+
+        if response.status_code != 200:
+            print(f"❌ Expected 200, got {response.status_code}: {response.get_data(as_text=True)}")
+            return False
+
+        if response.mimetype != 'image/png':
+            print(f"❌ Expected image/png, got {response.mimetype}")
+            return False
+
+        if response.get_data() != image_bytes:
+            print(f"❌ Expected streamed blob bytes, got {response.get_data()}")
+            return False
+
+        if message_container.query_count != 1:
+            print(f"❌ Expected one image read, got {message_container.query_count}")
+            return False
+
+        print("✅ Owner blob-backed image streamed expected bytes")
+        return True
+    finally:
+        restore()
+
+
 def test_foreign_image_return_forbidden_before_query():
     """Verify foreign conversation image reads fail closed before querying messages."""
     print("🔍 Testing foreign image read rejection...")
@@ -429,6 +562,7 @@ if __name__ == '__main__':
         test_foreign_messages_return_forbidden_before_query,
         test_missing_conversation_preserves_empty_message_history_response,
         test_owner_can_read_image,
+        test_owner_can_stream_blob_backed_image,
         test_foreign_image_return_forbidden_before_query,
         test_missing_image_preserves_not_found_response,
     ]

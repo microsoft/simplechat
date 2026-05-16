@@ -279,6 +279,23 @@
         border-radius: 8px;
         height: 100%;
         padding: 1rem;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+    }
+
+    .profile-workspace-card-clickable {
+        cursor: pointer;
+    }
+
+    .profile-workspace-card-clickable:hover,
+    .profile-workspace-card-clickable:focus-visible {
+        border-color: var(--bs-primary);
+        box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.12);
+        transform: translateY(-1px);
+    }
+
+    .profile-workspace-card-clickable:focus-visible {
+        outline: 2px solid var(--bs-primary);
+        outline-offset: 2px;
     }
 
     .profile-workspace-card-media {
@@ -348,6 +365,16 @@
 {% endblock %}
 
 {% block content %}
+{% set profile_user_roles = session.get('user', {}).get('roles', []) %}
+{% set profile_group_workspaces_enabled = app_settings.enable_group_workspaces | default(false) %}
+{% set profile_public_workspaces_enabled = app_settings.enable_public_workspaces | default(false) %}
+{% set profile_group_creation_enabled = app_settings.enable_group_creation | default(true) %}
+{% set profile_requires_create_group = app_settings.require_member_of_create_group | default(false) %}
+{% set profile_requires_create_public_workspace = app_settings.require_member_of_create_public_workspace | default(false) %}
+{% set profile_can_create_groups_from_settings = profile_group_workspaces_enabled and profile_group_creation_enabled and (not profile_requires_create_group or 'CreateGroups' in profile_user_roles) %}
+{% set profile_can_create_public_workspaces_from_settings = profile_public_workspaces_enabled and (not profile_requires_create_public_workspace or 'CreatePublicWorkspaces' in profile_user_roles) %}
+{% set profile_can_create_groups = (can_create_groups | default(false)) or profile_can_create_groups_from_settings %}
+{% set profile_can_create_public_workspaces = (can_create_public_workspaces | default(false)) or profile_can_create_public_workspaces_from_settings %}
 <div class="container-fluid px-4 py-3">
     <!-- Hero Section -->
     <div class="profile-hero">
@@ -962,13 +989,13 @@
                         <p class="text-muted mb-0">View groups you belong to, set your active group workspace, and find groups to join.</p>
                     </div>
                     <div class="d-flex flex-wrap gap-2">
-                        {% if can_create_groups %}
+                        {% if profile_can_create_groups %}
                         <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#profileCreateGroupModal">
-                            <i class="bi bi-plus-circle-fill me-1"></i>Create Group
+                            <i class="bi bi-plus-circle-fill me-1"></i>Create
                         </button>
                         {% endif %}
                         <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#profileFindGroupModal">
-                            <i class="bi bi-search me-1"></i>Find Group
+                            <i class="bi bi-search me-1"></i>Find
                         </button>
                     </div>
                 </div>
@@ -1054,13 +1081,13 @@
                         <p class="text-muted mb-0">Browse public workspaces, set your active public workspace, and request access where needed.</p>
                     </div>
                     <div class="d-flex flex-wrap gap-2">
-                        {% if can_create_public_workspaces %}
+                        {% if profile_can_create_public_workspaces %}
                         <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#profileCreatePublicWorkspaceModal">
-                            <i class="bi bi-plus-circle-fill me-1"></i>Create Public Workspace
+                            <i class="bi bi-plus-circle-fill me-1"></i>Create 
                         </button>
                         {% endif %}
                         <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#profileFindPublicWorkspaceModal">
-                            <i class="bi bi-search me-1"></i>Find Public Workspace
+                            <i class="bi bi-search me-1"></i>Find
                         </button>
                     </div>
                 </div>
@@ -1378,7 +1405,7 @@
 </div>
 
 {% if app_settings.enable_group_workspaces %}
-{% if can_create_groups %}
+{% if profile_can_create_groups %}
 <div class="modal fade" id="profileCreateGroupModal" tabindex="-1" aria-labelledby="profileCreateGroupModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -1449,7 +1476,7 @@
 {% endif %}
 
 {% if app_settings.enable_public_workspaces %}
-{% if can_create_public_workspaces %}
+{% if profile_can_create_public_workspaces %}
 <div class="modal fade" id="profileCreatePublicWorkspaceModal" tabindex="-1" aria-labelledby="profileCreatePublicWorkspaceModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -1861,13 +1888,13 @@
 <script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
 <script>
 window.profilePageConfig = {
-    initialTab: {{ initial_tab|tojson }},
-    feedbackEnabled: {{ app_settings.enable_user_feedback|tojson }},
-    contentSafetyEnabled: {{ app_settings.enable_content_safety | tojson }},
-    groupWorkspacesEnabled: {{ app_settings.enable_group_workspaces | tojson }},
-    publicWorkspacesEnabled: {{ app_settings.enable_public_workspaces | tojson }},
-    canCreateGroups: {{ can_create_groups | tojson }},
-    canCreatePublicWorkspaces: {{ can_create_public_workspaces | tojson }}
+    initialTab: {{ (initial_tab | default('stats')) | tojson }},
+    feedbackEnabled: {{ (app_settings.enable_user_feedback | default(false)) | tojson }},
+    contentSafetyEnabled: {{ (app_settings.enable_content_safety | default(false)) | tojson }},
+    groupWorkspacesEnabled: {{ (app_settings.enable_group_workspaces | default(false)) | tojson }},
+    publicWorkspacesEnabled: {{ (app_settings.enable_public_workspaces | default(false)) | tojson }},
+    canCreateGroups: {{ profile_can_create_groups | tojson }},
+    canCreatePublicWorkspaces: {{ profile_can_create_public_workspaces | tojson }}
 };
 
 // Initialize charts

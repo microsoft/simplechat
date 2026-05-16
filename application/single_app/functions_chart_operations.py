@@ -5,6 +5,7 @@ import json
 
 
 CHART_PLUGIN_TYPE = 'chart'
+CORE_CHART_PLUGIN_NAME = 'conversation_charts'
 CHART_DEFAULT_ENDPOINT = 'chart://internal'
 INLINE_CHART_BLOCK_LANGUAGE = 'simplechart'
 

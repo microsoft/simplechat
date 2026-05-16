@@ -11,14 +11,10 @@ from flask import make_response
 from config import *
 from functions_authentication import *
 from functions_settings import *
-from functions_control_center import (
-    calculate_next_control_center_auto_refresh_run,
-    get_control_center_auto_refresh_schedule,
-    parse_control_center_auto_refresh_datetime,
-)
 from functions_logging import *
 from functions_activity_logging import *
 from functions_approvals import *
+from functions_approvals import _can_user_approve, _can_user_deny
 from functions_documents import update_document, delete_document, delete_document_chunks
 from functions_group import delete_group
 from functions_safety_remediation import (
@@ -5666,29 +5662,10 @@ def register_route_backend_control_center(app):
             
             settings = get_settings()
             last_refresh = settings.get('control_center_last_refresh')
-            auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
-            auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
-            auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
-            auto_refresh_next_run_datetime = parse_control_center_auto_refresh_datetime(auto_refresh_next_run)
-            if auto_refresh_enabled and not auto_refresh_next_run_datetime:
-                auto_refresh_next_run_datetime = calculate_next_control_center_auto_refresh_run(
-                    settings,
-                    current_time=datetime.now(timezone.utc),
-                )
-                auto_refresh_next_run = auto_refresh_next_run_datetime.isoformat()
-
-            last_refresh_datetime = parse_control_center_auto_refresh_datetime(last_refresh)
             
             return jsonify({
                 'last_refresh': last_refresh,
-                'last_refresh_formatted': None if not last_refresh_datetime else last_refresh_datetime.strftime('%m/%d/%Y %I:%M %p UTC'),
-                'auto_refresh_enabled': auto_refresh_enabled,
-                'auto_refresh_time': auto_refresh_schedule['time'],
-                'auto_refresh_hour': auto_refresh_schedule['hour'],
-                'auto_refresh_minute': auto_refresh_schedule['minute'],
-                'auto_refresh_hour_formatted': f"{auto_refresh_schedule['hour']:02d}:{auto_refresh_schedule['minute']:02d} UTC",
-                'auto_refresh_next_run': auto_refresh_next_run,
-                'auto_refresh_next_run_formatted': None if not auto_refresh_next_run_datetime else auto_refresh_next_run_datetime.strftime('%m/%d/%Y %I:%M %p UTC'),
+                'last_refresh_formatted': None if not last_refresh else datetime.fromisoformat(last_refresh.replace('Z', '+00:00') if 'Z' in last_refresh else last_refresh).strftime('%m/%d/%Y %I:%M %p UTC')
             }), 200
             
         except Exception as e:
@@ -6376,8 +6353,8 @@ def register_route_backend_control_center(app):
             approvals_with_permission = []
             for approval in result.get('approvals', []):
                 approval_copy = dict(approval)
-                # User can approve if they didn't create the request OR if they're the only admin
-                approval_copy['can_approve'] = (approval.get('requester_id') != user_id)
+                approval_copy['can_approve'] = _can_user_approve(approval, user_id, user_roles)
+                approval_copy['can_deny'] = _can_user_deny(approval, user_id, user_roles)
                 approvals_with_permission.append(approval_copy)
             
             # Rename fields to match frontend expectations
@@ -6396,7 +6373,12 @@ def register_route_backend_control_center(app):
             debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
 
-    def _get_authorized_route_approval(approval_id, group_id, require_approval_rights=False):
+    def _get_authorized_route_approval(
+        approval_id,
+        group_id,
+        require_approval_rights=False,
+        require_denial_rights=False,
+    ):
         """Resolve the current user and return an authorized approval plus user context."""
         user = session.get('user', {})
         user_id = user.get('oid') or user.get('sub')
@@ -6409,6 +6391,7 @@ def register_route_backend_control_center(app):
             user_id,
             user_roles,
             require_approval_rights=require_approval_rights,
+            require_denial_rights=require_denial_rights,
         )
         return approval, user_id, user_roles, user_email, user_name
 
@@ -6435,6 +6418,7 @@ def register_route_backend_control_center(app):
             
             # Add can_approve field
             approval['can_approve'] = _can_user_approve(approval, user_id, user_roles)
+            approval['can_deny'] = _can_user_deny(approval, user_id, user_roles)
             
             return jsonify(approval), 200
         except LookupError:
@@ -6529,7 +6513,7 @@ def register_route_backend_control_center(app):
             approval, user_id, _user_roles, user_email, user_name = _get_authorized_route_approval(
                 approval_id,
                 group_id,
-                require_approval_rights=True,
+                require_denial_rights=True,
             )
             
             # Deny the request
@@ -6612,6 +6596,7 @@ def register_route_backend_control_center(app):
             for approval in result.get('approvals', []):
                 approval_copy = dict(approval)
                 approval_copy['can_approve'] = _can_user_approve(approval, user_id, user_roles)
+                approval_copy['can_deny'] = _can_user_deny(approval, user_id, user_roles)
                 approvals_with_permission.append(approval_copy)
             
             return jsonify({
@@ -6651,6 +6636,7 @@ def register_route_backend_control_center(app):
             
             # Add can_approve field
             approval['can_approve'] = _can_user_approve(approval, user_id, user_roles)
+            approval['can_deny'] = _can_user_deny(approval, user_id, user_roles)
             
             return jsonify(approval), 200
         except LookupError:
@@ -6743,7 +6729,7 @@ def register_route_backend_control_center(app):
             approval, user_id, _user_roles, user_email, user_name = _get_authorized_route_approval(
                 approval_id,
                 group_id,
-                require_approval_rights=True,
+                require_denial_rights=True,
             )
             
             # Deny the request

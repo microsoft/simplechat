@@ -2,6 +2,7 @@
 {% block title %} Public Workspaces - {{ app_settings.app_title }} {% endblock %}
 {% block head %}
 <link rel="stylesheet" href="/static/css/simplemde.min.css" />
+<link rel="stylesheet" href="/static/css/workspace-responsive.css" />
 <style>
   /* Adapted styles for Public Workspace */
   #public-documents-table { table-layout: fixed; width: 100%; }
@@ -30,7 +31,9 @@
   }
   /* Document checkbox and selection mode styles */
   .document-checkbox { cursor:pointer; min-width:18px; min-height:18px; display:none; }
+  .document-select-all-checkbox { cursor:pointer; min-width:18px; min-height:18px; display:none; }
   .selection-mode .document-checkbox { display:block; }
+  .selection-mode .document-select-all-checkbox { display:block; }
   .selection-mode .document-row { padding-left:0.5rem; }
   .action-dropdown .dropdown-toggle::after { display:none; }
   /* Dropdown styles */
@@ -324,19 +327,30 @@
 
         <!-- Removed duplicate filter row outside the collapsible area -->
 
-        <!-- View Controls (List/Grid Toggle) -->
+        <!-- View Controls -->
         <div class="d-flex justify-content-between align-items-center mb-2">
           <div class="btn-group btn-group-sm" role="group" aria-label="View mode">
             <input type="radio" class="btn-check" name="public-docs-view-mode" id="public-docs-view-list" autocomplete="off" checked>
             <label class="btn btn-outline-secondary" for="public-docs-view-list">
               <i class="bi bi-list-ul"></i> List
             </label>
+            <input type="radio" class="btn-check" name="public-docs-view-mode" id="public-docs-view-cards" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="public-docs-view-cards">
+              <i class="bi bi-grid"></i> Cards
+            </label>
             <input type="radio" class="btn-check" name="public-docs-view-mode" id="public-docs-view-grid" autocomplete="off">
             <label class="btn btn-outline-secondary" for="public-docs-view-grid">
-              <i class="bi bi-grid-3x3-gap"></i> Grid
+              <i class="bi bi-folder2-open"></i> Folders
+            </label>
+            <input type="radio" class="btn-check" name="public-docs-view-mode" id="public-docs-view-folders-cards" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="public-docs-view-folders-cards">
+              <i class="bi bi-folder-symlink"></i> Folders + Cards
             </label>
           </div>
           <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="public-toggle-selection-btn">
+              <i class="bi bi-check2-square me-1"></i>Multi-select
+            </button>
             <button type="button" class="btn btn-sm btn-outline-primary" id="public-manage-tags-btn">
               <i class="bi bi-tags me-1"></i>Manage Tags
             </button>
@@ -374,8 +388,14 @@
         <table class="table table-striped" id="public-documents-table">
           <thead>
             <tr>
-              <th></th>
-              <!-- Expand -->
+              <th>
+                <input
+                  type="checkbox"
+                  id="public-docs-select-all-checkbox"
+                  class="form-check-input document-select-all-checkbox"
+                  aria-label="Select all visible public documents"
+                />
+              </th>
               <th class="sortable-header" data-sort-field="file_name" style="cursor: pointer; user-select: none;">
                 File Name <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
               </th>
@@ -396,7 +416,17 @@
           </tbody>
         </table>
 
-        <div class="d-flex align-items-center gap-3 mb-3 mt-3">
+        </div>
+        <!-- End Documents List View -->
+
+        <div id="public-documents-card-view" class="row g-3 d-none">
+          <div class="col-12 text-center text-muted py-5">
+            <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+            Loading public documents...
+          </div>
+        </div>
+
+        <div id="public-list-controls-bar" class="d-flex align-items-center gap-3 mb-3 mt-3">
           <div>
             <label class="visually-hidden">Items per page:</label>
             <select id="public-docs-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;"><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select>
@@ -404,11 +434,9 @@
           </div>
           <div id="public-docs-pagination-container" class="d-flex gap-1 ms-auto"></div>
         </div>
-        </div>
-        <!-- End Documents List View -->
 
         <!-- Documents Grid View (Tag Folders) -->
-        <div id="public-documents-grid-view" style="display: none;">
+        <div id="public-documents-grid-view" class="d-none">
           <div id="public-tag-folders-container" class="row g-2">
             <div class="col-12 text-center text-muted py-5">
               <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
@@ -418,7 +446,7 @@
         </div>
 
         <!-- Grid View Controls (sort, page size, pagination) -->
-        <div id="public-grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3" style="display: none;">
+        <div id="public-grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3 d-none">
           <div class="d-flex align-items-center gap-2">
             <small class="text-muted">Sort:</small>
             <button class="btn btn-sm btn-outline-secondary public-grid-sort-btn" data-sort="name">
@@ -446,7 +474,15 @@
     <div class="tab-pane fade" id="public-prompts-tab" role="tabpanel">
       <div class="card p-3 my-3">
         <div id="public-prompts-role-warning" class="alert alert-warning d-none">You do not have permission to manage public prompts.</div>
-        <div class="mb-3 d-none" id="create-public-prompt-section"><button id="create-public-prompt-btn" class="btn btn-success btn-sm">New Prompt</button></div>
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+          <div class="d-none" id="create-public-prompt-section"><button id="create-public-prompt-btn" class="btn btn-success btn-sm" type="button">New Prompt</button></div>
+          <div class="btn-group btn-group-sm ms-auto" role="group" aria-label="Public prompts view mode">
+            <input type="radio" class="btn-check" name="public-prompts-view-mode" id="public-prompts-view-list" autocomplete="off" checked />
+            <label class="btn btn-outline-secondary" for="public-prompts-view-list" title="List view" aria-label="List view"><i class="bi bi-list-ul"></i></label>
+            <input type="radio" class="btn-check" name="public-prompts-view-mode" id="public-prompts-view-grid" autocomplete="off" />
+            <label class="btn btn-outline-secondary" for="public-prompts-view-grid" title="Card view" aria-label="Card view"><i class="bi bi-grid-3x3-gap"></i></label>
+          </div>
+        </div>
         
         <!-- Prompts Filters -->
         <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#public-prompts-filters-collapse" aria-expanded="false" aria-controls="public-prompts-filters-collapse" id="public-prompts-filters-toggle-btn">
@@ -464,7 +500,12 @@
             </div>
           </div>
         </div>
-        <table class="table table-striped" id="public-prompts-table"><thead><tr><th>Prompt Name</th><th>Actions</th></tr></thead><tbody><tr class="table-loading-row"><td colspan="2"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Loading public prompts...</td></tr></tbody></table>
+        <div id="public-prompts-list-view">
+          <table class="table table-striped" id="public-prompts-table"><thead><tr><th>Prompt Name</th><th>Actions</th></tr></thead><tbody><tr class="table-loading-row"><td colspan="2"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Loading public prompts...</td></tr></tbody></table>
+        </div>
+        <div id="public-prompts-card-view" class="row g-3 d-none">
+          <div class="col-12 text-center text-muted py-5"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div> Loading public prompts...</div>
+        </div>
         <div class="d-flex align-items-center gap-3 mb-3 mt-3"><div><label class="visually-hidden">Items per page:</label><select id="public-prompts-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;"><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select><span class="ms-1 small text-muted">items per page</span></div><div id="public-prompts-pagination-container" class="d-flex gap-1 ms-auto"></div></div>
       </div>
     </div>
@@ -577,6 +618,22 @@
 
 <!-- Prompt Modal -->
 <div class="modal fade" id="publicPromptModal" tabindex="-1"><div class="modal-dialog modal-xl"><form id="public-prompt-form"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="publicPromptModalLabel">Create Public Prompt</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="public-prompt-id" /><div class="mb-3"><label for="public-prompt-name" class="form-label">Prompt Name</label><input type="text" class="form-control" id="public-prompt-name" required /></div><div class="mb-3"><label for="public-prompt-content" class="form-label">Prompt Content</label><textarea class="form-control" id="public-prompt-content" rows="10"></textarea></div></div><div class="modal-footer"><button id="public-prompt-save-btn" type="submit" class="btn btn-primary">Save Prompt</button></div></div></form></div></div>
+
+<!-- Prompt View Modal -->
+<div class="modal fade" id="publicPromptViewModal" tabindex="-1" aria-labelledby="publicPromptViewModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="publicPromptViewModalLabel">Prompt Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="publicPromptViewModalBody"></div>
+      <div class="modal-footer" id="publicPromptViewModalFooter">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Activity Timeline Modal -->
 <div class="modal fade" id="activityTimelineModal" tabindex="-1" aria-hidden="true">

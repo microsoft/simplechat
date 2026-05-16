@@ -291,20 +291,13 @@ def get_pending_approvals(
         
         debug_print(f"📋 [GET_APPROVALS] Found {len(items)} total items from query")
         
-        # Filter by user eligibility
-        # For pending requests: check if user can approve
-        # For completed requests: check if user has visibility (was involved or is admin/owner)
+        # Filter by user visibility.
+        # Pending requests may be visible to requesters who can deny but cannot approve.
         eligible_approvals = []
         for approval in items:
             try:
-                if status_filter == 'pending':
-                    # For pending requests, check if user can approve
-                    if _can_user_approve(approval, user_id, safe_user_roles):
-                        eligible_approvals.append(approval)
-                else:
-                    # For completed requests, check if user has visibility
-                    if _can_user_view(approval, user_id, safe_user_roles):
-                        eligible_approvals.append(approval)
+                if _can_user_view(approval, user_id, safe_user_roles):
+                    eligible_approvals.append(approval)
             except Exception as ex:
                 log_event("[Approvals] Skipping malformed approval during eligibility check", {
                     'approval_id': approval.get('id') if isinstance(approval, dict) else None,
@@ -375,6 +368,9 @@ def approve_request(
         if approval['status'] != STATUS_PENDING:
             debug_print(f"Cannot approve request with status: {approval['status']}")
             raise ValueError(f"Cannot approve request with status: {approval['status']}")
+
+        if approval.get('requester_id') == approver_id:
+            raise PermissionError("Requesters cannot approve their own approval requests.")
         
         # Update approval status
         approval['status'] = STATUS_APPROVED
@@ -622,17 +618,23 @@ def get_authorized_approval(
     user_id: str,
     user_roles: List[str],
     require_approval_rights: bool = False,
+    require_denial_rights: bool = False,
 ) -> Dict[str, Any]:
     """Return an approval only if the current user is allowed to view or approve it."""
+    if require_approval_rights and require_denial_rights:
+        raise ValueError("Approval and denial authorization checks are mutually exclusive")
+
     approval = get_approval_by_id(approval_id, group_id)
     if not approval:
         raise LookupError("Approval not found")
 
-    is_authorized = (
-        _can_user_approve(approval, user_id, user_roles)
-        if require_approval_rights
-        else _can_user_view(approval, user_id, user_roles)
-    )
+    if require_approval_rights:
+        is_authorized = _can_user_approve(approval, user_id, user_roles)
+    elif require_denial_rights:
+        is_authorized = _can_user_deny(approval, user_id, user_roles)
+    else:
+        is_authorized = _can_user_view(approval, user_id, user_roles)
+
     if not is_authorized:
         raise PermissionError("You are not authorized to access this approval")
 
@@ -778,7 +780,7 @@ def _can_user_approve(
     - User must be the personal workspace owner (for user document operations), OR
     - User must have 'ControlCenterAdmin' role, OR
     - User must have 'Admin' role
-    - User cannot be the requester (unless they're the only eligible approver)
+    - User cannot be the requester
     
     Args:
         approval: Approval request document
@@ -790,6 +792,9 @@ def _can_user_approve(
     """
     safe_user_roles = _normalize_user_roles(user_roles)
     metadata = _get_approval_metadata(approval)
+
+    if approval.get('requester_id') == user_id:
+        return False
 
     # Check if user is the group owner (for group-based approvals)
     is_group_owner = approval.get('group_owner_id') == user_id
@@ -808,9 +813,6 @@ def _can_user_approve(
         if not has_request_role:
             return False
 
-        if approval.get('requester_id') == user_id:
-            return True
-
         return True
 
     # Check if user has admin roles (check both capitalized and lowercase)
@@ -821,13 +823,24 @@ def _can_user_approve(
     if not (is_group_owner or is_personal_workspace_owner or has_control_center_admin or has_admin):
         return False
     
-    # Special case: If user is the requester, they can still approve if they're the only eligible approver
-    # This handles the case where there's only one admin in the system
-    if approval.get('requester_id') == user_id:
-        # Allow same-user approval (with documentation through the approval system)
-        return True
-    
     return True
+
+
+def _can_user_deny(
+    approval: Dict[str, Any],
+    user_id: str,
+    user_roles: List[str]
+) -> bool:
+    """
+    Check if a user is eligible to deny a specific request.
+
+    Requesters may deny their own pending approval requests to cancel them,
+    while approval remains restricted to a different eligible reviewer.
+    """
+    if approval.get('requester_id') == user_id:
+        return True
+
+    return _can_user_approve(approval, user_id, user_roles)
 
 
 def _create_approval_notifications(

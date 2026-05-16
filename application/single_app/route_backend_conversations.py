@@ -12,9 +12,9 @@ from functions_collaboration import (
 from functions_settings import *
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
-from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_external_image_url
+from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
-from flask import Response, request
+from flask import Response, request, stream_with_context
 from functions_debug import debug_print
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
@@ -100,6 +100,66 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
         raise PermissionError('Forbidden')
 
     return conversation_item
+
+
+def _authorize_image_conversation_read(user_id, conversation_id):
+    """Authorize image reads for either personal or collaborative conversations."""
+    try:
+        return _authorize_personal_conversation_read(user_id, conversation_id), 'personal'
+    except PermissionError:
+        raise
+    except LookupError:
+        pass
+
+    try:
+        conversation_item = get_collaboration_conversation(conversation_id)
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError(f"Conversation {conversation_id} not found") from exc
+
+    assert_user_can_view_collaboration_conversation(user_id, conversation_item, allow_pending=True)
+    return conversation_item, 'collaboration'
+
+
+def _stream_blob_backed_image_message(message_doc):
+    """Stream a blob-backed image message through the authenticated image endpoint."""
+    blob_container = str(message_doc.get('blob_container') or '').strip()
+    blob_path = str(message_doc.get('blob_path') or '').strip()
+    mime_type = str(message_doc.get('mime_type') or '').strip() or 'image/png'
+    if not blob_container or not blob_path:
+        raise LookupError('Image not found')
+
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        raise RuntimeError('Blob storage client not available')
+
+    blob_client = blob_service_client.get_blob_client(
+        container=blob_container,
+        blob=blob_path,
+    )
+
+    content_length = None
+    try:
+        blob_properties = blob_client.get_blob_properties()
+        content_length = getattr(blob_properties, 'size', None)
+    except Exception:
+        content_length = None
+
+    def stream_blob_chunks():
+        blob_stream = blob_client.download_blob()
+        for blob_chunk in blob_stream.chunks():
+            yield blob_chunk
+
+    headers = {
+        'Cache-Control': 'private, max-age=300',
+    }
+    if content_length is not None:
+        headers['Content-Length'] = str(content_length)
+
+    return Response(
+        stream_with_context(stream_blob_chunks()),
+        mimetype=mime_type,
+        headers=headers,
+    )
 
 
 def _load_scope_lock_conversation(conversation_id, user_id):
@@ -216,10 +276,7 @@ def register_route_backend_conversations(app):
     @login_required
     @user_required
     def api_get_image(image_id):
-        """Serve large images that were stored in chunks"""
-        print(f"🔥 IMAGE ENDPOINT CALLED: {image_id}")
-        print(f"🔥 Request URL: {request.url}")
-        print(f"🔥 Request headers: {dict(request.headers)}")
+        """Serve chat images from blob storage or legacy chunked message content."""
         
         user_id = get_current_user_id()
         if not user_id:
@@ -237,12 +294,15 @@ def register_route_backend_conversations(app):
             
             debug_print(f"Serving image {image_id} from conversation {conversation_id}")
 
-            _authorize_personal_conversation_read(user_id, conversation_id)
-            _, complete_content = get_complete_image_content(
+            _authorize_image_conversation_read(user_id, conversation_id)
+            image_message, complete_content = get_complete_image_content(
                 cosmos_messages_container,
                 conversation_id,
                 image_id,
             )
+
+            if is_blob_backed_image_message(image_message):
+                return _stream_blob_backed_image_message(image_message)
 
             if is_external_image_url(complete_content):
                 return redirect(complete_content)
@@ -259,6 +319,8 @@ def register_route_backend_conversations(app):
 
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Image not found'}), 404
         except LookupError:
             return jsonify({'error': 'Image not found'}), 404
         except Exception as e:

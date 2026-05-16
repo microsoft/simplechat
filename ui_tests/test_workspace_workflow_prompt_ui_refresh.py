@@ -1,16 +1,18 @@
 # test_workspace_workflow_prompt_ui_refresh.py
 """
 UI test for the workspace workflow and prompt UI refresh.
-Version: 0.241.044
-Implemented in: 0.241.044
+Version: 0.241.032
+Implemented in: 0.241.032
 
 This test ensures the personal workspace workflows tab uses the refreshed
-workflow toolbar and action buttons, switches into the new grid view, and the
-prompts tab exposes the read-only prompt view modal.
+workflow toolbar and card overflow menu, switches into card views, and the
+prompts tab exposes list/card rendering, prompt Chat links, and the read-only
+prompt view modal.
 """
 
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -158,25 +160,53 @@ def test_workspace_workflow_prompt_ui_refresh(playwright):
         workflow_card = page.locator("#workflows-grid-view .workflow-item-card").first
         expect(workflow_card).to_be_visible()
         expect(workflow_card).to_contain_text("Daily Summary")
-        expect(workflow_card.get_by_role("button", name="Activity")).to_be_visible()
+        expect(workflow_card.get_by_role("button", name="Run workflow")).to_be_visible()
+        expect(workflow_card.get_by_role("button", name="Open activity view")).to_be_visible()
+        expect(workflow_card.get_by_role("button", name="History")).to_be_hidden()
+
+        workflow_card.get_by_role("button", name="Workflow actions").click()
+        expect(page.get_by_role("button", name="History")).to_be_visible()
+        expect(page.get_by_role("button", name="Edit")).to_be_visible()
+        expect(page.get_by_role("button", name="Delete")).to_be_visible()
+        page.keyboard.press("Escape")
+
+        workflow_card.locator(".card-title").click()
+        expect(page.locator("#workflowModal")).to_be_visible()
+        expect(page.locator("#workflow-name")).to_have_value("Daily Summary")
+        page.locator("#workflowModal .btn-close").click()
 
         page.locator("#prompts-tab-btn").evaluate("button => button.click()")
         expect(page.locator("#prompts-tab")).to_be_visible()
 
         prompt_row = page.locator("#prompts-table tbody tr").filter(has_text="Workspace Summary")
         expect(prompt_row).to_be_visible()
+        expect(prompt_row.locator('button[title="Chat with Prompt"]')).to_be_visible()
         expect(prompt_row.locator('button[title="View Prompt"]')).to_be_visible()
         expect(prompt_row.locator('button[title="Edit Prompt"]')).to_be_visible()
         expect(prompt_row.locator('button[title="Delete Prompt"]')).to_be_visible()
 
-        prompt_row.locator('button[title="View Prompt"]').click()
+        page.locator('label[for="prompts-view-grid"]').click()
+        prompt_card = page.locator("#prompts-card-view .prompt-item-card").first
+        expect(prompt_card).to_be_visible()
+        expect(prompt_card).to_contain_text("Workspace Summary")
+        expect(prompt_card.get_by_role("button", name="Chat with Prompt")).to_be_visible()
+        expect(prompt_card.get_by_role("button", name="View Prompt")).to_be_visible()
+        expect(prompt_card.get_by_role("button", name="Edit Prompt")).to_be_visible()
+        expect(prompt_card.get_by_role("button", name="Delete Prompt")).to_be_visible()
+
+        prompt_card.locator(".card-title").click()
         expect(page.locator("#item-view-modal")).to_be_visible()
         expect(page.locator("#item-view-modal .modal-title")).to_have_text("Prompt Details")
         expect(page.locator("#item-view-modal")).to_contain_text("Workspace Summary")
         expect(page.locator("#item-view-modal")).to_contain_text("Summarize the newest workflow activity in three bullets.")
+        expect(page.locator("#item-view-modal").get_by_role("button", name="Chat")).to_be_visible()
 
         dialog_class = page.locator("#item-view-modal .modal-dialog").get_attribute("class") or ""
         assert "modal-lg" not in dialog_class, "Expected the prompt details modal to use the smaller dialog size."
+
+        page.locator("#item-view-modal .btn-secondary").click()
+        prompt_card.get_by_role("button", name="Chat with Prompt").click()
+        expect(page).to_have_url(re.compile(r".*/chats\?(?=.*prompt_id=prompt-001)(?=.*prompt_scope=personal)(?=.*openPrompt=1).*"))
     finally:
         context.close()
         browser.close()

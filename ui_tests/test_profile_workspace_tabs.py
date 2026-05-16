@@ -1,7 +1,7 @@
 # test_profile_workspace_tabs.py
 """
 UI test for profile workspace tabs.
-Version: 0.241.028
+Version: 0.241.031
 Implemented in: 0.241.028
 
 This test ensures authenticated users can open the profile-hosted Groups and

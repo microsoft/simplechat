@@ -1,7 +1,6 @@
 // static/js/workspace/workspace-prompts.js
 
-import { escapeHtml } from "./workspace-utils.js";
-import { openViewModal } from "./view-utils.js";
+import { openViewModal, setupViewToggle, switchViewContainers, truncateDescription } from "./view-utils.js";
 
 // ------------- State Variables (Prompts Tab) -------------
 let promptsCurrentPage = 1;
@@ -10,6 +9,8 @@ let promptsSearchTerm = '';
 
 // ------------- DOM Elements (Prompts Tab) -------------
 const promptsTableBody = document.querySelector("#prompts-table tbody");
+const promptsListView = document.getElementById("prompts-list-view");
+const promptsCardView = document.getElementById("prompts-card-view");
 const promptModalEl = document.getElementById("promptModal") ? new bootstrap.Modal(document.getElementById("promptModal")) : null;
 const promptForm = document.getElementById("prompt-form");
 const promptIdEl = document.getElementById("prompt-id");
@@ -25,7 +26,7 @@ const promptsPageSizeSelect = document.getElementById('prompts-page-size-select'
 const promptsPaginationContainer = document.getElementById('prompts-pagination-container');
 
 // Check if essential elements exist
-if (!promptsTableBody || !promptModalEl || !promptForm || !promptIdEl || !promptNameEl || !promptContentEl || !createPromptBtn || !promptSaveBtn || !promptsSearchInput || !promptsApplyFiltersBtn || !promptsClearFiltersBtn || !promptsPageSizeSelect || !promptsPaginationContainer) {
+if (!promptsTableBody || !promptsListView || !promptsCardView || !promptModalEl || !promptForm || !promptIdEl || !promptNameEl || !promptContentEl || !createPromptBtn || !promptSaveBtn || !promptsSearchInput || !promptsApplyFiltersBtn || !promptsClearFiltersBtn || !promptsPageSizeSelect || !promptsPaginationContainer) {
     console.warn("Workspace Prompts Tab: One or more essential DOM elements not found. Script might not function correctly.");
 }
 
@@ -46,17 +47,318 @@ else if (typeof SimpleMDE === 'undefined') { console.warn("SimpleMDE library not
 
 // ------------- Prompt Functions -------------
 
+function createPromptLoadingElement(message) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'col-12 text-center text-muted py-5';
+
+    const spinner = document.createElement('div');
+    spinner.className = 'spinner-border spinner-border-sm me-2';
+    spinner.setAttribute('role', 'status');
+
+    const hiddenLabel = document.createElement('span');
+    hiddenLabel.className = 'visually-hidden';
+    hiddenLabel.textContent = 'Loading...';
+    spinner.appendChild(hiddenLabel);
+
+    wrapper.appendChild(spinner);
+    wrapper.append(message);
+    return wrapper;
+}
+
+function setPromptsLoadingState() {
+    if (promptsTableBody) {
+        const row = document.createElement('tr');
+        row.className = 'table-loading-row';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+
+        const spinner = document.createElement('div');
+        spinner.className = 'spinner-border spinner-border-sm me-2';
+        spinner.setAttribute('role', 'status');
+        const hiddenLabel = document.createElement('span');
+        hiddenLabel.className = 'visually-hidden';
+        hiddenLabel.textContent = 'Loading...';
+        spinner.appendChild(hiddenLabel);
+
+        cell.appendChild(spinner);
+        cell.append('Loading prompts...');
+        row.appendChild(cell);
+        promptsTableBody.replaceChildren(row);
+    }
+
+    if (promptsCardView) {
+        promptsCardView.replaceChildren(createPromptLoadingElement('Loading prompts...'));
+    }
+}
+
+function renderPromptsEmptyState(message, showResetButton) {
+    if (promptsTableBody) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.className = 'text-center p-4 text-muted';
+        cell.append(message);
+
+        if (showResetButton) {
+            cell.appendChild(document.createElement('br'));
+            const resetButton = document.createElement('button');
+            resetButton.type = 'button';
+            resetButton.className = 'btn btn-link btn-sm p-0';
+            resetButton.textContent = 'Clear search';
+            resetButton.addEventListener('click', () => promptsClearFiltersBtn?.click());
+            cell.appendChild(resetButton);
+            cell.append(' to see all prompts.');
+        }
+
+        row.appendChild(cell);
+        promptsTableBody.replaceChildren(row);
+    }
+
+    if (promptsCardView) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'col-12 text-center text-muted py-5';
+
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-card-text display-6 mb-2 d-block';
+        wrapper.appendChild(icon);
+
+        const text = document.createElement('p');
+        text.className = 'mb-2';
+        text.textContent = message;
+        wrapper.appendChild(text);
+
+        if (showResetButton) {
+            const resetButton = document.createElement('button');
+            resetButton.type = 'button';
+            resetButton.className = 'btn btn-link btn-sm p-0';
+            resetButton.textContent = 'Clear search';
+            resetButton.addEventListener('click', () => promptsClearFiltersBtn?.click());
+            wrapper.appendChild(resetButton);
+        }
+
+        promptsCardView.replaceChildren(wrapper);
+    }
+}
+
+function renderPromptsErrorState(message) {
+    if (promptsTableBody) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.className = 'text-center text-danger p-3';
+        cell.textContent = message;
+        row.appendChild(cell);
+        promptsTableBody.replaceChildren(row);
+    }
+
+    if (promptsCardView) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'col-12 text-center text-danger py-5';
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-exclamation-triangle display-6 mb-2 d-block';
+        const text = document.createElement('p');
+        text.className = 'mb-0';
+        text.textContent = message;
+        wrapper.append(icon, text);
+        promptsCardView.replaceChildren(wrapper);
+    }
+}
+
+function getPromptPreview(prompt) {
+    const content = String(prompt?.content || '').trim();
+    if (content) {
+        return truncateDescription(content, 180);
+    }
+
+    return 'Open the prompt to review or edit the reusable content.';
+}
+
+function isPromptCardActionTarget(target) {
+    return Boolean(target.closest('a, button, input, label, select, textarea, .dropdown-menu'));
+}
+
+function buildPromptChatUrl(promptId, scopeType = 'personal', scopeId = '') {
+    const params = new URLSearchParams({
+        prompt_id: String(promptId || ''),
+        prompt_scope: scopeType,
+        openPrompt: '1',
+    });
+
+    if (scopeId) {
+        params.set('prompt_scope_id', String(scopeId));
+    }
+
+    return `/chats?${params.toString()}`;
+}
+
+function chatWithPrompt(promptId) {
+    if (!promptId) {
+        return;
+    }
+
+    window.location.href = buildPromptChatUrl(promptId);
+}
+
+function createPromptButton({ className, title, iconClass, label, onClick }) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+
+    const icon = document.createElement('i');
+    icon.className = iconClass;
+    button.appendChild(icon);
+
+    if (label) {
+        icon.classList.add('me-1');
+        button.append(label);
+    }
+
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        onClick(event);
+    });
+
+    return button;
+}
+
+function renderPromptRow(prompt) {
+    if (!promptsTableBody) return;
+
+    const row = document.createElement('tr');
+    row.dataset.promptId = prompt.id || '';
+
+    const nameCell = document.createElement('td');
+    nameCell.title = prompt.name || '';
+    nameCell.textContent = prompt.name || 'Untitled Prompt';
+
+    const actionsCell = document.createElement('td');
+    const actionWrap = document.createElement('div');
+    actionWrap.className = 'd-flex gap-1 justify-content-start justify-content-md-end';
+
+    actionWrap.append(
+        createPromptButton({
+            className: 'btn btn-sm btn-primary',
+            title: 'Chat with Prompt',
+            iconClass: 'bi bi-chat-dots',
+            onClick: () => chatWithPrompt(prompt.id),
+        }),
+        createPromptButton({
+            className: 'btn btn-sm btn-outline-info',
+            title: 'View Prompt',
+            iconClass: 'bi bi-eye',
+            onClick: () => window.onViewPrompt(prompt.id),
+        }),
+        createPromptButton({
+            className: 'btn btn-sm btn-outline-secondary',
+            title: 'Edit Prompt',
+            iconClass: 'bi bi-pencil',
+            onClick: () => window.onEditPrompt(prompt.id),
+        }),
+        createPromptButton({
+            className: 'btn btn-sm btn-outline-danger',
+            title: 'Delete Prompt',
+            iconClass: 'bi bi-trash',
+            onClick: (event) => window.onDeletePrompt(prompt.id, event),
+        })
+    );
+
+    actionsCell.appendChild(actionWrap);
+    row.append(nameCell, actionsCell);
+    promptsTableBody.appendChild(row);
+}
+
+function createPromptCard(prompt) {
+    const col = document.createElement('div');
+    col.className = 'col-12 col-md-6 col-xl-4';
+
+    const card = document.createElement('div');
+    card.className = 'card item-card prompt-item-card h-100';
+    card.tabIndex = 0;
+    card.setAttribute('aria-label', `View prompt ${prompt.name || 'Untitled Prompt'}`);
+
+    const body = document.createElement('div');
+    body.className = 'card-body d-flex flex-column';
+
+    const iconWrap = document.createElement('div');
+    iconWrap.className = 'item-card-icon mb-2';
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-card-text';
+    icon.style.fontSize = '1.75rem';
+    iconWrap.appendChild(icon);
+
+    const title = document.createElement('h6');
+    title.className = 'card-title mb-2';
+    title.textContent = prompt.name || 'Untitled Prompt';
+
+    const preview = document.createElement('p');
+    preview.className = 'card-text small text-muted prompt-card-preview flex-grow-1';
+    preview.textContent = getPromptPreview(prompt);
+
+    const actions = document.createElement('div');
+    actions.className = 'item-card-buttons mt-2 d-flex flex-wrap gap-1';
+    actions.append(
+        createPromptButton({
+            className: 'btn btn-sm btn-primary',
+            title: 'Chat with Prompt',
+            iconClass: 'bi bi-chat-dots',
+            label: 'Chat',
+            onClick: () => chatWithPrompt(prompt.id),
+        }),
+        createPromptButton({
+            className: 'btn btn-sm btn-outline-info',
+            title: 'View Prompt',
+            iconClass: 'bi bi-eye',
+            label: 'View',
+            onClick: () => window.onViewPrompt(prompt.id),
+        }),
+        createPromptButton({
+            className: 'btn btn-sm btn-outline-secondary',
+            title: 'Edit Prompt',
+            iconClass: 'bi bi-pencil',
+            label: 'Edit',
+            onClick: () => window.onEditPrompt(prompt.id),
+        }),
+        createPromptButton({
+            className: 'btn btn-sm btn-outline-danger',
+            title: 'Delete Prompt',
+            iconClass: 'bi bi-trash',
+            onClick: (event) => window.onDeletePrompt(prompt.id, event),
+        })
+    );
+
+    card.addEventListener('click', (event) => {
+        if (!isPromptCardActionTarget(event.target)) {
+            window.onViewPrompt(prompt.id);
+        }
+    });
+    card.addEventListener('keydown', (event) => {
+        if (!isPromptCardActionTarget(event.target) && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            window.onViewPrompt(prompt.id);
+        }
+    });
+
+    body.append(iconWrap, title, preview, actions);
+    card.appendChild(body);
+    col.appendChild(card);
+    return col;
+}
+
+function renderPromptViews(prompts) {
+    promptsTableBody.replaceChildren();
+    prompts.forEach((prompt) => renderPromptRow(prompt));
+
+    if (promptsCardView) {
+        promptsCardView.replaceChildren(...prompts.map((prompt) => createPromptCard(prompt)));
+    }
+}
+
 function fetchUserPrompts() {
     if (!promptsTableBody || !promptsPaginationContainer) return;
 
-    // Show loading state
-    promptsTableBody.innerHTML = `
-         <tr class="table-loading-row">
-             <td colspan="2">
-                 <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                 Loading prompts...
-             </td>
-         </tr>`;
+    setPromptsLoadingState();
     promptsPaginationContainer.innerHTML = ''; // Clear pagination
 
     // Build query parameters
@@ -71,59 +373,26 @@ function fetchUserPrompts() {
     fetch(`/api/prompts?${params.toString()}`)
         .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
         .then(data => {
-            promptsTableBody.innerHTML = ""; // Clear loading/existing rows
             if (!data.prompts || data.prompts.length === 0) {
-                 promptsTableBody.innerHTML = `
-                    <tr>
-                        <td colspan="2" class="text-center p-4 text-muted">
-                            ${promptsSearchTerm ? 'No prompts found matching your search.' : 'No prompts created yet.'}
-                            ${promptsSearchTerm ? '<br><button class="btn btn-link btn-sm p-0" id="prompts-reset-filter-msg-btn">Clear search</button> to see all prompts.' : ''}
-                         </td>
-                     </tr>`;
-                 // Add event listener for the reset button within the message
-                 const resetButton = document.getElementById('prompts-reset-filter-msg-btn');
-                 if (resetButton) {
-                     resetButton.addEventListener('click', () => {
-                         promptsClearFiltersBtn.click(); // Simulate clicking the main clear button
-                     });
-                 }
+                renderPromptsEmptyState(
+                    promptsSearchTerm ? 'No prompts found matching your search.' : 'No prompts created yet.',
+                    Boolean(promptsSearchTerm)
+                );
             } else {
-                data.prompts.forEach(p => renderPromptRow(p));
+                renderPromptViews(data.prompts);
             }
             // Render pagination controls using data from response
             renderPromptsPaginationControls(data.page, data.page_size, data.total_count);
         })
         .catch(err => {
             console.error("Error fetching prompts:", err);
-            promptsTableBody.innerHTML = `<tr><td colspan="2" class="text-center text-danger p-3">Error loading prompts: ${escapeHtml(err.error || err.message || 'Unknown error')}</td></tr>`;
+            renderPromptsErrorState(`Error loading prompts: ${err.error || err.message || 'Unknown error'}`);
             renderPromptsPaginationControls(1, promptsPageSize, 0); // Show empty pagination on error
         });
 }
 
-function renderPromptRow(p) {
-    if (!promptsTableBody) return;
-     const tr = document.createElement("tr");
-     tr.innerHTML = `
-         <td title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</td>
-         <td>
-            <div class="d-flex gap-1 justify-content-start justify-content-md-end">
-            <button class="btn btn-sm btn-outline-info" onclick="window.onViewPrompt('${p.id}')" title="View Prompt">
-                <i class="bi bi-eye"></i>
-            </button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="window.onEditPrompt('${p.id}')" title="Edit Prompt">
-                <i class="bi bi-pencil"></i>
-            </button>
-            <button class="btn btn-sm btn-outline-danger" onclick="window.onDeletePrompt('${p.id}', event)" title="Delete Prompt">
-                <i class="bi bi-trash"></i>
-            </button>
-            </div>
-         </td>
-     `;
-     promptsTableBody.appendChild(tr);
-}
-
 function fetchPrompt(promptId) {
-    return fetch(`/api/prompts/${promptId}`)
+    return fetch(`/api/prompts/${encodeURIComponent(promptId)}`)
         .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)));
 }
 
@@ -283,7 +552,7 @@ if (promptForm && promptSaveBtn && promptModalEl) {
             content: contentValue.trim(),
         };
 
-        const url = promptId ? `/api/prompts/${promptId}` : "/api/prompts";
+        const url = promptId ? `/api/prompts/${encodeURIComponent(promptId)}` : "/api/prompts";
         const method = promptId ? "PATCH" : "POST";
 
         fetch(url, {
@@ -356,6 +625,10 @@ if (promptsSearchInput) {
     });
 }
 
+setupViewToggle('prompts', 'promptsViewPreference', (mode) => {
+    switchViewContainers(mode, promptsListView, promptsCardView);
+});
+
 
 // --- Global Functions for Inline `onclick` Handlers ---
 
@@ -365,7 +638,7 @@ window.onEditPrompt = function (promptId) {
     fetchPrompt(promptId)
         .then(data => {
             const modalLabel = document.getElementById("promptModalLabel");
-                if (modalLabel) modalLabel.textContent = `Edit Prompt: ${escapeHtml(data.name)}`;
+            if (modalLabel) modalLabel.textContent = `Edit Prompt: ${data.name || 'Untitled Prompt'}`;
             promptIdEl.value = data.id;
             promptNameEl.value = data.name;
             
@@ -396,6 +669,7 @@ window.onViewPrompt = function (promptId) {
     fetchPrompt(promptId)
         .then(data => {
             openViewModal(data, 'prompt', {
+                onChat: (item) => chatWithPrompt(item.id),
                 onEdit: (item) => window.onEditPrompt(item.id),
             });
         })
@@ -415,7 +689,7 @@ window.onDeletePrompt = function (promptId, event) {
         deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
     }
 
-    fetch(`/api/prompts/${promptId}`, { method: "DELETE" })
+    fetch(`/api/prompts/${encodeURIComponent(promptId)}`, { method: "DELETE" })
         .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
         .then(data => {
             // Refresh the current page after deleting
@@ -430,6 +704,8 @@ window.onDeletePrompt = function (promptId, event) {
             }
         });
 };
+
+window.chatWithPrompt = chatWithPrompt;
 
 // Make fetchUserPrompts globally available IF needed by workspace-init.js
 window.fetchUserPrompts = fetchUserPrompts;

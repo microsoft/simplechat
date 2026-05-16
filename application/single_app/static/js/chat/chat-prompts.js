@@ -241,29 +241,94 @@ function initializeScopeChangeListener() {
     scopeChangeListenerInitialized = true;
 }
 
+function setPromptSelectionVisible(isVisible, { clearSelection = true } = {}) {
+    if (!promptSelectionContainer || !searchPromptsBtn || !userInput) {
+        return;
+    }
+
+    searchPromptsBtn.classList.toggle("active", isVisible);
+    promptSelectionContainer.style.display = isVisible ? "block" : "none";
+
+    if (isVisible) {
+        userInput.classList.add("with-prompt-active");
+        return;
+    }
+
+    if (clearSelection && promptSelect) {
+        promptSelect.selectedIndex = 0;
+        promptSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    userInput.classList.remove("with-prompt-active");
+}
+
+function findPromptOption(promptId, promptScope = "", scopeId = "") {
+    const normalizedPromptId = String(promptId || "");
+    const normalizedPromptScope = String(promptScope || "");
+    const normalizedScopeId = String(scopeId || "");
+    const options = Array.from(promptSelect?.options || []);
+
+    const scopedMatch = options.find(option => {
+        if (option.value !== normalizedPromptId) {
+            return false;
+        }
+
+        if (normalizedPromptScope && option.dataset.scopeType !== normalizedPromptScope) {
+            return false;
+        }
+
+        if (normalizedScopeId && option.dataset.scopeId !== normalizedScopeId) {
+            return false;
+        }
+
+        return true;
+    });
+
+    return scopedMatch || options.find(option => option.value === normalizedPromptId) || null;
+}
+
+export async function selectPromptById({ promptId, promptScope = "", scopeId = "" } = {}) {
+    if (!promptId || !promptSelect) {
+        return false;
+    }
+
+    initializePromptSelector();
+    initializeScopeChangeListener();
+    setPromptSelectionVisible(true, { clearSelection: false });
+
+    await loadAllPrompts();
+
+    const match = findPromptOption(promptId, promptScope, scopeId);
+    if (!match) {
+        updateSendButtonVisibility();
+        return false;
+    }
+
+    promptSelect.selectedIndex = Array.from(promptSelect.options).indexOf(match);
+    promptSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    promptSelectorController?.refresh();
+    notifyMobileSelectorActivated("prompt-selection-container", "prompt-dropdown-button");
+    userInput?.focus();
+    updateSendButtonVisibility();
+    return true;
+}
+
 export function initializePromptInteractions() {
     if (searchPromptsBtn && promptSelectionContainer && userInput) {
         initializePromptSelector();
         initializeScopeChangeListener();
 
         searchPromptsBtn.addEventListener("click", function() {
-            const isActive = this.classList.toggle("active");
+            const isActive = !this.classList.contains("active");
 
             if (isActive) {
-                promptSelectionContainer.style.display = "block";
-            loadAllPrompts().finally(() => {
-              notifyMobileSelectorActivated("prompt-selection-container", "prompt-dropdown-button");
-            });
-                userInput.classList.add("with-prompt-active");
+                setPromptSelectionVisible(true, { clearSelection: false });
+                loadAllPrompts().finally(() => {
+                    notifyMobileSelectorActivated("prompt-selection-container", "prompt-dropdown-button");
+                });
                 userInput.focus();
                 updateSendButtonVisibility();
             } else {
-                promptSelectionContainer.style.display = "none";
-                if (promptSelect) {
-                    promptSelect.selectedIndex = 0;
-                    promptSelect.dispatchEvent(new Event("change", { bubbles: true }));
-                }
-                userInput.classList.remove("with-prompt-active");
+                setPromptSelectionVisible(false);
                 userInput.focus();
                 updateSendButtonVisibility();
             }

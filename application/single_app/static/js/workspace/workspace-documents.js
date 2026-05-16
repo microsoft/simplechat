@@ -40,6 +40,7 @@ const documentDeleteAllBtn = document.getElementById("documentDeleteAllBtn");
 // Selection mode variables
 let selectionModeActive = false;
 let selectedDocuments = new Set();
+let lastCardSelectionAnchorId = null;
 
 function getDocumentSelectionTables() {
     return [
@@ -49,7 +50,8 @@ function getDocumentSelectionTables() {
 }
 
 function getVisibleDocumentCheckboxes() {
-    return Array.from(document.querySelectorAll("#documents-table .document-checkbox, #folder-docs-table .document-checkbox"));
+    return Array.from(document.querySelectorAll("#documents-table .document-checkbox, #folder-docs-table .document-checkbox, #documents-card-view .document-checkbox, #folder-documents-card-view .document-checkbox"))
+        .filter(checkbox => checkbox.offsetParent !== null);
 }
 
 function getDocumentSelectAllCheckboxes() {
@@ -92,6 +94,11 @@ window.isDocumentSelectionModeActive = function() {
 };
 
 window.toggleSelectAllDocuments = function(isSelected) {
+    if (isSelected && !selectionModeActive) {
+        selectionModeActive = true;
+        syncDocumentSelectionModeUI();
+    }
+
     getVisibleDocumentCheckboxes().forEach((checkbox) => {
         const documentId = checkbox.getAttribute("data-document-id");
         checkbox.checked = isSelected;
@@ -104,6 +111,94 @@ window.toggleSelectAllDocuments = function(isSelected) {
 
     window.syncDocumentSelectionUI();
 };
+
+function getVisibleDocumentCards() {
+    return Array.from(document.querySelectorAll('#documents-card-view .document-item-card, #folder-documents-card-view .document-item-card'))
+        .filter(card => card.offsetParent !== null);
+}
+
+function isDocumentCardActionTarget(target) {
+    return Boolean(target.closest('a, button, input, label, select, textarea, .dropdown-menu, .tag-badge'));
+}
+
+function openDocumentCardDropdown(card) {
+    const dropdownToggle = card.querySelector('.action-dropdown [data-bs-toggle="dropdown"]');
+    if (!dropdownToggle || !window.bootstrap?.Dropdown) {
+        return;
+    }
+
+    window.bootstrap.Dropdown.getOrCreateInstance(dropdownToggle).show();
+}
+
+function setDocumentSelectionModeActive(isActive) {
+    if (selectionModeActive === isActive) {
+        return;
+    }
+
+    selectionModeActive = isActive;
+    if (!selectionModeActive) {
+        selectedDocuments.clear();
+        lastCardSelectionAnchorId = null;
+    }
+    syncDocumentSelectionModeUI();
+}
+
+function selectDocumentCardRange(documentId) {
+    const documentIds = getVisibleDocumentCards()
+        .map(card => card.getAttribute('data-document-id'))
+        .filter(Boolean);
+    const currentIndex = documentIds.indexOf(documentId);
+    const anchorIndex = documentIds.indexOf(lastCardSelectionAnchorId);
+
+    if (currentIndex === -1) {
+        return;
+    }
+
+    if (anchorIndex === -1) {
+        selectedDocuments.add(documentId);
+        lastCardSelectionAnchorId = documentId;
+        return;
+    }
+
+    const startIndex = Math.min(anchorIndex, currentIndex);
+    const endIndex = Math.max(anchorIndex, currentIndex);
+    documentIds.slice(startIndex, endIndex + 1).forEach(id => selectedDocuments.add(id));
+}
+
+function handleDocumentCardClick(event) {
+    const card = event.target.closest('.document-item-card');
+    if (!card || isDocumentCardActionTarget(event.target)) {
+        return;
+    }
+
+    const documentId = card.getAttribute('data-document-id');
+    if (!documentId) {
+        return;
+    }
+
+    if (event.shiftKey || event.ctrlKey || event.metaKey || selectionModeActive) {
+        event.preventDefault();
+        if (!selectionModeActive) {
+            setDocumentSelectionModeActive(true);
+        }
+
+        if (event.shiftKey) {
+            selectDocumentCardRange(documentId);
+        } else {
+            if (selectedDocuments.has(documentId)) {
+                selectedDocuments.delete(documentId);
+            } else {
+                selectedDocuments.add(documentId);
+            }
+            lastCardSelectionAnchorId = documentId;
+        }
+
+        syncDocumentSelectionModeUI();
+        return;
+    }
+
+    openDocumentCardDropdown(card);
+}
 
 // --- Filter elements ---
 const docsSearchInput = document.getElementById('docs-search-input');
@@ -373,6 +468,16 @@ function createDocumentCard(doc) {
                 <i class="bi bi-check-square me-2"></i>Select
             </a></li>`;
 
+        if (access.hasApprovedAccess) {
+            dropdownItems += `
+                <li><a class="dropdown-item" href="#" onclick="window.redirectToChat('${docId}'); return false;">
+                    <i class="bi bi-chat-dots-fill me-2"></i>Chat
+                </a></li>
+                <li><a class="dropdown-item" href="#" onclick="window.onEditDocument('${docId}'); return false;">
+                    <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
+                </a></li>`;
+        }
+
         if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
             dropdownItems += `
                 <li><a class="dropdown-item" href="#" onclick="window.onExtractMetadata('${docId}', event); return false;">
@@ -470,6 +575,19 @@ function renderDocumentCards(docs) {
         documentsCardView.appendChild(createDocumentCard(doc));
     });
 }
+
+window.createWorkspaceDocumentCard = createDocumentCard;
+window.renderWorkspaceDocumentCardsInto = function(docs, target) {
+    if (!target) {
+        return;
+    }
+
+    target.innerHTML = '';
+    docs.forEach(doc => {
+        target.appendChild(createDocumentCard(doc));
+    });
+    syncDocumentSelectionModeUI();
+};
 
 function renderWorkspaceDocumentView() {
     const docs = Array.isArray(window.lastFetchedDocs) ? window.lastFetchedDocs : [];
@@ -1940,19 +2058,14 @@ window.fetchUserDocuments = fetchUserDocuments;
 
 // Toggle selection mode
 window.toggleSelectionMode = function() {
-    selectionModeActive = !selectionModeActive;
-
-    if (!selectionModeActive) {
-        selectedDocuments.clear();
-    }
-
-    syncDocumentSelectionModeUI();
+    setDocumentSelectionModeActive(!selectionModeActive);
 };
 
 // Update selected documents
 window.updateSelectedDocuments = function(documentId, isSelected) {
     if (isSelected) {
         selectedDocuments.add(documentId);
+        lastCardSelectionAnchorId = documentId;
     } else {
         selectedDocuments.delete(documentId);
     }
@@ -1994,6 +2107,7 @@ function updateBulkActionButtons() {
 
 function syncDocumentSelectionModeUI() {
     const bulkActionsBar = document.getElementById('bulkActionsBar');
+    const toggleSelectionBtn = document.getElementById('workspace-toggle-selection-btn');
 
     syncDocumentCheckboxesWithSelection();
 
@@ -2020,6 +2134,11 @@ function syncDocumentSelectionModeUI() {
     if (!selectionModeActive && bulkActionsBar) {
         bulkActionsBar.classList.remove('d-block');
         bulkActionsBar.classList.add('d-none');
+    }
+
+    if (toggleSelectionBtn) {
+        toggleSelectionBtn.classList.toggle('active', selectionModeActive);
+        toggleSelectionBtn.setAttribute('aria-pressed', String(selectionModeActive));
     }
 
     updateBulkActionButtons();
@@ -2130,6 +2249,7 @@ window.removeSelectedDocuments = function() {
 // Clear selection handler
 window.clearDocumentSelection = function() {
     selectedDocuments.clear();
+    lastCardSelectionAnchorId = null;
     syncDocumentSelectionModeUI();
 };
 
@@ -2144,6 +2264,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (clearSelectionBtn) {
         clearSelectionBtn.addEventListener('click', window.clearDocumentSelection);
     }
+
+    document.getElementById('workspace-toggle-selection-btn')?.addEventListener('click', window.toggleSelectionMode);
     
     document.addEventListener('change', function(event) {
         if (event.target.classList.contains('document-checkbox')) {
@@ -2155,6 +2277,8 @@ document.addEventListener('DOMContentLoaded', function() {
             window.toggleSelectAllDocuments(event.target.checked);
         }
     });
+
+    document.addEventListener('click', handleDocumentCardClick);
 });
 
 // Approve shared document handler

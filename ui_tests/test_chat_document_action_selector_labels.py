@@ -1,14 +1,15 @@
 # test_chat_document_action_selector_labels.py
 """
 UI test for chat document action selector labels.
-Version: 0.241.019
-Implemented in: 0.241.019
+Version: 0.241.030
+Implemented in: 0.241.030
 
 This test ensures the chat document action selector renders before scope,
 uses the Search/Analyze/Compare labels, updates the hover description for
-each selected action, and exposes the compact Source/Target comparison summary
-as a full-width row below the dropdowns plus the modal editor with both version
-history and uploaded chat files.
+each selected action, keeps the Document picker full width for every action,
+and exposes the compact Source/Target comparison summary as a full-width row
+below the dropdowns plus the modal editor with both version history and
+uploaded chat files.
 """
 
 import json
@@ -16,7 +17,9 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
+
+playwright_sync_api = pytest.importorskip("playwright.sync_api")
+expect = playwright_sync_api.expect
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -159,22 +162,53 @@ def test_chat_document_action_selector_labels(playwright):
         )
         assert field_labels[:4] == ["Action", "Scope", "Tags", "Document"]
 
+        def assert_document_picker_fills_remaining_row(action_value):
+            page.select_option("#document-action-select", action_value)
+            layout = page.locator("#search-documents-container").evaluate(
+                """
+                container => {
+                    const grid = container.querySelector('.chat-search-panel-grid');
+                    const documentField = container.querySelector('[data-chat-document-picker-field="document"]');
+                    const documentButton = container.querySelector('#document-dropdown-button');
+                    const tagsField = container.querySelector('[data-chat-document-picker-field="tags"]');
+                    const gridRect = grid.getBoundingClientRect();
+                    const documentFieldRect = documentField.getBoundingClientRect();
+                    const documentButtonRect = documentButton.getBoundingClientRect();
+                    const tagsFieldRect = tagsField.getBoundingClientRect();
+
+                    return {
+                        buttonFillsField: documentButtonRect.width >= documentFieldRect.width - 2,
+                        fieldReachesGridRight: Math.abs(documentFieldRect.right - gridRect.right) <= 4,
+                        documentWiderThanTags: documentFieldRect.width > tagsFieldRect.width * 1.25,
+                        documentOnTagsRow: Math.abs(documentFieldRect.top - tagsFieldRect.top) <= 4,
+                    };
+                }
+                """
+            )
+            assert layout == {
+                "buttonFillsField": True,
+                "fieldReachesGridRight": True,
+                "documentWiderThanTags": True,
+                "documentOnTagsRow": True,
+            }, f"Expected full-width document picker layout for action {action_value}, got {layout}"
+
         action_options = page.locator("#document-action-select option").all_text_contents()
         assert action_options[:3] == ["Search", "Analyze", "Compare"]
 
         action_select = page.locator("#document-action-select")
+        assert_document_picker_fills_remaining_row("none")
         expect(action_select).to_have_attribute(
             "title",
             "Find relevant information in the selected documents.",
         )
 
-        page.select_option("#document-action-select", "analyze")
+        assert_document_picker_fills_remaining_row("analyze")
         expect(action_select).to_have_attribute(
             "title",
             "Perform an in-depth analysis across all selected documents based on your request.",
         )
 
-        page.select_option("#document-action-select", "comparison")
+        assert_document_picker_fills_remaining_row("comparison")
         expect(action_select).to_have_attribute(
             "title",
             "Compare one selected Source document against the Target documents to explain differences, relationships, or downstream impact.",

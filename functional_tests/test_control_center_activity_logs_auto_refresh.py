@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center Activity Logs auto-refresh.
-Version: 0.241.028
+Version: 0.241.029
 Implemented in: 0.241.028
 
 This test ensures that the Activity Logs tab exposes browser-side auto-refresh
@@ -10,12 +10,15 @@ controls, persists refresh settings, and guards the polling loop from running
 while the page is hidden or repeatedly failing.
 """
 
-from pathlib import Path
+import re
 import sys
+from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "application" / "single_app"
+CURRENT_VERSION = "0.241.029"
+IMPLEMENTED_VERSION = "0.241.028"
 
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
@@ -24,6 +27,15 @@ if str(APP_DIR) not in sys.path:
 def read_text(relative_path: str) -> str:
     """Read a repository file as UTF-8 text."""
     return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def get_config_version() -> str:
+    """Read the current application version from config.py."""
+    config_content = read_text("application/single_app/config.py")
+    match = re.search(r'VERSION = "([^"]+)"', config_content)
+    if not match:
+        raise AssertionError("Could not find VERSION in config.py")
+    return match.group(1)
 
 
 def test_activity_logs_template_contains_auto_refresh_controls() -> bool:
@@ -89,21 +101,20 @@ def test_activity_logs_javascript_contains_auto_refresh_logic() -> bool:
 def test_activity_logs_auto_refresh_documentation_and_version() -> bool:
     """Validate feature documentation and config version are aligned."""
     print("Testing activity logs auto-refresh documentation and version...")
-    config_content = read_text("application/single_app/config.py")
     documentation_content = read_text("docs/explanation/features/CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md")
 
-    if 'VERSION = "0.241.028"' not in config_content:
-        print("Config version was not bumped to 0.241.028")
+    if get_config_version() != CURRENT_VERSION:
+        print(f"Config version was not bumped to {CURRENT_VERSION}")
         return False
 
     required_documentation_snippets = [
-        "Fixed/Implemented in version: **0.241.028**",
+        f"Fixed/Implemented in version: **{IMPLEMENTED_VERSION}**",
         "Minimum interval: 1 second",
         "Maximum interval: 300 seconds",
         "Default interval: 30 seconds",
         "`functional_tests/test_control_center_activity_logs_auto_refresh.py`",
         "`ui_tests/test_control_center_activity_logs_auto_refresh.py`",
-        "`application/single_app/config.py` - version updated to 0.241.028",
+        f"`application/single_app/config.py` - version updated to {IMPLEMENTED_VERSION}",
     ]
 
     missing_snippets = [snippet for snippet in required_documentation_snippets if snippet not in documentation_content]

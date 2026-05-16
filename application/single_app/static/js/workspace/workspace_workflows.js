@@ -683,6 +683,56 @@ function buildWorkflowActionButtons(workflow) {
     return `<div class="workflow-action-buttons d-flex flex-wrap gap-1 justify-content-start justify-content-xl-end">${buttons.join("")}</div>`;
 }
 
+function buildWorkflowRunButton(workflow, includeLabel = true) {
+    const workflowId = escapeHtml(normalizeText(workflow.id));
+    const isRunning = getWorkflowDisplayStatus(workflow) === "running";
+    const label = isRunning ? "Running" : "Run";
+    const iconClass = isRunning ? "bi bi-hourglass-split" : "bi bi-play-fill";
+    const iconSpacing = includeLabel ? " me-1" : "";
+    return `<button type="button" class="btn btn-sm btn-primary" data-action="run" data-workflow-id="${workflowId}" ${isRunning ? "disabled" : ""} title="Run workflow" aria-label="Run workflow"><i class="${iconClass}${iconSpacing}"></i>${includeLabel ? label : ""}</button>`;
+}
+
+function buildWorkflowActivityButton(workflow, includeLabel = true) {
+    const workflowId = escapeHtml(normalizeText(workflow.id));
+    const activityState = getWorkflowActivityState(workflow);
+    const iconSpacing = includeLabel ? " me-1" : "";
+    return `<button type="button" class="btn btn-sm btn-outline-info" data-action="activity" data-workflow-id="${workflowId}" ${activityState.isAvailable ? "" : "disabled"} title="Open activity view" aria-label="Open activity view"><i class="bi bi-activity${iconSpacing}"></i>${includeLabel ? "Activity" : ""}</button>`;
+}
+
+function buildWorkflowCardMenu(workflow) {
+    const workflowId = escapeHtml(normalizeText(workflow.id));
+    const isRunning = getWorkflowDisplayStatus(workflow) === "running";
+    const activityState = getWorkflowActivityState(workflow);
+    const runDisabled = isRunning ? "disabled" : "";
+    const activityDisabled = activityState.isAvailable ? "" : "disabled";
+
+    return `
+        <div class="dropdown workflow-card-menu">
+            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Workflow actions" aria-label="Workflow actions">
+                <i class="bi bi-three-dots"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><button type="button" class="dropdown-item" data-action="run" data-workflow-id="${workflowId}" ${runDisabled}><i class="bi bi-play-fill me-2"></i>Run</button></li>
+                <li><button type="button" class="dropdown-item" data-action="activity" data-workflow-id="${workflowId}" ${activityDisabled}><i class="bi bi-activity me-2"></i>Activity</button></li>
+                <li><button type="button" class="dropdown-item" data-action="history" data-workflow-id="${workflowId}"><i class="bi bi-clock-history me-2"></i>History</button></li>
+                <li><button type="button" class="dropdown-item" data-action="edit" data-workflow-id="${workflowId}"><i class="bi bi-pencil me-2"></i>Edit</button></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><button type="button" class="dropdown-item text-danger" data-action="delete" data-workflow-id="${workflowId}"><i class="bi bi-trash me-2"></i>Delete</button></li>
+            </ul>
+        </div>
+    `;
+}
+
+function buildWorkflowCardActions(workflow) {
+    return `
+        <div class="workflow-card-primary-actions d-flex flex-wrap gap-1">
+            ${buildWorkflowRunButton(workflow, true)}
+            ${buildWorkflowActivityButton(workflow, true)}
+        </div>
+        ${buildWorkflowCardMenu(workflow)}
+    `;
+}
+
 function getCustomEndpointOptions() {
     const endpointGroups = [
         {
@@ -868,6 +918,7 @@ function renderWorkflowGrid(items) {
     }
 
     workflowsGridView.innerHTML = items.map((workflow) => {
+        const workflowId = escapeHtml(normalizeText(workflow.id));
         const workflowName = escapeHtml(normalizeText(workflow.name) || "Untitled Workflow");
         const description = escapeHtml(truncateDescription(normalizeText(workflow.description) || "No description available.", 180));
         const displayStatus = getWorkflowDisplayStatus(workflow);
@@ -883,7 +934,7 @@ function renderWorkflowGrid(items) {
 
         return `
             <div class="col-12 col-md-6 col-xl-4">
-                <div class="card item-card workflow-item-card h-100">
+                <div class="card item-card workflow-item-card h-100" data-workflow-id="${workflowId}" tabindex="0" aria-label="Edit workflow ${workflowName}">
                     <div class="card-body d-flex flex-column">
                         <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
                             <div class="item-card-icon mb-0"><i class="bi bi-diagram-3"></i></div>
@@ -900,7 +951,7 @@ function renderWorkflowGrid(items) {
                         </div>
                         <div class="workflow-grid-preview small text-muted mb-3">${escapeHtml(truncateDescription(previewText, 170))}</div>
                         <div class="workflow-grid-actions mt-auto">
-                            ${buildWorkflowActionButtons(workflow)}
+                            ${buildWorkflowCardActions(workflow)}
                         </div>
                     </div>
                 </div>
@@ -1729,11 +1780,18 @@ function findWorkflowById(workflowId) {
     return workflows.find((workflow) => normalizeText(workflow.id) === normalizeText(workflowId)) || null;
 }
 
+function isWorkflowCardActionTarget(target) {
+    return Boolean(target.closest('a, button, input, label, select, textarea, .dropdown-menu'));
+}
+
 function handleWorkflowActionClick(event) {
     const button = event.target.closest("button[data-action]");
-    if (!button) {
+    if (!button || button.disabled) {
         return;
     }
+
+    event.preventDefault();
+    event.stopPropagation();
 
     const workflow = findWorkflowById(button.getAttribute("data-workflow-id"));
     if (!workflow) {
@@ -1751,6 +1809,44 @@ function handleWorkflowActionClick(event) {
         openWorkflowModal(workflow);
     } else if (action === "delete") {
         promptDeleteWorkflow(workflow);
+    }
+}
+
+function handleWorkflowGridClick(event) {
+    if (event.target.closest("button[data-action]")) {
+        handleWorkflowActionClick(event);
+        return;
+    }
+
+    if (isWorkflowCardActionTarget(event.target)) {
+        return;
+    }
+
+    const card = event.target.closest(".workflow-item-card[data-workflow-id]");
+    if (!card) {
+        return;
+    }
+
+    const workflow = findWorkflowById(card.getAttribute("data-workflow-id"));
+    if (workflow) {
+        openWorkflowModal(workflow);
+    }
+}
+
+function handleWorkflowGridKeydown(event) {
+    if (isWorkflowCardActionTarget(event.target) || (event.key !== "Enter" && event.key !== " ")) {
+        return;
+    }
+
+    const card = event.target.closest(".workflow-item-card[data-workflow-id]");
+    if (!card) {
+        return;
+    }
+
+    const workflow = findWorkflowById(card.getAttribute("data-workflow-id"));
+    if (workflow) {
+        event.preventDefault();
+        openWorkflowModal(workflow);
     }
 }
 
@@ -1792,7 +1888,8 @@ function initializeWorkflowEvents() {
     });
     workflowsSearchInput?.addEventListener("input", filterWorkflows);
     workflowsTableBody.addEventListener("click", handleWorkflowActionClick);
-    workflowsGridView?.addEventListener("click", handleWorkflowActionClick);
+    workflowsGridView?.addEventListener("click", handleWorkflowGridClick);
+    workflowsGridView?.addEventListener("keydown", handleWorkflowGridKeydown);
     workflowForm?.addEventListener("submit", saveWorkflow);
     workflowDeleteConfirmBtn?.addEventListener("click", deleteWorkflow);
     workflowRunnerTypeSelect?.addEventListener("change", updateRunnerFields);

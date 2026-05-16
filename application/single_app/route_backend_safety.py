@@ -108,8 +108,8 @@ def _validate_safety_remediation_request(action, datetime_to_allow):
 
 
 def _actor_can_self_approve_safety_request(request_type, actor_roles):
-    required_roles = get_approval_roles_for_request_type(request_type)
-    return any(role in actor_roles for role in required_roles)
+    """Requester-created safety approvals must be reviewed by another eligible user."""
+    return False
 
 
 def _build_safety_approval_metadata(

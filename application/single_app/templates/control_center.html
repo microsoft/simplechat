@@ -147,63 +147,6 @@
             max-width: 40rem;
         }
 
-        .activity-log-auto-refresh-toolbar {
-            background: rgba(var(--bs-primary-rgb), 0.04);
-            border: 1px solid rgba(var(--bs-primary-rgb), 0.14);
-            border-radius: 0.5rem;
-            padding: 0.85rem 1rem;
-        }
-
-        .activity-log-auto-refresh-toolbar .form-switch .form-check-input {
-            cursor: pointer;
-            height: 1.25rem;
-            width: 2.4rem;
-        }
-
-        .activity-log-refresh-interval-controls {
-            display: grid;
-            grid-template-columns: minmax(14rem, 22rem) minmax(5.5rem, 7rem);
-            gap: 0.75rem;
-            align-items: center;
-        }
-
-        .activity-log-refresh-presets {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.35rem;
-        }
-
-        .activity-log-refresh-presets .btn {
-            min-width: 3rem;
-        }
-
-        .activity-log-refresh-slider-wrap {
-            display: grid;
-            grid-template-columns: minmax(10rem, 1fr) 4.5rem;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
-        .activity-log-refresh-slider {
-            min-width: 10rem;
-        }
-
-        [data-bs-theme="dark"] .activity-log-auto-refresh-toolbar {
-            background: rgba(var(--bs-primary-rgb), 0.12);
-            border-color: rgba(var(--bs-primary-rgb), 0.28);
-        }
-
-        @media (max-width: 767.98px) {
-            .activity-log-refresh-interval-controls,
-            .activity-log-refresh-slider-wrap {
-                grid-template-columns: 1fr;
-            }
-
-            .activity-log-refresh-presets .btn {
-                flex: 1 1 3.25rem;
-            }
-        }
-
         .activity-logs-table {
             --activity-logs-min-width: 940px;
             --activity-log-timestamp-width: 18%;
@@ -1092,7 +1035,7 @@
                                 <div class="col-lg-5 col-md-12">
                                     <div class="input-group">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                        <input type="text" class="form-control" id="userSearchInput" placeholder="Search users by name or email...">
+                                        <input type="text" class="form-control" id="userSearchInput" placeholder="Search users by name, email, or ID...">
                                     </div>
                                 </div>
                                 <div class="col-lg-2 col-md-4">
@@ -1221,7 +1164,7 @@
                                 <div class="col-lg-5 col-md-12">
                                     <div class="input-group">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                        <input type="text" class="form-control" id="groupSearchInput" placeholder="Search groups by name or owner...">
+                                        <input type="text" class="form-control" id="groupSearchInput" placeholder="Search groups by name, owner, or ID...">
                                     </div>
                                 </div>
                                 <div class="col-lg-2 col-md-4">
@@ -1324,7 +1267,7 @@
                                         <input type="text"
                                                class="form-control"
                                                id="publicWorkspaceSearchInput"
-                                               placeholder="Search workspaces by name or description..." />
+                                               placeholder="Search workspaces by name, description, owner, or ID..." />
                                     </div>
                                 </div>
                                 <div class="col-lg-2 col-md-4">
@@ -1362,51 +1305,51 @@
                                         </button>
                                     </div>
                                 </div>
-                                <div class="col-md-12">
-                                    <div class="text-muted small mt-2">
-                                        <span id="publicWorkspaceCount">Loading...</span>
-                                    </div>
-                                </div>
                             </div>
 
                             <!-- Public Workspaces Table -->
-                            <div class="table-responsive">
-                                <table class="table table-hover align-middle" id="publicWorkspacesTable">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th style="width: 50px;">
-                                                <input type="checkbox" class="form-check-input" id="selectAllPublicWorkspaces">
-                                            </th>
-                                            <th>Workspace Name</th>
-                                            <th>Owner</th>
-                                            <th>Members</th>
-                                            <th>Status</th>
-                                            <th>Documents</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="publicWorkspacesTableBody">
-                                        <tr>
-                                            <td colspan="7" class="text-center py-4">
-                                                <div class="spinner-border text-primary" role="status">
-                                                    <span class="visually-hidden">Loading...</span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover group-table align-middle" id="publicWorkspacesTable">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 50px;">
+                                                        <input type="checkbox" class="form-check-input" id="selectAllPublicWorkspaces">
+                                                    </th>
+                                                    <th class="sortable" data-sort="name" style="padding-right: 25px;">Workspace Name</th>
+                                                    <th class="sortable" data-sort="owner" style="padding-right: 25px;">Owner</th>
+                                                    <th class="sortable" data-sort="members" style="padding-right: 25px;">Members</th>
+                                                    <th class="sortable" data-sort="status" style="padding-right: 25px;">Status</th>
+                                                    <th class="sortable" data-sort="documents" style="padding-right: 25px;">Documents</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="publicWorkspacesTableBody">
+                                                <tr>
+                                                    <td colspan="7" class="text-center py-4">
+                                                        <div class="spinner-border text-primary" role="status">
+                                                            <span class="visually-hidden">Loading...</span>
+                                                        </div>
+                                                        <div class="mt-2">Loading public workspaces...</div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
 
-                            <!-- Pagination -->
-                            <div class="d-flex justify-content-between align-items-center mt-3">
-                                <div class="text-muted small" id="publicWorkspacesPaginationInfo">
-                                    <!-- Pagination info will be populated by JavaScript -->
+                                    <!-- Pagination -->
+                                    <div class="d-flex justify-content-between align-items-center mt-3">
+                                        <div class="text-muted small" id="publicWorkspacesPaginationInfo">
+                                            <!-- Pagination info will be populated by JavaScript -->
+                                        </div>
+                                        <nav aria-label="Public workspaces pagination">
+                                            <ul class="pagination mb-0" id="publicWorkspacesPagination">
+                                                <!-- Pagination controls will be populated by JavaScript -->
+                                            </ul>
+                                        </nav>
+                                    </div>
                                 </div>
-                                <nav aria-label="Public workspaces pagination">
-                                    <ul class="pagination mb-0" id="publicWorkspacesPagination">
-                                        <!-- Pagination controls will be populated by JavaScript -->
-                                    </ul>
-                                </nav>
                             </div>
 
                             <!-- No Results Message -->
@@ -1470,39 +1413,6 @@
                                     <button type="button" class="btn btn-outline-primary" id="refreshActivityLogsBtn">
                                         <i class="bi bi-arrow-clockwise"></i>Reload
                                     </button>
-                                </div>
-                            </div>
-
-                            <div class="activity-log-auto-refresh-toolbar d-flex flex-column flex-xl-row justify-content-between align-items-xl-center gap-3 mb-3" aria-label="Activity log auto-refresh controls">
-                                <div>
-                                    <div class="form-check form-switch mb-1">
-                                        <input class="form-check-input" type="checkbox" role="switch" id="activityLogsAutoRefreshToggle" aria-describedby="activityLogsAutoRefreshStatus" />
-                                        <label class="form-check-label fw-semibold" for="activityLogsAutoRefreshToggle">
-                                            Auto-refresh
-                                        </label>
-                                    </div>
-                                    <div class="small text-muted" id="activityLogsAutoRefreshStatus" aria-live="polite">
-                                        Auto-refresh off
-                                    </div>
-                                </div>
-                                <div class="d-flex flex-column flex-lg-row align-items-lg-center gap-3">
-                                    <div class="activity-log-refresh-presets" role="group" aria-label="Activity log auto-refresh interval presets">
-                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="1">1s</button>
-                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="10">10s</button>
-                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="30">30s</button>
-                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="60">60s</button>
-                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-activity-logs-refresh-preset="300">5m</button>
-                                    </div>
-                                    <div class="activity-log-refresh-interval-controls">
-                                        <div class="activity-log-refresh-slider-wrap">
-                                            <input type="range" class="form-range activity-log-refresh-slider" id="activityLogsAutoRefreshIntervalRange" min="1" max="300" step="1" value="30" aria-label="Auto-refresh interval in seconds" />
-                                            <output class="small fw-semibold text-nowrap" id="activityLogsAutoRefreshIntervalValue" for="activityLogsAutoRefreshIntervalRange">30 sec</output>
-                                        </div>
-                                        <div class="input-group input-group-sm">
-                                            <input type="number" class="form-control" id="activityLogsAutoRefreshIntervalInput" min="1" max="300" step="1" value="30" aria-label="Auto-refresh interval seconds" />
-                                            <span class="input-group-text">sec</span>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                             
@@ -3232,7 +3142,7 @@
 <script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
 <script>
 // Pass user role information to JavaScript
-window.hasControlCenterAdmin = {{ 'true' if has_control_center_admin else 'false' }};
+window.hasControlCenterAdmin = JSON.parse('{{ has_control_center_admin|tojson }}');
 </script>
 <script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/control-center.js') }}"></script>

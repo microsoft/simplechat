@@ -65,15 +65,18 @@
     width: 100%;
   }
 
+  #safetyLogsTable th:last-child,
+  #safetyLogsTable td:last-child {
+    width: 6rem;
+  }
+
   #safetyLogsTable td {
     vertical-align: middle;
   }
 
   .table-message-cell {
-    max-width: 280px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .table-details-cell {
@@ -82,6 +85,89 @@
   }
 
   .table-loading-row td {
+    color: var(--bs-secondary-color);
+    padding: 2rem 1rem;
+    text-align: center;
+  }
+
+  .review-data-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .review-toolbar,
+  .review-table-shell {
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  .review-table-shell {
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .review-table-shell .table {
+    margin-bottom: 0;
+  }
+
+  .review-view-toggle .btn {
+    align-items: center;
+    display: inline-flex;
+    gap: 0.35rem;
+  }
+
+  .review-badge-list {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .review-card {
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    height: 100%;
+    padding: 1rem;
+  }
+
+  .review-card-header,
+  .review-card-footer {
+    align-items: flex-start;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: space-between;
+  }
+
+  .review-card-title {
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    display: -webkit-box;
+    font-weight: 600;
+    line-height: 1.35;
+    margin-bottom: 0;
+    overflow: hidden;
+  }
+
+  .review-card-meta {
+    color: var(--bs-secondary-color);
+    font-size: 0.85rem;
+  }
+
+  .review-card-footer {
+    margin-top: auto;
+  }
+
+  .review-empty-state {
+    border: 1px dashed var(--bs-border-color);
+    border-radius: 8px;
     color: var(--bs-secondary-color);
     padding: 2rem 1rem;
     text-align: center;
@@ -206,51 +292,65 @@
     </div>
 
     <div class="tab-pane fade" id="safety-data-pane" role="tabpanel" aria-labelledby="safety-data-tab">
-      <div class="surface-card">
-        <div class="row g-3 align-items-end mb-3">
-          <div class="col-md-3">
-            <label for="filterStatus" class="form-label mb-1">Status</label>
-            <select id="filterStatus" class="form-select form-select-sm">
-              <option value="">(All)</option>
-              <option value="New">New</option>
-              <option value="In-Review">In-Review</option>
-              <option value="Resolved">Resolved</option>
-              <option value="Dismissed">Dismissed</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label for="filterAction" class="form-label mb-1">Action</label>
-            <select id="filterAction" class="form-select form-select-sm">
-              <option value="">(All)</option>
-              <option value="None">None</option>
-              <option value="WarnUser">Warn user</option>
-              <option value="SuspendUser">Suspend user</option>
-              <option value="Escalate">Escalate</option>
-              <option value="BlockUser">Block user</option>
-            </select>
-          </div>
-          <div class="col-md-6 text-md-end">
-            <button id="applyFiltersBtn" class="btn btn-primary btn-sm">Apply Filters</button>
-            <button id="clearFiltersBtn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+      <div class="review-data-layout">
+        <div class="review-toolbar">
+          <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+              <label for="filterStatus" class="form-label mb-1">Status</label>
+              <select id="filterStatus" class="form-select form-select-sm">
+                <option value="">(All)</option>
+                <option value="New">New</option>
+                <option value="In-Review">In-Review</option>
+                <option value="Resolved">Resolved</option>
+                <option value="Dismissed">Dismissed</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label for="filterAction" class="form-label mb-1">Action</label>
+              <select id="filterAction" class="form-select form-select-sm">
+                <option value="">(All)</option>
+                <option value="None">None</option>
+                <option value="WarnUser">Warn user</option>
+                <option value="SuspendUser">Suspend user</option>
+                <option value="Escalate">Escalate</option>
+                <option value="BlockUser">Block user</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-end gap-2">
+                <div class="btn-group btn-group-sm review-view-toggle" role="group" aria-label="Safety violations view mode">
+                  <input type="radio" class="btn-check" name="safety-view-mode" id="safety-view-list" autocomplete="off" checked />
+                  <label class="btn btn-outline-secondary" for="safety-view-list" title="List view" aria-label="List view">
+                    <i class="bi bi-list-ul"></i>List
+                  </label>
+                  <input type="radio" class="btn-check" name="safety-view-mode" id="safety-view-cards" autocomplete="off" />
+                  <label class="btn btn-outline-secondary" for="safety-view-cards" title="Card view" aria-label="Card view">
+                    <i class="bi bi-grid-3x3-gap"></i>Cards
+                  </label>
+                </div>
+                <div>
+                  <button id="applyFiltersBtn" class="btn btn-primary btn-sm">Apply Filters</button>
+                  <button id="clearFiltersBtn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="table-responsive">
+        <div id="safety-list-view" class="review-table-shell">
           <table class="table table-striped align-middle" id="safetyLogsTable">
             <thead>
               <tr>
-                <th>User</th>
                 <th>Message</th>
                 <th>Triggered Categories</th>
                 <th>Status</th>
                 <th>Action</th>
-                <th>Notes</th>
-                <th class="table-details-cell">Edit</th>
+                <th class="table-details-cell">View</th>
               </tr>
             </thead>
             <tbody>
               <tr class="table-loading-row">
-                <td colspan="7">
+                <td colspan="5">
                   <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
                   Loading logs...
                 </td>
@@ -258,6 +358,8 @@
             </tbody>
           </table>
         </div>
+
+        <div id="safety-card-view" class="row g-3 d-none" aria-live="polite"></div>
 
         <div class="d-flex align-items-center gap-3 mt-3">
           <div>
@@ -281,7 +383,7 @@
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="editModalLabel">Edit Violation</h5>
+        <h5 class="modal-title" id="editModalLabel">View Violation</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
@@ -295,7 +397,7 @@
         </div>
         <div class="mb-3">
           <label class="form-label fw-bold">Triggered Categories:</label>
-          <p id="editCategories" class="form-control-plaintext" style="white-space: pre-wrap;"></p>
+          <div id="editCategories" class="form-control-plaintext review-badge-list"></div>
         </div>
         <div class="mb-3">
           <label class="form-label fw-bold">Status:</label>
@@ -337,8 +439,8 @@
       </div>
       <div class="modal-footer">
         <div id="safetyEditStatus" class="small text-danger me-auto"></div>
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" id="saveChangesBtn" class="btn btn-primary">Save Changes</button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" id="saveChangesBtn" class="btn btn-primary">Save Review</button>
       </div>
     </div>
   </div>

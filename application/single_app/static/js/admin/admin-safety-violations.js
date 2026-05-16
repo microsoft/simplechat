@@ -4,10 +4,13 @@
     const state = {
         currentPage: 1,
         pageSize: 10,
+        viewMode: 'list',
         items: [],
         userCache: {},
         activeItem: null,
     };
+
+    const SAFETY_VIEW_STORAGE_KEY = 'simplechat.admin.safetyViolations.viewMode';
 
     const SAFETY_REMEDIATION_ACTIONS = new Set(['WarnUser', 'SuspendUser', 'BlockUser']);
     const ACTION_LABELS = {
@@ -77,11 +80,32 @@
         const row = document.createElement('tr');
         row.className = 'table-loading-row';
         const cell = document.createElement('td');
-        cell.colSpan = 7;
+        cell.colSpan = 5;
         cell.className = isError ? 'text-danger text-center p-4' : 'table-loading-row';
         cell.textContent = message;
         row.appendChild(cell);
         tbody.appendChild(row);
+    }
+
+    function renderCardMessage(message, isError) {
+        const cardView = document.getElementById('safety-card-view');
+        if (!cardView) {
+            return;
+        }
+
+        clearElement(cardView);
+        const column = document.createElement('div');
+        column.className = 'col-12';
+        const messageElement = document.createElement('div');
+        messageElement.className = isError ? 'review-empty-state text-danger' : 'review-empty-state';
+        messageElement.textContent = message;
+        column.appendChild(messageElement);
+        cardView.appendChild(column);
+    }
+
+    function renderSafetyMessage(message, isError) {
+        renderTableMessage(message, isError);
+        renderCardMessage(message, isError);
     }
 
     async function fetchJson(url, options) {
@@ -150,13 +174,204 @@
         return email ? `${displayName} (${email})` : displayName;
     }
 
-    function formatCategories(logItem) {
+    function formatDateTime(value) {
+        if (!value) {
+            return 'N/A';
+        }
+
+        const parsedDate = new Date(value);
+        if (Number.isNaN(parsedDate.getTime())) {
+            return String(value);
+        }
+
+        return parsedDate.toLocaleString();
+    }
+
+    function normalizeSeverity(severity) {
+        const parsedSeverity = Number(severity);
+        return Number.isFinite(parsedSeverity) ? parsedSeverity : null;
+    }
+
+    function getTriggeredCategoryEntries(logItem) {
         const categories = Array.isArray(logItem.triggered_categories) ? logItem.triggered_categories : [];
-        return categories.map(function (entry) {
-            const categoryName = entry.category || '';
-            const severity = entry.severity;
-            return severity == null ? categoryName : `${categoryName}(s=${severity})`;
+        return categories.reduce(function (entries, entry) {
+            const categoryName = String(entry.category || '').trim();
+            const severity = normalizeSeverity(entry.severity);
+            if (categoryName && severity >= 1 && severity <= 4) {
+                entries.push({ category: categoryName, severity });
+            }
+            return entries;
+        }, []);
+    }
+
+    function formatCategories(logItem) {
+        return getTriggeredCategoryEntries(logItem).map(function (entry) {
+            return `${entry.category}(s=${entry.severity})`;
         }).join(', ');
+    }
+
+    function createIcon(iconClass) {
+        const icon = document.createElement('i');
+        icon.className = iconClass;
+        icon.setAttribute('aria-hidden', 'true');
+        return icon;
+    }
+
+    function createBadge(label, variant, title) {
+        const badge = document.createElement('span');
+        badge.className = `badge rounded-pill text-bg-${variant || 'secondary'}`;
+        badge.textContent = label == null || label === '' ? '-' : String(label);
+        if (title) {
+            badge.title = title;
+        }
+        return badge;
+    }
+
+    function getCategoryVariant(severity) {
+        if (severity >= 4) {
+            return 'danger';
+        }
+        if (severity === 3) {
+            return 'warning';
+        }
+        if (severity === 2) {
+            return 'info';
+        }
+        return 'secondary';
+    }
+
+    function appendCategoryBadges(container, logItem, emptyText) {
+        if (!container) {
+            return;
+        }
+
+        clearElement(container);
+        const entries = getTriggeredCategoryEntries(logItem);
+        if (!entries.length) {
+            const emptyElement = document.createElement('span');
+            emptyElement.className = 'text-muted small';
+            emptyElement.textContent = emptyText || '-';
+            container.appendChild(emptyElement);
+            return;
+        }
+
+        entries.forEach(function (entry) {
+            container.appendChild(createBadge(entry.category, getCategoryVariant(entry.severity), `Severity ${entry.severity}`));
+        });
+    }
+
+    function createCategoryCell(logItem) {
+        const cell = document.createElement('td');
+        const wrapper = document.createElement('div');
+        wrapper.className = 'review-badge-list';
+        appendCategoryBadges(wrapper, logItem, '-');
+        cell.appendChild(wrapper);
+        return cell;
+    }
+
+    function getStatusVariant(status) {
+        if (status === 'Resolved') {
+            return 'success';
+        }
+        if (status === 'Dismissed') {
+            return 'secondary';
+        }
+        if (status === 'In-Review') {
+            return 'info';
+        }
+        return 'warning';
+    }
+
+    function getActionVariant(action) {
+        if (action === 'BlockUser') {
+            return 'dark';
+        }
+        if (action === 'SuspendUser') {
+            return 'danger';
+        }
+        if (action === 'WarnUser') {
+            return 'warning';
+        }
+        if (action === 'Escalate') {
+            return 'info';
+        }
+        return 'secondary';
+    }
+
+    function createStatusBadge(status) {
+        const normalizedStatus = status || 'New';
+        return createBadge(normalizedStatus, getStatusVariant(normalizedStatus));
+    }
+
+    function createActionBadge(logItem) {
+        const action = logItem.action || 'None';
+        return createBadge(formatActionDisplay(logItem), getActionVariant(action));
+    }
+
+    function createBadgeCell(badge) {
+        const cell = document.createElement('td');
+        const wrapper = document.createElement('div');
+        wrapper.className = 'review-badge-list';
+        wrapper.appendChild(badge);
+        cell.appendChild(wrapper);
+        return cell;
+    }
+
+    function createViewButton(logId) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-primary';
+        button.dataset.logId = logId || '';
+        button.appendChild(createIcon('bi bi-eye me-1'));
+        button.appendChild(document.createTextNode('View'));
+        return button;
+    }
+
+    function getInitialViewMode() {
+        try {
+            const savedViewMode = window.localStorage.getItem(SAFETY_VIEW_STORAGE_KEY);
+            if (savedViewMode === 'cards' || savedViewMode === 'list') {
+                return savedViewMode;
+            }
+        } catch (error) {
+            // Ignore storage access errors and fall back to viewport defaults.
+        }
+
+        if (window.matchMedia && window.matchMedia('(max-width: 991.98px)').matches) {
+            return 'cards';
+        }
+        return 'list';
+    }
+
+    function setSafetyViewMode(viewMode, persist) {
+        const normalizedViewMode = viewMode === 'cards' ? 'cards' : 'list';
+        state.viewMode = normalizedViewMode;
+
+        const listView = document.getElementById('safety-list-view');
+        const cardView = document.getElementById('safety-card-view');
+        const listRadio = document.getElementById('safety-view-list');
+        const cardsRadio = document.getElementById('safety-view-cards');
+
+        if (listView) {
+            listView.classList.toggle('d-none', normalizedViewMode !== 'list');
+        }
+        if (cardView) {
+            cardView.classList.toggle('d-none', normalizedViewMode !== 'cards');
+        }
+        if (listRadio) {
+            listRadio.checked = normalizedViewMode === 'list';
+        }
+        if (cardsRadio) {
+            cardsRadio.checked = normalizedViewMode === 'cards';
+        }
+
+        if (persist) {
+            try {
+                window.localStorage.setItem(SAFETY_VIEW_STORAGE_KEY, normalizedViewMode);
+            } catch (error) {
+                // Ignore storage access errors; the current view has already been applied.
+            }
+        }
     }
 
     function formatActionLabel(action) {
@@ -373,43 +588,93 @@
 
         for (const item of items) {
             const row = document.createElement('tr');
-            const userInfo = await lookupUserInfo(item.user_id);
-            const userDisplay = formatUserDisplay(userInfo, item.user_id);
-            const categories = formatCategories(item);
-            const actionDisplay = formatActionDisplay(item);
 
-            row.appendChild(createTextCell(userDisplay, 'table-message-cell', userDisplay));
             row.appendChild(createTextCell(item.message || '', 'table-message-cell', item.message || ''));
-            row.appendChild(createTextCell(categories || '', 'table-message-cell', categories || ''));
-            row.appendChild(createTextCell(item.status || 'New'));
-            row.appendChild(createTextCell(actionDisplay, 'table-message-cell', actionDisplay));
-            row.appendChild(createTextCell(item.notes || '', 'table-message-cell', item.notes || ''));
+            row.appendChild(createCategoryCell(item));
+            row.appendChild(createBadgeCell(createStatusBadge(item.status || 'New')));
+            row.appendChild(createBadgeCell(createActionBadge(item)));
 
-            const editCell = document.createElement('td');
-            editCell.className = 'table-details-cell';
-            const editButton = document.createElement('button');
-            editButton.type = 'button';
-            editButton.className = 'btn btn-sm btn-primary';
-            editButton.dataset.logId = item.id || '';
-            editButton.textContent = 'Edit';
-            editCell.appendChild(editButton);
-            row.appendChild(editCell);
+            const viewCell = document.createElement('td');
+            viewCell.className = 'table-details-cell';
+            viewCell.appendChild(createViewButton(item.id));
+            row.appendChild(viewCell);
 
             tbody.appendChild(row);
         }
     }
 
+    function renderSafetyCards(items) {
+        const cardView = document.getElementById('safety-card-view');
+        if (!cardView) {
+            return;
+        }
+
+        clearElement(cardView);
+        if (!items.length) {
+            renderCardMessage('No safety violations found for the current filters.', false);
+            return;
+        }
+
+        items.forEach(function (item) {
+            const column = document.createElement('div');
+            column.className = 'col-12 col-xl-6 col-xxl-4';
+
+            const card = document.createElement('article');
+            card.className = 'review-card';
+
+            const header = document.createElement('div');
+            header.className = 'review-card-header';
+            const timestamp = document.createElement('div');
+            timestamp.className = 'review-card-meta';
+            timestamp.textContent = formatDateTime(item.last_updated || item.created_at);
+            const statusBadges = document.createElement('div');
+            statusBadges.className = 'review-badge-list';
+            statusBadges.appendChild(createStatusBadge(item.status || 'New'));
+            statusBadges.appendChild(createActionBadge(item));
+            header.appendChild(timestamp);
+            header.appendChild(statusBadges);
+
+            const message = document.createElement('p');
+            message.className = 'review-card-title';
+            message.textContent = item.message || 'No message captured.';
+
+            const categoryBadges = document.createElement('div');
+            categoryBadges.className = 'review-badge-list';
+            appendCategoryBadges(categoryBadges, item, 'No triggered categories');
+
+            const footer = document.createElement('div');
+            footer.className = 'review-card-footer';
+            const footerMeta = document.createElement('div');
+            footerMeta.className = 'review-card-meta';
+            footerMeta.textContent = item.notes ? 'Notes added' : 'No notes yet';
+            footer.appendChild(footerMeta);
+            footer.appendChild(createViewButton(item.id));
+
+            card.appendChild(header);
+            card.appendChild(message);
+            card.appendChild(categoryBadges);
+            card.appendChild(footer);
+            column.appendChild(card);
+            cardView.appendChild(column);
+        });
+    }
+
+    async function renderSafetyItems(items) {
+        await renderSafetyRows(items);
+        renderSafetyCards(items);
+    }
+
     async function loadSafetyLogs() {
-        renderTableMessage('Loading logs...', false);
+        renderSafetyMessage('Loading logs...', false);
 
         try {
             const params = getQueryParams(true);
             const data = await fetchJson(`/api/safety/logs?${params.toString()}`);
             state.items = Array.isArray(data.logs) ? data.logs : [];
-            await renderSafetyRows(state.items);
+            await renderSafetyItems(state.items);
             buildPagination(data.page || state.currentPage, data.page_size || state.pageSize, data.total_count || 0);
         } catch (error) {
-            renderTableMessage(`Error loading logs: ${error.message}`, true);
+            renderSafetyMessage(`Error loading logs: ${error.message}`, true);
         }
     }
 
@@ -442,7 +707,7 @@
         const userInfo = await lookupUserInfo(item.user_id);
         setTextContent('editUserId', formatUserDisplay(userInfo, item.user_id));
         setTextContent('editMessage', item.message || '');
-        setTextContent('editCategories', formatCategories(item) || '');
+        appendCategoryBadges(document.getElementById('editCategories'), item, 'No triggered categories');
         document.getElementById('editStatus').value = item.status || 'New';
         document.getElementById('editAction').value = item.action || 'None';
         document.getElementById('editNotes').value = item.notes || '';
@@ -483,7 +748,7 @@
         }
 
         if (statusElement) {
-            statusElement.textContent = 'Saving changes...';
+            statusElement.textContent = 'Saving review...';
             statusElement.className = 'small text-info me-auto';
         }
 
@@ -509,24 +774,33 @@
         await refreshSafetyView();
     }
 
+    function handleSafetyActionClick(event) {
+        const actionButton = event.target.closest('button[data-log-id]');
+        if (!actionButton) {
+            return;
+        }
+
+        openEditModal(actionButton.dataset.logId || '');
+    }
+
     function attachEventListeners() {
         const tableBody = document.querySelector('#safetyLogsTable tbody');
+        const cardView = document.getElementById('safety-card-view');
         const pageSizeSelect = document.getElementById('page-size-select');
         const applyFiltersButton = document.getElementById('applyFiltersBtn');
         const clearFiltersButton = document.getElementById('clearFiltersBtn');
         const exportButton = document.getElementById('safetyExportBtn');
         const saveButton = document.getElementById('saveChangesBtn');
         const actionSelect = document.getElementById('editAction');
+        const listViewRadio = document.getElementById('safety-view-list');
+        const cardsViewRadio = document.getElementById('safety-view-cards');
 
         if (tableBody) {
-            tableBody.addEventListener('click', function (event) {
-                const actionButton = event.target.closest('button[data-log-id]');
-                if (!actionButton) {
-                    return;
-                }
+            tableBody.addEventListener('click', handleSafetyActionClick);
+        }
 
-                openEditModal(actionButton.dataset.logId || '');
-            });
+        if (cardView) {
+            cardView.addEventListener('click', handleSafetyActionClick);
         }
 
         if (pageSizeSelect) {
@@ -589,13 +863,30 @@
                 updateRemediationFields(state.activeItem, false);
             });
         }
+
+        if (listViewRadio) {
+            listViewRadio.addEventListener('change', function () {
+                if (listViewRadio.checked) {
+                    setSafetyViewMode('list', true);
+                }
+            });
+        }
+
+        if (cardsViewRadio) {
+            cardsViewRadio.addEventListener('change', function () {
+                if (cardsViewRadio.checked) {
+                    setSafetyViewMode('cards', true);
+                }
+            });
+        }
     }
 
     document.addEventListener('DOMContentLoaded', function () {
+        setSafetyViewMode(getInitialViewMode(), false);
         attachEventListeners();
         clearPageStatus();
         refreshSafetyView().catch(function (error) {
-            renderTableMessage(`Error loading logs: ${error.message}`, true);
+            renderSafetyMessage(`Error loading logs: ${error.message}`, true);
         });
     });
 })();

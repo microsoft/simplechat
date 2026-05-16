@@ -1,7 +1,7 @@
 # test_chat_prompt_desktop_toolbar_position.py
 """
 UI test for desktop chat prompt selector placement.
-Version: 0.241.025
+Version: 0.241.030
 Implemented in: 0.241.025
 
 This test ensures the prompt selector appears in the larger desktop toolbar
@@ -13,7 +13,9 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
+
+playwright_sync_api = pytest.importorskip("playwright.sync_api")
+expect = playwright_sync_api.expect
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")

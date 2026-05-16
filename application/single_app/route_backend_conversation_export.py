@@ -37,6 +37,7 @@ from functions_message_artifacts import (
     is_assistant_artifact_role,
 )
 from functions_settings import *
+from functions_simplechat_operations import download_blob_content
 from functions_thoughts import get_thoughts_for_conversation
 from PIL import Image
 from pptx import Presentation
@@ -56,8 +57,13 @@ EMAIL_SUBJECT_CHAR_LIMIT = 120
 EMAIL_SUBJECT_SOURCE_CHAR_LIMIT = 12000
 EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX = 'message_chart'
 POWERPOINT_PLAN_SOURCE_CHAR_LIMIT = 24000
-POWERPOINT_MAX_SLIDES = 7
+POWERPOINT_DEFAULT_SLIDES = 7
+POWERPOINT_MAX_SLIDES = 30
+POWERPOINT_MAX_STRUCTURED_SLIDES = 60
 POWERPOINT_MAX_BULLETS_PER_SLIDE = 5
+POWERPOINT_MAX_STRUCTURED_BULLETS_PER_SLIDE = 12
+POWERPOINT_BULLET_CHAR_LIMIT = 120
+POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT = 180
 POWERPOINT_MAX_APPENDIX_IMAGES = 4
 POWERPOINT_MAX_APPENDIX_TABLES = 3
 POWERPOINT_MAX_APPENDIX_CODE_BLOCKS = 2
@@ -264,19 +270,33 @@ def register_route_backend_conversation_export(app):
 
         message_id = str(data.get('message_id', '') or '').strip()
         conversation_id = str(data.get('conversation_id', '') or '').strip()
+        artifact_message_id = str(data.get('artifact_message_id', '') or '').strip()
+        slide_count_value = data.get('slide_count')
+        if slide_count_value in (None, ''):
+            slide_count_value = data.get('target_slide_count')
 
         if not message_id or not conversation_id:
             return jsonify({'error': 'message_id and conversation_id are required'}), 400
 
         try:
+            requested_slide_count = _parse_powerpoint_requested_slide_count(slide_count_value)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+
+        try:
             settings = get_settings()
-            message = _load_export_message_for_user(
+            message = _load_powerpoint_export_message_for_user(
                 user_id=user_id,
                 conversation_id=conversation_id,
-                message_id=message_id
+                message_id=message_id,
+                artifact_message_id=artifact_message_id,
             )
 
-            presentation_bytes = _message_to_pptx_bytes(message, settings)
+            presentation_bytes = _message_to_pptx_bytes(
+                message,
+                settings,
+                requested_slide_count=requested_slide_count,
+            )
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
             filename = f"message_export_{timestamp_str}.pptx"
 
@@ -1466,6 +1486,81 @@ def _load_export_message_for_user(user_id: str, conversation_id: str, message_id
     return message
 
 
+def _load_powerpoint_export_message_for_user(
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    artifact_message_id: str = '',
+) -> Dict[str, Any]:
+    message = _load_export_message_for_user(user_id, conversation_id, message_id)
+    normalized_artifact_message_id = str(artifact_message_id or '').strip()
+    if not normalized_artifact_message_id:
+        return message
+
+    artifact_message = _load_generated_markdown_artifact_for_user(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        artifact_message_id=normalized_artifact_message_id,
+    )
+    artifact_bytes = download_blob_content(
+        artifact_message.get('blob_container'),
+        artifact_message.get('blob_path'),
+    )
+    try:
+        artifact_content = artifact_bytes.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        artifact_content = artifact_bytes.decode('utf-8', errors='replace')
+
+    artifact_filename = str(artifact_message.get('filename') or 'generated-artifact.md').strip()
+    metadata = dict(message.get('metadata') or {})
+    metadata.update({
+        'powerpoint_export_source': 'generated_markdown_artifact',
+        'powerpoint_export_artifact_message_id': normalized_artifact_message_id,
+        'powerpoint_export_artifact_filename': artifact_filename,
+    })
+
+    artifact_backed_message = dict(message)
+    artifact_backed_message.update({
+        'role': 'assistant',
+        'content': artifact_content,
+        'timestamp': artifact_message.get('timestamp') or message.get('timestamp'),
+        'metadata': metadata,
+    })
+    return artifact_backed_message
+
+
+def _load_generated_markdown_artifact_for_user(
+    user_id: str,
+    conversation_id: str,
+    artifact_message_id: str,
+) -> Dict[str, Any]:
+    artifact_message = _load_export_message_for_user(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        message_id=artifact_message_id,
+    )
+    artifact_metadata = artifact_message.get('metadata') if isinstance(artifact_message.get('metadata'), dict) else {}
+    artifact_filename = str(artifact_message.get('filename') or '').strip().lower()
+    artifact_format = str(artifact_metadata.get('generated_artifact_output_format') or '').strip().lower()
+
+    if artifact_message.get('role') != 'file' or not artifact_metadata.get('is_generated_chat_artifact'):
+        raise LookupError('Generated Markdown artifact not found')
+
+    if artifact_format not in {'md', 'markdown'} and not artifact_filename.endswith(('.md', '.markdown')):
+        raise ValueError('Only generated Markdown artifacts can be exported as PowerPoint')
+
+    if str(artifact_message.get('file_content_source') or '').strip().lower() != 'blob':
+        raise LookupError('Generated Markdown artifact content is unavailable')
+
+    if (
+        not str(artifact_message.get('blob_container') or '').strip()
+        or not str(artifact_message.get('blob_path') or '').strip()
+    ):
+        raise LookupError('Generated Markdown artifact content is unavailable')
+
+    return artifact_message
+
+
 def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
     doc = DocxDocument()
     doc.add_heading('Message Export', level=1)
@@ -1501,7 +1596,11 @@ def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
     return buffer.read()
 
 
-def _message_to_pptx_bytes(message: Dict[str, Any], settings: Dict[str, Any]) -> bytes:
+def _message_to_pptx_bytes(
+    message: Dict[str, Any],
+    settings: Dict[str, Any],
+    requested_slide_count: Optional[int] = None,
+) -> bytes:
     role_label = _role_to_label(message.get('role', 'unknown'))
     timestamp = str(message.get('timestamp', '') or '')
 
@@ -1514,9 +1613,14 @@ def _message_to_pptx_bytes(message: Dict[str, Any], settings: Dict[str, Any]) ->
         message=message,
         settings=settings,
         requested_model=_extract_message_powerpoint_model(message),
+        requested_slide_count=requested_slide_count,
     )
-    appendix_assets = _extract_powerpoint_appendix_assets(render_content)
-    citation_labels = _build_message_citation_labels(message)
+    if slide_plan.get('include_appendix_slides', True):
+        appendix_assets = _extract_powerpoint_appendix_assets(render_content)
+        citation_labels = _build_message_citation_labels(message)
+    else:
+        appendix_assets = {'images': [], 'tables': [], 'code_blocks': []}
+        citation_labels = []
 
     presentation = Presentation()
     presentation.slide_width = PptxInches(13.333)
@@ -1528,13 +1632,14 @@ def _message_to_pptx_bytes(message: Dict[str, Any], settings: Dict[str, Any]) ->
         timestamp,
     )
 
-    _add_powerpoint_title_slide(
-        presentation,
-        title=presentation_title,
-        subtitle=presentation_subtitle,
-        role_label=role_label,
-        timestamp=timestamp,
-    )
+    if slide_plan.get('include_title_slide', True):
+        _add_powerpoint_title_slide(
+            presentation,
+            title=presentation_title,
+            subtitle=presentation_subtitle,
+            role_label=role_label,
+            timestamp=timestamp,
+        )
 
     rendered_slide = False
     for slide_spec in slide_plan.get('slides', []):
@@ -1577,13 +1682,564 @@ def _sanitize_powerpoint_source_content(content: str) -> str:
     return sanitized.strip()
 
 
+def _parse_powerpoint_requested_slide_count(raw_slide_count: Any) -> Optional[int]:
+    if raw_slide_count is None:
+        return None
+
+    if isinstance(raw_slide_count, str):
+        stripped_slide_count = raw_slide_count.strip()
+        if not stripped_slide_count:
+            return None
+        if not re.fullmatch(r'\d+', stripped_slide_count):
+            raise ValueError(
+                f'slide_count must be a whole number between 1 and {POWERPOINT_MAX_SLIDES}.'
+            )
+        slide_count = int(stripped_slide_count)
+    elif isinstance(raw_slide_count, bool):
+        raise ValueError(
+            f'slide_count must be a whole number between 1 and {POWERPOINT_MAX_SLIDES}.'
+        )
+    elif isinstance(raw_slide_count, float):
+        if not raw_slide_count.is_integer():
+            raise ValueError(
+                f'slide_count must be a whole number between 1 and {POWERPOINT_MAX_SLIDES}.'
+            )
+        slide_count = int(raw_slide_count)
+    elif isinstance(raw_slide_count, int):
+        slide_count = raw_slide_count
+    else:
+        raise ValueError(
+            f'slide_count must be a whole number between 1 and {POWERPOINT_MAX_SLIDES}.'
+        )
+
+    if slide_count < 1 or slide_count > POWERPOINT_MAX_SLIDES:
+        raise ValueError(
+            f'slide_count must be between 1 and {POWERPOINT_MAX_SLIDES}.'
+        )
+
+    return slide_count
+
+
+def _resolve_powerpoint_slide_count(requested_slide_count: Optional[int] = None) -> int:
+    if requested_slide_count is None:
+        return POWERPOINT_DEFAULT_SLIDES
+
+    return max(1, min(int(requested_slide_count), POWERPOINT_MAX_SLIDES))
+
+
+def _build_structured_markdown_powerpoint_plan(
+    content: str,
+    message: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    slide_sections, preamble_title = _extract_powerpoint_structured_slide_sections(content)
+    if len(slide_sections) < 2:
+        return None
+
+    role_label = _role_to_label(message.get('role', 'unknown'))
+    timestamp = str(message.get('timestamp', '') or '')
+    slides: List[Dict[str, Any]] = []
+    title_section = slide_sections[0] if _is_powerpoint_title_section(slide_sections[0]) else None
+    content_sections = slide_sections[1:] if title_section else slide_sections
+    title_metadata = _build_powerpoint_title_metadata_from_section(
+        title_section,
+        preamble_title,
+        role_label,
+        timestamp,
+    )
+
+    for index, section in enumerate(content_sections[:POWERPOINT_MAX_STRUCTURED_SLIDES], start=1):
+        section_content = _trim_powerpoint_structured_section_content(section.get('content', ''))
+        title = _clean_slide_text(section.get('title') or f'Slide {index}', 100)
+        bullets = _extract_structured_powerpoint_bullets(
+            section_content,
+            max_bullets=POWERPOINT_MAX_STRUCTURED_BULLETS_PER_SLIDE,
+        )
+        tables = _extract_structured_powerpoint_tables(section_content)
+        slides.append({
+            'title': title or f'Slide {index}',
+            'bullets': bullets,
+            'tables': tables,
+            'allow_empty_body': True,
+            'bullet_char_limit': POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT,
+            'footer_label': _build_powerpoint_slide_footer_label(section, index),
+            'source_format': 'structured_markdown',
+        })
+
+    if len(slides) < 1:
+        return None
+
+    return {
+        'presentation_title': title_metadata['title'],
+        'presentation_subtitle': title_metadata['subtitle'],
+        'slides': slides,
+        'include_title_slide': bool(title_section),
+        'include_appendix_slides': False,
+        'source_format': 'structured_markdown',
+    }
+
+
+def _extract_powerpoint_structured_slide_sections(content: str) -> Tuple[List[Dict[str, str]], str]:
+    numbered_sections, numbered_title = _extract_powerpoint_numbered_slide_sections(content)
+    if len(numbered_sections) >= 2:
+        return numbered_sections, numbered_title
+
+    separator_sections, separator_title = _extract_powerpoint_separator_slide_sections(content)
+    if len(separator_sections) >= 2:
+        return separator_sections, separator_title
+
+    return [], ''
+
+
+def _extract_powerpoint_numbered_slide_sections(content: str) -> Tuple[List[Dict[str, str]], str]:
+    sections: List[Dict[str, Any]] = []
+    preamble_lines: List[str] = []
+    current_section: Optional[Dict[str, Any]] = None
+    in_code_block = False
+
+    for line in str(content or '').splitlines():
+        stripped_line = line.strip()
+        if stripped_line.startswith('```'):
+            in_code_block = not in_code_block
+
+        if not in_code_block and _is_powerpoint_slide_separator(line):
+            continue
+
+        slide_marker = None if in_code_block else _match_powerpoint_slide_marker(line)
+        if slide_marker:
+            if current_section:
+                sections.append(current_section)
+
+            current_section = {
+                'slide_number': slide_marker.get('number', ''),
+                'title': slide_marker.get('title', ''),
+                'lines': [],
+            }
+            continue
+
+        if current_section is None:
+            preamble_lines.append(line)
+        else:
+            current_section['lines'].append(line)
+
+    if current_section:
+        sections.append(current_section)
+
+    resolved_sections: List[Dict[str, str]] = []
+    for index, section in enumerate(sections, start=1):
+        title, section_content = _resolve_powerpoint_slide_title_and_content(
+            section.get('title', ''),
+            '\n'.join(section.get('lines', [])).strip(),
+            fallback_title=f'Slide {index}',
+        )
+        resolved_sections.append({
+            'slide_number': str(section.get('slide_number', '') or ''),
+            'title': title,
+            'content': section_content,
+        })
+
+    return resolved_sections, _extract_powerpoint_preamble_title(preamble_lines)
+
+
+def _extract_powerpoint_separator_slide_sections(content: str) -> Tuple[List[Dict[str, str]], str]:
+    blocks: List[List[str]] = []
+    current_block: List[str] = []
+    in_code_block = False
+
+    for line in str(content or '').splitlines():
+        stripped_line = line.strip()
+        if stripped_line.startswith('```'):
+            in_code_block = not in_code_block
+
+        if not in_code_block and _is_powerpoint_slide_separator(line):
+            blocks.append(current_block)
+            current_block = []
+            continue
+
+        current_block.append(line)
+
+    blocks.append(current_block)
+
+    nonempty_blocks = [
+        block for block in blocks
+        if any(line.strip() for line in block)
+    ]
+    if nonempty_blocks and _looks_like_powerpoint_front_matter_block(nonempty_blocks[0]):
+        nonempty_blocks = nonempty_blocks[1:]
+
+    sections: List[Dict[str, str]] = []
+    for index, block in enumerate(nonempty_blocks, start=1):
+        title, section_content = _resolve_powerpoint_slide_title_and_content(
+            '',
+            '\n'.join(block).strip(),
+            fallback_title=f'Slide {index}',
+        )
+        if title == f'Slide {index}':
+            return [], ''
+        sections.append({
+            'slide_number': str(index),
+            'title': title,
+            'content': section_content,
+        })
+
+    return sections, sections[0]['title'] if sections else ''
+
+
+def _match_powerpoint_slide_marker(line: str) -> Optional[Dict[str, str]]:
+    candidate = str(line or '').strip()
+    if not candidate:
+        return None
+
+    heading_match = re.match(r'^#{1,6}\s+(.+?)\s*$', candidate)
+    if heading_match:
+        candidate = heading_match.group(1).strip()
+
+    candidate = candidate.strip('*_` ')
+    marker_match = re.match(
+        r'^(?:slide|page)\s+(\d{1,3})(?:\s*(?:[:.)-]|\u2013|\u2014)\s*(.+?))?$',
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    if not marker_match:
+        return None
+
+    return {
+        'number': marker_match.group(1),
+        'title': _clean_slide_text(marker_match.group(2) or '', 100),
+    }
+
+
+def _resolve_powerpoint_slide_title_and_content(
+    marker_title: str,
+    content: str,
+    fallback_title: str,
+) -> Tuple[str, str]:
+    if marker_title:
+        return _clean_slide_text(marker_title, 100), str(content or '').strip()
+
+    content_lines = str(content or '').splitlines()
+    for index, line in enumerate(content_lines):
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+
+        heading_match = re.match(r'^#{1,6}\s+(.+?)\s*$', stripped_line)
+        if heading_match and not _match_powerpoint_slide_marker(stripped_line):
+            remaining_lines = content_lines[:index] + content_lines[index + 1:]
+            return (
+                _clean_slide_text(heading_match.group(1), 100) or fallback_title,
+                '\n'.join(remaining_lines).strip(),
+            )
+        break
+
+    return fallback_title, str(content or '').strip()
+
+
+def _extract_powerpoint_preamble_title(lines: List[str]) -> str:
+    for line in lines:
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+
+        heading_match = re.match(r'^#{1,6}\s+(.+?)\s*$', stripped_line)
+        if heading_match and not _match_powerpoint_slide_marker(stripped_line):
+            return _clean_slide_text(heading_match.group(1), 100)
+
+        cleaned_line = _clean_slide_text(stripped_line, 100)
+        if cleaned_line:
+            return cleaned_line
+
+    return ''
+
+
+def _is_powerpoint_slide_separator(line: str) -> bool:
+    return bool(re.match(r'^\s*(?:---+|\*\*\*+|___+)\s*$', str(line or '')))
+
+
+def _looks_like_powerpoint_front_matter_block(block: List[str]) -> bool:
+    nonempty_lines = [line.strip() for line in block if line.strip()]
+    if not nonempty_lines or len(nonempty_lines) > 12:
+        return False
+
+    return all(re.match(r'^[A-Za-z0-9_-]+\s*:', line) for line in nonempty_lines)
+
+
+def _is_powerpoint_title_section(section: Dict[str, str]) -> bool:
+    title = _clean_slide_text(section.get('title', ''), 80).lower()
+    slide_number = str(section.get('slide_number', '') or '').strip()
+    return slide_number == '1' and title in {'title', 'title slide', 'intro', 'introduction'}
+
+
+def _build_powerpoint_title_metadata_from_section(
+    title_section: Optional[Dict[str, str]],
+    preamble_title: str,
+    role_label: str,
+    timestamp: str,
+) -> Dict[str, str]:
+    default_subtitle = _build_powerpoint_subtitle(role_label, timestamp)
+    if not title_section:
+        return {
+            'title': _clean_slide_text(preamble_title, 100) or f'{role_label} Message',
+            'subtitle': default_subtitle,
+        }
+
+    title_lines = _extract_powerpoint_title_section_lines(title_section.get('content', ''))
+    title = _clean_slide_text(title_lines[0], 120) if title_lines else ''
+    if not title:
+        title = _clean_slide_text(preamble_title, 120) or f'{role_label} Message'
+
+    subtitle_lines = [
+        _clean_slide_text(line, 120)
+        for line in title_lines[1:4]
+        if _clean_slide_text(line, 120)
+    ]
+    subtitle = ' | '.join(subtitle_lines) if subtitle_lines else default_subtitle
+
+    return {
+        'title': _clean_slide_text(title, 120),
+        'subtitle': _clean_slide_text(subtitle, 180),
+    }
+
+
+def _extract_powerpoint_title_section_lines(content: str) -> List[str]:
+    title_lines: List[str] = []
+    for line in _trim_powerpoint_structured_section_content(content).splitlines():
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+        if _is_powerpoint_slide_separator(stripped_line):
+            continue
+        if _looks_like_markdown_table_row(stripped_line) or _looks_like_markdown_table_divider(stripped_line):
+            continue
+
+        title_lines.append(stripped_line)
+
+    return title_lines
+
+
+def _build_powerpoint_slide_footer_label(section: Dict[str, str], fallback_index: int) -> str:
+    slide_number = str(section.get('slide_number', '') or '').strip()
+    if slide_number:
+        return f'Slide {slide_number}'
+
+    return f'Slide {fallback_index}'
+
+
+def _trim_powerpoint_structured_section_content(content: str) -> str:
+    retained_lines: List[str] = []
+    for line in str(content or '').splitlines():
+        stripped_line = line.strip()
+        if _is_powerpoint_non_slide_tail_marker(stripped_line):
+            break
+        retained_lines.append(line)
+
+    return '\n'.join(retained_lines).strip()
+
+
+def _is_powerpoint_non_slide_tail_marker(line: str) -> bool:
+    if not line:
+        return False
+
+    normalized_line = _clean_slide_text(line, 140).lower()
+    if normalized_line.startswith('if you want') or normalized_line.startswith('would you like'):
+        return True
+
+    heading_match = re.match(r'^#{1,6}\s+(.+?)\s*$', line)
+    if not heading_match:
+        return False
+
+    heading_text = _clean_slide_text(heading_match.group(1), 140).lower()
+    return heading_text.startswith((
+        'optional speaker notes',
+        'speaker notes',
+        'coverage caveat',
+        'coverage notes',
+    ))
+
+
+def _extract_structured_powerpoint_bullets(content: str, max_bullets: int) -> List[str]:
+    bullets: List[str] = []
+    paragraph_lines: List[str] = []
+    in_code_block = False
+
+    def flush_paragraph_lines():
+        nonlocal paragraph_lines
+        if not paragraph_lines or len(bullets) >= max_bullets:
+            paragraph_lines = []
+            return
+
+        paragraph_text = ' '.join(paragraph_lines)
+        for paragraph_bullet in _sentence_bullets(paragraph_text, max_bullets - len(bullets)):
+            cleaned_bullet = _clean_slide_text(paragraph_bullet, POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT)
+            if cleaned_bullet and cleaned_bullet not in bullets:
+                bullets.append(cleaned_bullet)
+            if len(bullets) >= max_bullets:
+                break
+
+        paragraph_lines = []
+
+    for line in str(content or '').splitlines():
+        stripped_line = line.strip()
+        if stripped_line.startswith('```'):
+            flush_paragraph_lines()
+            in_code_block = not in_code_block
+            continue
+
+        if in_code_block:
+            continue
+
+        if not stripped_line:
+            flush_paragraph_lines()
+            continue
+
+        if _is_powerpoint_slide_separator(stripped_line):
+            flush_paragraph_lines()
+            continue
+
+        if _looks_like_markdown_table_row(stripped_line) or _looks_like_markdown_table_divider(stripped_line):
+            flush_paragraph_lines()
+            continue
+
+        heading_match = re.match(r'^#{1,6}\s+(.+?)\s*$', stripped_line)
+        if heading_match:
+            flush_paragraph_lines()
+            cleaned_heading = _clean_slide_text(heading_match.group(1), POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT)
+            if cleaned_heading and cleaned_heading not in bullets:
+                bullets.append(cleaned_heading)
+            if len(bullets) >= max_bullets:
+                break
+            continue
+
+        bullet_match = re.match(r'^(?:[-*+]\s+|\d+[.)]\s+)(.+)$', stripped_line)
+        if bullet_match:
+            flush_paragraph_lines()
+            cleaned_bullet = _clean_slide_text(bullet_match.group(1), POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT)
+            if cleaned_bullet and cleaned_bullet not in bullets:
+                bullets.append(cleaned_bullet)
+            if len(bullets) >= max_bullets:
+                break
+            continue
+
+        if re.match(r'^!\[[^\]]*\]\([^)]+\)$', stripped_line):
+            flush_paragraph_lines()
+            continue
+
+        paragraph_lines.append(stripped_line)
+        if len(' '.join(paragraph_lines)) >= POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT:
+            flush_paragraph_lines()
+
+    flush_paragraph_lines()
+    return bullets[:max_bullets]
+
+
+def _extract_structured_powerpoint_tables(content: str) -> List[Dict[str, Any]]:
+    tables: List[Dict[str, Any]] = []
+    table_block: List[str] = []
+    in_code_block = False
+
+    def flush_table_block():
+        nonlocal table_block
+        if table_block:
+            parsed_table = _parse_powerpoint_markdown_table_block(table_block)
+            if parsed_table:
+                tables.append(parsed_table)
+            table_block = []
+
+    for line in str(content or '').splitlines():
+        stripped_line = line.strip()
+        if stripped_line.startswith('```'):
+            in_code_block = not in_code_block
+            flush_table_block()
+            continue
+
+        if in_code_block:
+            continue
+
+        if _looks_like_markdown_table_row(stripped_line) or _looks_like_markdown_table_divider(stripped_line):
+            table_block.append(stripped_line)
+            continue
+
+        flush_table_block()
+
+    flush_table_block()
+    return tables[:2]
+
+
+def _parse_powerpoint_markdown_table_block(table_block: List[str]) -> Optional[Dict[str, Any]]:
+    split_rows = [
+        _split_powerpoint_markdown_table_line(line)
+        for line in table_block
+        if _looks_like_markdown_table_row(line) or _looks_like_markdown_table_divider(line)
+    ]
+    split_rows = [row for row in split_rows if row]
+    if len(split_rows) < 2:
+        return None
+
+    separator_index = next(
+        (
+            index for index, row in enumerate(split_rows)
+            if _is_powerpoint_markdown_table_separator_row(row)
+        ),
+        None,
+    )
+    has_header = separator_index is not None and separator_index > 0
+
+    if has_header:
+        rows = [split_rows[separator_index - 1]] + split_rows[separator_index + 1:]
+    else:
+        rows = [row for row in split_rows if not _is_powerpoint_markdown_table_separator_row(row)]
+
+    rows = [
+        [_clean_powerpoint_markdown_table_cell(cell) for cell in row[:POWERPOINT_MAX_TABLE_COLS]]
+        for row in rows[:POWERPOINT_MAX_TABLE_ROWS]
+    ]
+    rows = [row for row in rows if any(cell for cell in row)]
+    if len(rows) < 2:
+        return None
+
+    column_count = max(len(row) for row in rows)
+    normalized_rows = [row + [''] * (column_count - len(row)) for row in rows]
+
+    return {
+        'rows': normalized_rows,
+        'has_header': has_header,
+    }
+
+
+def _split_powerpoint_markdown_table_line(line: str) -> List[str]:
+    candidate = str(line or '').strip()
+    if candidate.startswith('|'):
+        candidate = candidate[1:]
+    if candidate.endswith('|'):
+        candidate = candidate[:-1]
+
+    return [cell.strip() for cell in candidate.split('|')]
+
+
+def _is_powerpoint_markdown_table_separator_row(row: List[str]) -> bool:
+    return bool(row) and all(re.match(r'^\s*:?-{3,}:?\s*$', cell or '') for cell in row)
+
+
+def _clean_powerpoint_markdown_table_cell(cell: Any) -> str:
+    return _clean_slide_text(str(cell or '').replace('<br>', ' '), 80)
+
+
 def _build_message_powerpoint_plan(
     content: str,
     message: Dict[str, Any],
     settings: Dict[str, Any],
     requested_model: str = '',
+    requested_slide_count: Optional[int] = None,
 ) -> Dict[str, Any]:
-    fallback_plan = _build_fallback_powerpoint_plan(content, message)
+    structured_plan = _build_structured_markdown_powerpoint_plan(content, message)
+    if structured_plan and requested_slide_count is None:
+        return structured_plan
+
+    target_slide_count = _resolve_powerpoint_slide_count(requested_slide_count)
+    fallback_plan = _build_fallback_powerpoint_plan(
+        content,
+        message,
+        slide_count=target_slide_count,
+    )
     if not content.strip():
         return fallback_plan
 
@@ -1593,13 +2249,19 @@ def _build_message_powerpoint_plan(
         settings=settings,
         requested_model=requested_model,
         fallback_plan=fallback_plan,
+        target_slide_count=target_slide_count,
     )
     return ai_plan or fallback_plan
 
 
-def _build_fallback_powerpoint_plan(content: str, message: Dict[str, Any]) -> Dict[str, Any]:
+def _build_fallback_powerpoint_plan(
+    content: str,
+    message: Dict[str, Any],
+    slide_count: Optional[int] = None,
+) -> Dict[str, Any]:
     role_label = _role_to_label(message.get('role', 'unknown'))
     timestamp = str(message.get('timestamp', '') or '')
+    target_slide_count = _resolve_powerpoint_slide_count(slide_count)
     sections = _extract_powerpoint_sections(content)
 
     if len(sections) == 1 and not sections[0].get('title'):
@@ -1615,7 +2277,7 @@ def _build_fallback_powerpoint_plan(content: str, message: Dict[str, Any]) -> Di
 
     slides: List[Dict[str, Any]] = []
     for index, section in enumerate(sections, start=1):
-        if len(slides) >= POWERPOINT_MAX_SLIDES:
+        if len(slides) >= target_slide_count:
             break
 
         title = _clean_slide_text(
@@ -1697,6 +2359,7 @@ def _generate_powerpoint_slide_plan_with_model(
     settings: Dict[str, Any],
     requested_model: str,
     fallback_plan: Dict[str, Any],
+    target_slide_count: int,
 ) -> Optional[Dict[str, Any]]:
     prompt_source = str(content or '').strip()[:POWERPOINT_PLAN_SOURCE_CHAR_LIMIT]
     if not prompt_source:
@@ -1723,7 +2386,8 @@ def _generate_powerpoint_slide_plan_with_model(
             'Preserve factual content, keep numbers and sequence accurate, and do not invent new claims. '
             'Optimize for concise slide titles and visually scannable bullets. '
             'Return valid JSON only with the keys presentation_title, presentation_subtitle, and slides. '
-            'The slides value must be an array of 1 to 6 objects. '
+            f'The slides value must be an array of 1 to {target_slide_count} objects. '
+            f'Use {target_slide_count} slides when the source has enough distinct material; use fewer only to avoid invented content. '
             'Each slide object must contain title and bullets. It may also contain body. '
             'Use no more than 5 bullets per slide. Keep each bullet under 16 words. '
             'If body is present, keep it under 280 characters. '
@@ -1763,7 +2427,11 @@ def _generate_powerpoint_slide_plan_with_model(
             return None
 
         parsed_plan = json.loads(json_payload)
-        return _sanitize_powerpoint_plan(parsed_plan, fallback_plan)
+        return _sanitize_powerpoint_plan(
+            parsed_plan,
+            fallback_plan,
+            max_slides=target_slide_count,
+        )
     except Exception as exc:
         debug_print(f'Message PowerPoint plan generation failed: {exc}')
         log_event(
@@ -1789,14 +2457,19 @@ def _extract_json_object(raw_content: str) -> Optional[str]:
     return raw_content[start_index:end_index + 1]
 
 
-def _sanitize_powerpoint_plan(plan: Any, fallback_plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _sanitize_powerpoint_plan(
+    plan: Any,
+    fallback_plan: Dict[str, Any],
+    max_slides: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
     if not isinstance(plan, dict):
         return None
 
+    slide_limit = _resolve_powerpoint_slide_count(max_slides)
     slides: List[Dict[str, Any]] = []
     raw_slides = plan.get('slides') if isinstance(plan.get('slides'), list) else []
     for index, raw_slide in enumerate(raw_slides, start=1):
-        if len(slides) >= POWERPOINT_MAX_SLIDES or not isinstance(raw_slide, dict):
+        if len(slides) >= slide_limit or not isinstance(raw_slide, dict):
             continue
 
         title = _clean_slide_text(raw_slide.get('title') or f'Slide {index}', 80)
@@ -1823,6 +2496,7 @@ def _sanitize_powerpoint_plan(plan: Any, fallback_plan: Dict[str, Any]) -> Optio
         slides.append({
             'title': title,
             'bullets': bullets[:POWERPOINT_MAX_BULLETS_PER_SLIDE],
+            'bullet_char_limit': POWERPOINT_BULLET_CHAR_LIMIT,
         })
 
     if not slides:
@@ -2182,6 +2856,36 @@ def _add_powerpoint_content_slide(
             run.font.color.rgb = POWERPOINT_TEXT
 
     content_placeholder = slide.placeholders[1]
+    tables = slide_spec.get('tables', []) if isinstance(slide_spec.get('tables'), list) else []
+    primary_table = next(
+        (table for table in tables if isinstance(table, dict) and table.get('rows')),
+        None,
+    )
+
+    if primary_table:
+        table_rows = primary_table.get('rows', [])
+        table_height = min(
+            PptxInches(2.45),
+            max(PptxInches(0.95), PptxInches(0.34 * max(len(table_rows), 1))),
+        )
+        table_top = PptxInches(1.35)
+        _add_powerpoint_inline_table(
+            slide,
+            primary_table,
+            left=PptxInches(0.75),
+            top=table_top,
+            width=presentation.slide_width - PptxInches(1.45),
+            height=table_height,
+        )
+
+        content_placeholder.left = PptxInches(0.78)
+        content_placeholder.top = table_top + table_height + PptxInches(0.25)
+        content_placeholder.width = presentation.slide_width - PptxInches(1.55)
+        content_placeholder.height = max(
+            PptxInches(0.45),
+            presentation.slide_height - content_placeholder.top - PptxInches(0.95),
+        )
+
     text_frame = content_placeholder.text_frame
     text_frame.clear()
     text_frame.word_wrap = True
@@ -2190,12 +2894,27 @@ def _add_powerpoint_content_slide(
     if isinstance(bullets, str):
         bullets = [bullets]
     if not bullets:
-        bullets = ['No content recorded.']
+        bullets = [] if slide_spec.get('allow_empty_body') else ['No content recorded.']
 
-    font_size = 22 if len(bullets) <= 3 else 20 if len(bullets) <= 5 else 18
+    try:
+        bullet_char_limit = int(slide_spec.get('bullet_char_limit') or POWERPOINT_BULLET_CHAR_LIMIT)
+    except (TypeError, ValueError):
+        bullet_char_limit = POWERPOINT_BULLET_CHAR_LIMIT
+
+    if len(bullets) <= 3:
+        font_size = 22
+    elif len(bullets) <= 5:
+        font_size = 20
+    elif len(bullets) <= 8:
+        font_size = 18
+    elif len(bullets) <= 10:
+        font_size = 16
+    else:
+        font_size = 14
+
     for index, bullet in enumerate(bullets):
         paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
-        paragraph.text = _clean_slide_text(bullet, 120)
+        paragraph.text = _clean_slide_text(bullet, bullet_char_limit)
         paragraph.level = 0
         paragraph.alignment = PP_ALIGN.LEFT
         paragraph.space_after = PptxPt(8)
@@ -2210,12 +2929,51 @@ def _add_powerpoint_content_slide(
         PptxInches(0.22),
     )
     metadata_frame = metadata_box.text_frame
-    metadata_frame.text = f'{role_label}{f" | {timestamp}" if timestamp else ""}'
+    footer_label = str(slide_spec.get('footer_label') or '').strip()
+    metadata_frame.text = footer_label or f'{role_label}{f" | {timestamp}" if timestamp else ""}'
     metadata_paragraph = metadata_frame.paragraphs[0]
     metadata_paragraph.alignment = PP_ALIGN.RIGHT
     for run in metadata_paragraph.runs:
         run.font.size = PptxPt(9)
         run.font.color.rgb = POWERPOINT_MUTED
+
+
+def _add_powerpoint_inline_table(
+    slide,
+    table_asset: Dict[str, Any],
+    left: int,
+    top: int,
+    width: int,
+    height: int,
+):
+    rows = table_asset.get('rows', [])
+    if not rows:
+        return
+
+    row_count = len(rows)
+    column_count = max(len(row) for row in rows)
+    if row_count < 1 or column_count < 1:
+        return
+
+    table_shape = slide.shapes.add_table(row_count, column_count, left, top, width, height)
+    table = table_shape.table
+    has_header = bool(table_asset.get('has_header'))
+    font_size = 10 if row_count <= 5 and column_count <= 3 else 9
+
+    for row_index, row_values in enumerate(rows):
+        for column_index in range(column_count):
+            cell = table.cell(row_index, column_index)
+            cell.text = row_values[column_index] if column_index < len(row_values) else ''
+            fill = cell.fill
+            fill.solid()
+            fill.fore_color.rgb = POWERPOINT_ACCENT if has_header and row_index == 0 else POWERPOINT_PANEL
+
+            paragraph = cell.text_frame.paragraphs[0]
+            paragraph.alignment = PP_ALIGN.LEFT
+            for run in paragraph.runs:
+                run.font.size = PptxPt(font_size)
+                run.font.bold = bool(has_header and row_index == 0)
+                run.font.color.rgb = POWERPOINT_TITLE_TEXT if has_header and row_index == 0 else POWERPOINT_TEXT
 
 
 def _append_powerpoint_appendix_slides(

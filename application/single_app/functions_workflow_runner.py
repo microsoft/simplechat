@@ -710,8 +710,8 @@ def _build_tabular_document_action_coverage(tabular_documents, phase_label):
 
 
 def _build_tabular_analysis_action_prompt(analysis_prompt, tabular_documents):
-    # Import lazily to avoid a circular dependency with route_backend_chats.
-    from route_backend_chats import build_tabular_computed_results_system_message
+    # Import lazily to avoid a circular dependency during workflow startup.
+    from functions_tabular_analysis import build_tabular_computed_results_system_message
 
     prompt_sections = [
         'You are completing deterministic document analysis using tool-backed tabular analysis.',
@@ -736,8 +736,8 @@ def _build_tabular_analysis_action_prompt(analysis_prompt, tabular_documents):
 
 
 def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, right_documents):
-    # Import lazily to avoid a circular dependency with route_backend_chats.
-    from route_backend_chats import build_tabular_computed_results_system_message
+    # Import lazily to avoid a circular dependency during workflow startup.
+    from functions_tabular_analysis import build_tabular_computed_results_system_message
 
     prompt_sections = [
         'You are completing a deterministic document comparison using tool-backed tabular analysis.',
@@ -811,8 +811,8 @@ def _maybe_execute_tabular_document_action(
     if not gpt_model:
         return None
 
-    # Import lazily to avoid a circular dependency with route_backend_chats.
-    from route_backend_chats import (
+    # Import lazily to avoid a circular dependency during workflow startup.
+    from functions_tabular_analysis import (
         augment_tabular_invocations_with_related_document_evidence,
         build_tabular_related_document_evidence_summary,
         get_new_plugin_invocations,

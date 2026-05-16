@@ -2643,6 +2643,42 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
+  async function exportGeneratedMarkdownArtifactAsPowerPoint(outputMetadata, exportButton) {
+    const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
+    const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
+    const parentMessageDiv = exportButton?.closest('.message');
+    const parentMessageId = String(parentMessageDiv?.getAttribute('data-message-id') || '').trim();
+
+    if (!normalizedArtifactMessageId || !normalizedConversationId || !parentMessageId) {
+      showToast('Generated Markdown artifact is missing PowerPoint export metadata.', 'warning');
+      return;
+    }
+
+    const originalButtonText = exportButton?.textContent || 'Create PowerPoint';
+    if (exportButton) {
+      exportButton.disabled = true;
+      exportButton.textContent = 'Creating...';
+    }
+
+    try {
+      const module = await import('./chat-message-export.js');
+      if (typeof module.exportMessageAsPowerPoint === 'function') {
+        await module.exportMessageAsPowerPoint(parentMessageDiv, parentMessageId, 'assistant', {
+          artifactMessageId: normalizedArtifactMessageId,
+          conversationId: normalizedConversationId,
+        });
+      }
+    } catch (error) {
+      console.error('Error exporting generated Markdown artifact to PowerPoint:', error);
+      showToast('Failed to export the generated Markdown artifact to PowerPoint.', 'danger');
+    } finally {
+      if (exportButton) {
+        exportButton.disabled = false;
+        exportButton.textContent = originalButtonText;
+      }
+    }
+  }
+
   function createGeneratedAnalysisArtifactCard(outputMetadata) {
     const card = document.createElement('section');
     card.className = 'generated-tabular-output-card border rounded p-3 mt-3';
@@ -2743,6 +2779,21 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     actions.appendChild(downloadButton);
 
     if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat)) {
+      const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
+      const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
+      if (normalizedArtifactMessageId && normalizedConversationId) {
+        const exportPowerPointButton = document.createElement('button');
+        exportPowerPointButton.type = 'button';
+        exportPowerPointButton.className = 'btn btn-sm btn-outline-primary generated-artifact-export-ppt-btn';
+        exportPowerPointButton.textContent = 'Create PowerPoint';
+        exportPowerPointButton.dataset.artifactMessageId = normalizedArtifactMessageId;
+        exportPowerPointButton.dataset.conversationId = normalizedConversationId;
+        exportPowerPointButton.addEventListener('click', () => {
+          exportGeneratedMarkdownArtifactAsPowerPoint(outputMetadata, exportPowerPointButton);
+        });
+        actions.appendChild(exportPowerPointButton);
+      }
+
       const viewButton = document.createElement('button');
       viewButton.type = 'button';
       viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-md-btn';

@@ -113,6 +113,24 @@ function downloadEmailDraftAttachments(attachments) {
     return downloadedCount;
 }
 
+function getPreferredMarkdownArtifactExportSource(messageDiv) {
+    if (!(messageDiv instanceof HTMLElement)) {
+        return null;
+    }
+
+    const artifactButton = messageDiv.querySelector('.generated-artifact-export-ppt-btn[data-artifact-message-id]');
+    const artifactMessageId = String(artifactButton?.dataset.artifactMessageId || '').trim();
+    const conversationId = String(artifactButton?.dataset.conversationId || window.currentConversationId || '').trim();
+    if (!artifactMessageId || !conversationId) {
+        return null;
+    }
+
+    return {
+        artifactMessageId,
+        conversationId,
+    };
+}
+
 /**
  * Build a formatted timestamp string for filenames.
  */
@@ -190,21 +208,32 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
  * Export a single message as a PowerPoint (.pptx) presentation by calling
  * the backend endpoint that uses python-pptx to generate slides.
  */
-export async function exportMessageAsPowerPoint(messageDiv, messageId, role) {
-    const conversationId = window.currentConversationId;
+export async function exportMessageAsPowerPoint(messageDiv, messageId, role, options = {}) {
+    const preferredArtifactSource = options.artifactMessageId
+        ? {
+            artifactMessageId: String(options.artifactMessageId || '').trim(),
+            conversationId: String(options.conversationId || window.currentConversationId || '').trim(),
+        }
+        : getPreferredMarkdownArtifactExportSource(messageDiv);
+    const conversationId = preferredArtifactSource?.conversationId || window.currentConversationId;
     if (!conversationId || !messageId) {
         showToast('Cannot export - no active conversation or message.', 'warning');
         return;
     }
 
     try {
+        const requestBody = {
+            message_id: messageId,
+            conversation_id: conversationId
+        };
+        if (preferredArtifactSource?.artifactMessageId) {
+            requestBody.artifact_message_id = preferredArtifactSource.artifactMessageId;
+        }
+
         const response = await fetch('/api/message/export-powerpoint', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message_id: messageId,
-                conversation_id: conversationId
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
@@ -217,7 +246,12 @@ export async function exportMessageAsPowerPoint(messageDiv, messageId, role) {
         const blob = await response.blob();
         const filename = `message_export_${filenameTimestamp()}.pptx`;
         downloadBlob(blob, filename);
-        showToast('Message exported as PowerPoint.', 'success');
+        showToast(
+            preferredArtifactSource?.artifactMessageId
+                ? 'Markdown artifact exported as PowerPoint.'
+                : 'Message exported as PowerPoint.',
+            'success'
+        );
     } catch (err) {
         console.error('Error exporting message to PowerPoint:', err);
         showToast('Failed to export message to PowerPoint.', 'danger');

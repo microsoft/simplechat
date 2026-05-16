@@ -23,6 +23,7 @@ from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
 from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
+from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled
 from foundry_agent_runtime import (
@@ -58,6 +59,7 @@ from functions_personal_agents import get_personal_agents, ensure_migration_comp
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
 from functions_chart_operations import (
     CHART_PLUGIN_TYPE,
+    CORE_CHART_PLUGIN_NAME,
     get_enabled_chart_type_keys,
     resolve_chart_action_capabilities,
 )
@@ -853,6 +855,23 @@ def load_tabular_processing_plugin(kernel: Kernel):
         description="Provides data analysis on tabular files (CSV, XLSX) stored in blob storage. Can list files, describe schemas, aggregate columns, filter rows, run queries, and perform group-by operations."
     )
 
+def _kernel_has_plugin(kernel: Kernel, plugin_name: str) -> bool:
+    try:
+        return plugin_name in kernel.plugins
+    except Exception:
+        return False
+
+def load_chart_plugin(kernel: Kernel):
+    if _kernel_has_plugin(kernel, CORE_CHART_PLUGIN_NAME):
+        return False
+
+    kernel.add_plugin(
+        ChartPlugin(),
+        plugin_name=CORE_CHART_PLUGIN_NAME,
+        description="Provides validated inline Chart.js visualizations for conversation responses."
+    )
+    return True
+
 def load_core_plugins_only(kernel: Kernel, settings):
     """Load only core plugins for model-only conversations without agents."""
     debug_print(f"[SK Loader] Loading core plugins only for model-only mode...")
@@ -883,6 +902,12 @@ def load_core_plugins_only(kernel: Kernel, settings):
     if is_tabular_processing_enabled(settings):
         load_tabular_processing_plugin(kernel)
         log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+
+    try:
+        if load_chart_plugin(kernel):
+            log_event("[SK Loader] Loaded Conversation Charts plugin.", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Failed to load Conversation Charts plugin: {e}", level=logging.WARNING)
 
 # =================== Semantic Kernel Initialization ===================
 def initialize_semantic_kernel(user_id: str=None, redis_client=None):
@@ -1975,6 +2000,12 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
         except Exception as e:
             log_event(f"[SK Loader] Failed to load Tabular Processing plugin: {e}", level=logging.WARNING)
 
+    try:
+        if load_chart_plugin(kernel):
+            log_event("[SK Loader] Loaded Conversation Charts plugin.", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Failed to load Conversation Charts plugin: {e}", level=logging.WARNING)
+
     # Conditionally load static embedding model plugin
     if settings.get('enable_default_embedding_model_plugin', True):
         try:
@@ -2399,6 +2430,12 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     if is_tabular_processing_enabled(settings):
         load_tabular_processing_plugin(kernel)
         log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+
+    try:
+        if load_chart_plugin(kernel):
+            log_event("[SK Loader] Loaded Conversation Charts plugin.", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Failed to load Conversation Charts plugin: {e}", level=logging.WARNING)
 
     # Get selected agent from user settings (this still needs to be in user settings for UI state)
     user_settings = get_user_settings(user_id).get('settings', {})

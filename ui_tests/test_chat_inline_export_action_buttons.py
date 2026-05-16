@@ -1,14 +1,15 @@
 # test_chat_inline_export_action_buttons.py
 """
 UI test for assistant inline export action buttons.
-Version: 0.241.108
-Implemented in: 0.241.108
+Version: 0.241.033
+Implemented in: 0.241.033
 
 This test ensures assistant replies show inline export buttons when the latest
 user prompt explicitly asks for a supported export format such as a
 presentation, markdown document, or email, that the buttons persist when the
-conversation history is reloaded, and that inline create actions show a
-pending label while the export is being prepared.
+conversation history is reloaded, that inline create actions show a pending
+label while the export is being prepared, and that PowerPoint exports prefer
+attached generated Markdown artifacts when present.
 """
 
 import json
@@ -56,8 +57,10 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
         lambda route: _fulfill_json(route, {"selected_agent": None, "settings": {"enable_agents": False}}),
     )
     page.route("**/api/get_conversations", lambda route: _fulfill_json(route, {"conversations": []}))
+    export_requests = []
 
     def handle_powerpoint_export(route):
+        export_requests.append(route.request.post_data_json)
         time.sleep(0.25)
         route.fulfill(
             status=200,
@@ -117,6 +120,24 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
                         id: 'assistant-presentation-response',
                         role: 'assistant',
                         content: 'Here is the summary you requested.',
+                        metadata: {
+                            generated_analysis_artifacts: [
+                                {
+                                    capability: 'analyze',
+                                    artifact_message_id: 'generated-markdown-presentation',
+                                    conversation_id: 'inline-export-actions-test',
+                                    storage_scope: 'chat',
+                                    file_name: 'generated-presentation.md',
+                                    output_format: 'md',
+                                    summary: 'Saved the full presentation deck as Markdown.',
+                                    preview_lines: [
+                                        '# Generated Presentation',
+                                        '## Slide 1 - Overview',
+                                        'Deck content lives in the artifact.',
+                                    ],
+                                },
+                            ],
+                        },
                     },
                     true
                 );
@@ -255,6 +276,9 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
         expect(powerpoint_button).to_have_text('Creating PowerPoint Presentation...')
         expect(powerpoint_button).to_be_disabled()
         expect(powerpoint_button).to_have_text('Create PowerPoint Presentation')
+        assert export_requests[0]["message_id"] == "assistant-presentation-response"
+        assert export_requests[0]["conversation_id"] == "inline-export-actions-test"
+        assert export_requests[0]["artifact_message_id"] == "generated-markdown-presentation"
 
         historical_message = page.locator('[data-message-id="assistant-historical-response"]')
         historical_actions = historical_message.locator('.inline-assistant-export-actions')

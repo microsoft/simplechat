@@ -285,15 +285,16 @@ def register_route_backend_users(app):
                     if not isinstance(sidebar_menu_state, dict):
                         return jsonify({"error": "Invalid sidebar menu state"}), 400
 
-                    invalid_sidebar_menu_state = {
-                        key: value
-                        for key, value in sidebar_menu_state.items()
-                        if key not in allowed_sidebar_menu_keys or not isinstance(value, bool)
-                    }
-                    if invalid_sidebar_menu_state:
-                        return jsonify({"error": "Invalid sidebar menu state"}), 400
+                    normalized_sidebar_menu_state = {}
+                    for key, value in sidebar_menu_state.items():
+                        if key not in allowed_sidebar_menu_keys:
+                            continue
+                        if isinstance(value, bool):
+                            normalized_sidebar_menu_state[key] = value
+                        elif isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+                            normalized_sidebar_menu_state[key] = value.strip().lower() == "true"
 
-                    settings_to_update["sidebarMenuState"] = sidebar_menu_state
+                    settings_to_update["sidebarMenuState"] = normalized_sidebar_menu_state
 
                 active_group_updated = False
                 active_public_workspace_updated = False

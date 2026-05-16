@@ -2,8 +2,8 @@
 # test_safety_violation_remediation_approvals.py
 """
 Functional test for safety violation remediation approvals.
-Version: 0.241.127
-Implemented in: 0.241.127
+Version: 0.241.030
+Implemented in: 0.241.030
 
 This test ensures warn, suspend, and block actions collect user-facing
 remediation details, follow the shared approval workflow, and apply the same
@@ -115,7 +115,8 @@ def test_safety_remediation_execution_and_approval_roles():
     }
     with patch.object(functions_approvals, 'get_approval_roles_for_request_type', return_value=['ControlCenterAdmin']):
         assert not functions_approvals._can_user_approve(approval_doc, 'safety-admin-1', ['Admin'])
-        assert functions_approvals._can_user_approve(approval_doc, 'safety-admin-1', ['ControlCenterAdmin'])
+        assert not functions_approvals._can_user_approve(approval_doc, 'safety-admin-1', ['ControlCenterAdmin'])
+        assert functions_approvals._can_user_deny(approval_doc, 'safety-admin-1', ['ControlCenterAdmin'])
         assert functions_approvals._can_user_approve(approval_doc, 'control-admin-2', ['ControlCenterAdmin'])
 
     created_notifications = []

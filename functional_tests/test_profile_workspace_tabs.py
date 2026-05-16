@@ -1,7 +1,8 @@
+# test_profile_workspace_tabs.py
 #!/usr/bin/env python3
 """
 Functional test for profile workspace tabs.
-Version: 0.241.028
+Version: 0.241.031
 Implemented in: 0.241.028
 
 This test ensures that My Groups and My Public Workspaces are exposed as
@@ -9,13 +10,15 @@ Profile tabs with list/card views, menu deep links, legacy redirects, and
 versioned documentation.
 """
 
+import re
 import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
-EXPECTED_VERSION = "0.241.028"
+CURRENT_VERSION = "0.241.031"
+IMPLEMENTED_VERSION = "0.241.028"
 
 
 def read_text(path):
@@ -28,10 +31,18 @@ def require_token(file_text, token, file_path):
     assert token in file_text, f"Expected {token!r} in {file_path}"
 
 
+def get_config_version():
+    """Read the current application version from config.py."""
+    config_text = read_text(APP_ROOT / "config.py")
+    match = re.search(r'VERSION = "([^"]+)"', config_text)
+    if not match:
+        raise AssertionError("Could not find VERSION in application/single_app/config.py")
+    return match.group(1)
+
+
 def test_profile_workspace_tabs_static_contract():
     """Validate the static contract for profile workspace tabs."""
-    config_text = read_text(APP_ROOT / "config.py")
-    require_token(config_text, f'VERSION = "{EXPECTED_VERSION}"', "application/single_app/config.py")
+    assert get_config_version() == CURRENT_VERSION, f"Expected config VERSION {CURRENT_VERSION}"
 
     profile_route_text = read_text(APP_ROOT / "route_frontend_profile.py")
     for token in [
@@ -70,6 +81,15 @@ def test_profile_workspace_tabs_static_contract():
         "id=\"profileFindPublicWorkspaceModal\"",
         "groupWorkspacesEnabled",
         "publicWorkspacesEnabled",
+        "profile_can_create_groups_from_settings",
+        "profile_can_create_public_workspaces_from_settings",
+        "{% set profile_can_create_groups = (can_create_groups | default(false)) or profile_can_create_groups_from_settings %}",
+        "{% set profile_can_create_public_workspaces = (can_create_public_workspaces | default(false)) or profile_can_create_public_workspaces_from_settings %}",
+        "{% if profile_can_create_groups %}",
+        "{% if profile_can_create_public_workspaces %}",
+        "canCreateGroups: {{ profile_can_create_groups | tojson }}",
+        "canCreatePublicWorkspaces: {{ profile_can_create_public_workspaces | tojson }}",
+        ".profile-workspace-card-clickable:hover",
     ]:
         require_token(profile_template_text, token, "application/single_app/templates/profile.html")
 
@@ -85,6 +105,9 @@ def test_profile_workspace_tabs_static_contract():
         "loadWorkspaceCollection(workspaceTabConfigs.publicWorkspaces)",
         "setWorkspaceViewMode(config, 'cards')",
         "requestWorkspaceAccess(config",
+        "activateRequestedProfileTab()",
+        "card.dataset.manageUrl = config.managePath(workspaceId)",
+        "window.location.assign(card.dataset.manageUrl)",
     ]:
         require_token(profile_js_text, token, "application/single_app/static/js/profile/profile-tabs.js")
 
@@ -104,9 +127,9 @@ def test_profile_workspace_tabs_static_contract():
     for relative_path, token in redirect_targets.items():
         require_token(read_text(REPO_ROOT / relative_path), token, relative_path)
 
-    docs_text = read_text(REPO_ROOT / "docs" / "explanation" / "features" / f"v{EXPECTED_VERSION}" / "PROFILE_WORKSPACE_TABS.md")
-    require_token(docs_text, f"Implemented in version: **{EXPECTED_VERSION}**", "docs/explanation/features/v0.241.028/PROFILE_WORKSPACE_TABS.md")
-    require_token(docs_text, f"Fixed/Implemented in version: **{EXPECTED_VERSION}**", "docs/explanation/features/v0.241.028/PROFILE_WORKSPACE_TABS.md")
+    docs_text = read_text(REPO_ROOT / "docs" / "explanation" / "features" / f"v{IMPLEMENTED_VERSION}" / "PROFILE_WORKSPACE_TABS.md")
+    require_token(docs_text, f"Implemented in version: **{IMPLEMENTED_VERSION}**", "docs/explanation/features/v0.241.028/PROFILE_WORKSPACE_TABS.md")
+    require_token(docs_text, f"Fixed/Implemented in version: **{IMPLEMENTED_VERSION}**", "docs/explanation/features/v0.241.028/PROFILE_WORKSPACE_TABS.md")
 
     print("Profile workspace tabs static contract validated.")
     return True

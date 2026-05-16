@@ -9,6 +9,15 @@
  */
 
 // Utility functions for user settings
+const sidebarMenuStateKeys = new Set([
+  'workspaces',
+  'support',
+  'externalLinks',
+  'adminSettings',
+  'controlCenter',
+  'conversations'
+]);
+
 async function getUserSettings() {
   try {
     const resp = await fetch('/api/user/settings');
@@ -34,9 +43,35 @@ async function setUserNavLayout(navLayout) {
   }
 }
 
+function normalizeSidebarMenuState(menuState) {
+  if (!menuState || typeof menuState !== 'object' || Array.isArray(menuState)) {
+    return {};
+  }
+
+  return Object.entries(menuState).reduce((normalizedState, [key, value]) => {
+    if (!sidebarMenuStateKeys.has(key)) {
+      return normalizedState;
+    }
+
+    if (typeof value === 'boolean') {
+      normalizedState[key] = value;
+      return normalizedState;
+    }
+
+    if (typeof value === 'string') {
+      const normalizedValue = value.trim().toLowerCase();
+      if (normalizedValue === 'true' || normalizedValue === 'false') {
+        normalizedState[key] = normalizedValue === 'true';
+      }
+    }
+
+    return normalizedState;
+  }, {});
+}
+
 function readInitialSidebarMenuState() {
   if (window.simplechatSidebarMenuState && typeof window.simplechatSidebarMenuState === 'object') {
-    return { ...window.simplechatSidebarMenuState };
+    return normalizeSidebarMenuState(window.simplechatSidebarMenuState);
   }
 
   const stateElement = document.getElementById('sidebar-menu-state-data');
@@ -46,10 +81,7 @@ function readInitialSidebarMenuState() {
 
   try {
     const parsedState = JSON.parse(stateElement.textContent || '{}');
-    if (!parsedState || typeof parsedState !== 'object' || Array.isArray(parsedState)) {
-      return {};
-    }
-    return parsedState;
+    return normalizeSidebarMenuState(parsedState);
   } catch (error) {
     console.warn('Unable to parse sidebar menu state:', error);
     return {};
@@ -57,9 +89,9 @@ function readInitialSidebarMenuState() {
 }
 
 function getSidebarMenuStateCache() {
-  if (!window.simplechatSidebarMenuState || typeof window.simplechatSidebarMenuState !== 'object') {
-    window.simplechatSidebarMenuState = readInitialSidebarMenuState();
-  }
+  window.simplechatSidebarMenuState = normalizeSidebarMenuState(
+    window.simplechatSidebarMenuState || readInitialSidebarMenuState()
+  );
 
   return window.simplechatSidebarMenuState;
 }
@@ -69,11 +101,16 @@ async function saveSidebarMenuState(menuKey, isExpanded) {
     return false;
   }
 
+  if (!sidebarMenuStateKeys.has(menuKey)) {
+    console.warn('Ignoring unsupported sidebar menu state key:', menuKey);
+    return false;
+  }
+
   const currentMenuState = getSidebarMenuStateCache();
-  const nextMenuState = {
+  const nextMenuState = normalizeSidebarMenuState({
     ...currentMenuState,
     [menuKey]: Boolean(isExpanded)
-  };
+  });
   window.simplechatSidebarMenuState = nextMenuState;
 
   try {

@@ -23,6 +23,7 @@ const publicActivePolls = new Set();
 // Document selection state
 let publicSelectedDocuments = new Set();
 let publicSelectionMode = false;
+let publicLastCardSelectionAnchorId = null;
 
 // Grid/folder view state
 let publicCurrentView = 'list';
@@ -248,6 +249,7 @@ const fileInput = document.getElementById('file-input');
 const uploadBtn = document.getElementById('upload-btn') || document.getElementById('public-upload-btn');
 const uploadStatus = document.getElementById('upload-status');
 const publicDocsTableBody = document.querySelector('#public-documents-table tbody');
+const publicDocumentsCardView = document.getElementById('public-documents-card-view');
 const publicDocsPagination = document.getElementById('public-docs-pagination-container');
 const publicDocsPageSizeSelect = document.getElementById('public-docs-page-size-select');
 const publicDocsSearchInput = document.getElementById('public-docs-search-input');
@@ -255,6 +257,8 @@ const docsApplyBtn = document.getElementById('public-docs-apply-filters-btn');
 const docsClearBtn = document.getElementById('public-docs-clear-filters-btn');
 
 const publicPromptsTableBody = document.querySelector('#public-prompts-table tbody');
+const publicPromptsListView = document.getElementById('public-prompts-list-view');
+const publicPromptsCardView = document.getElementById('public-prompts-card-view');
 const publicPromptsPagination = document.getElementById('public-prompts-pagination-container');
 const publicPromptsPageSizeSelect = document.getElementById('public-prompts-page-size-select');
 const publicPromptsSearchInput = document.getElementById('public-prompts-search-input');
@@ -318,6 +322,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
         : 'Please select an active public workspace.';
       setPublicTableMessage(publicDocsTableBody, 4, noActivePublicMessage);
       setPublicTableMessage(publicPromptsTableBody, 2, noActivePublicMessage);
+      renderPublicPromptsEmptyState(noActivePublicMessage);
     }
   });
 
@@ -420,6 +425,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   promptsApplyBtn.onclick = ()=>{ publicPromptsSearchTerm = publicPromptsSearchInput.value.trim(); publicPromptsCurrentPage=1; fetchPublicPrompts(); };
   promptsClearBtn.onclick = ()=>{ publicPromptsSearchInput.value=''; publicPromptsSearchTerm=''; publicPromptsCurrentPage=1; fetchPublicPrompts(); };
   publicPromptsSearchInput.onkeypress = e=>{ if(e.key==='Enter') promptsApplyBtn.click(); };
+  setupPublicPromptsViewSwitcher();
 
   // Add tab change event listeners to load data when switching tabs
   document.getElementById('public-prompts-tab-btn').addEventListener('shown.bs.tab', () => {
@@ -427,7 +433,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
   });
   
   document.getElementById('public-docs-tab-btn').addEventListener('shown.bs.tab', () => {
-    if (activePublicId) fetchPublicDocs();
+    if (!activePublicId) return;
+    if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') {
+      renderPublicGridView();
+    } else {
+      fetchPublicDocs();
+    }
   });
 
   // --- Document selection event listeners ---
@@ -439,6 +450,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
         window.updatePublicSelectedDocuments(documentId, event.target.checked);
       }
     }
+
+    if (event.target.classList.contains('document-select-all-checkbox')) {
+      togglePublicSelectAllDocuments(event.target.checked);
+    }
   });
 
   // Bulk action buttons
@@ -449,6 +464,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if (publicDeleteSelectedBtn) publicDeleteSelectedBtn.addEventListener('click', deletePublicSelectedDocuments);
   if (publicClearSelectionBtn) publicClearSelectionBtn.addEventListener('click', clearPublicSelection);
   if (publicChatSelectedBtn) publicChatSelectedBtn.addEventListener('click', chatWithPublicSelected);
+  document.getElementById('public-toggle-selection-btn')?.addEventListener('click', togglePublicSelectionMode);
+  document.addEventListener('click', handlePublicDocumentCardClick);
 });
 
 // Fetch User's Public Workspaces
@@ -822,20 +839,282 @@ function wirePublicFolderGeneratedArtifactApproveButtons(docs) {
   const rows = document.querySelectorAll('#public-folder-docs-table tbody tr');
   docs.forEach((doc, index) => {
     const row = rows[index];
-    const actionsCell = row && row.children ? row.children[2] : null;
+    const actionsCell = row && row.children ? row.children[3] : null;
     prependPublicGeneratedArtifactActionButtons(actionsCell, doc);
   });
 }
 
 function loadActivePublicData(){
   const activeTab = document.querySelector('#publicWorkspaceTab .nav-link.active').dataset.bsTarget;
-  if(activeTab==='#public-docs-tab') fetchPublicDocs(); else fetchPublicPrompts();
+  if(activeTab==='#public-docs-tab') {
+    if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); else fetchPublicDocs();
+  } else fetchPublicPrompts();
   updatePublicRoleDisplay(); updatePublicPromptsRoleUI(); updateWorkspaceStatusAlert();
+}
+
+function getPublicDocumentProcessingState(doc) {
+  const pctString = String((doc.percentage_complete ?? doc.percentage) || '0');
+  const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
+  const docStatus = doc.status || '';
+  const normalizedStatus = docStatus.toLowerCase();
+  const hasError = normalizedStatus.includes('error') || normalizedStatus.includes('failed');
+  const isComplete = pct >= 100 || normalizedStatus.includes('complete') || hasError;
+  return { pct, docStatus, hasError, isComplete };
+}
+
+function getPublicDocumentIcon(fileName) {
+  const extension = String(fileName || '').split('.').pop().toLowerCase();
+  const iconMap = {
+    pdf: 'bi-file-earmark-pdf',
+    doc: 'bi-file-earmark-word',
+    docx: 'bi-file-earmark-word',
+    xls: 'bi-file-earmark-excel',
+    xlsx: 'bi-file-earmark-excel',
+    csv: 'bi-file-earmark-spreadsheet',
+    ppt: 'bi-file-earmark-ppt',
+    pptx: 'bi-file-earmark-ppt',
+    txt: 'bi-file-earmark-text',
+    md: 'bi-file-earmark-text',
+    json: 'bi-file-earmark-code',
+    html: 'bi-file-earmark-code',
+  };
+  return iconMap[extension] || 'bi-file-earmark-text';
+}
+
+function truncatePublicDocumentText(text, maxLength = 90) {
+  const value = String(text || '').trim();
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
+}
+
+function getPublicDocumentSummaryText(doc) {
+  return doc.abstract || doc.summary || doc.description || 'No abstract available.';
+}
+
+function appendPublicTextElement(parent, tagName, className, text, title) {
+  const element = document.createElement(tagName);
+  if (className) element.className = className;
+  element.textContent = text;
+  if (title) element.title = title;
+  parent.appendChild(element);
+  return element;
+}
+
+function createPublicDocumentCardActionButton(className, iconClass, label, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  const icon = document.createElement('i');
+  icon.className = `bi ${iconClass} me-1`;
+  button.appendChild(icon);
+  button.appendChild(document.createTextNode(label));
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function createPublicDocumentClassificationBadge(doc) {
+  const classification = doc.document_classification || doc.classification || 'N/A';
+  const category = (window.classification_categories || []).find(cat => cat.label === classification);
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  const safeColor = applyPublicBackgroundColor(badge, category?.color, '#6c757d');
+  badge.style.color = isPublicColorLight(safeColor) ? '#000' : '#fff';
+  badge.textContent = classification;
+  return badge;
+}
+
+function appendPublicDocumentMetaPills(container, doc) {
+  const metaItems = [
+    doc.version ? `v${doc.version}` : null,
+    doc.authors ? `By ${doc.authors}` : null,
+    doc.number_of_pages ? `${doc.number_of_pages} pages` : null,
+    doc.publication_date ? doc.publication_date : null,
+  ].filter(Boolean);
+
+  if (!metaItems.length) {
+    appendPublicTextElement(container, 'span', 'text-muted small', 'No metadata');
+    return;
+  }
+
+  metaItems.slice(0, 4).forEach((item) => {
+    appendPublicTextElement(container, 'span', 'badge bg-light text-dark border', item);
+  });
+}
+
+function createPublicDocumentCard(doc) {
+  const docId = doc.id;
+  const { pct, docStatus, hasError, isComplete } = getPublicDocumentProcessingState(doc);
+  const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
+  const canChat = (window.currentPublicStatus || 'active') !== 'inactive';
+  const displayTitle = doc.title && doc.title !== doc.file_name ? doc.title : (doc.file_name || 'Untitled');
+  const subtitle = doc.title && doc.title !== doc.file_name ? (doc.file_name || '') : '';
+  const selected = publicSelectedDocuments.has(docId);
+
+  const column = document.createElement('div');
+  column.className = 'col-12 col-md-6 col-xl-4';
+
+  const card = document.createElement('div');
+  card.id = `public-doc-card-${docId}`;
+  card.className = `card item-card document-item-card h-100${selected ? ' is-selected' : ''}`;
+  card.setAttribute('data-document-id', docId);
+
+  const cardBody = document.createElement('div');
+  cardBody.className = 'card-body d-flex flex-column';
+
+  const header = document.createElement('div');
+  header.className = 'document-item-card__header';
+
+  const checkWrap = document.createElement('div');
+  checkWrap.className = 'document-item-card__check';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = `form-check-input document-checkbox${publicSelectionMode ? '' : ' d-none'}`;
+  checkbox.setAttribute('data-document-id', docId);
+  checkbox.checked = selected;
+  checkWrap.appendChild(checkbox);
+
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'item-card-icon';
+  const icon = document.createElement('i');
+  icon.className = `bi ${getPublicDocumentIcon(doc.file_name || '')}`;
+  icon.style.fontSize = '1.75rem';
+  iconWrap.appendChild(icon);
+
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'document-item-card__title-wrap';
+  appendPublicTextElement(titleWrap, 'div', 'document-item-card__eyebrow', 'Public document');
+  appendPublicTextElement(titleWrap, 'h6', 'card-title mb-1', truncatePublicDocumentText(displayTitle, 60), displayTitle);
+  if (subtitle) {
+    appendPublicTextElement(titleWrap, 'div', 'document-item-card__subtitle', subtitle, subtitle);
+  }
+
+  const statusWrap = document.createElement('div');
+  statusWrap.className = 'document-item-card__status';
+  const statusBadge = document.createElement('span');
+  if (hasError) {
+    statusBadge.className = 'badge bg-danger';
+    statusBadge.textContent = 'Error';
+  } else if (!isComplete) {
+    statusBadge.className = 'badge bg-info text-dark';
+    statusBadge.textContent = `Processing ${pct.toFixed(0)}%`;
+  } else if (!canChat) {
+    statusBadge.className = 'badge bg-secondary';
+    statusBadge.textContent = 'Read Only';
+  } else {
+    statusBadge.className = 'badge bg-success';
+    statusBadge.textContent = 'Ready';
+  }
+  statusWrap.appendChild(statusBadge);
+
+  header.append(checkWrap, iconWrap, titleWrap, statusWrap);
+
+  const summary = document.createElement('div');
+  summary.className = 'document-item-card__summary';
+  summary.textContent = truncatePublicDocumentText(getPublicDocumentSummaryText(doc), 160);
+
+  const meta = document.createElement('div');
+  meta.className = 'document-item-card__meta';
+  appendPublicDocumentMetaPills(meta, doc);
+
+  const badges = document.createElement('div');
+  badges.className = 'document-item-card__badges';
+  badges.appendChild(createPublicDocumentClassificationBadge(doc));
+  const citationBadge = document.createElement('span');
+  citationBadge.className = `badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}`;
+  citationBadge.textContent = doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations';
+  badges.appendChild(citationBadge);
+
+  const tags = document.createElement('div');
+  tags.className = 'document-item-card__tags';
+  renderPublicTagBadges(doc.tags || [], tags, 4);
+
+  const progress = document.createElement('div');
+  if (hasError) {
+    progress.className = 'alert alert-danger py-2 px-3 small mb-0';
+    progress.textContent = docStatus || 'Processing error';
+  } else if (!isComplete) {
+    progress.className = 'document-item-card__progress';
+    const progressBar = document.createElement('div');
+    progressBar.className = 'progress';
+    progressBar.style.height = '10px';
+    const innerBar = document.createElement('div');
+    innerBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-info';
+    innerBar.style.width = `${pct}%`;
+    innerBar.setAttribute('role', 'progressbar');
+    innerBar.setAttribute('aria-valuenow', String(pct));
+    innerBar.setAttribute('aria-valuemin', '0');
+    innerBar.setAttribute('aria-valuemax', '100');
+    progressBar.appendChild(innerBar);
+    appendPublicTextElement(progress, 'span', 'document-item-card__progress-label', `${docStatus} (${pct.toFixed(0)}%)`);
+    progress.prepend(progressBar);
+  }
+
+  const buttons = document.createElement('div');
+  buttons.className = 'item-card-buttons mt-auto d-flex flex-wrap gap-1';
+  if (isComplete && !hasError && canChat) {
+    buttons.appendChild(createPublicDocumentCardActionButton('btn btn-sm btn-primary me-1', 'bi-chat-dots', 'Chat', () => window.searchPublicDocumentInChat(docId)));
+  }
+  if (isComplete && !hasError && canManage) {
+    buttons.appendChild(createPublicDocumentCardActionButton('btn btn-sm btn-outline-secondary me-1', 'bi-pencil', 'Edit', () => window.onEditPublicDocument(docId)));
+  }
+  getPublicGeneratedArtifactActionButtons(doc).forEach((button) => buttons.appendChild(button));
+
+  const dropdownItems = [];
+  if (isComplete && !hasError) {
+    dropdownItems.push(createPublicDropdownItem('bi-check-square', 'Select', () => togglePublicSelectionMode()));
+    if (canChat) dropdownItems.push(createPublicDropdownItem('bi-chat-dots-fill', 'Chat', () => window.searchPublicDocumentInChat(docId)));
+    if (canManage) {
+      dropdownItems.push(createPublicDropdownItem('bi-pencil-fill', 'Edit Metadata', () => window.onEditPublicDocument(docId)));
+      dropdownItems.push(createPublicDropdownItem('bi-magic', 'Extract Metadata', () => window.onExtractPublicMetadata(docId, null)));
+      dropdownItems.push(createPublicDropdownDivider());
+      dropdownItems.push(createPublicDropdownItem('bi-trash-fill', 'Delete', () => window.deletePublicDocument(docId, null), true));
+    }
+  } else if (canManage) {
+    dropdownItems.push(createPublicDropdownItem('bi-trash-fill', 'Delete', () => window.deletePublicDocument(docId, null), true));
+  }
+
+  if (dropdownItems.length) {
+    const dropdown = document.createElement('div');
+    dropdown.className = 'dropdown action-dropdown d-inline-block ms-auto';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'btn btn-sm btn-outline-secondary dropdown-toggle';
+    toggle.setAttribute('data-bs-toggle', 'dropdown');
+    toggle.setAttribute('aria-expanded', 'false');
+    const toggleIcon = document.createElement('i');
+    toggleIcon.className = 'bi bi-three-dots-vertical';
+    toggle.appendChild(toggleIcon);
+    const menu = document.createElement('ul');
+    menu.className = 'dropdown-menu dropdown-menu-end';
+    dropdownItems.forEach((item) => menu.appendChild(item));
+    dropdown.append(toggle, menu);
+    buttons.appendChild(dropdown);
+  }
+
+  cardBody.append(header, summary, meta, badges, tags);
+  if (progress.childNodes.length) cardBody.appendChild(progress);
+  cardBody.appendChild(buttons);
+  card.appendChild(cardBody);
+  column.appendChild(card);
+
+  if (!isComplete && !hasError) {
+    pollPublicDocumentStatus(docId);
+  }
+
+  return column;
+}
+
+function renderPublicDocumentCards(docs, container = publicDocumentsCardView) {
+  if (!container) return;
+  container.innerHTML = '';
+  docs.forEach((doc) => container.appendChild(createPublicDocumentCard(doc)));
 }
 
 async function fetchPublicDocs(){
   if(!activePublicId) return;
   publicDocsTableBody.innerHTML='<tr class="table-loading-row"><td colspan="4"><div class="spinner-border spinner-border-sm me-2"></div> Loading public documents...</td></tr>';
+  if (publicDocumentsCardView) {
+    publicDocumentsCardView.innerHTML = '<div class="col-12 text-center text-muted py-5"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>Loading public documents...</div>';
+  }
   publicDocsPagination.innerHTML='';
   const params=new URLSearchParams({page:publicDocsCurrentPage,page_size:publicDocsPageSize});
   if(publicDocsSearchTerm) params.append('search',publicDocsSearchTerm);
@@ -867,10 +1146,24 @@ async function fetchPublicDocs(){
     const r=await fetch(`/api/public_documents?${params}`);
     if(!r.ok) throw await r.json(); const data=await r.json();
     publicDocsTableBody.innerHTML='';
-    if(!data.documents.length){ publicDocsTableBody.innerHTML=`<tr><td colspan="4" class="text-center p-4 text-muted">${publicDocsSearchTerm?'No documents found.':'No documents in this workspace.'}</td></tr>`; }
+    if (publicDocumentsCardView) publicDocumentsCardView.innerHTML = '';
+    if(!data.documents.length){
+      const emptyMessage = publicDocsSearchTerm ? 'No documents found.' : 'No documents in this workspace.';
+      publicDocsTableBody.innerHTML=`<tr><td colspan="4" class="text-center p-4 text-muted">${emptyMessage}</td></tr>`;
+      if (publicDocumentsCardView) publicDocumentsCardView.innerHTML = `<div class="col-12 text-center text-muted py-5">${emptyMessage}</div>`;
+    }
+    else if (publicCurrentView === 'cards') {
+      renderPublicDocumentCards(data.documents, publicDocumentsCardView);
+    }
     else data.documents.forEach(doc=> renderPublicDocumentRow(doc));
     renderPublicDocsPagination(data.page,data.page_size,data.total_count);
-  } catch(err){ console.error(err); publicDocsTableBody.innerHTML=`<tr><td colspan="4" class="text-center text-danger p-4">Error: ${escapeHtml(err.error||err.message)}</td></tr>`; }
+    syncPublicSelectionModeUI();
+  } catch(err){
+    console.error(err);
+    const errorMessage = `Error: ${escapeHtml(err.error||err.message)}`;
+    publicDocsTableBody.innerHTML=`<tr><td colspan="4" class="text-center text-danger p-4">${errorMessage}</td></tr>`;
+    if (publicDocumentsCardView) publicDocumentsCardView.innerHTML = `<div class="col-12 text-center text-danger py-5">${errorMessage}</div>`;
+  }
 }
 
 function renderPublicDocumentRow(doc) {
@@ -891,7 +1184,7 @@ function renderPublicDocumentRow(doc) {
   let firstTdHtml = "";
   if (isComplete && !hasError) {
     firstTdHtml = `
-      <input type="checkbox" class="document-checkbox" data-document-id="${doc.id}" style="display: none;">
+      <input type="checkbox" class="form-check-input document-checkbox d-none" data-document-id="${doc.id}">
       <span class="expand-collapse-container">
         <button class="btn btn-link p-0" onclick="window.togglePublicDetails('${doc.id}')" title="Show/Hide Details"><span id="public-arrow-icon-${doc.id}" class="bi bi-chevron-right"></span></button>
       </span>`;
@@ -1069,7 +1362,8 @@ function pollPublicDocumentStatus(documentId) {
   const intervalId = setInterval(async () => {
     const docRow = document.getElementById(`public-doc-row-${documentId}`);
     const statusRow = document.getElementById(`public-status-row-${documentId}`);
-    if (!docRow && !statusRow) {
+    const docCard = document.getElementById(`public-doc-card-${documentId}`);
+    if (!docRow && !statusRow && !docCard) {
       clearInterval(intervalId);
       publicActivePolls.delete(documentId);
       return;
@@ -1103,7 +1397,8 @@ function pollPublicDocumentStatus(documentId) {
         // Wait 5 seconds, then reload the table to show the detail button
         setTimeout(() => {
           const docRow = document.getElementById(`public-doc-row-${documentId}`);
-          if (docRow) fetchPublicDocs();
+          const docCard = document.getElementById(`public-doc-card-${documentId}`);
+          if (docRow || docCard) fetchPublicDocs();
         }, 5000);
       }
     } catch (err) {
@@ -1438,12 +1733,73 @@ window.searchPublicDocumentInChat = function(docId) {
 };
 
 // --- Public Document Selection Functions ---
+function getVisiblePublicDocumentCheckboxes() {
+  return Array.from(document.querySelectorAll('#public-documents-table .document-checkbox, #public-folder-docs-table .document-checkbox, #public-documents-card-view .document-checkbox, #public-folder-documents-card-view .document-checkbox'))
+    .filter(checkbox => checkbox.offsetParent !== null);
+}
+
+function syncPublicSelectionUI() {
+  document.querySelectorAll('.document-checkbox').forEach((checkbox) => {
+    const documentId = checkbox.getAttribute('data-document-id');
+    checkbox.checked = publicSelectedDocuments.has(documentId);
+  });
+
+  document.querySelectorAll('.document-item-card').forEach((card) => {
+    const documentId = card.getAttribute('data-document-id');
+    card.classList.toggle('is-selected', publicSelectedDocuments.has(documentId));
+  });
+
+  const visibleCheckboxes = getVisiblePublicDocumentCheckboxes();
+  document.querySelectorAll('.document-select-all-checkbox').forEach((checkbox) => {
+    const visibleScope = checkbox.offsetParent !== null;
+    checkbox.checked = visibleScope && visibleCheckboxes.length > 0 && visibleCheckboxes.every(cb => publicSelectedDocuments.has(cb.getAttribute('data-document-id')));
+    checkbox.indeterminate = visibleScope && visibleCheckboxes.some(cb => publicSelectedDocuments.has(cb.getAttribute('data-document-id'))) && !checkbox.checked;
+  });
+}
+
+function syncPublicSelectionModeUI() {
+  const table = document.getElementById('public-documents-table');
+  const folderTable = document.getElementById('public-folder-docs-table');
+  const folderCardView = document.getElementById('public-folder-documents-card-view');
+  const bulkActionsBar = document.getElementById('publicBulkActionsBar');
+  const toggleSelectionBtn = document.getElementById('public-toggle-selection-btn');
+
+  table?.classList.toggle('selection-mode', publicSelectionMode);
+  folderTable?.classList.toggle('selection-mode', publicSelectionMode);
+  publicDocumentsCardView?.classList.toggle('selection-mode', publicSelectionMode);
+  folderCardView?.classList.toggle('selection-mode', publicSelectionMode);
+
+  document.querySelectorAll('.document-checkbox').forEach((checkbox) => {
+    checkbox.classList.toggle('d-none', !publicSelectionMode);
+    checkbox.checked = publicSelectionMode && publicSelectedDocuments.has(checkbox.getAttribute('data-document-id'));
+  });
+
+  document.querySelectorAll('.expand-collapse-container').forEach((container) => {
+    container.classList.toggle('d-none', publicSelectionMode);
+    container.classList.toggle('d-inline-block', !publicSelectionMode);
+  });
+
+  if (toggleSelectionBtn) {
+    toggleSelectionBtn.classList.toggle('active', publicSelectionMode);
+    toggleSelectionBtn.setAttribute('aria-pressed', String(publicSelectionMode));
+  }
+
+  if (!publicSelectionMode && bulkActionsBar) {
+    bulkActionsBar.style.display = 'none';
+  }
+
+  syncPublicSelectionUI();
+  updatePublicBulkActionButtons();
+}
+
 function updatePublicSelectedDocuments(documentId, isSelected) {
   if (isSelected) {
     publicSelectedDocuments.add(documentId);
+    publicLastCardSelectionAnchorId = documentId;
   } else {
     publicSelectedDocuments.delete(documentId);
   }
+  syncPublicSelectionUI();
   updatePublicBulkActionButtons();
 }
 
@@ -1463,30 +1819,114 @@ function updatePublicBulkActionButtons() {
 }
 
 function togglePublicSelectionMode() {
-  const table = document.getElementById('public-documents-table');
-  const checkboxes = document.querySelectorAll('.document-checkbox');
-  const expandContainers = document.querySelectorAll('.expand-collapse-container');
-  const bulkActionsBar = document.getElementById('publicBulkActionsBar');
-
   publicSelectionMode = !publicSelectionMode;
 
-  if (publicSelectionMode) {
-    table.classList.add('selection-mode');
-    checkboxes.forEach(cb => { cb.style.display = 'inline-block'; });
-    expandContainers.forEach(c => { c.style.display = 'none'; });
-  } else {
-    table.classList.remove('selection-mode');
-    checkboxes.forEach(cb => { cb.style.display = 'none'; cb.checked = false; });
-    expandContainers.forEach(c => { c.style.display = 'inline-block'; });
-    if (bulkActionsBar) bulkActionsBar.style.display = 'none';
+  if (!publicSelectionMode) {
     publicSelectedDocuments.clear();
+    publicLastCardSelectionAnchorId = null;
   }
+
+  syncPublicSelectionModeUI();
 }
 
 function clearPublicSelection() {
-  document.querySelectorAll('.document-checkbox').forEach(cb => { cb.checked = false; });
   publicSelectedDocuments.clear();
+  publicLastCardSelectionAnchorId = null;
+  syncPublicSelectionUI();
   updatePublicBulkActionButtons();
+}
+
+function togglePublicSelectAllDocuments(isSelected) {
+  if (isSelected && !publicSelectionMode) {
+    publicSelectionMode = true;
+    syncPublicSelectionModeUI();
+  }
+
+  getVisiblePublicDocumentCheckboxes().forEach((checkbox) => {
+    const documentId = checkbox.getAttribute('data-document-id');
+    checkbox.checked = isSelected;
+    if (isSelected) {
+      publicSelectedDocuments.add(documentId);
+    } else {
+      publicSelectedDocuments.delete(documentId);
+    }
+  });
+
+  syncPublicSelectionModeUI();
+}
+
+function getVisiblePublicDocumentCards() {
+  return Array.from(document.querySelectorAll('#public-documents-card-view .document-item-card, #public-folder-documents-card-view .document-item-card'))
+    .filter(card => card.offsetParent !== null);
+}
+
+function isPublicDocumentCardActionTarget(target) {
+  return Boolean(target.closest('a, button, input, label, select, textarea, .dropdown-menu, .tag-badge'));
+}
+
+function openPublicDocumentCardDropdown(card) {
+  const dropdownToggle = card.querySelector('.action-dropdown [data-bs-toggle="dropdown"]');
+  if (!dropdownToggle || !window.bootstrap?.Dropdown) {
+    return;
+  }
+  window.bootstrap.Dropdown.getOrCreateInstance(dropdownToggle).show();
+}
+
+function selectPublicDocumentCardRange(documentId) {
+  const documentIds = getVisiblePublicDocumentCards()
+    .map(card => card.getAttribute('data-document-id'))
+    .filter(Boolean);
+  const currentIndex = documentIds.indexOf(documentId);
+  const anchorIndex = documentIds.indexOf(publicLastCardSelectionAnchorId);
+
+  if (currentIndex === -1) {
+    return;
+  }
+
+  if (anchorIndex === -1) {
+    publicSelectedDocuments.add(documentId);
+    publicLastCardSelectionAnchorId = documentId;
+    return;
+  }
+
+  const startIndex = Math.min(anchorIndex, currentIndex);
+  const endIndex = Math.max(anchorIndex, currentIndex);
+  documentIds.slice(startIndex, endIndex + 1).forEach(id => publicSelectedDocuments.add(id));
+}
+
+function handlePublicDocumentCardClick(event) {
+  const card = event.target.closest('.document-item-card');
+  if (!card || isPublicDocumentCardActionTarget(event.target)) {
+    return;
+  }
+
+  const documentId = card.getAttribute('data-document-id');
+  if (!documentId) {
+    return;
+  }
+
+  if (event.shiftKey || event.ctrlKey || event.metaKey || publicSelectionMode) {
+    event.preventDefault();
+    if (!publicSelectionMode) {
+      publicSelectionMode = true;
+    }
+
+    if (event.shiftKey) {
+      selectPublicDocumentCardRange(documentId);
+    } else {
+      if (publicSelectedDocuments.has(documentId)) {
+        publicSelectedDocuments.delete(documentId);
+      } else {
+        publicSelectedDocuments.add(documentId);
+      }
+      publicLastCardSelectionAnchorId = documentId;
+    }
+
+    syncPublicSelectionModeUI();
+    return;
+  }
+
+  openPublicDocumentCardDropdown(card);
 }
 
 function deletePublicSelectedDocuments() {
@@ -1546,18 +1986,336 @@ window.clearPublicSelection = clearPublicSelection;
 window.chatWithPublicSelected = chatWithPublicSelected;
 
 // Prompts
-async function fetchPublicPrompts(){
-  publicPromptsTableBody.innerHTML='<tr class="table-loading-row"><td colspan="2"><div class="spinner-border spinner-border-sm me-2"></div> Loading prompts...</td></tr>';
-  publicPromptsPagination.innerHTML=''; const params=new URLSearchParams({page:publicPromptsCurrentPage,page_size:publicPromptsPageSize}); if(publicPromptsSearchTerm) params.append('search',publicPromptsSearchTerm);
-  try{ const r=await fetch(`/api/public_prompts?${params}`); if(!r.ok) throw await r.json(); const d=await r.json(); publicPromptsTableBody.innerHTML=''; if(!d.prompts.length) publicPromptsTableBody.innerHTML='<tr><td colspan="2" class="text-center p-4 text-muted">No prompts.</td></tr>'; else d.prompts.forEach(p=>renderPublicPromptRow(p)); renderPublicPromptsPagination(d.page,d.page_size,d.total_count); }catch(e){ publicPromptsTableBody.innerHTML=`<tr><td colspan="2" class="text-center text-danger p-3">Error: ${escapeHtml(e.error||e.message)}</td></tr>`; }
+function canManagePublicPrompts() {
+  return ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic) && (window.currentPublicStatus || 'active') === 'active';
 }
-function renderPublicPromptRow(p){ const tr=document.createElement('tr'); tr.innerHTML=`<td title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</td><td><button class="btn btn-sm btn-primary" onclick="onEditPublicPrompt('${p.id}')"><i class="bi bi-pencil-fill"></i></button><button class="btn btn-sm btn-danger ms-1" onclick="onDeletePublicPrompt('${p.id}')"><i class="bi bi-trash-fill"></i></button></td>`; publicPromptsTableBody.append(tr); }
+
+function createPublicPromptLoadingElement(message) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'col-12 text-center text-muted py-5';
+  const spinner = document.createElement('div');
+  spinner.className = 'spinner-border spinner-border-sm me-2';
+  spinner.setAttribute('role', 'status');
+  const hiddenLabel = document.createElement('span');
+  hiddenLabel.className = 'visually-hidden';
+  hiddenLabel.textContent = 'Loading...';
+  spinner.appendChild(hiddenLabel);
+  wrapper.appendChild(spinner);
+  wrapper.append(message);
+  return wrapper;
+}
+
+function setPublicPromptsLoadingState() {
+  if (publicPromptsTableBody) {
+    const row = document.createElement('tr');
+    row.className = 'table-loading-row';
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    const spinner = document.createElement('div');
+    spinner.className = 'spinner-border spinner-border-sm me-2';
+    spinner.setAttribute('role', 'status');
+    const hiddenLabel = document.createElement('span');
+    hiddenLabel.className = 'visually-hidden';
+    hiddenLabel.textContent = 'Loading...';
+    spinner.appendChild(hiddenLabel);
+    cell.appendChild(spinner);
+    cell.append('Loading public prompts...');
+    row.appendChild(cell);
+    publicPromptsTableBody.replaceChildren(row);
+  }
+
+  publicPromptsCardView?.replaceChildren(createPublicPromptLoadingElement('Loading public prompts...'));
+}
+
+function renderPublicPromptsEmptyState(message) {
+  if (publicPromptsTableBody) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    cell.className = 'text-center p-4 text-muted';
+    cell.textContent = message;
+    row.appendChild(cell);
+    publicPromptsTableBody.replaceChildren(row);
+  }
+
+  if (publicPromptsCardView) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'col-12 text-center text-muted py-5';
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-card-text display-6 mb-2 d-block';
+    const text = document.createElement('p');
+    text.className = 'mb-0';
+    text.textContent = message;
+    wrapper.append(icon, text);
+    publicPromptsCardView.replaceChildren(wrapper);
+  }
+}
+
+function renderPublicPromptsErrorState(message) {
+  if (publicPromptsTableBody) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    cell.className = 'text-center text-danger p-3';
+    cell.textContent = message;
+    row.appendChild(cell);
+    publicPromptsTableBody.replaceChildren(row);
+  }
+
+  if (publicPromptsCardView) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'col-12 text-center text-danger py-5';
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-exclamation-triangle display-6 mb-2 d-block';
+    const text = document.createElement('p');
+    text.className = 'mb-0';
+    text.textContent = message;
+    wrapper.append(icon, text);
+    publicPromptsCardView.replaceChildren(wrapper);
+  }
+}
+
+function getPublicPromptPreview(prompt) {
+  const content = String(prompt?.content || '').trim();
+  if (!content) return 'Open the prompt to review the reusable content.';
+  return content.length > 180 ? `${content.slice(0, 180).trimEnd()}...` : content;
+}
+
+function buildPublicPromptChatUrl(promptId) {
+  const params = new URLSearchParams({
+    prompt_id: String(promptId || ''),
+    prompt_scope: 'public',
+    openPrompt: '1',
+  });
+
+  if (activePublicId) {
+    params.set('workspace_id', String(activePublicId));
+    params.set('prompt_scope_id', String(activePublicId));
+  }
+
+  return `/chats?${params.toString()}`;
+}
+
+function chatWithPublicPrompt(promptId) {
+  if (!promptId) return;
+  window.location.href = buildPublicPromptChatUrl(promptId);
+}
+
+function createPublicPromptButton({ className, title, iconClass, label, onClick }) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  const icon = document.createElement('i');
+  icon.className = iconClass;
+  button.appendChild(icon);
+  if (label) {
+    icon.classList.add('me-1');
+    button.append(label);
+  }
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    onClick(event);
+  });
+  return button;
+}
+
+function appendPublicPromptActions(container, prompt, includeLabels = false) {
+  container.appendChild(createPublicPromptButton({
+    className: 'btn btn-sm btn-primary',
+    title: 'Chat with Prompt',
+    iconClass: 'bi bi-chat-dots',
+    label: includeLabels ? 'Chat' : '',
+    onClick: () => chatWithPublicPrompt(prompt.id),
+  }));
+
+  container.appendChild(createPublicPromptButton({
+    className: 'btn btn-sm btn-outline-info',
+    title: 'View Prompt',
+    iconClass: 'bi bi-eye',
+    label: includeLabels ? 'View' : '',
+    onClick: () => window.onViewPublicPrompt(prompt.id),
+  }));
+
+  if (!canManagePublicPrompts()) return;
+
+  container.append(
+    createPublicPromptButton({
+      className: 'btn btn-sm btn-outline-secondary',
+      title: 'Edit Prompt',
+      iconClass: 'bi bi-pencil',
+      label: includeLabels ? 'Edit' : '',
+      onClick: () => window.onEditPublicPrompt(prompt.id),
+    }),
+    createPublicPromptButton({
+      className: 'btn btn-sm btn-outline-danger',
+      title: 'Delete Prompt',
+      iconClass: 'bi bi-trash',
+      onClick: () => window.onDeletePublicPrompt(prompt.id),
+    })
+  );
+}
+
+async function fetchPublicPrompts(){
+  setPublicPromptsLoadingState();
+  publicPromptsPagination.innerHTML=''; const params=new URLSearchParams({page:publicPromptsCurrentPage,page_size:publicPromptsPageSize}); if(publicPromptsSearchTerm) params.append('search',publicPromptsSearchTerm);
+  try{ const r=await fetch(`/api/public_prompts?${params}`); if(!r.ok) throw await r.json(); const d=await r.json(); if(!d.prompts.length) renderPublicPromptsEmptyState(publicPromptsSearchTerm ? 'No public prompts found.' : 'No public prompts created yet.'); else renderPublicPromptViews(d.prompts); renderPublicPromptsPagination(d.page,d.page_size,d.total_count); }catch(e){ renderPublicPromptsErrorState(`Error: ${e.error||e.message||'Unknown error'}`); }
+}
+
+function renderPublicPromptViews(prompts) {
+  publicPromptsTableBody?.replaceChildren();
+  prompts.forEach((prompt) => renderPublicPromptRow(prompt));
+  publicPromptsCardView?.replaceChildren(...prompts.map((prompt) => createPublicPromptCard(prompt)));
+}
+
+function renderPublicPromptRow(p){
+  const tr=document.createElement('tr');
+  tr.dataset.promptId = p.id || '';
+  const nameCell = document.createElement('td');
+  nameCell.title = p.name || '';
+  nameCell.textContent = p.name || 'Untitled Prompt';
+  const actionsCell = document.createElement('td');
+  const actions = document.createElement('div');
+  actions.className = 'd-flex gap-1 justify-content-start justify-content-md-end';
+  appendPublicPromptActions(actions, p, false);
+  actionsCell.appendChild(actions);
+  tr.append(nameCell, actionsCell);
+  publicPromptsTableBody.append(tr);
+}
+
+function createPublicPromptCard(prompt) {
+  const col = document.createElement('div');
+  col.className = 'col-12 col-md-6 col-xl-4';
+  const card = document.createElement('div');
+  card.className = 'card item-card prompt-item-card h-100';
+  card.tabIndex = 0;
+  card.setAttribute('aria-label', `View prompt ${prompt.name || 'Untitled Prompt'}`);
+  const body = document.createElement('div');
+  body.className = 'card-body d-flex flex-column';
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'item-card-icon mb-2';
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-card-text';
+  icon.style.fontSize = '1.75rem';
+  iconWrap.appendChild(icon);
+  const title = document.createElement('h6');
+  title.className = 'card-title mb-2';
+  title.textContent = prompt.name || 'Untitled Prompt';
+  const preview = document.createElement('p');
+  preview.className = 'card-text small text-muted prompt-card-preview flex-grow-1';
+  preview.textContent = getPublicPromptPreview(prompt);
+  const actions = document.createElement('div');
+  actions.className = 'item-card-buttons mt-2 d-flex flex-wrap gap-1';
+  appendPublicPromptActions(actions, prompt, true);
+  card.addEventListener('click', (event) => {
+    if (!event.target.closest('a, button, input, label, select, textarea, .dropdown-menu')) {
+      window.onViewPublicPrompt(prompt.id);
+    }
+  });
+  card.addEventListener('keydown', (event) => {
+    if (!event.target.closest('a, button, input, label, select, textarea, .dropdown-menu') && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      window.onViewPublicPrompt(prompt.id);
+    }
+  });
+  body.append(iconWrap, title, preview, actions);
+  card.appendChild(body);
+  col.appendChild(card);
+  return col;
+}
+
+function setupPublicPromptsViewSwitcher() {
+  const listRadio = document.getElementById('public-prompts-view-list');
+  const gridRadio = document.getElementById('public-prompts-view-grid');
+  const switchView = (view, persist = true) => {
+    const mode = view === 'grid' ? 'grid' : 'list';
+    if (listRadio) listRadio.checked = mode === 'list';
+    if (gridRadio) gridRadio.checked = mode === 'grid';
+    publicPromptsListView?.classList.toggle('d-none', mode !== 'list');
+    publicPromptsCardView?.classList.toggle('d-none', mode !== 'grid');
+    if (persist) localStorage.setItem('publicPromptsViewPreference', mode);
+  };
+  listRadio?.addEventListener('change', () => { if (listRadio.checked) switchView('list'); });
+  gridRadio?.addEventListener('change', () => { if (gridRadio.checked) switchView('grid'); });
+  switchView(localStorage.getItem('publicPromptsViewPreference') === 'grid' ? 'grid' : 'list', false);
+}
+
+function openPublicPromptViewModal(prompt) {
+  const modalEl = document.getElementById('publicPromptViewModal');
+  if (!modalEl) return;
+  const titleEl = document.getElementById('publicPromptViewModalLabel');
+  const bodyEl = document.getElementById('publicPromptViewModalBody');
+  const footerEl = document.getElementById('publicPromptViewModalFooter');
+  if (!titleEl || !bodyEl || !footerEl) return;
+  titleEl.textContent = 'Prompt Details';
+
+  const nameLabel = document.createElement('label');
+  nameLabel.className = 'text-muted small mb-1 d-block';
+  nameLabel.textContent = 'Prompt Name';
+  const nameText = document.createElement('div');
+  nameText.className = 'fw-medium mb-3';
+  nameText.textContent = prompt.name || 'Untitled Prompt';
+  const contentLabel = document.createElement('label');
+  contentLabel.className = 'text-muted small mb-1 d-block';
+  contentLabel.textContent = 'Prompt Content';
+  const contentPre = document.createElement('pre');
+  contentPre.className = 'mb-0 p-3 bg-body-tertiary border rounded';
+  contentPre.style.whiteSpace = 'pre-wrap';
+  contentPre.style.wordBreak = 'break-word';
+  contentPre.style.maxHeight = '360px';
+  contentPre.style.overflowY = 'auto';
+  contentPre.style.fontSize = '0.9rem';
+  contentPre.textContent = prompt.content || 'No prompt content available.';
+  bodyEl.replaceChildren(nameLabel, nameText, contentLabel, contentPre);
+
+  footerEl.replaceChildren();
+  const chatButton = document.createElement('button');
+  chatButton.type = 'button';
+  chatButton.className = 'btn btn-primary';
+  chatButton.innerHTML = '<i class="bi bi-chat-dots-fill me-1"></i>Chat';
+  chatButton.addEventListener('click', () => {
+    bootstrap.Modal.getInstance(modalEl)?.hide();
+    chatWithPublicPrompt(prompt.id);
+  });
+  footerEl.appendChild(chatButton);
+
+  if (canManagePublicPrompts()) {
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'btn btn-outline-secondary';
+    editButton.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit';
+    editButton.addEventListener('click', () => {
+      bootstrap.Modal.getInstance(modalEl)?.hide();
+      window.onEditPublicPrompt(prompt.id);
+    });
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'btn btn-outline-danger';
+    deleteButton.innerHTML = '<i class="bi bi-trash me-1"></i>Delete';
+    deleteButton.addEventListener('click', () => {
+      bootstrap.Modal.getInstance(modalEl)?.hide();
+      window.onDeletePublicPrompt(prompt.id);
+    });
+    footerEl.append(editButton, deleteButton);
+  }
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'btn btn-secondary';
+  closeButton.textContent = 'Close';
+  closeButton.setAttribute('data-bs-dismiss', 'modal');
+  footerEl.appendChild(closeButton);
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
+}
+
+window.onViewPublicPrompt=async function(id){ try{ const r=await fetch(`/api/public_prompts/${encodeURIComponent(id)}`); if(!r.ok) throw await r.json(); const d=await r.json(); openPublicPromptViewModal(d); }catch(e){ alert(e.error||e.message);} };
+window.chatWithPublicPrompt=chatWithPublicPrompt;
 function renderPublicPromptsPagination(page,pageSize,totalCount){ const container=publicPromptsPagination; container.innerHTML=''; const totalPages=Math.ceil(totalCount/pageSize); if(totalPages<=1) return; const ul=document.createElement('ul'); ul.className='pagination pagination-sm mb-0'; function mk(p,t,d,a){ const li=document.createElement('li'); li.className=`page-item${d?' disabled':''}${a?' active':''}`; const aEl=document.createElement('a'); aEl.className='page-link'; aEl.href='#'; aEl.textContent=t; if(!d&&!a) aEl.onclick=e=>{e.preventDefault();publicPromptsCurrentPage=p;fetchPublicPrompts();}; li.append(aEl); return li;} ul.append(mk(page-1,'«',page<=1,false)); for(let p=1;p<=totalPages;p++) ul.append(mk(p,p,false,p===page)); ul.append(mk(page+1,'»',page>=totalPages,false)); container.append(ul);} 
 
 function openPublicPromptModal(){ publicPromptIdEl.value=''; publicPromptNameEl.value=''; if(publicSimplemde) publicSimplemde.value(''); else publicPromptContentEl.value=''; document.getElementById('publicPromptModalLabel').textContent='Create Public Prompt'; publicPromptModal.show(); updatePublicPromptsRoleUI(); }
-async function onSavePublicPrompt(e){ e.preventDefault(); const id=publicPromptIdEl.value; const url=id?`/api/public_prompts/${id}`:'/api/public_prompts'; const method=id?'PATCH':'POST'; const name=publicPromptNameEl.value.trim(); const content=publicSimplemde?publicSimplemde.value():publicPromptContentEl.value.trim(); if(!name||!content) return alert('Name & content required'); const btn=document.getElementById('public-prompt-save-btn'); btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Saving…'; try{ const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify({name,content})}); if(!r.ok) throw await r.json(); publicPromptModal.hide(); fetchPublicPrompts(); }catch(err){ alert(err.error||err.message); }finally{ btn.disabled=false; btn.textContent='Save Prompt'; }}
-window.onEditPublicPrompt=async function(id){ try{ const r=await fetch(`/api/public_prompts/${id}`); if(!r.ok) throw await r.json(); const d=await r.json(); document.getElementById('publicPromptModalLabel').textContent=`Edit: ${d.name}`; publicPromptIdEl.value=d.id; publicPromptNameEl.value=d.name; if(publicSimplemde) publicSimplemde.value(d.content); else publicPromptContentEl.value=d.content; publicPromptModal.show(); }catch(e){ alert(e.error||e.message);} };
-window.onDeletePublicPrompt=async function(id){ if(!confirm('Delete prompt?')) return; try{ await fetch(`/api/public_prompts/${id}`,{method:'DELETE'}); fetchPublicPrompts(); }catch(e){ alert(e.error||e.message);} };
+async function onSavePublicPrompt(e){ e.preventDefault(); const id=publicPromptIdEl.value; const url=id?`/api/public_prompts/${encodeURIComponent(id)}`:'/api/public_prompts'; const method=id?'PATCH':'POST'; const name=publicPromptNameEl.value.trim(); const content=publicSimplemde?publicSimplemde.value():publicPromptContentEl.value.trim(); if(!name||!content) return alert('Name & content required'); const btn=document.getElementById('public-prompt-save-btn'); btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Saving…'; try{ const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify({name,content})}); if(!r.ok) throw await r.json(); publicPromptModal.hide(); fetchPublicPrompts(); }catch(err){ alert(err.error||err.message); }finally{ btn.disabled=false; btn.textContent='Save Prompt'; }}
+window.onEditPublicPrompt=async function(id){ try{ const r=await fetch(`/api/public_prompts/${encodeURIComponent(id)}`); if(!r.ok) throw await r.json(); const d=await r.json(); document.getElementById('publicPromptModalLabel').textContent=`Edit: ${d.name}`; publicPromptIdEl.value=d.id; publicPromptNameEl.value=d.name; if(publicSimplemde) publicSimplemde.value(d.content); else publicPromptContentEl.value=d.content; publicPromptModal.show(); }catch(e){ alert(e.error||e.message);} };
+window.onDeletePublicPrompt=async function(id){ if(!confirm('Delete prompt?')) return; try{ await fetch(`/api/public_prompts/${encodeURIComponent(id)}`,{method:'DELETE'}); fetchPublicPrompts(); }catch(e){ alert(e.error||e.message);} };
 
 // Document metadata functions
 window.onEditPublicDocument = function(docId) {
@@ -1713,7 +2471,7 @@ window.onExtractPublicMetadata = function(docId, event) {
     });
 };
 
-function updatePublicPromptsRoleUI(){ const canManage=['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic); document.getElementById('create-public-prompt-section')?.classList.toggle('d-none', !canManage); document.getElementById('public-prompts-role-warning')?.classList.toggle('d-none', canManage); }
+function updatePublicPromptsRoleUI(){ const canManage=canManagePublicPrompts(); document.getElementById('create-public-prompt-section')?.classList.toggle('d-none', !canManage); document.getElementById('public-prompts-role-warning')?.classList.toggle('d-none', canManage); }
 
 // Expose fetch
 window.fetchPublicPrompts = fetchPublicPrompts;
@@ -1759,30 +2517,36 @@ function loadPublicWorkspaceTags() {
         });
       }
       updatePublicBulkTagsList();
-      if (publicCurrentView === 'grid') renderPublicGridView();
+      if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView();
     })
     .catch(err => console.error('Error loading public workspace tags:', err));
 }
 
 function setupPublicViewSwitcher() {
   const listRadio = document.getElementById('public-docs-view-list');
+  const cardsRadio = document.getElementById('public-docs-view-cards');
   const gridRadio = document.getElementById('public-docs-view-grid');
+  const foldersCardsRadio = document.getElementById('public-docs-view-folders-cards');
   if (listRadio) listRadio.addEventListener('change', () => { if (listRadio.checked) switchPublicView('list'); });
+  if (cardsRadio) cardsRadio.addEventListener('change', () => { if (cardsRadio.checked) switchPublicView('cards'); });
   if (gridRadio) gridRadio.addEventListener('change', () => { if (gridRadio.checked) switchPublicView('grid'); });
+  if (foldersCardsRadio) foldersCardsRadio.addEventListener('change', () => { if (foldersCardsRadio.checked) switchPublicView('folders-cards'); });
 }
 
 function switchPublicView(view) {
-  publicCurrentView = view;
-  localStorage.setItem('publicWorkspaceViewPreference', view);
+  publicCurrentView = ['list', 'cards', 'grid', 'folders-cards'].includes(view) ? view : 'list';
+  localStorage.setItem('publicWorkspaceViewPreference', publicCurrentView);
   const listView = document.getElementById('public-documents-list-view');
+  const cardView = document.getElementById('public-documents-card-view');
   const gridView = document.getElementById('public-documents-grid-view');
   const viewInfo = document.getElementById('public-docs-view-info');
   const gridControls = document.getElementById('public-grid-controls-bar');
+  const listControls = document.getElementById('public-list-controls-bar');
   const filterBtn = document.getElementById('public-docs-filters-toggle-btn');
   const filterCollapse = document.getElementById('public-docs-filters-collapse');
   const bulkBar = document.getElementById('publicBulkActionsBar');
 
-  if (view === 'list') {
+  if (publicCurrentView === 'list' || publicCurrentView === 'cards') {
     publicCurrentFolder = null;
     publicCurrentFolderType = null;
     publicFolderCurrentPage = 1;
@@ -1791,20 +2555,44 @@ function switchPublicView(view) {
     publicFolderSearchTerm = '';
     const tagContainer = document.getElementById('public-tag-folders-container');
     if (tagContainer) tagContainer.className = 'row g-2';
-    if (listView) listView.style.display = 'block';
-    if (gridView) gridView.style.display = 'none';
-    if (gridControls) gridControls.style.display = 'none';
-    if (filterBtn) filterBtn.style.display = '';
-    if (viewInfo) viewInfo.textContent = '';
+    if (listView) listView.classList.toggle('d-none', publicCurrentView !== 'list');
+    if (cardView) cardView.classList.toggle('d-none', publicCurrentView !== 'cards');
+    if (gridView) gridView.classList.add('d-none');
+    if (listControls) {
+      listControls.classList.remove('d-none');
+      listControls.classList.add('d-flex');
+    }
+    if (gridControls) {
+      gridControls.classList.add('d-none');
+      gridControls.classList.remove('d-flex');
+    }
+    if (filterBtn) filterBtn.classList.remove('d-none');
+    if (viewInfo) viewInfo.textContent = publicCurrentView === 'cards' ? 'Cards surface status, metadata, and quick actions.' : '';
     fetchPublicDocs();
   } else {
-    if (listView) listView.style.display = 'none';
-    if (gridView) gridView.style.display = 'block';
-    if (gridControls) gridControls.style.display = 'flex';
-    if (filterBtn) filterBtn.style.display = 'none';
+    if (listView) listView.classList.add('d-none');
+    if (cardView) cardView.classList.add('d-none');
+    if (gridView) gridView.classList.remove('d-none');
+    if (listControls) {
+      listControls.classList.add('d-none');
+      listControls.classList.remove('d-flex');
+    }
+    if (gridControls) {
+      gridControls.classList.remove('d-none');
+      gridControls.classList.add('d-flex');
+    }
+    if (filterBtn) filterBtn.classList.add('d-none');
     if (filterCollapse) {
       const bsCollapse = bootstrap.Collapse.getInstance(filterCollapse);
       if (bsCollapse) bsCollapse.hide();
+    }
+    if (viewInfo) {
+      viewInfo.textContent = publicCurrentView === 'folders-cards'
+        ? 'Browse folders, then review matching documents as cards.'
+        : 'Browse folders by tag and classification.';
+    }
+    if (publicSelectionMode) {
+      togglePublicSelectionMode();
     }
     if (bulkBar) bulkBar.style.display = 'none';
     renderPublicGridView();
@@ -1932,20 +2720,37 @@ function buildPublicFolderDocumentsTable(docs) {
     }
     return 'bi-arrow-down-up text-muted';
   }
-  let html = '<table class="table table-striped table-sm" id="public-folder-docs-table"><thead><tr>';
+  const selectionModeClass = publicSelectionMode ? ' selection-mode' : '';
+  let html = `<table class="table table-striped table-sm${selectionModeClass}" id="public-folder-docs-table"><thead><tr>`;
+  html += '<th style="width:50px;"><input type="checkbox" class="form-check-input document-select-all-checkbox" aria-label="Select all visible public folder documents" /></th>';
   html += `<th class="folder-sortable-header" data-sort-field="file_name" style="cursor:pointer;user-select:none;">File Name <i class="bi ${getSortIcon('file_name')} small"></i></th>`;
   html += `<th class="folder-sortable-header" data-sort-field="title" style="cursor:pointer;user-select:none;">Title <i class="bi ${getSortIcon('title')} small"></i></th>`;
   html += '<th>Actions</th></tr></thead><tbody>';
+  const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
   docs.forEach(doc => {
     const pctString = String((doc.percentage_complete ?? doc.percentage) || '0');
     const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
     const docStatus = doc.status || '';
     const isComplete = pct >= 100 || docStatus.toLowerCase().includes('complete') || docStatus.toLowerCase().includes('error');
     const hasError = docStatus.toLowerCase().includes('error') || docStatus.toLowerCase().includes('failed');
+    const isSelected = publicSelectedDocuments.has(doc.id);
+    let firstColHtml = `<input type="checkbox" class="form-check-input document-checkbox${publicSelectionMode ? '' : ' d-none'}" data-document-id="${doc.id}"${isSelected ? ' checked' : ''}>`;
     let actionsHtml = '';
 
     if (isComplete && !hasError) {
-      actionsHtml = `<button class="btn btn-sm btn-primary" onclick="searchPublicDocumentInChat('${doc.id}')" title="Chat"><i class="bi bi-chat-dots-fill me-1"></i>Chat</button>`;
+      actionsHtml = `<button class="btn btn-sm btn-primary me-1" onclick="searchPublicDocumentInChat('${doc.id}')" title="Chat"><i class="bi bi-chat-dots-fill me-1"></i>Chat</button>
+        <div class="dropdown action-dropdown d-inline-block">
+          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-three-dots-vertical"></i></button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><a class="dropdown-item" href="#" onclick="togglePublicSelectionMode(); return false;"><i class="bi bi-check-square me-2"></i>Select</a></li>
+            <li><a class="dropdown-item" href="#" onclick="searchPublicDocumentInChat('${doc.id}'); return false;"><i class="bi bi-chat-dots-fill me-2"></i>Chat</a></li>`;
+      if (canManage) {
+        actionsHtml += `<li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;"><i class="bi bi-pencil-fill me-2"></i>Edit Metadata</a></li>
+            <li><a class="dropdown-item" href="#" onclick="window.onExtractPublicMetadata('${doc.id}', event); return false;"><i class="bi bi-magic me-2"></i>Extract Metadata</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item text-danger" href="#" onclick="deletePublicDocument('${doc.id}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>`;
+      }
+      actionsHtml += '</ul></div>';
     } else if (hasError) {
       actionsHtml = `<span class="text-danger small">${escapeHtml(docStatus || 'Processing error')}</span>`;
     } else {
@@ -1953,6 +2758,7 @@ function buildPublicFolderDocumentsTable(docs) {
     }
 
     html += `<tr>
+      <td>${firstColHtml}</td>
       <td title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
       <td title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
       <td>${actionsHtml}</td>
@@ -1960,6 +2766,15 @@ function buildPublicFolderDocumentsTable(docs) {
   });
   html += '</tbody></table>';
   return html;
+}
+
+function buildPublicFolderDocumentsCardsHtml() {
+  return '<div id="public-folder-documents-card-view" class="row g-3"></div>';
+}
+
+function renderPublicFolderDocumentCards(docs) {
+  const cardContainer = document.getElementById('public-folder-documents-card-view');
+  renderPublicDocumentCards(docs, cardContainer);
 }
 
 function renderPublicFolderPagination(page, pageSize, totalCount) {
@@ -1988,7 +2803,10 @@ async function renderPublicFolderContents(tagName) {
   const container = document.getElementById('public-tag-folders-container');
   if (!container) return;
   const gridControls = document.getElementById('public-grid-controls-bar');
-  if (gridControls) gridControls.style.display = 'none';
+  if (gridControls) {
+    gridControls.classList.add('d-none');
+    gridControls.classList.remove('d-flex');
+  }
   container.className = '';
 
   const isClassification = (publicCurrentFolderType === 'classification');
@@ -2003,7 +2821,7 @@ async function renderPublicFolderContents(tagName) {
   }
 
   const viewInfo = document.getElementById('public-docs-view-info');
-  if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
+  //if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
 
   container.innerHTML = buildPublicBreadcrumbHtml(displayName, tagColor, publicCurrentFolderType || 'tag') +
     '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>Loading documents...</div>';
@@ -2072,13 +2890,20 @@ async function renderPublicFolderContents(tagName) {
     if (docs.length === 0) {
       html += '<div class="text-center text-muted py-4"><i class="bi bi-folder2-open display-4 d-block mb-2"></i><p>No documents found in this folder.</p></div>';
     } else {
-      html += buildPublicFolderDocumentsTable(docs);
+      html += publicCurrentView === 'folders-cards'
+        ? buildPublicFolderDocumentsCardsHtml()
+        : buildPublicFolderDocumentsTable(docs);
       html += '<div id="public-folder-pagination" class="d-flex justify-content-center mt-3"></div>';
     }
 
     container.innerHTML = html;
     wirePublicBackButton(container);
-  wirePublicFolderGeneratedArtifactApproveButtons(docs);
+    if (publicCurrentView === 'folders-cards' && docs.length > 0) {
+      renderPublicFolderDocumentCards(docs);
+    } else {
+      wirePublicFolderGeneratedArtifactApproveButtons(docs);
+    }
+    syncPublicSelectionModeUI();
 
     const si = document.getElementById('public-folder-search-input');
     const sb = document.getElementById('public-folder-search-btn');
@@ -2128,7 +2953,7 @@ function renamePublicTag(tagName) {
     body: JSON.stringify({ new_name: newName.trim() })
   }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
     .then(({ ok, data }) => {
-      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid') renderPublicGridView(); else fetchPublicDocs(); }
+      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); else fetchPublicDocs(); }
       else alert('Error: ' + (data.error || 'Failed to rename'));
     }).catch(e => { console.error(e); alert('Error renaming tag'); });
 }
@@ -2142,7 +2967,7 @@ function changePublicTagColor(tagName, currentColor) {
     body: JSON.stringify({ color: newColor.trim() })
   }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
     .then(({ ok, data }) => {
-      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid') renderPublicGridView(); }
+      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); }
       else alert('Error: ' + (data.error || 'Failed to change color'));
     }).catch(e => { console.error(e); alert('Error changing tag color'); });
 }
@@ -2152,7 +2977,7 @@ function deletePublicTag(tagName) {
   fetch(`/api/public_workspace_documents/tags/${encodeURIComponent(tagName)}`, { method: 'DELETE' })
     .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
     .then(({ ok, data }) => {
-      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid') renderPublicGridView(); else fetchPublicDocs(); }
+      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); else fetchPublicDocs(); }
       else alert('Error: ' + (data.error || 'Failed to delete'));
     }).catch(e => { console.error(e); alert('Error deleting tag'); });
 }
@@ -2508,9 +3333,15 @@ window.loadPublicWorkspaceTags = loadPublicWorkspaceTags;
 
   // Load saved view preference
   const savedView = localStorage.getItem('publicWorkspaceViewPreference');
-  if (savedView === 'grid') {
+  if (savedView === 'cards') {
+    const cardsRadio = document.getElementById('public-docs-view-cards');
+    if (cardsRadio) { cardsRadio.checked = true; switchPublicView('cards'); }
+  } else if (savedView === 'grid') {
     const gridRadio = document.getElementById('public-docs-view-grid');
     if (gridRadio) { gridRadio.checked = true; switchPublicView('grid'); }
+  } else if (savedView === 'folders-cards') {
+    const foldersCardsRadio = document.getElementById('public-docs-view-folders-cards');
+    if (foldersCardsRadio) { foldersCardsRadio.checked = true; switchPublicView('folders-cards'); }
   }
 
   // Wire sortable headers in list view
@@ -2756,7 +3587,7 @@ async function handlePublicAddOrSaveTag() {
         publicCancelEditMode();
         await loadPublicWorkspaceTags();
         refreshPublicTagManagementTable();
-        if (publicCurrentView === 'grid') renderPublicGridView();
+        if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView();
       } else { alert('Error: ' + (data.error || 'Failed to update tag')); }
     } catch (e) { console.error(e); alert('Error updating tag'); }
   } else {
@@ -2773,7 +3604,7 @@ async function handlePublicAddOrSaveTag() {
         colorInput.value = '#0d6efd';
         await loadPublicWorkspaceTags();
         refreshPublicTagManagementTable();
-        if (publicCurrentView === 'grid') renderPublicGridView();
+        if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView();
       } else { alert('Error: ' + (data.error || 'Failed to create tag')); }
     } catch (e) { console.error(e); alert('Error creating tag'); }
   }

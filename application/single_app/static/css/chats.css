@@ -82,16 +82,26 @@
   margin-bottom: 0.125rem;
 }
 
-#document-dropdown .dropdown-menu {
-  width: auto;
-  min-width: 400px; /* Increased width as requested */
-  max-width: 400px; /* Increased width as requested */
-  max-height: 60vh; /* Use viewport height for better adaptation */
+#scope-dropdown-menu,
+#tags-dropdown-menu,
+#document-dropdown-menu {
+  max-height: min(420px, calc(100vh - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
   overflow: hidden;
+}
+
+#scope-dropdown-menu,
+#tags-dropdown-menu {
+  width: min(22rem, calc(100vw - 1.25rem));
+}
+
+#document-dropdown .dropdown-menu {
+  left: auto;
+  min-width: min(32rem, calc(100vw - 1.25rem));
   padding: 8px;
   position: absolute;
-  left: 0 !important; /* Keep it aligned to the left of its container */
-  right: auto !important; /* Prevent right positioning */
+  right: 0;
+  width: min(32rem, calc(100vw - 1.25rem));
 }
 
 .chat-search-panel {
@@ -107,6 +117,16 @@
 
 .chat-search-panel-field {
   min-width: 0;
+}
+
+.chat-search-panel-field > .dropdown,
+.chat-search-panel-field > .form-select {
+  width: 100%;
+}
+
+.chat-search-panel-field-wide {
+  flex-basis: 32rem;
+  max-width: none !important;
 }
 
 .chat-search-panel-comparison-row {
@@ -186,6 +206,17 @@
 @media (min-width: 992px) {
   .chat-search-panel .offcanvas-header {
     display: none;
+  }
+
+  .chat-search-panel-grid {
+    display: grid;
+    grid-template-columns: minmax(6.75rem, 8.5rem) minmax(7rem, 9rem) minmax(10rem, 14rem) minmax(14rem, 1fr);
+  }
+
+  .chat-search-panel-grid > .chat-search-panel-field {
+    max-width: none !important;
+    min-width: 0 !important;
+    width: 100%;
   }
 }
 
@@ -399,11 +430,6 @@
   background-color: transparent;
 }
 
-#scope-dropdown-menu,
-#tags-dropdown-menu {
-  overflow: hidden !important;
-}
-
 @media (max-width: 1200px) {
   .chat-toolbar {
     flex-wrap: wrap;
@@ -488,6 +514,7 @@
   #document-dropdown .dropdown-menu,
   #scope-dropdown-menu,
   #tags-dropdown-menu {
+    max-height: min(420px, calc(100vh - 1.25rem));
     max-width: none;
     min-width: 0;
     width: 100% !important;
@@ -650,7 +677,7 @@
 }
 
 #tags-dropdown-items {
-  max-height: 220px;
+  max-height: 320px;
   overflow-y: auto;
 }
 
@@ -662,7 +689,8 @@
 
 /* Document dropdown items must be explicitly displayed */
 #document-dropdown .dropdown-item {
-  display: block !important;
+  align-items: center;
+  display: flex;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -673,13 +701,17 @@
   max-width: 100%; /* Ensure items don't exceed container width */
 }
 
-/* Only hide when explicitly told to */
+#document-dropdown .dropdown-item[data-search-role="action"] {
+  display: block;
+}
+
+#document-dropdown .dropdown-item.d-none,
 #document-dropdown .dropdown-item[data-filtered="hidden"] {
   display: none !important;
 }
 
 #document-dropdown .dropdown-items-container {
-  max-height: 55vh; /* A bit less than the menu to leave room for search */
+  max-height: 320px;
   overflow-y: auto;
   padding: 0;
   width: 100%; /* Take full width of parent */
@@ -732,15 +764,20 @@
 }
 
 #document-dropdown-items .dropdown-item {
+  align-items: center;
+  display: flex;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
   padding: 0.5rem 1rem;
-  display: block;
   width: 100%; /* Ensure items take full width of their container */
   text-align: left;
   max-width: 100%; /* Ensure items don't exceed container width */
+}
+
+#document-dropdown-items .dropdown-item.d-none {
+  display: none !important;
 }
 
 #document-dropdown-items .dropdown-item.active {

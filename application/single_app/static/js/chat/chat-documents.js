@@ -72,6 +72,7 @@ const documentSearchController = initializeFilterableDropdownSearch({
   itemsContainerEl: docDropdownItems,
   emptyMessage: 'No matching documents found',
   isAlwaysVisibleItem: item => item.getAttribute('data-search-role') === 'action',
+  onFilterApplied: () => updateDocumentDropdownActionState(),
 });
 
 const scopeSearchController = initializeFilterableDropdownSearch({
@@ -200,6 +201,12 @@ function refreshDocumentsAndTags({ source = null, showLoading = true } = {}) {
 
 const SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING = 10;
 const SEARCH_FILTER_DROPDOWN_FLIP_THRESHOLD = 180;
+const SEARCH_FILTER_DROPDOWN_MAX_HEIGHT = 420;
+const SEARCH_FILTER_DROPDOWN_WIDTHS = {
+  'scope-dropdown-menu': 360,
+  'tags-dropdown-menu': 360,
+  'document-dropdown-menu': 520,
+};
 
 function getSearchFilterDropdownViewportSpace(buttonEl) {
   if (!buttonEl) {
@@ -281,18 +288,34 @@ function getSearchFilterDropdownAvailableHeight(buttonEl, menuEl) {
   return viewportSpace.below;
 }
 
+function getSearchFilterDropdownWidth(buttonEl, menuEl) {
+  const fieldContainer = buttonEl.closest('.chat-search-panel-field');
+  const containerWidth = fieldContainer ? fieldContainer.offsetWidth : buttonEl.offsetWidth || 280;
+  const viewportMaxWidth = Math.max(0, window.innerWidth - (SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING * 2));
+
+  if (isSearchDocumentsMobileDrawerViewport() || menuEl.closest('.document-comparison-picker-controls')) {
+    return Math.min(containerWidth, viewportMaxWidth || containerWidth);
+  }
+
+  const preferredWidth = SEARCH_FILTER_DROPDOWN_WIDTHS[menuEl.id] || containerWidth;
+  return Math.min(Math.max(containerWidth, preferredWidth), viewportMaxWidth || preferredWidth);
+}
+
 function sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl) {
   if (!buttonEl || !menuEl) {
     return;
   }
 
-  const fieldContainer = buttonEl.closest('.chat-search-panel-field');
-  const containerWidth = fieldContainer ? fieldContainer.offsetWidth : buttonEl.offsetWidth || 280;
+  const menuWidth = Math.floor(getSearchFilterDropdownWidth(buttonEl, menuEl));
+  const menuHeight = Math.floor(Math.min(
+    getSearchFilterDropdownAvailableHeight(buttonEl, menuEl),
+    SEARCH_FILTER_DROPDOWN_MAX_HEIGHT
+  ));
 
-  menuEl.style.width = `${containerWidth}px`;
-  menuEl.style.minWidth = `${containerWidth}px`;
-  menuEl.style.maxWidth = `${containerWidth}px`;
-  menuEl.style.maxHeight = `${Math.floor(getSearchFilterDropdownAvailableHeight(buttonEl, menuEl))}px`;
+  menuEl.style.width = `${menuWidth}px`;
+  menuEl.style.minWidth = `${menuWidth}px`;
+  menuEl.style.maxWidth = `${menuWidth}px`;
+  menuEl.style.maxHeight = `${Math.max(0, menuHeight)}px`;
   menuEl.style.overflowY = 'hidden';
   menuEl.style.zIndex = '1060';
 
@@ -1079,17 +1102,108 @@ function getSelectableDocumentOptions() {
   return Array.from(docSelectEl.options).filter(option => option.value && !option.disabled);
 }
 
+function getDocumentOptionById(documentId) {
+  if (!docSelectEl || !documentId) {
+    return null;
+  }
+
+  return Array.from(docSelectEl.options).find(option => option.value === documentId) || null;
+}
+
+function isDocumentSearchFilterActive() {
+  return Boolean(docSearchInput && docSearchInput.value.trim());
+}
+
+function isDocumentDropdownItemVisible(item) {
+  return Boolean(
+    item
+    && !item.classList.contains('d-none')
+    && item.getAttribute('data-filtered') !== 'hidden'
+  );
+}
+
+function getVisibleSearchedDocumentIds() {
+  if (!docDropdownItems || !isDocumentSearchFilterActive()) {
+    return [];
+  }
+
+  const seenDocumentIds = new Set();
+  const visibleDocumentIds = [];
+
+  docDropdownItems.querySelectorAll('.dropdown-item[data-search-role="item"][data-document-id]').forEach(item => {
+    const documentId = item.getAttribute('data-document-id');
+    const option = getDocumentOptionById(documentId);
+
+    if (!documentId || seenDocumentIds.has(documentId) || !option || option.disabled || !isDocumentDropdownItemVisible(item)) {
+      return;
+    }
+
+    seenDocumentIds.add(documentId);
+    visibleDocumentIds.push(documentId);
+  });
+
+  return visibleDocumentIds;
+}
+
+function areDocumentIdsSelected(documentIds) {
+  return documentIds.length > 0 && documentIds.every(documentId => {
+    const option = getDocumentOptionById(documentId);
+    return Boolean(option && option.selected);
+  });
+}
+
 function areAllSelectableDocumentsSelected() {
   const selectableDocumentOptions = getSelectableDocumentOptions();
   return selectableDocumentOptions.length > 0 && selectableDocumentOptions.every(option => option.selected);
 }
 
-function getDocumentDropdownActionLabel() {
-  if (!isExplicitDocumentSelectionMode()) {
-    return "All Documents";
+function getDocumentDropdownActionState() {
+  if (isDocumentSearchFilterActive()) {
+    const searchedDocumentIds = getVisibleSearchedDocumentIds();
+    const allSearchedDocumentsSelected = areDocumentIdsSelected(searchedDocumentIds);
+
+    if (searchedDocumentIds.length === 0) {
+      return {
+        disabled: true,
+        documentIds: [],
+        label: 'No Matching Documents',
+        mode: 'searched',
+        shouldClearSelections: false,
+      };
+    }
+
+    return {
+      disabled: false,
+      documentIds: searchedDocumentIds,
+      label: allSearchedDocumentsSelected ? 'Clear Searched' : 'Select All Searched',
+      mode: 'searched',
+      shouldClearSelections: allSearchedDocumentsSelected,
+    };
   }
 
-  return areAllSelectableDocumentsSelected() ? "Clear Selected Documents" : "Select All Documents";
+  if (!isExplicitDocumentSelectionMode()) {
+    return {
+      disabled: false,
+      documentIds: [],
+      label: 'All Documents',
+      mode: 'all-documents',
+      shouldClearSelections: true,
+    };
+  }
+
+  const allSelectableDocumentsSelected = areAllSelectableDocumentsSelected();
+
+  return {
+    disabled: false,
+    documentIds: getSelectableDocumentOptions().map(option => option.value),
+    label: allSelectableDocumentsSelected ? 'Clear Selected Documents' : 'Select All Documents',
+    mode: 'all-selectable',
+    shouldClearSelections: allSelectableDocumentsSelected,
+  };
+}
+
+function getDocumentDropdownActionLabel() {
+  return getDocumentDropdownActionState().label;
 }
 
 function updateDocumentDropdownActionState() {
@@ -1106,8 +1220,56 @@ function updateDocumentDropdownActionState() {
     const actionItem = docDropdownItems.querySelector('.dropdown-item[data-document-id=""]');
     if (actionItem) {
       actionItem.textContent = actionLabel;
+      const actionState = getDocumentDropdownActionState();
+      actionItem.disabled = actionState.disabled;
+      actionItem.classList.toggle('disabled', actionState.disabled);
+      actionItem.setAttribute('aria-disabled', String(actionState.disabled));
     }
   }
+}
+
+function applyDocumentSelectionForIds(documentIds, { clearMatchingDocuments = false, replaceSelection = false } = {}) {
+  const targetDocumentIds = new Set(documentIds);
+
+  if (docDropdownItems) {
+    docDropdownItems.querySelectorAll('.dropdown-item[data-document-id]').forEach(dropdownItem => {
+      const documentId = dropdownItem.getAttribute('data-document-id');
+      const checkbox = dropdownItem.querySelector('.doc-checkbox');
+
+      if (!checkbox || !documentId) {
+        return;
+      }
+
+      if (clearMatchingDocuments) {
+        if (targetDocumentIds.has(documentId)) {
+          checkbox.checked = false;
+        }
+        return;
+      }
+
+      checkbox.checked = replaceSelection ? targetDocumentIds.has(documentId) : checkbox.checked || targetDocumentIds.has(documentId);
+    });
+  }
+
+  if (!docSelectEl) {
+    return;
+  }
+
+  Array.from(docSelectEl.options).forEach(option => {
+    if (!option.value) {
+      option.selected = false;
+      return;
+    }
+
+    if (clearMatchingDocuments) {
+      if (targetDocumentIds.has(option.value)) {
+        option.selected = false;
+      }
+      return;
+    }
+
+    option.selected = replaceSelection ? targetDocumentIds.has(option.value) : option.selected || targetDocumentIds.has(option.value);
+  });
 }
 
 /* ---------------------------------------------------------------------------
@@ -2114,9 +2276,20 @@ if (docDropdownItems) {
 
     const docId = item.getAttribute('data-document-id');
 
-    // The top picker action clears in search mode and toggles select-all in document action mode.
+    // The top picker action follows the active document search when present.
     if (docId === '' || docId === null) {
-      if (isExplicitDocumentSelectionMode()) {
+      const actionState = getDocumentDropdownActionState();
+
+      if (actionState.disabled) {
+        return;
+      }
+
+      if (actionState.mode === 'searched') {
+        applyDocumentSelectionForIds(actionState.documentIds, {
+          clearMatchingDocuments: actionState.shouldClearSelections,
+          replaceSelection: !actionState.shouldClearSelections,
+        });
+      } else if (isExplicitDocumentSelectionMode()) {
         const selectableDocumentIds = new Set(getSelectableDocumentOptions().map(option => option.value));
         const shouldClearSelections = areAllSelectableDocumentsSelected();
 

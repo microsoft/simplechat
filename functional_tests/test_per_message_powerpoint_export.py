@@ -2,13 +2,16 @@
 # test_per_message_powerpoint_export.py
 """
 Functional test for per-message PowerPoint export.
-Version: 0.241.105
-Implemented in: 0.241.105
+Version: 0.241.033
+Implemented in: 0.241.033
 
 This test ensures the message export flow exposes a PowerPoint route,
 uses the frontend PowerPoint action hook, prefers the message model
 deployment for AI slide planning, and produces a valid .pptx deck with
-appendix slides for visuals, tables, code, and references.
+appendix slides for visuals, tables, code, and references. It also
+ensures already structured markdown slide decks are exported without
+AI summarization or slide-count compression. It also ensures generated
+Markdown artifacts can be used as the PowerPoint export source.
 """
 
 import ast
@@ -92,10 +95,48 @@ def _collect_slide_titles(presentation: Presentation) -> List[str]:
     return titles
 
 
+def _collect_slide_text(presentation: Presentation) -> str:
+    text_parts = []
+    for slide in presentation.slides:
+        for shape in slide.shapes:
+            if getattr(shape, 'has_text_frame', False):
+                text_parts.append(shape.text)
+            if getattr(shape, 'has_table', False):
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        text_parts.append(cell.text)
+    return '\n'.join(text_parts)
+
+
 def _load_powerpoint_helpers():
     helper_names = {
         '_message_to_pptx_bytes',
         '_sanitize_powerpoint_source_content',
+        '_load_powerpoint_export_message_for_user',
+        '_load_generated_markdown_artifact_for_user',
+        '_parse_powerpoint_requested_slide_count',
+        '_resolve_powerpoint_slide_count',
+        '_build_structured_markdown_powerpoint_plan',
+        '_extract_powerpoint_structured_slide_sections',
+        '_extract_powerpoint_numbered_slide_sections',
+        '_extract_powerpoint_separator_slide_sections',
+        '_match_powerpoint_slide_marker',
+        '_resolve_powerpoint_slide_title_and_content',
+        '_extract_powerpoint_preamble_title',
+        '_is_powerpoint_slide_separator',
+        '_looks_like_powerpoint_front_matter_block',
+        '_is_powerpoint_title_section',
+        '_build_powerpoint_title_metadata_from_section',
+        '_extract_powerpoint_title_section_lines',
+        '_build_powerpoint_slide_footer_label',
+        '_trim_powerpoint_structured_section_content',
+        '_is_powerpoint_non_slide_tail_marker',
+        '_extract_structured_powerpoint_bullets',
+        '_extract_structured_powerpoint_tables',
+        '_parse_powerpoint_markdown_table_block',
+        '_split_powerpoint_markdown_table_line',
+        '_is_powerpoint_markdown_table_separator_row',
+        '_clean_powerpoint_markdown_table_cell',
         '_build_message_powerpoint_plan',
         '_build_fallback_powerpoint_plan',
         '_extract_message_powerpoint_model',
@@ -118,6 +159,7 @@ def _load_powerpoint_helpers():
         '_extract_powerpoint_code_blocks',
         '_add_powerpoint_title_slide',
         '_add_powerpoint_content_slide',
+        '_add_powerpoint_inline_table',
         '_append_powerpoint_appendix_slides',
         '_add_powerpoint_image_slide',
         '_fit_powerpoint_image',
@@ -139,6 +181,8 @@ def _load_powerpoint_helpers():
     assert not missing_names, f"Missing PowerPoint helpers in route file: {sorted(missing_names)}"
 
     requested_models: List[str] = []
+    artifact_lookup_messages: Dict[str, Dict[str, Any]] = {}
+    artifact_download_requests: List[Tuple[str, str]] = []
 
     class _FakeCompletions:
         def create(self, model, messages):
@@ -177,6 +221,16 @@ def _load_powerpoint_helpers():
         requested_models.append(requested_model or '')
         return _FakeClient(), requested_model or 'fallback-model'
 
+    def _fake_load_export_message_for_user(user_id, conversation_id, message_id):
+        message = artifact_lookup_messages.get(message_id)
+        if not message:
+            raise LookupError('Message not found')
+        return dict(message)
+
+    def _fake_download_blob_content(container_name, blob_path):
+        artifact_download_requests.append((container_name, blob_path))
+        return b'# Artifact Deck\n\n## Slide 1 - Title\nArtifact title'
+
     module = ast.Module(body=selected_nodes, type_ignores=[])
     ast.fix_missing_locations(module)
 
@@ -202,8 +256,13 @@ def _load_powerpoint_helpers():
         'PptxPt': PptxPt,
         'DOCX_MARKDOWN_EXTRAS': ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike'],
         'POWERPOINT_PLAN_SOURCE_CHAR_LIMIT': 24000,
-        'POWERPOINT_MAX_SLIDES': 7,
+        'POWERPOINT_DEFAULT_SLIDES': 7,
+        'POWERPOINT_MAX_SLIDES': 30,
+        'POWERPOINT_MAX_STRUCTURED_SLIDES': 60,
         'POWERPOINT_MAX_BULLETS_PER_SLIDE': 5,
+        'POWERPOINT_MAX_STRUCTURED_BULLETS_PER_SLIDE': 12,
+        'POWERPOINT_BULLET_CHAR_LIMIT': 120,
+        'POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT': 180,
         'POWERPOINT_MAX_APPENDIX_IMAGES': 4,
         'POWERPOINT_MAX_APPENDIX_TABLES': 3,
         'POWERPOINT_MAX_APPENDIX_CODE_BLOCKS': 2,
@@ -221,6 +280,8 @@ def _load_powerpoint_helpers():
             re.IGNORECASE,
         ),
         '_normalize_content': _normalize_content,
+        '_load_export_message_for_user': _fake_load_export_message_for_user,
+        'download_blob_content': _fake_download_blob_content,
         '_role_to_label': lambda role: {
             'assistant': 'Assistant',
             'user': 'User',
@@ -235,6 +296,8 @@ def _load_powerpoint_helpers():
         '_initialize_gpt_client': _fake_initialize_gpt_client,
         'debug_print': lambda *args, **kwargs: None,
         'log_event': lambda *args, **kwargs: None,
+        '_artifact_lookup_messages': artifact_lookup_messages,
+        '_artifact_download_requests': artifact_download_requests,
     }
 
     exec(compile(module, str(ROUTE_FILE), 'exec'), namespace)
@@ -304,8 +367,60 @@ def test_powerpoint_frontend_hooks_present() -> bool:
     assert "fetch('/api/message/export-powerpoint'" in frontend_source, 'Expected frontend fetch for the PowerPoint export endpoint'
     assert 'exportMessageAsPowerPoint' in frontend_source, 'Expected frontend PowerPoint export helper'
     assert 'dropdown-export-ppt-btn' in menu_source, 'Expected chat message menu PowerPoint action'
+    assert 'artifact_message_id' in frontend_source, 'Expected PowerPoint export request to support artifact_message_id'
+    assert 'generated-artifact-export-ppt-btn' in menu_source, 'Expected generated Markdown artifact PowerPoint action'
 
     print("PASS: frontend PowerPoint hooks present")
+    return True
+
+
+def test_powerpoint_export_can_use_generated_markdown_artifact_source() -> bool:
+    """Generated Markdown artifact exports should load artifact blob content."""
+    print("Testing generated Markdown artifact PowerPoint source loading...")
+
+    helpers, _ = _load_powerpoint_helpers()
+    lookup_messages = helpers['_artifact_lookup_messages']
+    download_requests = helpers['_artifact_download_requests']
+    lookup_messages.update({
+        'assistant-message': {
+            'id': 'assistant-message',
+            'conversation_id': 'conversation-1',
+            'role': 'assistant',
+            'content': 'Short assistant preview only.',
+            'timestamp': '2026-05-16T12:00:00Z',
+            'metadata': {},
+        },
+        'artifact-message': {
+            'id': 'artifact-message',
+            'conversation_id': 'conversation-1',
+            'role': 'file',
+            'filename': 'generated-deck.md',
+            'file_content_source': 'blob',
+            'blob_container': 'chat-container',
+            'blob_path': 'user/conversation/generated/generated-deck.md',
+            'timestamp': '2026-05-16T12:01:00Z',
+            'metadata': {
+                'is_generated_chat_artifact': True,
+                'generated_artifact_output_format': 'md',
+            },
+        },
+    })
+
+    export_message = helpers['_load_powerpoint_export_message_for_user'](
+        user_id='user-1',
+        conversation_id='conversation-1',
+        message_id='assistant-message',
+        artifact_message_id='artifact-message',
+    )
+
+    assert export_message['role'] == 'assistant', 'Artifact-backed exports should render as assistant content'
+    assert export_message['content'].startswith('# Artifact Deck'), 'Expected artifact blob content as export source'
+    assert export_message['timestamp'] == '2026-05-16T12:01:00Z', 'Expected artifact timestamp on export source'
+    assert export_message['metadata']['powerpoint_export_source'] == 'generated_markdown_artifact'
+    assert export_message['metadata']['powerpoint_export_artifact_message_id'] == 'artifact-message'
+    assert download_requests == [('chat-container', 'user/conversation/generated/generated-deck.md')]
+
+    print("PASS: PowerPoint export can use generated Markdown artifact source")
     return True
 
 
@@ -363,11 +478,140 @@ def test_powerpoint_export_prefers_message_model_and_renders_appendix() -> bool:
     return True
 
 
+def test_structured_markdown_powerpoint_export_preserves_slide_count() -> bool:
+    """Structured markdown decks should bypass AI planning and preserve slide count."""
+    print("Testing structured markdown PowerPoint export preservation...")
+
+    helpers, requested_models = _load_powerpoint_helpers()
+    content_lines = [
+        'Here is a polished PowerPoint-ready version of your draft.',
+        '',
+        '---',
+        '',
+        "# FAA FY 2026 President's Budget Submission",
+        '**Source:** *FAA_FY_2026_Budget_Estimates_CJ.pdf*',
+        '**Basis:** Consolidated review of provided pages **1-385**',
+        '',
+        '---',
+        '',
+        '## Slide 1 \u2014 Title',
+        "**FAA FY 2026 President's Budget Submission**",
+        '*FAA_FY_2026_Budget_Estimates_CJ.pdf*',
+        'Consolidated review of pages **1-385**',
+        '',
+        '---',
+        '',
+    ]
+
+    for index in range(2, 33):
+        if index == 3:
+            content_lines.extend([
+                '## Slide 3 \u2014 Top-Line Budget by Account',
+                '### FY 2026 Request',
+                '',
+                '| Account | FY 2026 Request |',
+                '|---|---:|',
+                '| Operations | **$13.842B** |',
+                '| Facilities & Equipment | **$4.000B** |',
+                '| Research, Engineering & Development | **$165.0M** |',
+                '| Grants-in-Aid for Airports | **$4.000B** |',
+                '',
+                '### Total with IIJA / All Appropriations',
+                '- **$27.005B**',
+                '',
+                '---',
+                '',
+            ])
+            continue
+
+        content_lines.extend([
+            f'## Slide {index} \u2014 Topic {index}',
+            '',
+            f'- Key detail for slide {index}',
+            f'- Supporting evidence for slide {index}',
+            '',
+            '---',
+            '',
+        ])
+
+    content_lines.extend([
+        '# Optional Speaker Notes Summary',
+        'This should not become slide content.',
+        '',
+        '# Coverage Caveat',
+        'This should also stay out of the exported deck.',
+        '',
+        'If you want, I can also turn this into a shorter executive briefing.',
+    ])
+
+    message = {
+        'role': 'assistant',
+        'timestamp': '2026-05-16T12:00:00Z',
+        'model_deployment_name': 'gpt-4o-mini',
+        'content': '\n'.join(content_lines),
+        'citations': [
+            {'title': 'Large source presentation'},
+            {'title': 'Supporting notes'},
+        ],
+    }
+
+    pptx_bytes = helpers['_message_to_pptx_bytes'](
+        message,
+        {'gpt_model': {'selected': [{'deploymentName': 'fallback-model'}]}},
+    )
+
+    assert requested_models == [], f'Structured markdown should not call AI planning, found {requested_models}'
+
+    presentation = Presentation(io.BytesIO(pptx_bytes))
+    slide_titles = _collect_slide_titles(presentation)
+    slide_text = _collect_slide_text(presentation)
+
+    assert len(presentation.slides) == 32, f'Expected exactly 32 structured slides, found {len(presentation.slides)}'
+    assert slide_titles[0] == "FAA FY 2026 President's Budget Submission", f'Unexpected title slide text: {slide_titles[0]}'
+    assert slide_titles[1] == 'Topic 2', f'Unexpected first content slide title: {slide_titles[1]}'
+    assert slide_titles[2] == 'Top-Line Budget by Account', f'Unexpected table slide title: {slide_titles[2]}'
+    assert slide_titles[-1] == 'Topic 32', f'Unexpected final slide title: {slide_titles[-1]}'
+    assert any(shape.has_table for shape in presentation.slides[2].shapes), 'Expected native table on Slide 3'
+    assert 'Operations' in slide_text and '$13.842B' in slide_text, 'Expected table content in exported deck'
+    assert 'Slide 32' in slide_text, 'Expected authored slide number in footer text'
+    assert 'Optional Speaker Notes Summary' not in slide_text, 'Speaker notes tail should not be exported'
+    assert 'If you want' not in slide_text, 'Follow-up offer text should not be exported'
+
+    print("PASS: structured markdown deck exported without slide-count compression")
+    return True
+
+
+def test_powerpoint_slide_count_request_validation() -> bool:
+    """Optional slide_count should accept bounded integers and reject invalid values."""
+    print("Testing PowerPoint slide count request validation...")
+
+    helpers, _ = _load_powerpoint_helpers()
+    parse_slide_count = helpers['_parse_powerpoint_requested_slide_count']
+
+    assert parse_slide_count(None) is None, 'Missing slide_count should keep default behavior'
+    assert parse_slide_count('15') == 15, 'String slide_count should parse to an integer'
+    assert parse_slide_count(30) == 30, 'Maximum supported slide_count should be accepted'
+
+    invalid_values = ['0', '31', '2.5', True, {'slides': 15}]
+    for invalid_value in invalid_values:
+        try:
+            parse_slide_count(invalid_value)
+        except ValueError:
+            continue
+        raise AssertionError(f'Expected slide_count={invalid_value!r} to be rejected')
+
+    print("PASS: PowerPoint slide count validation is bounded and explicit")
+    return True
+
+
 if __name__ == '__main__':
     tests = [
         test_export_powerpoint_route_definition_present,
         test_powerpoint_frontend_hooks_present,
+        test_powerpoint_export_can_use_generated_markdown_artifact_source,
         test_powerpoint_export_prefers_message_model_and_renders_appendix,
+        test_structured_markdown_powerpoint_export_preserves_slide_count,
+        test_powerpoint_slide_count_request_validation,
     ]
 
     results = []

@@ -646,8 +646,15 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <label class="btn btn-outline-secondary" for="group-docs-view-grid">
               <i class="bi bi-folder2-open"></i> Folders
             </label>
+            <input type="radio" class="btn-check" name="group-docs-view-mode" id="group-docs-view-folders-cards" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="group-docs-view-folders-cards">
+              <i class="bi bi-folder-symlink"></i> Folders + Cards
+            </label>
           </div>
           <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="group-toggle-selection-btn">
+              <i class="bi bi-check2-square me-1"></i>Multi-select
+            </button>
             <button type="button" class="btn btn-sm btn-outline-primary" id="group-manage-tags-btn">
               <i class="bi bi-tags me-1"></i>Manage Tags
             </button>
@@ -805,14 +812,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
           You do not have permission to manage group prompts.
         </div>
 
-        <!-- Button to open modal -->
-        <div
-          id="create-group-prompt-section"
-          class="mb-3 d-none"
-        >
-          <button id="create-group-prompt-btn" class="btn btn-success btn-sm">
-            New Prompt
-          </button>
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+          <!-- Button to open modal -->
+          <div
+            id="create-group-prompt-section"
+            class="d-none"
+          >
+            <button id="create-group-prompt-btn" class="btn btn-success btn-sm" type="button">
+              New Prompt
+            </button>
+          </div>
+          <div class="btn-group btn-group-sm ms-auto" role="group" aria-label="Group prompts view mode">
+            <input type="radio" class="btn-check" name="group-prompts-view-mode" id="group-prompts-view-list" autocomplete="off" checked />
+            <label class="btn btn-outline-secondary" for="group-prompts-view-list" title="List view" aria-label="List view"><i class="bi bi-list-ul"></i></label>
+            <input type="radio" class="btn-check" name="group-prompts-view-mode" id="group-prompts-view-grid" autocomplete="off" />
+            <label class="btn btn-outline-secondary" for="group-prompts-view-grid" title="Card view" aria-label="Card view"><i class="bi bi-grid-3x3-gap"></i></label>
+          </div>
         </div>
 
         <!-- Group Prompts Filters -->
@@ -853,27 +868,36 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
 
         <!-- Group Prompts List -->
-        <table class="table table-striped" id="group-prompts-table">
-          <thead>
-            <tr>
-              <th>Prompt Name</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr class="table-loading-row">
-              <td colspan="2">
-                <div
-                  class="spinner-border spinner-border-sm me-2"
-                  role="status"
-                >
-                  <span class="visually-hidden">Loading...</span>
-                </div>
-                Loading group prompts...
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div id="group-prompts-list-view">
+          <table class="table table-striped" id="group-prompts-table">
+            <thead>
+              <tr>
+                <th>Prompt Name</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="table-loading-row">
+                <td colspan="2">
+                  <div
+                    class="spinner-border spinner-border-sm me-2"
+                    role="status"
+                  >
+                    <span class="visually-hidden">Loading...</span>
+                  </div>
+                  Loading group prompts...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div id="group-prompts-card-view" class="row g-3 d-none">
+          <div class="col-12 text-center text-muted py-5">
+            <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+            Loading group prompts...
+          </div>
+        </div>
 
         <!-- Group Prompts Pagination & Page Size -->
         <div class="d-flex align-items-center gap-3 mb-3 mt-3">
@@ -1845,6 +1869,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   // Document selection state for group documents
   let groupSelectedDocuments = new Set();
   let groupSelectionMode = false;
+  let groupLastCardSelectionAnchorId = null;
 
   // Grid/folder view state
   let groupCurrentView = 'list';
@@ -2572,6 +2597,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <i class="bi bi-check-square me-2"></i>Select
         </a></li>`;
 
+      if (canChat) {
+        dropdownItems += `
+          <li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;">
+            <i class="bi bi-chat-dots-fill me-2"></i>Chat
+          </a></li>`;
+      }
+
+      if (canManage && canModify) {
+        dropdownItems += `
+          <li><a class="dropdown-item" href="#" onclick="onEditGroupDocument('${docId}'); return false;">
+            <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
+          </a></li>`;
+      }
+
       if (canManage && canModify && (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true")) {
         dropdownItems += `
           <li><a class="dropdown-item" href="#" onclick="onExtractGroupMetadata('${docId}', event); return false;">
@@ -2667,6 +2706,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function syncGroupSelectionModeUI() {
     const table = document.getElementById('group-documents-table');
     const bulkActionsBar = document.getElementById('groupBulkActionsBar');
+    const toggleSelectionBtn = document.getElementById('group-toggle-selection-btn');
 
     syncGroupSelectionUI();
 
@@ -2690,6 +2730,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     if (!groupSelectionMode && bulkActionsBar) {
       bulkActionsBar.style.display = 'none';
+    }
+
+    if (toggleSelectionBtn) {
+      toggleSelectionBtn.classList.toggle('active', groupSelectionMode);
+      toggleSelectionBtn.setAttribute('aria-pressed', String(groupSelectionMode));
     }
 
     updateGroupBulkActionButtons();
@@ -2735,7 +2780,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function getGroupVisibleDocumentCheckboxes() {
-    return Array.from(document.querySelectorAll("#group-documents-table .document-checkbox, #group-folder-docs-table .document-checkbox"));
+    return Array.from(document.querySelectorAll("#group-documents-table .document-checkbox, #group-folder-docs-table .document-checkbox, #group-documents-card-view .document-checkbox, #group-folder-documents-card-view .document-checkbox"))
+      .filter(checkbox => checkbox.offsetParent !== null);
   }
 
   function getGroupSelectAllCheckboxes() {
@@ -2774,6 +2820,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function toggleGroupSelectAllDocuments(isSelected) {
+    if (isSelected && !groupSelectionMode) {
+      groupSelectionMode = true;
+      refreshGroupSelectionState();
+    }
+
     getGroupVisibleDocumentCheckboxes().forEach((checkbox) => {
       const documentId = checkbox.getAttribute("data-document-id");
       checkbox.checked = isSelected;
@@ -2787,9 +2838,84 @@ app_settings.app_title }} {% endblock %} {% block head %}
     refreshGroupSelectionState();
   }
 
+  function getVisibleGroupDocumentCards() {
+    return Array.from(document.querySelectorAll('#group-documents-card-view .document-item-card, #group-folder-documents-card-view .document-item-card'))
+      .filter(card => card.offsetParent !== null);
+  }
+
+  function isGroupDocumentCardActionTarget(target) {
+    return Boolean(target.closest('a, button, input, label, select, textarea, .dropdown-menu, .tag-badge'));
+  }
+
+  function openGroupDocumentCardDropdown(card) {
+    const dropdownToggle = card.querySelector('.action-dropdown [data-bs-toggle="dropdown"]');
+    if (!dropdownToggle || !window.bootstrap?.Dropdown) {
+      return;
+    }
+    window.bootstrap.Dropdown.getOrCreateInstance(dropdownToggle).show();
+  }
+
+  function selectGroupDocumentCardRange(documentId) {
+    const documentIds = getVisibleGroupDocumentCards()
+      .map(card => card.getAttribute('data-document-id'))
+      .filter(Boolean);
+    const currentIndex = documentIds.indexOf(documentId);
+    const anchorIndex = documentIds.indexOf(groupLastCardSelectionAnchorId);
+
+    if (currentIndex === -1) {
+      return;
+    }
+
+    if (anchorIndex === -1) {
+      groupSelectedDocuments.add(documentId);
+      groupLastCardSelectionAnchorId = documentId;
+      return;
+    }
+
+    const startIndex = Math.min(anchorIndex, currentIndex);
+    const endIndex = Math.max(anchorIndex, currentIndex);
+    documentIds.slice(startIndex, endIndex + 1).forEach(id => groupSelectedDocuments.add(id));
+  }
+
+  function handleGroupDocumentCardClick(event) {
+    const card = event.target.closest('.document-item-card');
+    if (!card || isGroupDocumentCardActionTarget(event.target)) {
+      return;
+    }
+
+    const documentId = card.getAttribute('data-document-id');
+    if (!documentId) {
+      return;
+    }
+
+    if (event.shiftKey || event.ctrlKey || event.metaKey || groupSelectionMode) {
+      event.preventDefault();
+      if (!groupSelectionMode) {
+        groupSelectionMode = true;
+      }
+
+      if (event.shiftKey) {
+        selectGroupDocumentCardRange(documentId);
+      } else {
+        if (groupSelectedDocuments.has(documentId)) {
+          groupSelectedDocuments.delete(documentId);
+        } else {
+          groupSelectedDocuments.add(documentId);
+        }
+        groupLastCardSelectionAnchorId = documentId;
+      }
+
+      refreshGroupSelectionState();
+      return;
+    }
+
+    openGroupDocumentCardDropdown(card);
+  }
+
   function updateGroupSelectedDocuments(documentId, isSelected) {
     if (isSelected) {
       groupSelectedDocuments.add(documentId);
+      groupLastCardSelectionAnchorId = documentId;
     } else {
       groupSelectedDocuments.delete(documentId);
     }
@@ -2836,6 +2962,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     if (!groupSelectionMode) {
       groupSelectedDocuments.clear();
+      groupLastCardSelectionAnchorId = null;
     }
 
     refreshGroupSelectionState();
@@ -2844,6 +2971,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   // Clear group selection
   function clearGroupSelection() {
     groupSelectedDocuments.clear();
+    groupLastCardSelectionAnchorId = null;
     refreshGroupSelectionState();
   }
 
@@ -3017,6 +3145,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (groupClearSelectionBtn) {
       groupClearSelectionBtn.addEventListener("click", clearGroupSelection);
     }
+    document.getElementById('group-toggle-selection-btn')?.addEventListener('click', toggleGroupSelectionMode);
+    document.addEventListener('click', handleGroupDocumentCardClick);
 
     // Load initial data
     fetchUserGroups().then(() => {
@@ -5146,6 +5276,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
   const groupPromptsTableBody = document.querySelector(
     "#group-prompts-table tbody"
   );
+  const groupPromptsListView = document.getElementById("group-prompts-list-view");
+  const groupPromptsCardView = document.getElementById("group-prompts-card-view");
   const groupPromptsSearchInput = document.getElementById(
     "group-prompts-search-input"
   );
@@ -5172,19 +5304,201 @@ app_settings.app_title }} {% endblock %} {% block head %}
   const groupPromptIdEl = document.getElementById("group-prompt-id");
   const groupPromptNameEl = document.getElementById("group-prompt-name");
 
+  function canManageGroupPrompts() {
+    const groupStatus = window.currentGroupStatus || "active";
+    return groupStatus === "active" && ["Owner", "Admin", "DocumentManager", "PromptManager"].includes(userRoleInActiveGroup);
+  }
+
+  function createGroupPromptLoadingElement(message) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "col-12 text-center text-muted py-5";
+    const spinner = document.createElement("div");
+    spinner.className = "spinner-border spinner-border-sm me-2";
+    spinner.setAttribute("role", "status");
+    const hiddenLabel = document.createElement("span");
+    hiddenLabel.className = "visually-hidden";
+    hiddenLabel.textContent = "Loading...";
+    spinner.appendChild(hiddenLabel);
+    wrapper.appendChild(spinner);
+    wrapper.append(message);
+    return wrapper;
+  }
+
+  function setGroupPromptsLoadingState() {
+    if (groupPromptsTableBody) {
+      const row = document.createElement("tr");
+      row.className = "table-loading-row";
+      const cell = document.createElement("td");
+      cell.colSpan = 2;
+      const spinner = document.createElement("div");
+      spinner.className = "spinner-border spinner-border-sm me-2";
+      spinner.setAttribute("role", "status");
+      const hiddenLabel = document.createElement("span");
+      hiddenLabel.className = "visually-hidden";
+      hiddenLabel.textContent = "Loading...";
+      spinner.appendChild(hiddenLabel);
+      cell.appendChild(spinner);
+      cell.append("Loading group prompts...");
+      row.appendChild(cell);
+      groupPromptsTableBody.replaceChildren(row);
+    }
+
+    groupPromptsCardView?.replaceChildren(createGroupPromptLoadingElement("Loading group prompts..."));
+  }
+
+  function renderGroupPromptsEmptyState(message) {
+    if (groupPromptsTableBody) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 2;
+      cell.className = "text-center p-4 text-muted";
+      cell.textContent = message;
+      row.appendChild(cell);
+      groupPromptsTableBody.replaceChildren(row);
+    }
+
+    if (groupPromptsCardView) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "col-12 text-center text-muted py-5";
+      const icon = document.createElement("i");
+      icon.className = "bi bi-card-text display-6 mb-2 d-block";
+      const text = document.createElement("p");
+      text.className = "mb-0";
+      text.textContent = message;
+      wrapper.append(icon, text);
+      groupPromptsCardView.replaceChildren(wrapper);
+    }
+  }
+
+  function renderGroupPromptsErrorState(message) {
+    if (groupPromptsTableBody) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 2;
+      cell.className = "text-center text-danger p-3";
+      cell.textContent = message;
+      row.appendChild(cell);
+      groupPromptsTableBody.replaceChildren(row);
+    }
+
+    if (groupPromptsCardView) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "col-12 text-center text-danger py-5";
+      const icon = document.createElement("i");
+      icon.className = "bi bi-exclamation-triangle display-6 mb-2 d-block";
+      const text = document.createElement("p");
+      text.className = "mb-0";
+      text.textContent = message;
+      wrapper.append(icon, text);
+      groupPromptsCardView.replaceChildren(wrapper);
+    }
+  }
+
+  function getPromptPreviewText(prompt) {
+    const content = String(prompt?.content || "").trim();
+    if (!content) {
+      return "Open the prompt to review the reusable content.";
+    }
+
+    return content.length > 180 ? `${content.slice(0, 180).trimEnd()}...` : content;
+  }
+
+  function buildGroupPromptChatUrl(promptId) {
+    const params = new URLSearchParams({
+      prompt_id: String(promptId || ""),
+      prompt_scope: "group",
+      openPrompt: "1",
+    });
+
+    if (activeGroupId) {
+      params.set("group_id", String(activeGroupId));
+      params.set("prompt_scope_id", String(activeGroupId));
+    }
+
+    return `/chats?${params.toString()}`;
+  }
+
+  function chatWithGroupPrompt(promptId) {
+    if (!promptId) {
+      return;
+    }
+
+    window.location.href = buildGroupPromptChatUrl(promptId);
+  }
+
+  function createGroupPromptButton({ className, title, iconClass, label, onClick }) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    const icon = document.createElement("i");
+    icon.className = iconClass;
+    button.appendChild(icon);
+    if (label) {
+      icon.classList.add("me-1");
+      button.append(label);
+    }
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      onClick(event);
+    });
+    return button;
+  }
+
+  function appendGroupPromptActions(container, prompt, includeLabels = false) {
+    container.appendChild(createGroupPromptButton({
+      className: "btn btn-sm btn-primary",
+      title: "Chat with Prompt",
+      iconClass: "bi bi-chat-dots",
+      label: includeLabels ? "Chat" : "",
+      onClick: () => chatWithGroupPrompt(prompt.id),
+    }));
+
+    container.appendChild(createGroupPromptButton({
+      className: "btn btn-sm btn-outline-info",
+      title: "View Prompt",
+      iconClass: "bi bi-eye",
+      label: includeLabels ? "View" : "",
+      onClick: () => window.onViewGroupPrompt(prompt.id),
+    }));
+
+    if (!canManageGroupPrompts()) {
+      return;
+    }
+
+    container.append(
+      createGroupPromptButton({
+        className: "btn btn-sm btn-outline-secondary",
+        title: "Edit Prompt",
+        iconClass: "bi bi-pencil",
+        label: includeLabels ? "Edit" : "",
+        onClick: () => window.onEditGroupPrompt(prompt.id),
+      }),
+      createGroupPromptButton({
+        className: "btn btn-sm btn-outline-danger",
+        title: "Delete Prompt",
+        iconClass: "bi bi-trash",
+        onClick: (event) => window.onDeleteGroupPrompt(prompt.id, event),
+      })
+    );
+  }
+
+  function renderGroupPromptViews(prompts) {
+    groupPromptsTableBody?.replaceChildren();
+    prompts.forEach((prompt) => renderGroupPromptRow(prompt));
+    if (groupPromptsCardView) {
+      groupPromptsCardView.replaceChildren(...prompts.map((prompt) => createGroupPromptCard(prompt)));
+    }
+  }
+
   // — Fetch & render group prompts —
   function fetchGroupPrompts() {
     if (!groupPromptsTableBody || !groupPromptsPagination) {
       return;
     }
 
-    groupPromptsTableBody.innerHTML = `
-      <tr class="table-loading-row">
-        <td colspan="2">
-          <div class="spinner-border spinner-border-sm me-2"></div>
-          Loading group prompts…
-        </td>
-      </tr>`;
+    setGroupPromptsLoadingState();
     groupPromptsPagination.innerHTML = "";
 
     const params = new URLSearchParams({
@@ -5200,20 +5514,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
         r.ok ? r.json() : r.json().then((err) => Promise.reject(err))
       )
       .then((data) => {
-        groupPromptsTableBody.innerHTML = "";
         if (!data.prompts || data.prompts.length === 0) {
-          groupPromptsTableBody.innerHTML = `
-            <tr>
-              <td colspan="2" class="text-center p-4 text-muted">
-                ${
-                  groupPromptsSearchTerm
-                    ? "No group prompts found."
-                    : "No group prompts created yet."
-                }
-              </td>
-            </tr>`;
+          renderGroupPromptsEmptyState(groupPromptsSearchTerm ? "No group prompts found." : "No group prompts created yet.");
         } else {
-          data.prompts.forEach((p) => renderGroupPromptRow(p));
+          renderGroupPromptViews(data.prompts);
         }
         renderGroupPromptsPagination(
           data.page,
@@ -5223,40 +5527,89 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .catch((err) => {
         console.error("Error loading group prompts:", err);
-        groupPromptsTableBody.innerHTML = `
-          <tr>
-            <td colspan="2" class="text-center text-danger p-3">
-              Error: ${err.error || err.message || "Unknown error"}
-            </td>
-          </tr>`;
+        renderGroupPromptsErrorState(`Error: ${err.error || err.message || "Unknown error"}`);
       });
   }
 
   function renderGroupPromptRow(p) {
     const tr = document.createElement("tr");
-    
-    // Check if group allows modifications
-    const groupStatus = window.currentGroupStatus || 'active';
-    const canModify = (groupStatus === 'active');
-    
-    let actionsHtml = '';
-    if (canModify) {
-      actionsHtml = `
-        <button class="btn btn-sm btn-primary" onclick="onEditGroupPrompt('${p.id}')" title="Edit">
-          <i class="bi bi-pencil-fill"></i>
-        </button>
-        <button class="btn btn-sm btn-danger ms-1" onclick="onDeleteGroupPrompt('${p.id}', event)" title="Delete">
-          <i class="bi bi-trash-fill"></i>
-        </button>
-      `;
-    } else {
-      actionsHtml = '<span class="text-muted small">—</span>';
-    }
-    
-    tr.innerHTML = `
-      <td title="${p.name}">${p.name}</td>
-      <td>${actionsHtml}</td>`;
+    tr.dataset.promptId = p.id || "";
+    const nameCell = document.createElement("td");
+    nameCell.title = p.name || "";
+    nameCell.textContent = p.name || "Untitled Prompt";
+    const actionsCell = document.createElement("td");
+    const actions = document.createElement("div");
+    actions.className = "d-flex gap-1 justify-content-start justify-content-md-end";
+    appendGroupPromptActions(actions, p, false);
+    actionsCell.appendChild(actions);
+    tr.append(nameCell, actionsCell);
     groupPromptsTableBody.appendChild(tr);
+  }
+
+  function createGroupPromptCard(prompt) {
+    const col = document.createElement("div");
+    col.className = "col-12 col-md-6 col-xl-4";
+    const card = document.createElement("div");
+    card.className = "card item-card prompt-item-card h-100";
+    card.tabIndex = 0;
+    card.setAttribute("aria-label", `View prompt ${prompt.name || "Untitled Prompt"}`);
+    const body = document.createElement("div");
+    body.className = "card-body d-flex flex-column";
+    const iconWrap = document.createElement("div");
+    iconWrap.className = "item-card-icon mb-2";
+    const icon = document.createElement("i");
+    icon.className = "bi bi-card-text";
+    icon.style.fontSize = "1.75rem";
+    iconWrap.appendChild(icon);
+    const title = document.createElement("h6");
+    title.className = "card-title mb-2";
+    title.textContent = prompt.name || "Untitled Prompt";
+    const preview = document.createElement("p");
+    preview.className = "card-text small text-muted prompt-card-preview flex-grow-1";
+    preview.textContent = getPromptPreviewText(prompt);
+    const actions = document.createElement("div");
+    actions.className = "item-card-buttons mt-2 d-flex flex-wrap gap-1";
+    appendGroupPromptActions(actions, prompt, true);
+
+    card.addEventListener("click", (event) => {
+      if (!event.target.closest("a, button, input, label, select, textarea, .dropdown-menu")) {
+        window.onViewGroupPrompt(prompt.id);
+      }
+    });
+    card.addEventListener("keydown", (event) => {
+      if (!event.target.closest("a, button, input, label, select, textarea, .dropdown-menu") && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        window.onViewGroupPrompt(prompt.id);
+      }
+    });
+
+    body.append(iconWrap, title, preview, actions);
+    card.appendChild(body);
+    col.appendChild(card);
+    return col;
+  }
+
+  function setupGroupPromptsViewSwitcher() {
+    const listRadio = document.getElementById("group-prompts-view-list");
+    const gridRadio = document.getElementById("group-prompts-view-grid");
+    const switchView = (view, persist = true) => {
+      const mode = view === "grid" ? "grid" : "list";
+      if (listRadio) listRadio.checked = mode === "list";
+      if (gridRadio) gridRadio.checked = mode === "grid";
+      groupPromptsListView?.classList.toggle("d-none", mode !== "list");
+      groupPromptsCardView?.classList.toggle("d-none", mode !== "grid");
+      if (persist) {
+        localStorage.setItem("groupPromptsViewPreference", mode);
+      }
+    };
+
+    listRadio?.addEventListener("change", () => {
+      if (listRadio.checked) switchView("list");
+    });
+    gridRadio?.addEventListener("change", () => {
+      if (gridRadio.checked) switchView("grid");
+    });
+    switchView(localStorage.getItem("groupPromptsViewPreference") === "grid" ? "grid" : "list", false);
   }
 
   function renderGroupPromptsPagination(page, pageSize, totalCount) {
@@ -5345,7 +5698,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   groupPromptForm?.addEventListener("submit", (e) => {
     e.preventDefault();
     const id = groupPromptIdEl.value;
-    const url = id ? `/api/group_prompts/${id}` : "/api/group_prompts";
+    const url = id ? `/api/group_prompts/${encodeURIComponent(id)}` : "/api/group_prompts";
     const method = id ? "PATCH" : "POST";
     const name = groupPromptNameEl.value.trim();
     const content = (
@@ -5379,8 +5732,116 @@ app_settings.app_title }} {% endblock %} {% block head %}
       });
   });
 
+  function openGroupPromptViewModal(prompt) {
+    const modalEl = document.getElementById("item-view-modal");
+    if (!modalEl) {
+      return;
+    }
+
+    const dialogEl = modalEl.querySelector(".modal-dialog");
+    const titleEl = modalEl.querySelector(".modal-title");
+    const bodyEl = document.getElementById("item-view-modal-body") || modalEl.querySelector(".modal-body");
+    const footerEl = modalEl.querySelector(".modal-footer");
+    if (!titleEl || !bodyEl || !footerEl) {
+      return;
+    }
+
+    if (dialogEl) {
+      dialogEl.className = "modal-dialog modal-dialog-scrollable";
+    }
+    titleEl.textContent = "Prompt Details";
+
+    const nameCard = document.createElement("div");
+    nameCard.className = "card mb-3 border-0 shadow-sm";
+    const nameBody = document.createElement("div");
+    nameBody.className = "card-body";
+    const nameLabel = document.createElement("label");
+    nameLabel.className = "text-muted small mb-1 d-block";
+    nameLabel.textContent = "Prompt Name";
+    const nameText = document.createElement("span");
+    nameText.className = "fw-medium";
+    nameText.textContent = prompt.name || "Untitled Prompt";
+    nameBody.append(nameLabel, nameText);
+    nameCard.appendChild(nameBody);
+
+    const contentCard = document.createElement("div");
+    contentCard.className = "card border-0 shadow-sm";
+    const contentBody = document.createElement("div");
+    contentBody.className = "card-body";
+    const contentLabel = document.createElement("label");
+    contentLabel.className = "text-muted small mb-1 d-block";
+    contentLabel.textContent = "Prompt Content";
+    const contentPre = document.createElement("pre");
+    contentPre.className = "mb-0 p-3 bg-body-tertiary border rounded";
+    contentPre.style.whiteSpace = "pre-wrap";
+    contentPre.style.wordBreak = "break-word";
+    contentPre.style.maxHeight = "360px";
+    contentPre.style.overflowY = "auto";
+    contentPre.style.fontSize = "0.9rem";
+    contentPre.textContent = prompt.content || "No prompt content available.";
+    contentBody.append(contentLabel, contentPre);
+    contentCard.appendChild(contentBody);
+    bodyEl.replaceChildren(nameCard, contentCard);
+
+    footerEl.replaceChildren();
+    const chatButton = document.createElement("button");
+    chatButton.type = "button";
+    chatButton.className = "btn btn-primary";
+    chatButton.innerHTML = '<i class="bi bi-chat-dots-fill me-1"></i>Chat';
+    chatButton.addEventListener("click", () => {
+      bootstrap.Modal.getInstance(modalEl)?.hide();
+      chatWithGroupPrompt(prompt.id);
+    });
+    footerEl.appendChild(chatButton);
+
+    if (canManageGroupPrompts()) {
+      const editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.className = "btn btn-outline-secondary";
+      editButton.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit';
+      editButton.addEventListener("click", () => {
+        bootstrap.Modal.getInstance(modalEl)?.hide();
+        window.onEditGroupPrompt(prompt.id);
+      });
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "btn btn-outline-danger";
+      deleteButton.innerHTML = '<i class="bi bi-trash me-1"></i>Delete';
+      deleteButton.addEventListener("click", (event) => {
+        bootstrap.Modal.getInstance(modalEl)?.hide();
+        window.onDeleteGroupPrompt(prompt.id, event);
+      });
+
+      footerEl.append(editButton, deleteButton);
+    }
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "btn btn-secondary";
+    closeButton.textContent = "Close";
+    closeButton.setAttribute("data-bs-dismiss", "modal");
+    footerEl.appendChild(closeButton);
+
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  window.onViewGroupPrompt = (promptId) => {
+    fetch(`/api/group_prompts/${encodeURIComponent(promptId)}`)
+      .then((r) =>
+        r.ok ? r.json() : r.json().then((err) => Promise.reject(err))
+      )
+      .then((data) => {
+        openGroupPromptViewModal(data);
+      })
+      .catch((err) => {
+        console.error("Error loading prompt:", err);
+        alert(err.error || err.message || "Unable to load prompt");
+      });
+  };
+
   window.onEditGroupPrompt = (promptId) => {
-    fetch(`/api/group_prompts/${promptId}`)
+    fetch(`/api/group_prompts/${encodeURIComponent(promptId)}`)
       .then((r) =>
         r.ok ? r.json() : r.json().then((err) => Promise.reject(err))
       )
@@ -5416,12 +5877,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   window.onDeleteGroupPrompt = (promptId, ev) => {
     if (!confirm("Delete this prompt?")) return;
-    const btn = ev.target.closest("button");
+    const btn = ev?.target?.closest("button");
     if (btn) {
       btn.disabled = true;
       btn.innerHTML = `<span class="spinner-border spinner-border-sm"></span>`;
     }
-    fetch(`/api/group_prompts/${promptId}`, { method: "DELETE" })
+    fetch(`/api/group_prompts/${encodeURIComponent(promptId)}`, { method: "DELETE" })
       .then((r) =>
         r.ok ? fetchGroupPrompts() : r.json().then((err) => Promise.reject(err))
       )
@@ -5465,9 +5926,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // — Role‑based UI toggles —
   function updateGroupPromptsRoleUI() {
-    const canManage = ["Owner", "Admin", "PromptManager"].includes(
-      userRoleInActiveGroup
-    );
+    const canManage = canManageGroupPrompts();
     const createGroupPromptSection = document.getElementById(
       "create-group-prompt-section"
     );
@@ -5486,6 +5945,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
   // — Expose & initial load —
   window.fetchGroupPrompts = fetchGroupPrompts;
   window.onCreateGroupPrompt = createGroupPromptBtn?.onclick;
+  window.chatWithGroupPrompt = chatWithGroupPrompt;
+  setupGroupPromptsViewSwitcher();
 
   // ============= GRID VIEW / TAG MANAGEMENT FUNCTIONS =============
 
@@ -5511,7 +5972,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         // Update bulk tag modal list
         updateGroupBulkTagsList();
         // Refresh grid if visible
-        if (groupCurrentView === 'grid') renderGroupGridView();
+        if (groupCurrentView === 'grid' || groupCurrentView === 'folders-cards') renderGroupGridView();
       })
       .catch(err => console.error('Error loading group workspace tags:', err));
   }
@@ -5520,14 +5981,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const listRadio = document.getElementById('group-docs-view-list');
     const cardsRadio = document.getElementById('group-docs-view-cards');
     const gridRadio = document.getElementById('group-docs-view-grid');
+    const foldersCardsRadio = document.getElementById('group-docs-view-folders-cards');
     if (listRadio) listRadio.addEventListener('change', () => { if (listRadio.checked) switchGroupView('list'); });
     if (cardsRadio) cardsRadio.addEventListener('change', () => { if (cardsRadio.checked) switchGroupView('cards'); });
     if (gridRadio) gridRadio.addEventListener('change', () => { if (gridRadio.checked) switchGroupView('grid'); });
+    if (foldersCardsRadio) foldersCardsRadio.addEventListener('change', () => { if (foldersCardsRadio.checked) switchGroupView('folders-cards'); });
   }
 
   function switchGroupView(view) {
-    groupCurrentView = view === 'grid' || view === 'cards' ? view : 'list';
-    localStorage.setItem('groupWorkspaceViewPreference', view);
+    groupCurrentView = ['grid', 'cards', 'folders-cards'].includes(view) ? view : 'list';
+    localStorage.setItem('groupWorkspaceViewPreference', groupCurrentView);
     const listView = document.getElementById('group-documents-list-view');
     const cardView = document.getElementById('group-documents-card-view');
     const gridView = document.getElementById('group-documents-grid-view');
@@ -5590,7 +6053,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
         const bsCollapse = bootstrap.Collapse.getInstance(filterCollapse);
         if (bsCollapse) bsCollapse.hide();
       }
-      if (viewInfo) viewInfo.textContent = 'Browse documents by tag and classification folders.';
+      if (viewInfo) {
+        viewInfo.textContent = groupCurrentView === 'folders-cards'
+          ? 'Browse folders, then review matching documents as cards.'
+          : 'Browse documents by tag and classification folders.';
+      }
       if (groupSelectionMode) {
         toggleGroupSelectionMode();
       } else if (bulkBar) {
@@ -5849,6 +6316,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return html;
   }
 
+  function buildGroupFolderDocumentsCardsHtml() {
+    return '<div id="group-folder-documents-card-view" class="row g-3"></div>';
+  }
+
+  function renderGroupFolderDocumentCards(docs) {
+    const cardContainer = document.getElementById('group-folder-documents-card-view');
+    if (!cardContainer) return;
+    cardContainer.innerHTML = '';
+    docs.forEach(doc => {
+      cardContainer.appendChild(createGroupDocumentCard(doc, userRoleInActiveGroup));
+    });
+  }
+
   async function renderGroupFolderContents(tagName) {
     const container = document.getElementById('group-tag-folders-container');
     if (!container) return;
@@ -5869,7 +6349,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
 
     const viewInfo = document.getElementById('group-docs-view-info');
-    if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
+    //if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
 
     container.innerHTML = buildGroupBreadcrumbHtml(displayName, tagColor, groupCurrentFolderType || 'tag') +
       '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>Loading documents...</div>';
@@ -5940,12 +6420,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
       if (docs.length === 0) {
         html += '<div class="text-center text-muted py-4"><i class="bi bi-folder2-open display-4 d-block mb-2"></i><p>No documents found in this folder.</p></div>';
       } else {
-        html += buildGroupFolderDocumentsTable(docs);
+        html += groupCurrentView === 'folders-cards'
+          ? buildGroupFolderDocumentsCardsHtml()
+          : buildGroupFolderDocumentsTable(docs);
         html += '<div id="group-folder-pagination" class="d-flex justify-content-center mt-3"></div>';
       }
 
       container.innerHTML = html;
       wireGroupBackButton(container);
+        if (groupCurrentView === 'folders-cards' && docs.length > 0) {
+          renderGroupFolderDocumentCards(docs);
+        }
         refreshGroupSelectionState();
         wireGroupFolderGeneratedArtifactApproveButtons(docs);
 
@@ -6218,7 +6703,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     // Load saved view preference
     const savedView = localStorage.getItem('groupWorkspaceViewPreference');
-    const defaultView = savedView === 'grid' || savedView === 'cards'
+    const defaultView = savedView === 'grid' || savedView === 'cards' || savedView === 'folders-cards'
       ? savedView
       : (window.matchMedia && window.matchMedia('(max-width: 991.98px)').matches ? 'cards' : 'list');
     if (defaultView === 'cards') {
@@ -6227,6 +6712,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     } else if (defaultView === 'grid') {
       const gridRadio = document.getElementById('group-docs-view-grid');
       if (gridRadio) gridRadio.checked = true;
+    } else if (defaultView === 'folders-cards') {
+      const foldersCardsRadio = document.getElementById('group-docs-view-folders-cards');
+      if (foldersCardsRadio) foldersCardsRadio.checked = true;
     }
     switchGroupView(defaultView);
 

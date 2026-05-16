@@ -185,7 +185,7 @@
             </div>
             <div class="modal-body">
                 <!-- Cannot Approve Alert -->
-                <div class="alert alert-warning" id="cannotApproveAlert" style="display: none;">
+                <div class="alert alert-warning d-none" id="cannotApproveAlert">
                     <i class="bi bi-exclamation-triangle me-2"></i>
                     <strong>Note:</strong> You are not an eligible reviewer for this request. Another eligible reviewer must approve it.
                 </div>
@@ -215,7 +215,7 @@
                 <div class="mb-3">
                     <label for="approvalActionComment" class="form-label">
                         <span id="approvalCommentLabel">Comment</span>
-                        <span class="text-danger" id="approvalCommentRequired" style="display:none;">*</span>
+                        <span class="text-danger d-none" id="approvalCommentRequired">*</span>
                     </label>
                     <textarea class="form-control" id="approvalActionComment" rows="3" 
                               placeholder="Optional comment for approval or required reason for denial..."></textarea>
@@ -226,10 +226,10 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-danger" id="approvalDenyBtn" style="display:none;">
+                <button type="button" class="btn btn-danger d-none" id="approvalDenyBtn">
                     <i class="bi bi-x-circle me-1"></i>Deny Request
                 </button>
-                <button type="button" class="btn btn-success" id="approvalApproveBtn" style="display:none;">
+                <button type="button" class="btn btn-success d-none" id="approvalApproveBtn">
                     <i class="bi bi-check-circle me-1"></i>Approve & Execute
                 </button>
             </div>
@@ -580,7 +580,14 @@ window.ApprovalManager = {
         const denyBtn = document.getElementById('approvalDenyBtn');
         const commentField = document.getElementById('approvalActionComment');
         const commentFieldContainer = commentField.closest('.mb-3');
+        const commentRequired = document.getElementById('approvalCommentRequired');
+        const commentHelpText = document.getElementById('approvalCommentHelpText');
         const cannotApproveAlert = document.getElementById('cannotApproveAlert');
+        const setHidden = (element, hidden) => {
+            if (element) {
+                element.classList.toggle('d-none', hidden);
+            }
+        };
         
         // Format request type
         const requestTypeMap = {
@@ -608,10 +615,11 @@ window.ApprovalManager = {
         if (approval.status !== 'pending') {
             // Completed request - view-only mode with result
             modalTitle.textContent = 'View Approval Request';
-            approveBtn.style.display = 'none';
-            denyBtn.style.display = 'none';
-            commentFieldContainer.style.display = 'none';
-            cannotApproveAlert.style.display = 'none';
+            setHidden(approveBtn, true);
+            setHidden(denyBtn, true);
+            setHidden(commentFieldContainer, true);
+            setHidden(commentRequired, true);
+            setHidden(cannotApproveAlert, true);
             
             // Show approval result
             let resultHtml = `
@@ -628,23 +636,24 @@ window.ApprovalManager = {
             `;
             document.getElementById('approvalDetailReason').innerHTML = 
                 (approval.reason || 'No reason provided') + '<br><br>' + resultHtml;
-        } else if (action === 'view' && approval.can_approve) {
-            // View mode but user can approve - show buttons
+        } else if (action === 'view') {
+            const canApprove = Boolean(approval.can_approve);
+            const canDeny = Boolean(approval.can_deny);
+
             modalTitle.textContent = 'View Approval Request';
-            approveBtn.style.display = 'inline-block';
-            denyBtn.style.display = 'inline-block';
-            commentFieldContainer.style.display = 'block';
-            commentField.placeholder = 'Optional comment for approval, required for denial...';
+            setHidden(approveBtn, !canApprove);
+            setHidden(denyBtn, !canDeny);
+            setHidden(commentFieldContainer, !(canApprove || canDeny));
+            setHidden(commentRequired, !canDeny || canApprove);
+            setHidden(cannotApproveAlert, canApprove || canDeny);
+            commentField.placeholder = canApprove
+                ? 'Optional comment for approval, required for denial...'
+                : 'Required reason for denial...';
+            commentHelpText.textContent = canApprove
+                ? 'Provide additional context for this decision.'
+                : 'Provide a reason for denying this request.';
             commentField.value = '';
-            commentField.required = false;
-            cannotApproveAlert.style.display = 'none';
-        } else if (action === 'view' && !approval.can_approve) {
-            // View mode and user cannot approve - show alert
-            modalTitle.textContent = 'View Approval Request';
-            approveBtn.style.display = 'none';
-            denyBtn.style.display = 'none';
-            commentFieldContainer.style.display = 'none';
-            cannotApproveAlert.style.display = 'block';
+            commentField.required = canDeny && !canApprove;
         }
     },
     

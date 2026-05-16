@@ -44,7 +44,7 @@ from functions_collaboration import (
     update_personal_collaboration_title,
 )
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id
-from functions_image_messages import decode_image_content, get_complete_image_content, is_external_image_url
+from functions_image_messages import decode_image_content, get_complete_image_content, is_blob_backed_image_message, is_external_image_url
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
 from functions_message_artifacts import make_json_serializable
 from functions_settings import get_settings, get_user_settings
@@ -53,6 +53,48 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 COLLABORATION_EVENT_HEARTBEAT_SECONDS = 15
 COLLABORATION_EVENT_TTL_SECONDS = 3600
+
+
+def _stream_blob_backed_image_message(message_doc):
+    """Stream a blob-backed source image for authorized collaboration viewers."""
+    blob_container = str(message_doc.get('blob_container') or '').strip()
+    blob_path = str(message_doc.get('blob_path') or '').strip()
+    mime_type = str(message_doc.get('mime_type') or '').strip() or 'image/png'
+    if not blob_container or not blob_path:
+        raise LookupError('Image not found')
+
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        raise RuntimeError('Blob storage client not available')
+
+    blob_client = blob_service_client.get_blob_client(
+        container=blob_container,
+        blob=blob_path,
+    )
+
+    content_length = None
+    try:
+        blob_properties = blob_client.get_blob_properties()
+        content_length = getattr(blob_properties, 'size', None)
+    except Exception:
+        content_length = None
+
+    def stream_blob_chunks():
+        blob_stream = blob_client.download_blob()
+        for blob_chunk in blob_stream.chunks():
+            yield blob_chunk
+
+    headers = {
+        'Cache-Control': 'private, max-age=300',
+    }
+    if content_length is not None:
+        headers['Content-Length'] = str(content_length)
+
+    return Response(
+        stream_with_context(stream_blob_chunks()),
+        mimetype=mime_type,
+        headers=headers,
+    )
 
 
 class CollaborationEventSession:
@@ -1074,11 +1116,14 @@ def register_route_backend_collaboration(app):
             if not source_conversation_id or not source_message_id:
                 return jsonify({'error': 'Source image not found'}), 404
 
-            _, complete_content = get_complete_image_content(
+            source_image_doc, complete_content = get_complete_image_content(
                 cosmos_messages_container,
                 source_conversation_id,
                 source_message_id,
             )
+
+            if is_blob_backed_image_message(source_image_doc):
+                return _stream_blob_backed_image_message(source_image_doc)
 
             if is_external_image_url(complete_content):
                 return redirect(complete_content)

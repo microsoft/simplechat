@@ -4,9 +4,12 @@
     const state = {
         currentPage: 1,
         pageSize: 10,
+        viewMode: 'list',
         items: [],
         userCache: {},
     };
+
+    const FEEDBACK_VIEW_STORAGE_KEY = 'simplechat.admin.feedback.viewMode';
 
     let editModalInstance = null;
     let retestModalInstance = null;
@@ -53,11 +56,32 @@
         const row = document.createElement('tr');
         row.className = 'table-loading-row';
         const cell = document.createElement('td');
-        cell.colSpan = 9;
+        cell.colSpan = 5;
         cell.className = isError ? 'text-danger text-center p-4' : 'table-loading-row';
         cell.textContent = message;
         row.appendChild(cell);
         tbody.appendChild(row);
+    }
+
+    function renderCardMessage(message, isError) {
+        const cardView = document.getElementById('feedback-card-view');
+        if (!cardView) {
+            return;
+        }
+
+        clearElement(cardView);
+        const column = document.createElement('div');
+        column.className = 'col-12';
+        const messageElement = document.createElement('div');
+        messageElement.className = isError ? 'review-empty-state text-danger' : 'review-empty-state';
+        messageElement.textContent = message;
+        column.appendChild(messageElement);
+        cardView.appendChild(column);
+    }
+
+    function renderFeedbackMessage(message, isError) {
+        renderTableMessage(message, isError);
+        renderCardMessage(message, isError);
     }
 
     async function fetchJson(url, options) {
@@ -136,6 +160,129 @@
             cell.title = title;
         }
         return cell;
+    }
+
+    function createIcon(iconClass) {
+        const icon = document.createElement('i');
+        icon.className = iconClass;
+        icon.setAttribute('aria-hidden', 'true');
+        return icon;
+    }
+
+    function createBadge(label, variant, title) {
+        const badge = document.createElement('span');
+        badge.className = `badge rounded-pill text-bg-${variant || 'secondary'}`;
+        badge.textContent = label == null || label === '' ? '-' : String(label);
+        if (title) {
+            badge.title = title;
+        }
+        return badge;
+    }
+
+    function getFeedbackVariant(feedbackType) {
+        if (feedbackType === 'Positive') {
+            return 'success';
+        }
+        if (feedbackType === 'Negative') {
+            return 'danger';
+        }
+        if (feedbackType === 'Neutral') {
+            return 'info';
+        }
+        return 'secondary';
+    }
+
+    function createFeedbackBadge(feedbackType) {
+        const label = feedbackType || 'Unknown';
+        return createBadge(label, getFeedbackVariant(feedbackType));
+    }
+
+    function createAcknowledgedBadge(acknowledged) {
+        return createBadge(acknowledged ? 'Acknowledged' : 'Not acknowledged', acknowledged ? 'primary' : 'warning');
+    }
+
+    function createBadgeCell(badge) {
+        const cell = document.createElement('td');
+        const wrapper = document.createElement('div');
+        wrapper.className = 'review-badge-list';
+        wrapper.appendChild(badge);
+        cell.appendChild(wrapper);
+        return cell;
+    }
+
+    function createViewButton(feedbackId) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-primary';
+        button.dataset.feedbackId = feedbackId || '';
+        button.dataset.action = 'view';
+        button.appendChild(createIcon('bi bi-eye me-1'));
+        button.appendChild(document.createTextNode('View'));
+        return button;
+    }
+
+    function appendCardDetail(parent, label, value) {
+        if (value == null || value === '') {
+            return;
+        }
+
+        const detail = document.createElement('div');
+        detail.className = 'small';
+        const labelElement = document.createElement('span');
+        labelElement.className = 'fw-semibold text-muted';
+        labelElement.textContent = `${label}: `;
+        const valueElement = document.createElement('span');
+        valueElement.textContent = String(value);
+        detail.appendChild(labelElement);
+        detail.appendChild(valueElement);
+        parent.appendChild(detail);
+    }
+
+    function getInitialViewMode() {
+        try {
+            const savedViewMode = window.localStorage.getItem(FEEDBACK_VIEW_STORAGE_KEY);
+            if (savedViewMode === 'cards' || savedViewMode === 'list') {
+                return savedViewMode;
+            }
+        } catch (error) {
+            // Ignore storage access errors and fall back to viewport defaults.
+        }
+
+        if (window.matchMedia && window.matchMedia('(max-width: 991.98px)').matches) {
+            return 'cards';
+        }
+        return 'list';
+    }
+
+    function setFeedbackViewMode(viewMode, persist) {
+        const normalizedViewMode = viewMode === 'cards' ? 'cards' : 'list';
+        state.viewMode = normalizedViewMode;
+
+        const listView = document.getElementById('feedback-list-view');
+        const cardView = document.getElementById('feedback-card-view');
+        const listRadio = document.getElementById('feedback-view-list');
+        const cardsRadio = document.getElementById('feedback-view-cards');
+
+        if (listView) {
+            listView.classList.toggle('d-none', normalizedViewMode !== 'list');
+        }
+        if (cardView) {
+            cardView.classList.toggle('d-none', normalizedViewMode !== 'cards');
+        }
+        if (listRadio) {
+            listRadio.checked = normalizedViewMode === 'list';
+        }
+        if (cardsRadio) {
+            cardsRadio.checked = normalizedViewMode === 'cards';
+        }
+
+        if (persist) {
+            try {
+                window.localStorage.setItem(FEEDBACK_VIEW_STORAGE_KEY, normalizedViewMode);
+            } catch (error) {
+                // Ignore storage access errors; the current view has already been applied.
+            }
+        }
     }
 
     function buildPagination(page, pageSize, totalCount) {
@@ -222,55 +369,99 @@
 
         for (const item of items) {
             const row = document.createElement('tr');
-            const userInfo = await lookupUserInfo(item.userId);
-            const userDisplay = formatUserDisplay(userInfo, item.userId);
             const adminReview = item.adminReview || {};
+            const timestamp = formatDateTime(item.timestamp);
 
-            row.appendChild(createTextCell(userDisplay, 'table-message-cell', userDisplay));
+            row.appendChild(createTextCell(timestamp, 'table-message-cell', timestamp));
             row.appendChild(createTextCell(item.prompt || '', 'table-message-cell', item.prompt || ''));
-            row.appendChild(createTextCell(item.aiResponse || '', 'table-message-cell', item.aiResponse || ''));
-            row.appendChild(createTextCell(item.feedbackType || ''));
-            row.appendChild(createTextCell(item.reason || '', 'table-message-cell', item.reason || ''));
-            row.appendChild(createTextCell(adminReview.acknowledged ? 'Yes' : 'No'));
-            row.appendChild(createTextCell(adminReview.actionTaken || '', 'table-message-cell', adminReview.actionTaken || ''));
+            row.appendChild(createBadgeCell(createFeedbackBadge(item.feedbackType)));
+            row.appendChild(createBadgeCell(createAcknowledgedBadge(Boolean(adminReview.acknowledged))));
 
-            const editCell = document.createElement('td');
-            editCell.className = 'table-details-cell';
-            const editButton = document.createElement('button');
-            editButton.type = 'button';
-            editButton.className = 'btn btn-sm btn-primary';
-            editButton.dataset.feedbackId = item.id || '';
-            editButton.dataset.action = 'edit';
-            editButton.textContent = 'Edit';
-            editCell.appendChild(editButton);
-            row.appendChild(editCell);
-
-            const retestCell = document.createElement('td');
-            retestCell.className = 'table-details-cell';
-            const retestButton = document.createElement('button');
-            retestButton.type = 'button';
-            retestButton.className = 'btn btn-sm btn-outline-secondary';
-            retestButton.dataset.feedbackId = item.id || '';
-            retestButton.dataset.action = 'retest';
-            retestButton.textContent = 'Retest';
-            retestCell.appendChild(retestButton);
-            row.appendChild(retestCell);
+            const viewCell = document.createElement('td');
+            viewCell.className = 'table-details-cell';
+            viewCell.appendChild(createViewButton(item.id));
+            row.appendChild(viewCell);
 
             tbody.appendChild(row);
         }
     }
 
+    function renderFeedbackCards(items) {
+        const cardView = document.getElementById('feedback-card-view');
+        if (!cardView) {
+            return;
+        }
+
+        clearElement(cardView);
+        if (!items.length) {
+            renderCardMessage('No feedback found for the current filters.', false);
+            return;
+        }
+
+        items.forEach(function (item) {
+            const adminReview = item.adminReview || {};
+            const column = document.createElement('div');
+            column.className = 'col-12 col-xl-6 col-xxl-4';
+
+            const card = document.createElement('article');
+            card.className = 'review-card';
+
+            const header = document.createElement('div');
+            header.className = 'review-card-header';
+            const timestamp = document.createElement('div');
+            timestamp.className = 'review-card-meta';
+            timestamp.textContent = formatDateTime(item.timestamp);
+            const badges = document.createElement('div');
+            badges.className = 'review-badge-list';
+            badges.appendChild(createFeedbackBadge(item.feedbackType));
+            badges.appendChild(createAcknowledgedBadge(Boolean(adminReview.acknowledged)));
+            header.appendChild(timestamp);
+            header.appendChild(badges);
+
+            const prompt = document.createElement('p');
+            prompt.className = 'review-card-title';
+            prompt.textContent = item.prompt || 'No prompt captured.';
+
+            const details = document.createElement('div');
+            details.className = 'd-grid gap-1';
+            appendCardDetail(details, 'Reason', item.reason || '');
+            appendCardDetail(details, 'Action', adminReview.actionTaken || '');
+
+            const footer = document.createElement('div');
+            footer.className = 'review-card-footer';
+            const footerMeta = document.createElement('div');
+            footerMeta.className = 'review-card-meta';
+            footerMeta.textContent = adminReview.reviewTimestamp ? `Reviewed ${formatDateTime(adminReview.reviewTimestamp)}` : 'Waiting for review';
+            footer.appendChild(footerMeta);
+            footer.appendChild(createViewButton(item.id));
+
+            card.appendChild(header);
+            card.appendChild(prompt);
+            if (details.childElementCount) {
+                card.appendChild(details);
+            }
+            card.appendChild(footer);
+            column.appendChild(card);
+            cardView.appendChild(column);
+        });
+    }
+
+    async function renderFeedbackItems(items) {
+        await renderFeedbackRows(items);
+        renderFeedbackCards(items);
+    }
+
     async function loadFeedbackData() {
-        renderTableMessage('Loading feedback...', false);
+        renderFeedbackMessage('Loading feedback...', false);
 
         try {
             const params = getQueryParams(true);
             const data = await fetchJson(`/feedback/review?${params.toString()}`);
             state.items = Array.isArray(data.feedback) ? data.feedback : [];
-            await renderFeedbackRows(state.items);
+            await renderFeedbackItems(state.items);
             buildPagination(data.page || state.currentPage, data.page_size || state.pageSize, data.total_count || 0);
         } catch (error) {
-            renderTableMessage(`Error loading feedback: ${error.message}`, true);
+            renderFeedbackMessage(`Error loading feedback: ${error.message}`, true);
         }
     }
 
@@ -378,7 +569,7 @@
         }
 
         if (statusElement) {
-            statusElement.textContent = 'Saving changes...';
+            statusElement.textContent = 'Saving review...';
             statusElement.className = 'small text-info me-auto';
         }
 
@@ -408,29 +599,39 @@
         await refreshFeedbackView();
     }
 
+    function handleFeedbackActionClick(event) {
+        const actionButton = event.target.closest('button[data-feedback-id]');
+        if (!actionButton) {
+            return;
+        }
+
+        const feedbackId = actionButton.dataset.feedbackId || '';
+        const action = actionButton.dataset.action || 'view';
+        if (action === 'retest') {
+            openRetestModal(feedbackId);
+        } else {
+            openEditModal(feedbackId);
+        }
+    }
+
     function attachEventListeners() {
         const tableBody = document.querySelector('#feedback-table tbody');
+        const cardView = document.getElementById('feedback-card-view');
         const pageSizeSelect = document.getElementById('page-size-select');
         const applyFiltersButton = document.getElementById('applyFiltersBtn');
         const clearFiltersButton = document.getElementById('clearFiltersBtn');
         const exportButton = document.getElementById('feedbackExportBtn');
         const saveButton = document.getElementById('saveFeedbackChangesBtn');
+        const retestButton = document.getElementById('retestFeedbackBtn');
+        const listViewRadio = document.getElementById('feedback-view-list');
+        const cardsViewRadio = document.getElementById('feedback-view-cards');
 
         if (tableBody) {
-            tableBody.addEventListener('click', function (event) {
-                const actionButton = event.target.closest('button[data-feedback-id]');
-                if (!actionButton) {
-                    return;
-                }
+            tableBody.addEventListener('click', handleFeedbackActionClick);
+        }
 
-                const feedbackId = actionButton.dataset.feedbackId || '';
-                const action = actionButton.dataset.action || '';
-                if (action === 'edit') {
-                    openEditModal(feedbackId);
-                } else if (action === 'retest') {
-                    openRetestModal(feedbackId);
-                }
-            });
+        if (cardView) {
+            cardView.addEventListener('click', handleFeedbackActionClick);
         }
 
         if (pageSizeSelect) {
@@ -481,12 +682,36 @@
                 });
             });
         }
+
+        if (retestButton) {
+            retestButton.addEventListener('click', function () {
+                const feedbackId = document.getElementById('editFeedbackId')?.value || '';
+                openRetestModal(feedbackId);
+            });
+        }
+
+        if (listViewRadio) {
+            listViewRadio.addEventListener('change', function () {
+                if (listViewRadio.checked) {
+                    setFeedbackViewMode('list', true);
+                }
+            });
+        }
+
+        if (cardsViewRadio) {
+            cardsViewRadio.addEventListener('change', function () {
+                if (cardsViewRadio.checked) {
+                    setFeedbackViewMode('cards', true);
+                }
+            });
+        }
     }
 
     document.addEventListener('DOMContentLoaded', function () {
+        setFeedbackViewMode(getInitialViewMode(), false);
         attachEventListeners();
         refreshFeedbackView().catch(function (error) {
-            renderTableMessage(`Error loading feedback: ${error.message}`, true);
+            renderFeedbackMessage(`Error loading feedback: ${error.message}`, true);
         });
     });
 })();

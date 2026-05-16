@@ -6,7 +6,7 @@ import { showTagManagementModal } from "./workspace-tag-management.js";
 
 // ============= State Variables =============
 let workspaceTags = []; // All available workspace tags with colors
-let currentView = 'list'; // 'list', 'cards', or 'grid' (folders)
+let currentView = 'list'; // 'list', 'cards', 'grid' (folders), or 'folders-cards'
 let selectedTagFilter = [];
 let currentFolder = null;    // null = folder overview, string = tag name being viewed
 let currentFolderType = null; // null | 'tag' | 'classification'
@@ -62,12 +62,15 @@ export function initializeTags() {
     const preferredView = getPreferredWorkspaceView();
     const cardsRadio = document.getElementById('docs-view-cards');
     const gridRadio = document.getElementById('docs-view-grid');
+    const foldersCardsRadio = document.getElementById('docs-view-folders-cards');
     const listRadio = document.getElementById('docs-view-list');
 
     if (preferredView === 'cards' && cardsRadio) {
         cardsRadio.checked = true;
     } else if (preferredView === 'grid' && gridRadio) {
         gridRadio.checked = true;
+    } else if (preferredView === 'folders-cards' && foldersCardsRadio) {
+        foldersCardsRadio.checked = true;
     } else if (listRadio) {
         listRadio.checked = true;
     }
@@ -92,7 +95,7 @@ export async function loadWorkspaceTags() {
             updateBulkTagSelect();
             
             // Update grid view if visible
-            if (currentView === 'grid') {
+            if (currentView === 'grid' || currentView === 'folders-cards') {
                 renderGridView();
             }
         } else {
@@ -109,6 +112,7 @@ function setupViewSwitcher() {
     const listRadio = document.getElementById('docs-view-list');
     const cardsRadio = document.getElementById('docs-view-cards');
     const gridRadio = document.getElementById('docs-view-grid');
+    const foldersCardsRadio = document.getElementById('docs-view-folders-cards');
     
     if (listRadio) {
         listRadio.addEventListener('change', () => {
@@ -133,11 +137,19 @@ function setupViewSwitcher() {
             }
         });
     }
+
+    if (foldersCardsRadio) {
+        foldersCardsRadio.addEventListener('change', () => {
+            if (foldersCardsRadio.checked) {
+                switchView('folders-cards');
+            }
+        });
+    }
 }
 
 function getPreferredWorkspaceView() {
     const savedView = localStorage.getItem('personalWorkspaceViewPreference');
-    if (savedView === 'cards' || savedView === 'grid' || savedView === 'list') {
+    if (savedView === 'cards' || savedView === 'grid' || savedView === 'folders-cards' || savedView === 'list') {
         return savedView;
     }
 
@@ -171,8 +183,8 @@ function hideViewElement(element, displayClass = null) {
 }
 
 function switchView(view) {
-    currentView = view === 'grid' || view === 'cards' ? view : 'list';
-    localStorage.setItem('personalWorkspaceViewPreference', view);
+    currentView = ['grid', 'cards', 'folders-cards'].includes(view) ? view : 'list';
+    localStorage.setItem('personalWorkspaceViewPreference', currentView);
 
     const listView = document.getElementById('documents-list-view');
     const cardView = document.getElementById('documents-card-view');
@@ -207,7 +219,7 @@ function switchView(view) {
             hideViewElement(listView);
             showViewElement(cardView);
             if (viewInfo) {
-                viewInfo.textContent = 'Cards surface status, metadata, and quick actions.';
+                viewInfo.textContent = '';
             }
         }
 
@@ -238,7 +250,9 @@ function switchView(view) {
             if (bsCollapse) bsCollapse.hide();
         }
         if (viewInfo) {
-            viewInfo.textContent = 'Browse folders by tag and classification.';
+            viewInfo.textContent = currentView === 'folders-cards'
+                ? 'Browse folders, then review matching documents as cards.'
+                : 'Browse folders by tag and classification.';
         }
         if (selectionModeActive && typeof window.toggleSelectionMode === 'function') {
             window.toggleSelectionMode();
@@ -249,14 +263,18 @@ function switchView(view) {
 
 
 export function setWorkspaceView(view) {
-    const normalizedView = view === 'grid' || view === 'cards' ? view : 'list';
+    const normalizedView = ['grid', 'cards', 'folders-cards'].includes(view) ? view : 'list';
     const listRadio = document.getElementById('docs-view-list');
     const cardsRadio = document.getElementById('docs-view-cards');
     const gridRadio = document.getElementById('docs-view-grid');
+    const foldersCardsRadio = document.getElementById('docs-view-folders-cards');
 
-    if (normalizedView === 'grid') {
+    if (normalizedView === 'grid' || normalizedView === 'folders-cards') {
         if (gridRadio) {
-            gridRadio.checked = true;
+            gridRadio.checked = normalizedView === 'grid';
+        }
+        if (foldersCardsRadio) {
+            foldersCardsRadio.checked = normalizedView === 'folders-cards';
         }
         if (cardsRadio) {
             cardsRadio.checked = false;
@@ -271,6 +289,9 @@ export function setWorkspaceView(view) {
         if (gridRadio) {
             gridRadio.checked = false;
         }
+        if (foldersCardsRadio) {
+            foldersCardsRadio.checked = false;
+        }
         if (listRadio) {
             listRadio.checked = false;
         }
@@ -283,6 +304,9 @@ export function setWorkspaceView(view) {
         }
         if (gridRadio) {
             gridRadio.checked = false;
+        }
+        if (foldersCardsRadio) {
+            foldersCardsRadio.checked = false;
         }
     }
 
@@ -738,6 +762,19 @@ function buildFolderDocumentsTable(docs) {
     return html;
 }
 
+function buildFolderDocumentsCardsHtml() {
+    return '<div id="folder-documents-card-view" class="row g-3"></div>';
+}
+
+function renderFolderDocumentCards(docs) {
+    const cardContainer = document.getElementById('folder-documents-card-view');
+    if (!cardContainer || typeof window.renderWorkspaceDocumentCardsInto !== 'function') {
+        return;
+    }
+
+    window.renderWorkspaceDocumentCardsInto(docs, cardContainer);
+}
+
 function renderFolderPagination(page, pageSize, totalCount) {
     const paginationContainer = document.getElementById('folder-pagination');
     if (!paginationContainer) return;
@@ -870,7 +907,7 @@ async function renderFolderContents(tagName) {
 
     // Update view info
     const viewInfo = document.getElementById('docs-view-info');
-    if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
+    //if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
 
     // Show breadcrumb + loading spinner
     container.innerHTML = buildBreadcrumbHtml(displayName, tagColor, currentFolderType || 'tag') +
@@ -991,13 +1028,18 @@ async function renderFolderContents(tagName) {
                     <p>No documents found in this folder.</p>
                 </div>`;
         } else {
-            html += buildFolderDocumentsTable(docs);
+            html += currentView === 'folders-cards'
+                ? buildFolderDocumentsCardsHtml()
+                : buildFolderDocumentsTable(docs);
             html += '<div id="folder-pagination" class="d-flex justify-content-center mt-3"></div>';
         }
 
         container.innerHTML = html;
         wireBackButton(container);
-    window.syncDocumentSelectionUI?.();
+        if (currentView === 'folders-cards' && docs.length > 0) {
+            renderFolderDocumentCards(docs);
+        }
+        window.syncDocumentSelectionUI?.();
 
         // Wire up folder page-size select
         const folderPageSizeSelect = document.getElementById('folder-page-size-select');

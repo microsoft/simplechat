@@ -4,6 +4,7 @@ from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
 from semantic_kernel_fact_memory_store import FactMemoryStore
@@ -20,10 +21,12 @@ import csv
 import io
 import inspect
 import json
+import mimetypes
 import os
 import app_settings_cache
 import queue
 import re
+import requests
 import traceback
 from urllib.parse import urlparse
 import threading
@@ -41,6 +44,7 @@ from functions_assistant_table_exports import build_assistant_table_csv_export
 from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
+from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_notifications import create_chat_response_notification
@@ -68,7 +72,7 @@ from functions_document_actions import (
 )
 from functions_thoughts import ThoughtTracker
 from functions_workflow_runner import _execute_document_action_workflow
-from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
+from functions_simplechat_operations import upload_chat_image_bytes_for_user, upload_generated_analysis_artifact_for_current_user
 
 
 def _strip_agent_citation_artifact_refs(agent_citations):
@@ -115,6 +119,51 @@ TABULAR_STRUCTURED_EXPORT_MAX_RETRY_ATTEMPTS = 2
 TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW = 3
 TABULAR_RELATED_DOCUMENT_MAX_SUMMARY_ROWS = 8
 TABULAR_RELATED_DOCUMENT_MAX_EXCERPT_CHARS = 500
+
+
+def _get_user_message_image_context(conversation_id, user_message_id):
+    """Return user and thread metadata from the prompt message for paired image messages."""
+    try:
+        user_message_doc = cosmos_messages_container.read_item(
+            item=user_message_id,
+            partition_key=conversation_id,
+        )
+        user_metadata = user_message_doc.get('metadata', {}) if isinstance(user_message_doc.get('metadata'), dict) else {}
+        thread_info = user_metadata.get('thread_info', {}) if isinstance(user_metadata.get('thread_info'), dict) else {}
+        return (
+            user_metadata.get('user_info'),
+            thread_info.get('thread_id'),
+            thread_info.get('previous_thread_id'),
+        )
+    except Exception as exc:
+        debug_print(f"[ImageGeneration] Warning: Could not retrieve user message metadata: {exc}")
+        return None, None, None
+
+
+def _resolve_generated_image_bytes(generated_image_url):
+    """Resolve generated image output into bytes and a MIME type for blob storage."""
+    normalized_image_url = str(generated_image_url or '').strip()
+    if not normalized_image_url:
+        raise ValueError('Generated image URL is empty')
+
+    if normalized_image_url.startswith('data:image/'):
+        return decode_image_content(normalized_image_url)
+
+    parsed_url = urlparse(normalized_image_url)
+    if parsed_url.scheme not in {'http', 'https'}:
+        raise ValueError('Generated image output is not a supported image source')
+
+    response = requests.get(normalized_image_url, timeout=30)
+    response.raise_for_status()
+    image_bytes = response.content
+    if not image_bytes:
+        raise ValueError('Generated image download returned empty content')
+
+    content_type = str(response.headers.get('Content-Type') or '').split(';', 1)[0].strip()
+    if not content_type or not content_type.startswith('image/'):
+        content_type = mimetypes.guess_type(parsed_url.path)[0] or 'image/png'
+
+    return content_type, image_bytes
 
 
 def _normalize_generated_analysis_artifact_metadata(raw_artifact, default_capability='analysis'):
@@ -3340,9 +3389,10 @@ def insert_system_message_after_existing_system_messages(conversation_history, s
     return conversation_history
 
 
-def maybe_append_chart_tool_system_message(conversation_history, user_message, selected_agent):
-    """Add chart-tool guidance only when an agent is active and the user asked for a chart."""
-    if not selected_agent or not user_requested_chart_visualization(user_message):
+def maybe_append_chart_tool_system_message(conversation_history, user_message, selected_agent=None):
+    """Add chart-tool guidance when the user asked for a chart."""
+    del selected_agent
+    if not user_requested_chart_visualization(user_message):
         return conversation_history
 
     return insert_system_message_after_existing_system_messages(
@@ -11523,162 +11573,64 @@ def register_route_backend_chats(app):
                         raise ValueError("Generated image URL is null or empty")
 
                     image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000,9999)}"
-                    
-                    # Check if image data is too large for a single Cosmos document (2MB limit)
-                    # Account for JSON overhead by using 1.5MB as the safe limit for base64 content
-                    max_content_size = 1500000  # 1.5MB in bytes
-                    
-                    if len(generated_image_url) > max_content_size:
-                        debug_print(f"Large image detected ({len(generated_image_url)} bytes), splitting across multiple documents")
-                        
-                        # Split the data URL into manageable chunks
-                        if generated_image_url.startswith('data:image/png;base64,'):
-                            # Extract just the base64 part for splitting
-                            data_url_prefix = 'data:image/png;base64,'
-                            base64_content = generated_image_url[len(data_url_prefix):]
-                            debug_print(f"Extracted base64 content length: {len(base64_content)} bytes")
-                        else:
-                            # For regular URLs, store as-is (shouldn't happen with large content)
-                            data_url_prefix = ''
-                            base64_content = generated_image_url
-                        
-                        # Calculate chunk size and number of chunks
-                        chunk_size = max_content_size - len(data_url_prefix) - 200  # More room for JSON overhead
-                        chunks = [base64_content[i:i+chunk_size] for i in range(0, len(base64_content), chunk_size)]
-                        total_chunks = len(chunks)
-                        
-                        debug_print(f"Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
-                        for i, chunk in enumerate(chunks):
-                            debug_print(f"Chunk {i} length: {len(chunk)} bytes")
-                        
-                        # Verify we can reassemble before storing
-                        reassembled_test = data_url_prefix + ''.join(chunks)
-                        if len(reassembled_test) == len(generated_image_url):
-                            debug_print(f"✅ Chunking verification passed - can reassemble to original size")
-                        else:
-                            debug_print(f"❌ Chunking verification failed - {len(reassembled_test)} vs {len(generated_image_url)}")
-                        
-                        
-                        # Create main image document with metadata
-                        
-                        # Get user_info and thread_id from the user message for ownership tracking and threading
-                        user_info_for_chunked_image = None
-                        user_thread_id = None
-                        user_previous_thread_id = None
-                        try:
-                            user_msg = cosmos_messages_container.read_item(
-                                item=user_message_id,
-                                partition_key=conversation_id
-                            )
-                            user_info_for_chunked_image = user_msg.get('metadata', {}).get('user_info')
-                            user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
-                            user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
-                        except Exception as e:
-                            debug_print(f"Warning: Could not retrieve user_info from user message for chunked image: {e}")
-                        
-                        main_image_doc = {
-                            'id': image_message_id,
-                            'conversation_id': conversation_id,
-                            'role': 'image',
-                            'content': f"{data_url_prefix}{chunks[0]}",  # First chunk with data URL prefix
-                            'prompt': user_message,
-                            'created_at': datetime.utcnow().isoformat(),
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'model_deployment_name': image_gen_model,
-                            'metadata': {
-                                'user_info': user_info_for_chunked_image,  # Track which user created this image
-                                'is_chunked': True,
-                                'total_chunks': total_chunks,
-                                'chunk_index': 0,
-                                'original_size': len(generated_image_url),
-                                'thread_info': {
-                                    'thread_id': user_thread_id,  # Same thread as user message
-                                    'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
-                                    'active_thread': True,
-                                    'thread_attempt': 1
-                                }
+
+                    user_info_for_image, user_thread_id, user_previous_thread_id = _get_user_message_image_context(
+                        conversation_id,
+                        user_message_id,
+                    )
+                    image_timestamp = datetime.utcnow().isoformat()
+
+                    image_doc = {
+                        'id': image_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'image',
+                        'content': generated_image_url,
+                        'prompt': user_message,
+                        'created_at': image_timestamp,
+                        'timestamp': image_timestamp,
+                        'model_deployment_name': image_gen_model,
+                        'metadata': {
+                            'user_info': user_info_for_image,
+                            'thread_info': {
+                                'thread_id': user_thread_id,
+                                'previous_thread_id': user_previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
                             }
                         }
-                        # Image message shares the same thread as user message
-                        
-                        # Create additional chunk documents
-                        chunk_docs = []
-                        for i in range(1, total_chunks):
-                            chunk_doc = {
-                                'id': f"{image_message_id}_chunk_{i}",
-                                'conversation_id': conversation_id,
-                                'role': 'image_chunk',
-                                'content': chunks[i],
-                                'parent_message_id': image_message_id,
-                                'created_at': datetime.utcnow().isoformat(),
-                                'timestamp': datetime.utcnow().isoformat(),
-                                'metadata': {
-                                    'is_chunk': True,
-                                    'chunk_index': i,
-                                    'total_chunks': total_chunks,
-                                    'parent_message_id': image_message_id
-                                }
-                            }
-                            chunk_docs.append(chunk_doc)
-                        
-                        # Store all documents
-                        debug_print(f"Storing main document with content length: {len(main_image_doc['content'])} bytes")
-                        cosmos_messages_container.upsert_item(main_image_doc)
-                        
-                        for i, chunk_doc in enumerate(chunk_docs):
-                            debug_print(f"Storing chunk {i+1} with content length: {len(chunk_doc['content'])} bytes")
-                            cosmos_messages_container.upsert_item(chunk_doc)
-                            
-                        debug_print(f"Successfully stored image in {total_chunks} documents")
-                        debug_print(f"Main doc content starts with: {main_image_doc['content'][:50]}...")
-                        debug_print(f"Main doc content ends with: ...{main_image_doc['content'][-50:]}")
-                        
-                        # Return the full image URL for immediate display
-                        response_image_url = generated_image_url
-                        
-                    else:
-                        # Small image - store normally in single document
-                        debug_print(f"Small image ({len(generated_image_url)} bytes), storing in single document")
-                        
-                        # Get user_info and thread_id from the user message for ownership tracking and threading
-                        user_info_for_image = None
-                        user_thread_id = None
-                        user_previous_thread_id = None
-                        try:
-                            user_msg = cosmos_messages_container.read_item(
-                                item=user_message_id,
-                                partition_key=conversation_id
-                            )
-                            user_info_for_image = user_msg.get('metadata', {}).get('user_info')
-                            user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
-                            user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
-                        except Exception as e:
-                            debug_print(f"Warning: Could not retrieve user_info from user message for image: {e}")
-                        
-                        image_doc = {
-                            'id': image_message_id,
-                            'conversation_id': conversation_id,
-                            'role': 'image',
-                            'content': generated_image_url,
-                            'prompt': user_message,
-                            'created_at': datetime.utcnow().isoformat(),
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'model_deployment_name': image_gen_model,
-                            'metadata': {
-                                'user_info': user_info_for_image,  # Track which user created this image
-                                'is_chunked': False,
-                                'original_size': len(generated_image_url),
-                                'thread_info': {
-                                    'thread_id': user_thread_id,  # Same thread as user message
-                                    'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
-                                    'active_thread': True,
-                                    'thread_attempt': 1
-                                }
-                            }
-                        }
+                    }
+
+                    if settings.get('enable_enhanced_citations', False):
+                        image_mime_type, image_bytes = _resolve_generated_image_bytes(generated_image_url)
+                        image_file_extension = mimetypes.guess_extension(image_mime_type) or '.png'
+                        blob_image_info = upload_chat_image_bytes_for_user(
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            message_id=image_message_id,
+                            file_name=f"{image_message_id}{image_file_extension}",
+                            image_bytes=image_bytes,
+                            content_type=image_mime_type,
+                            image_source='generated',
+                        )
+                        image_doc.update({
+                            'content': blob_image_info['content'],
+                            'filename': blob_image_info['filename'],
+                            'file_content_source': blob_image_info['file_content_source'],
+                            'blob_container': blob_image_info['blob_container'],
+                            'blob_path': blob_image_info['blob_path'],
+                            'mime_type': blob_image_info['mime_type'],
+                        })
+                        image_doc['metadata']['is_chunked'] = False
+                        image_doc['metadata']['is_blob_backed'] = True
+                        image_doc['metadata']['original_size'] = blob_image_info['image_size']
                         cosmos_messages_container.upsert_item(image_doc)
+                        response_image_url = blob_image_info['content']
+                    else:
+                        image_documents = build_image_message_documents(image_doc)
+                        for image_document in image_documents:
+                            cosmos_messages_container.upsert_item(image_document)
+
                         response_image_url = generated_image_url
-                        # Image message shares the same thread as user message
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
@@ -12705,6 +12657,8 @@ def register_route_backend_chats(app):
                                     for msg in conversation_history_for_api:
                                         chat_hist.add_message({"role": msg["role"], "content": msg["content"]})
                                     settings_obj = PromptExecutionSettings()
+                                    if hasattr(settings_obj, 'function_choice_behavior'):
+                                        settings_obj.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=20)
 
                                     async def run_chatcompletion():
                                         return await chat_service.get_chat_message_contents(chat_hist, settings_obj)

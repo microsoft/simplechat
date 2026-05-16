@@ -10,6 +10,22 @@ from datetime import UTC, datetime
 IMAGE_MESSAGE_SAFE_CONTENT_LIMIT = 1500000
 IMAGE_MESSAGE_INLINE_RESPONSE_LIMIT = 1024 * 1024
 IMAGE_MESSAGE_CHUNK_OVERHEAD_BUFFER = 200
+IMAGE_MESSAGE_BLOB_CONTENT_SOURCE = 'blob'
+
+
+def is_blob_backed_image_message(message_doc):
+    """Return True when an image message stores its bytes in blob storage."""
+    if not isinstance(message_doc, dict):
+        return False
+
+    role_name = str(message_doc.get('role') or '').strip().lower()
+    content_source = str(message_doc.get('file_content_source') or '').strip().lower()
+    return (
+        role_name == 'image'
+        and content_source == IMAGE_MESSAGE_BLOB_CONTENT_SOURCE
+        and bool(str(message_doc.get('blob_container') or '').strip())
+        and bool(str(message_doc.get('blob_path') or '').strip())
+    )
 
 
 def _normalize_timestamp(timestamp=None):
@@ -136,6 +152,15 @@ def hydrate_image_messages(items, image_url_builder=None, inline_content_limit=I
 
         message_id = str(message.get('id') or '').strip()
         metadata = message.get('metadata', {}) if isinstance(message.get('metadata'), dict) else {}
+
+        if is_blob_backed_image_message(message):
+            if image_url_builder and message_id:
+                message['content'] = image_url_builder(message_id)
+            metadata['is_blob_backed'] = True
+            metadata.pop('is_large_image', None)
+            message['metadata'] = metadata
+            continue
+
         complete_content = reassemble_image_message_content(
             message,
             chunk_lookup.get(message_id, []),

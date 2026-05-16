@@ -1,7 +1,7 @@
 # test_chat_prompt_desktop_toolbar_position.py
 """
 Functional test for desktop chat prompt selector placement.
-Version: 0.241.025
+Version: 0.241.030
 Implemented in: 0.241.025
 
 This test ensures the prompt selector is anchored in the larger desktop toolbar
@@ -113,7 +113,7 @@ def test_version_bumped_for_prompt_toolbar_position_fix():
     print('Testing config version bump...')
 
     config_content = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.241.025"' in config_content, 'Expected config.py version 0.241.025'
+    assert 'VERSION = "0.241.030"' in config_content, 'Expected config.py version 0.241.030'
 
     print('Config version bump passed')
 

@@ -1,11 +1,12 @@
 # test_sidebar_menu_state_preference.py
 """
 UI test for sidebar menu state preference.
-Version: 0.241.025
-Implemented in: 0.241.025
+Version: 0.241.027
+Implemented in: 0.241.027
 
 This test ensures the left sidebar remembers whether a user left a menu section
-expanded or collapsed while navigating between pages.
+expanded or collapsed while navigating between pages, and that stale menu-state
+values do not cause settings saves to fail.
 """
 
 import os
@@ -57,7 +58,7 @@ def _get_user_settings(page):
 
 
 def _set_user_settings(page, settings):
-    return page.evaluate(
+    result = page.evaluate(
         """
         async (nextSettings) => {
             const response = await fetch('/api/user/settings', {
@@ -65,11 +66,19 @@ def _set_user_settings(page, settings):
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ settings: nextSettings })
             });
-            return response.ok;
+            let body = {};
+            try {
+                body = await response.json();
+            } catch (error) {
+                body = { error: 'Unable to parse response body' };
+            }
+            return { ok: response.ok, status: response.status, body };
         }
         """,
         settings,
     )
+    assert result["ok"], f"Expected user settings update to succeed. Response: {result}"
+    return result
 
 
 def _wait_for_sidebar_menu_state(page, menu_key, is_expanded):
@@ -85,6 +94,10 @@ def _wait_for_sidebar_menu_state(page, menu_key, is_expanded):
         """,
         {"menuKey": menu_key, "expanded": is_expanded},
     )
+
+
+def _get_sidebar_menu_state(page):
+    return _get_user_settings(page).get("sidebarMenuState") or {}
 
 
 def _get_restorable_sidebar_menu_state(settings):
@@ -122,13 +135,24 @@ def test_sidebar_menu_state_persists_across_navigation(playwright):
 
         original_settings = _get_user_settings(page)
         original_sidebar_menu_state = _get_restorable_sidebar_menu_state(original_settings)
-        starting_state = dict(original_sidebar_menu_state)
-        starting_state["workspaces"] = False
+        legacy_state = dict(original_sidebar_menu_state)
+        legacy_state.update({
+            "workspaces": "false",
+            "support": False,
+            "legacyCustomMenu": True,
+            "externalLinks": "not-a-bool",
+        })
 
-        assert _set_user_settings(page, {
+        _set_user_settings(page, {
             "navLayout": "sidebar",
-            "sidebarMenuState": starting_state,
-        }), "Expected sidebar menu preference update to succeed."
+            "sidebarMenuState": legacy_state,
+        })
+
+        saved_sidebar_state = _get_sidebar_menu_state(page)
+        assert saved_sidebar_state.get("workspaces") is False, "Expected legacy string boolean to be normalized."
+        assert saved_sidebar_state.get("support") is False, "Expected valid boolean menu state to be preserved."
+        assert "legacyCustomMenu" not in saved_sidebar_state, "Expected unknown sidebar menu keys to be ignored."
+        assert "externalLinks" not in saved_sidebar_state, "Expected invalid sidebar menu values to be ignored."
 
         response = page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
         assert response is not None and response.ok, "Expected /chats to reload in sidebar mode."

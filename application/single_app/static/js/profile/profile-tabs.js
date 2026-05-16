@@ -150,6 +150,60 @@
         window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
     }
 
+    function getProfileTabButton(tabName) {
+        const tabButtons = document.querySelectorAll('#profileTabs [data-profile-tab]');
+        for (const tabButton of tabButtons) {
+            if (tabButton.dataset.profileTab === tabName) {
+                return tabButton;
+            }
+        }
+
+        return null;
+    }
+
+    function getRequestedProfileTabName() {
+        const url = new URL(window.location.href);
+        return (url.searchParams.get('tab') || '').trim().toLowerCase();
+    }
+
+    function loadProfileTabData(tabName) {
+        if (tabName === 'feedback' && pageConfig.feedbackEnabled && !feedbackState.hasLoaded) {
+            refreshProfileFeedback();
+        }
+        if (tabName === 'violations' && pageConfig.contentSafetyEnabled && !violationState.hasLoaded) {
+            refreshProfileViolations();
+        }
+        if (tabName === 'groups' && pageConfig.groupWorkspacesEnabled && !groupState.hasLoaded) {
+            loadWorkspaceCollection(workspaceTabConfigs.groups);
+        }
+        if (tabName === 'public-workspaces' && pageConfig.publicWorkspacesEnabled && !publicWorkspaceState.hasLoaded) {
+            loadWorkspaceCollection(workspaceTabConfigs.publicWorkspaces);
+        }
+    }
+
+    function activateRequestedProfileTab() {
+        const requestedTab = getRequestedProfileTabName();
+        if (!requestedTab) {
+            return pageConfig.initialTab || 'stats';
+        }
+
+        const tabButton = getProfileTabButton(requestedTab);
+        if (!tabButton) {
+            return pageConfig.initialTab || 'stats';
+        }
+
+        if (tabButton.classList.contains('active')) {
+            return requestedTab;
+        }
+
+        if (typeof bootstrap !== 'undefined' && bootstrap.Tab) {
+            bootstrap.Tab.getOrCreateInstance(tabButton).show();
+            return '';
+        }
+
+        return requestedTab;
+    }
+
     function getFeedbackQueryParams(includePagination) {
         const params = new URLSearchParams();
         const feedbackType = document.getElementById('profile-feedback-filter-type')?.value || '';
@@ -526,7 +580,13 @@
             column.className = 'col-12 col-md-6 col-xl-4';
 
             const card = document.createElement('div');
-            card.className = 'profile-workspace-card';
+            card.className = 'profile-workspace-card profile-workspace-card-clickable';
+            if (workspaceId) {
+                card.dataset.manageUrl = config.managePath(workspaceId);
+                card.setAttribute('role', 'link');
+                card.setAttribute('tabindex', '0');
+                card.setAttribute('aria-label', `Manage ${workspaceName}`);
+            }
 
             const header = document.createElement('div');
             header.className = 'd-flex align-items-start gap-3 mb-3';
@@ -884,6 +944,28 @@
         }
         if (cardContainer) {
             cardContainer.addEventListener('click', handleWorkspaceActionClick);
+            cardContainer.addEventListener('click', function (event) {
+                const interactiveTarget = event.target.closest('a, button, input, select, textarea, label');
+                if (interactiveTarget) {
+                    return;
+                }
+
+                const card = event.target.closest('.profile-workspace-card-clickable[data-manage-url]');
+                if (card && card.dataset.manageUrl) {
+                    window.location.assign(card.dataset.manageUrl);
+                }
+            });
+            cardContainer.addEventListener('keydown', function (event) {
+                if (event.key !== 'Enter' && event.key !== ' ') {
+                    return;
+                }
+
+                const card = event.target.closest('.profile-workspace-card-clickable[data-manage-url]');
+                if (card && event.target === card && card.dataset.manageUrl) {
+                    event.preventDefault();
+                    window.location.assign(card.dataset.manageUrl);
+                }
+            });
         }
 
         if (pageSizeSelect) {
@@ -1274,19 +1356,7 @@
             tabButton.addEventListener('shown.bs.tab', function () {
                 const tabName = tabButton.dataset.profileTab || 'stats';
                 updateProfileTabQuery(tabName);
-
-                if (tabName === 'feedback' && pageConfig.feedbackEnabled && !feedbackState.hasLoaded) {
-                    refreshProfileFeedback();
-                }
-                if (tabName === 'violations' && pageConfig.contentSafetyEnabled && !violationState.hasLoaded) {
-                    refreshProfileViolations();
-                }
-                if (tabName === 'groups' && pageConfig.groupWorkspacesEnabled && !groupState.hasLoaded) {
-                    loadWorkspaceCollection(workspaceTabConfigs.groups);
-                }
-                if (tabName === 'public-workspaces' && pageConfig.publicWorkspacesEnabled && !publicWorkspaceState.hasLoaded) {
-                    loadWorkspaceCollection(workspaceTabConfigs.publicWorkspaces);
-                }
+                loadProfileTabData(tabName);
             });
         });
     }
@@ -1417,30 +1487,23 @@
 
         if (pageConfig.feedbackEnabled) {
             attachFeedbackListeners();
-            if (pageConfig.initialTab === 'feedback') {
-                refreshProfileFeedback();
-            }
         }
 
         if (pageConfig.contentSafetyEnabled) {
             attachViolationListeners();
-            if (pageConfig.initialTab === 'violations') {
-                refreshProfileViolations();
-            }
         }
 
         if (pageConfig.groupWorkspacesEnabled) {
             attachWorkspaceCollectionListeners(workspaceTabConfigs.groups);
-            if (pageConfig.initialTab === 'groups') {
-                loadWorkspaceCollection(workspaceTabConfigs.groups);
-            }
         }
 
         if (pageConfig.publicWorkspacesEnabled) {
             attachWorkspaceCollectionListeners(workspaceTabConfigs.publicWorkspaces);
-            if (pageConfig.initialTab === 'public-workspaces') {
-                loadWorkspaceCollection(workspaceTabConfigs.publicWorkspaces);
-            }
+        }
+
+        const startupTabName = activateRequestedProfileTab();
+        if (startupTabName) {
+            loadProfileTabData(startupTabName);
         }
     });
 })();

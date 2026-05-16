@@ -1,11 +1,12 @@
 # functions_control_center.py
 """
 Functions for Control Center operations including scheduled auto-refresh.
-Version: 0.241.026
+Version: 0.241.029
 """
 
 from datetime import datetime, timezone, timedelta
-from config import debug_print, cosmos_user_settings_container, cosmos_groups_container
+from config import cosmos_user_settings_container, cosmos_groups_container
+from functions_debug import debug_print
 from functions_settings import get_settings, update_settings
 from functions_appinsights import log_event
 

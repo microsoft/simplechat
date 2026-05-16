@@ -53,6 +53,19 @@
 
 .document-item-card {
     border-color: rgba(15, 23, 42, 0.08);
+    cursor: pointer;
+    overflow: visible;
+    position: relative;
+}
+
+.document-item-card:hover,
+.document-item-card:focus-within,
+.document-item-card:has(.dropdown-menu.show) {
+    z-index: 5;
+}
+
+.document-item-card .dropdown-menu {
+    z-index: 1080;
 }
 
 .document-item-card.is-selected {
@@ -157,10 +170,38 @@
     align-items: center;
 }
 
+.document-item-card .document-checkbox,
+.document-item-card .action-dropdown,
+.document-item-card .item-card-buttons {
+    cursor: auto;
+}
+
 .document-item-card .item-card-buttons .btn {
     align-items: center;
     display: inline-flex;
     justify-content: center;
+}
+
+.prompt-item-card {
+    cursor: pointer;
+}
+
+.prompt-item-card .card-title {
+    word-break: break-word;
+}
+
+.prompt-card-preview {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    min-height: 4.5rem;
+    overflow: hidden;
+    white-space: pre-wrap;
+}
+
+.prompt-item-card .item-card-buttons,
+.prompt-item-card .btn {
+    cursor: auto;
 }
 
 [data-bs-theme="dark"] .document-meta-pill {

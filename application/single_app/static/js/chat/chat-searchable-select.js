@@ -101,6 +101,7 @@ export function initializeFilterableDropdownSearch({
     isAlwaysVisibleItem,
     itemSelector = '.dropdown-item',
     clearSearchOnHide = true,
+    onFilterApplied,
 }) {
     if (!menuEl || !searchInputEl || !itemsContainerEl) {
         return null;
@@ -132,6 +133,8 @@ export function initializeFilterableDropdownSearch({
         if (searchTerm && visibleMatchCount === 0) {
             itemsContainerEl.appendChild(createNoMatchesElement(emptyMessage));
         }
+
+        onFilterApplied?.({ searchTerm, visibleMatchCount });
     };
 
     const resetFilter = () => {

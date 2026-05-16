@@ -15,7 +15,7 @@ import {
     openTagsDropdown,
 } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
-import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
+import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions, selectPromptById } from "./chat-prompts.js";
 import { initializeModelSelector, populateModelDropdown } from "./chat-model-selector.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
@@ -185,6 +185,12 @@ window.addEventListener('DOMContentLoaded', async () => {
       const scopeParam = getUrlParameter("scope") || "";
       const groupIdParam = getUrlParameter("group_id") || "";
       const workspaceIdParam = getUrlParameter("workspace_id") || "";
+      const promptIdParam = getUrlParameter("prompt_id") || getUrlParameter("promptId") || "";
+      const promptScopeParam = (getUrlParameter("prompt_scope") || "").toLowerCase();
+      const promptScopeIdParam = getUrlParameter("prompt_scope_id")
+          || (promptScopeParam === "group" ? groupIdParam : "")
+          || (promptScopeParam === "public" ? (workspaceIdParam || workspaceParam) : "")
+          || "";
       const localSearchDocsBtn = document.getElementById("search-documents-btn");
       const localDocScopeSel = document.getElementById("doc-scope-select");
       const localDocSelectEl = document.getElementById("document-select");
@@ -350,12 +356,31 @@ window.addEventListener('DOMContentLoaded', async () => {
           // If not loading from URL params, maybe still populate default scope?
           populateDocumentSelectScope();
       }
+
+      if (promptIdParam && ["personal", "group", "public"].includes(promptScopeParam)) {
+          setScopeFromUrlParam(promptScopeParam, {
+              groupId: promptScopeParam === "group" ? promptScopeIdParam : "",
+              workspaceId: promptScopeParam === "public" ? promptScopeIdParam : "",
+          });
+      }
       // --- End Document-related UI ---
 
 
       // --- Call the prompt initialization function HERE ---
       console.log("Calling initializePromptInteractions...");
       initializePromptInteractions();
+
+      if (promptIdParam) {
+          const promptSelected = await selectPromptById({
+              promptId: promptIdParam,
+              promptScope: promptScopeParam,
+              scopeId: promptScopeIdParam,
+          });
+
+          if (!promptSelected) {
+              showToast('Could not select that prompt. It may no longer be available in this workspace.', 'warning');
+          }
+      }
 
 
       // Deep-link: conversationId query param

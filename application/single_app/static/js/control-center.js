@@ -30,11 +30,6 @@ const ACTIVITY_LOGS_LAYOUT_HINTS = {
     'details-focus': 'Details Focus widens the Details column for longer entries. Click a row for the full raw log.',
     compact: 'Compact view prioritizes faster scanning. Click a row for the full raw log when details are truncated.'
 };
-const ACTIVITY_LOGS_AUTO_REFRESH_ENABLED_STORAGE_KEY = 'simplechat_activityLogsAutoRefreshEnabled';
-const ACTIVITY_LOGS_AUTO_REFRESH_INTERVAL_STORAGE_KEY = 'simplechat_activityLogsAutoRefreshIntervalSeconds';
-const ACTIVITY_LOGS_AUTO_REFRESH_MIN_SECONDS = 1;
-const ACTIVITY_LOGS_AUTO_REFRESH_MAX_SECONDS = 300;
-const ACTIVITY_LOGS_AUTO_REFRESH_DEFAULT_SECONDS = 30;
 const CONTROL_CENTER_MANAGEMENT_DEFAULT_PAGE_SIZE = 25;
 const CONTROL_CENTER_MANAGEMENT_MAX_PAGE_SIZE = 250;
 
@@ -204,13 +199,6 @@ class ControlCenter {
         this.activityLogsLayoutPreset = 'balanced';
         this.currentActivityLogUserMap = {};
         this.currentRawLogJson = '';
-        this.activityLogsAutoRefreshEnabled = false;
-        this.activityLogsAutoRefreshIntervalSeconds = ACTIVITY_LOGS_AUTO_REFRESH_DEFAULT_SECONDS;
-        this.activityLogsAutoRefreshTimerId = null;
-        this.activityLogsRefreshInFlight = false;
-        this.activityLogsLastRefreshAt = null;
-        this.activityLogsAutoRefreshFailureCount = 0;
-        this.activityLogsAutoRefreshPauseMessage = '';
         
         this.init();
     }
@@ -218,9 +206,7 @@ class ControlCenter {
     init() {
         this.bindEvents();
         this.loadActivityLogsLayoutPreset();
-        this.loadActivityLogsAutoRefreshSettings();
         this.applyActivityLogsLayoutPreset(this.activityLogsLayoutPreset);
-        this.syncActivityLogsAutoRefreshControls();
         
         // Check if user has admin role (passed from backend)
         const hasAdminRole = window.hasControlCenterAdmin === true;
@@ -258,11 +244,6 @@ class ControlCenter {
         
         document.getElementById('activity-logs-tab')?.addEventListener('shown.bs.tab', () => {
             this.loadActivityLogs();
-        });
-
-        document.getElementById('activity-logs-tab')?.addEventListener('hidden.bs.tab', () => {
-            this.clearActivityLogsAutoRefreshTimer();
-            this.updateActivityLogsAutoRefreshStatus();
         });
         
         // Search and filter controls
@@ -403,18 +384,6 @@ class ControlCenter {
         document.querySelectorAll('input[name="activityLogsLayoutPreset"]').forEach((presetInput) => {
             presetInput.addEventListener('change', (event) => this.handleActivityLogsLayoutPresetChange(event));
         });
-        document.getElementById('activityLogsAutoRefreshToggle')?.addEventListener('change',
-            (event) => this.handleActivityLogsAutoRefreshToggle(event));
-        document.getElementById('activityLogsAutoRefreshIntervalRange')?.addEventListener('input',
-            (event) => this.handleActivityLogsAutoRefreshIntervalChange(event.target.value));
-        document.getElementById('activityLogsAutoRefreshIntervalInput')?.addEventListener('input',
-            (event) => this.handleActivityLogsAutoRefreshIntervalChange(event.target.value));
-        document.querySelectorAll('[data-activity-logs-refresh-preset]').forEach((presetButton) => {
-            presetButton.addEventListener('click', () => {
-                this.handleActivityLogsAutoRefreshIntervalChange(presetButton.dataset.activityLogsRefreshPreset);
-            });
-        });
-        document.addEventListener('visibilitychange', () => this.handleActivityLogsVisibilityChange());
     }
     
     debounce(func, wait) {
@@ -2723,200 +2692,7 @@ class ControlCenter {
         this.saveActivityLogsLayoutPreset();
     }
 
-    normalizeActivityLogsAutoRefreshInterval(value) {
-        const parsedValue = Number.parseInt(value, 10);
-        if (!Number.isFinite(parsedValue)) {
-            return ACTIVITY_LOGS_AUTO_REFRESH_DEFAULT_SECONDS;
-        }
-
-        return Math.min(
-            ACTIVITY_LOGS_AUTO_REFRESH_MAX_SECONDS,
-            Math.max(ACTIVITY_LOGS_AUTO_REFRESH_MIN_SECONDS, parsedValue)
-        );
-    }
-
-    formatActivityLogsAutoRefreshInterval(seconds = this.activityLogsAutoRefreshIntervalSeconds) {
-        const normalizedSeconds = this.normalizeActivityLogsAutoRefreshInterval(seconds);
-        if (normalizedSeconds === 60) {
-            return '1 min';
-        }
-        if (normalizedSeconds > 60 && normalizedSeconds % 60 === 0) {
-            return `${normalizedSeconds / 60} min`;
-        }
-
-        return `${normalizedSeconds} sec`;
-    }
-
-    loadActivityLogsAutoRefreshSettings() {
-        try {
-            this.activityLogsAutoRefreshEnabled = window.localStorage.getItem(ACTIVITY_LOGS_AUTO_REFRESH_ENABLED_STORAGE_KEY) === 'true';
-            this.activityLogsAutoRefreshIntervalSeconds = this.normalizeActivityLogsAutoRefreshInterval(
-                window.localStorage.getItem(ACTIVITY_LOGS_AUTO_REFRESH_INTERVAL_STORAGE_KEY)
-            );
-        } catch (error) {
-            console.warn('Unable to load Activity Logs auto-refresh settings:', error);
-            this.activityLogsAutoRefreshEnabled = false;
-            this.activityLogsAutoRefreshIntervalSeconds = ACTIVITY_LOGS_AUTO_REFRESH_DEFAULT_SECONDS;
-        }
-    }
-
-    saveActivityLogsAutoRefreshSettings() {
-        try {
-            window.localStorage.setItem(
-                ACTIVITY_LOGS_AUTO_REFRESH_ENABLED_STORAGE_KEY,
-                this.activityLogsAutoRefreshEnabled ? 'true' : 'false'
-            );
-            window.localStorage.setItem(
-                ACTIVITY_LOGS_AUTO_REFRESH_INTERVAL_STORAGE_KEY,
-                String(this.activityLogsAutoRefreshIntervalSeconds)
-            );
-        } catch (error) {
-            console.warn('Unable to save Activity Logs auto-refresh settings:', error);
-        }
-    }
-
-    syncActivityLogsAutoRefreshControls() {
-        const toggle = document.getElementById('activityLogsAutoRefreshToggle');
-        const rangeInput = document.getElementById('activityLogsAutoRefreshIntervalRange');
-        const numberInput = document.getElementById('activityLogsAutoRefreshIntervalInput');
-        const valueOutput = document.getElementById('activityLogsAutoRefreshIntervalValue');
-
-        if (toggle) {
-            toggle.checked = this.activityLogsAutoRefreshEnabled;
-        }
-        if (rangeInput) {
-            rangeInput.value = String(this.activityLogsAutoRefreshIntervalSeconds);
-        }
-        if (numberInput) {
-            numberInput.value = String(this.activityLogsAutoRefreshIntervalSeconds);
-        }
-        if (valueOutput) {
-            valueOutput.textContent = this.formatActivityLogsAutoRefreshInterval();
-        }
-
-        document.querySelectorAll('[data-activity-logs-refresh-preset]').forEach((presetButton) => {
-            const presetValue = this.normalizeActivityLogsAutoRefreshInterval(presetButton.dataset.activityLogsRefreshPreset);
-            const isActivePreset = presetValue === this.activityLogsAutoRefreshIntervalSeconds;
-            presetButton.classList.toggle('active', isActivePreset);
-            presetButton.setAttribute('aria-pressed', isActivePreset ? 'true' : 'false');
-        });
-
-        this.updateActivityLogsAutoRefreshStatus();
-    }
-
-    updateActivityLogsAutoRefreshStatus(message = '') {
-        const statusElement = document.getElementById('activityLogsAutoRefreshStatus');
-        if (!statusElement) {
-            return;
-        }
-
-        if (message) {
-            statusElement.textContent = message;
-            return;
-        }
-
-        if (!this.activityLogsAutoRefreshEnabled && this.activityLogsAutoRefreshPauseMessage) {
-            statusElement.textContent = this.activityLogsAutoRefreshPauseMessage;
-            return;
-        }
-
-        if (!this.activityLogsAutoRefreshEnabled) {
-            statusElement.textContent = 'Auto-refresh off';
-            return;
-        }
-
-        if (this.activityLogsRefreshInFlight) {
-            statusElement.textContent = 'Refreshing...';
-            return;
-        }
-
-        if (!this.isActivityLogsTabActive() || document.hidden) {
-            statusElement.textContent = 'Auto-refresh paused';
-            return;
-        }
-
-        const lastRefreshText = this.activityLogsLastRefreshAt
-            ? ` Last updated ${this.activityLogsLastRefreshAt.toLocaleTimeString()}.`
-            : '';
-        statusElement.textContent = `Every ${this.formatActivityLogsAutoRefreshInterval()}.${lastRefreshText}`;
-    }
-
-    handleActivityLogsAutoRefreshToggle(event) {
-        this.activityLogsAutoRefreshEnabled = Boolean(event.target?.checked);
-        this.activityLogsAutoRefreshFailureCount = 0;
-        this.activityLogsAutoRefreshPauseMessage = '';
-        this.saveActivityLogsAutoRefreshSettings();
-        this.syncActivityLogsAutoRefreshControls();
-
-        if (this.activityLogsAutoRefreshEnabled) {
-            this.loadActivityLogs();
-            return;
-        }
-
-        this.clearActivityLogsAutoRefreshTimer();
-        this.updateActivityLogsAutoRefreshStatus();
-    }
-
-    handleActivityLogsAutoRefreshIntervalChange(value) {
-        this.activityLogsAutoRefreshIntervalSeconds = this.normalizeActivityLogsAutoRefreshInterval(value);
-        this.saveActivityLogsAutoRefreshSettings();
-        this.syncActivityLogsAutoRefreshControls();
-        this.scheduleActivityLogsAutoRefresh();
-    }
-
-    isActivityLogsTabActive() {
-        const activityLogsPane = document.getElementById('activity-logs');
-        return activityLogsPane ? activityLogsPane.classList.contains('active') : false;
-    }
-
-    clearActivityLogsAutoRefreshTimer() {
-        if (this.activityLogsAutoRefreshTimerId) {
-            window.clearTimeout(this.activityLogsAutoRefreshTimerId);
-            this.activityLogsAutoRefreshTimerId = null;
-        }
-    }
-
-    scheduleActivityLogsAutoRefresh() {
-        this.clearActivityLogsAutoRefreshTimer();
-
-        if (!this.activityLogsAutoRefreshEnabled || !this.isActivityLogsTabActive() || document.hidden) {
-            this.updateActivityLogsAutoRefreshStatus();
-            return;
-        }
-
-        this.activityLogsAutoRefreshTimerId = window.setTimeout(() => {
-            this.loadActivityLogs();
-        }, this.activityLogsAutoRefreshIntervalSeconds * 1000);
-        this.updateActivityLogsAutoRefreshStatus();
-    }
-
-    pauseActivityLogsAutoRefresh(message) {
-        this.activityLogsAutoRefreshEnabled = false;
-        this.activityLogsAutoRefreshPauseMessage = message || '';
-        this.clearActivityLogsAutoRefreshTimer();
-        this.saveActivityLogsAutoRefreshSettings();
-        this.syncActivityLogsAutoRefreshControls();
-        this.updateActivityLogsAutoRefreshStatus(message);
-    }
-
-    handleActivityLogsVisibilityChange() {
-        if (document.hidden) {
-            this.clearActivityLogsAutoRefreshTimer();
-            this.updateActivityLogsAutoRefreshStatus();
-            return;
-        }
-
-        this.scheduleActivityLogsAutoRefresh();
-    }
-
     async loadActivityLogs() {
-        if (this.activityLogsRefreshInFlight) {
-            return;
-        }
-
-        this.activityLogsRefreshInFlight = true;
-        this.updateActivityLogsAutoRefreshStatus();
-
         try {
             const params = new URLSearchParams({
                 page: this.activityLogsPage,
@@ -2934,32 +2710,15 @@ class ControlCenter {
             }
             
             if (!response.ok) {
-                const loadError = new Error(data?.error || 'Failed to load activity logs');
-                loadError.status = response.status;
-                throw loadError;
+                throw new Error(data?.error || 'Failed to load activity logs');
             }
             
             this.renderActivityLogs(data.logs, data.user_map);
             this.renderActivityLogsPagination(data.pagination);
-            this.activityLogsLastRefreshAt = new Date();
-            this.activityLogsAutoRefreshFailureCount = 0;
-            this.activityLogsAutoRefreshPauseMessage = '';
             
         } catch (error) {
             console.error('Error loading activity logs:', error);
             this.showActivityLogsError(error.message || 'Failed to load activity logs. Please try again.');
-            if (this.activityLogsAutoRefreshEnabled && (error.status === 401 || error.status === 403)) {
-                this.pauseActivityLogsAutoRefresh('Auto-refresh paused because access changed.');
-            } else if (this.activityLogsAutoRefreshEnabled) {
-                this.activityLogsAutoRefreshFailureCount += 1;
-                if (this.activityLogsAutoRefreshFailureCount >= 3) {
-                    this.pauseActivityLogsAutoRefresh('Auto-refresh paused after repeated refresh errors.');
-                }
-            }
-        } finally {
-            this.activityLogsRefreshInFlight = false;
-            this.syncActivityLogsAutoRefreshControls();
-            this.scheduleActivityLogsAutoRefresh();
         }
     }
 
@@ -4504,6 +4263,11 @@ class ControlCenter {
         // Update bulk action button state
         this.updateVisibleSelectionState('.public-workspace-checkbox', 'selectAllPublicWorkspaces');
         this.updatePublicWorkspaceBulkActionButton();
+
+        // Initialize sorting after data is loaded, matching the group table behavior.
+        if (!window.publicWorkspaceTableSorter) {
+            window.publicWorkspaceTableSorter = new GroupTableSorter('publicWorkspacesTable');
+        }
     }
     
     createPublicWorkspaceRow(workspace) {

@@ -13,6 +13,7 @@ from functions_image_messages import build_image_message_documents
 from functions_personal_agents import ensure_migration_complete, get_personal_agents
 from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
+from functions_simplechat_operations import upload_chat_image_bytes_for_user
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
@@ -493,6 +494,8 @@ def register_route_frontend_chats(app):
         is_table = False 
         vision_analysis = None
         image_base64_url = None  # For storing base64-encoded images
+        image_bytes = None
+        image_mime_type = None
 
         try:
             # Check if this is an image file
@@ -510,18 +513,27 @@ def register_route_frontend_chats(app):
                 else:
                     extracted_content = str(extracted_content_raw)
                 
-                # NEW: For images, convert to base64 for inline display
+                # For images, either store blob-backed bytes or convert to base64 for legacy inline display.
                 if is_image_file:
                     try:
+                        image_mime_type = mimetypes.guess_type(filename)[0] or 'image/png'
                         with open(temp_file_path, 'rb') as img_file:
                             image_bytes = img_file.read()
+
+                        if settings.get('enable_enhanced_citations', False):
+                            log_event(
+                                "[ChatUpload] Prepared image bytes for blob-backed chat storage",
+                                {
+                                    "conversation_id": conversation_id,
+                                    "filename": filename,
+                                    "content_type": image_mime_type,
+                                    "image_size": len(image_bytes),
+                                },
+                                debug_only=True,
+                            )
+                        else:
                             base64_image = base64.b64encode(image_bytes).decode('utf-8')
-                            
-                            # Detect mime type
-                            mime_type = mimetypes.guess_type(temp_file_path)[0] or 'image/png'
-                            
-                            # Create data URL
-                            image_base64_url = f"data:{mime_type};base64,{base64_image}"
+                            image_base64_url = f"data:{image_mime_type};base64,{base64_image}"
                             print(f"Converted image to base64: {filename}, size: {len(image_base64_url)} bytes")
                     except Exception as b64_error:
                         print(f"Warning: Failed to convert image to base64: {b64_error}")
@@ -612,8 +624,8 @@ def register_route_frontend_chats(app):
         try:
             file_message_id = f"{conversation_id}_file_{int(time.time())}_{random.randint(1000,9999)}"
             
-            # For images with base64 data, store as 'image' role (like system-generated images)
-            if image_base64_url:
+            # For images, store blob-backed references when enhanced citations is enabled.
+            if image_base64_url or image_bytes:
                 previous_thread_id = None
                 try:
                     last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
@@ -627,7 +639,6 @@ def register_route_frontend_chats(app):
                 image_message = {
                     'id': file_message_id,
                     'conversation_id': conversation_id,
-                    'content': image_base64_url,
                     'filename': filename,
                     'prompt': f"User uploaded: {filename}",
                     'created_at': datetime.utcnow().isoformat(),
@@ -649,14 +660,48 @@ def register_route_frontend_chats(app):
                 if extracted_content:
                     image_message['extracted_text'] = extracted_content
 
-                image_documents = build_image_message_documents(image_message)
-                for image_document in image_documents:
-                    cosmos_messages_container.upsert_item(image_document)
-
-                if image_documents[0].get('metadata', {}).get('is_chunked'):
-                    print(f"Created {len(image_documents)} chunked image documents for {filename}")
+                if image_bytes and settings.get('enable_enhanced_citations', False):
+                    blob_image_info = upload_chat_image_bytes_for_user(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        message_id=file_message_id,
+                        file_name=filename,
+                        image_bytes=image_bytes,
+                        content_type=image_mime_type or 'image/png',
+                        image_source='upload',
+                    )
+                    image_message.update({
+                        'role': 'image',
+                        'content': blob_image_info['content'],
+                        'filename': blob_image_info['filename'],
+                        'file_content_source': blob_image_info['file_content_source'],
+                        'blob_container': blob_image_info['blob_container'],
+                        'blob_path': blob_image_info['blob_path'],
+                        'mime_type': blob_image_info['mime_type'],
+                    })
+                    image_message['metadata']['is_chunked'] = False
+                    image_message['metadata']['is_blob_backed'] = True
+                    image_message['metadata']['original_size'] = blob_image_info['image_size']
+                    cosmos_messages_container.upsert_item(image_message)
+                    log_event(
+                        "[ChatUpload] Created blob-backed image message",
+                        {
+                            "conversation_id": conversation_id,
+                            "message_id": file_message_id,
+                            "filename": blob_image_info['filename'],
+                        },
+                        debug_only=True,
+                    )
                 else:
-                    print(f"Created single image document for {filename}")
+                    image_message['content'] = image_base64_url
+                    image_documents = build_image_message_documents(image_message)
+                    for image_document in image_documents:
+                        cosmos_messages_container.upsert_item(image_document)
+
+                    if image_documents[0].get('metadata', {}).get('is_chunked'):
+                        print(f"Created {len(image_documents)} chunked image documents for {filename}")
+                    else:
+                        print(f"Created single image document for {filename}")
             else:
                 # Non-image file or failed to convert to base64, store as 'file' role
                 # Threading logic for file upload

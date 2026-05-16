@@ -2,6 +2,7 @@
 """Shared SimpleChat-native operations for routes and Semantic Kernel plugins."""
 
 import logging
+import mimetypes
 import os
 import re
 import tempfile
@@ -572,6 +573,94 @@ def download_blob_content(blob_container: str, blob_path: str) -> bytes:
         blob=normalized_blob_path,
     )
     return blob_client.download_blob().readall()
+
+
+def _normalize_chat_image_file_name(file_name: str, content_type: str = "image/png") -> str:
+    normalized_file_name = str(file_name or "").replace("\\", "/").split("/")[-1].strip()
+    normalized_content_type = str(content_type or "image/png").split(";", 1)[0].strip().lower() or "image/png"
+    guessed_extension = mimetypes.guess_extension(normalized_content_type) or ".png"
+
+    if not normalized_file_name:
+        return f"chat-image{guessed_extension}"
+
+    base_name, extension = os.path.splitext(normalized_file_name)
+    if extension:
+        return normalized_file_name
+
+    normalized_base_name = base_name.strip() or normalized_file_name.strip() or "chat-image"
+    return f"{normalized_base_name}{guessed_extension}"
+
+
+def upload_chat_image_bytes_for_user(
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    file_name: str,
+    image_bytes: bytes,
+    content_type: str = "image/png",
+    image_source: str = "generated",
+) -> Dict[str, Any]:
+    """Upload chat image bytes to the conversation blob folder and return message fields."""
+    normalized_user_id = str(user_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_message_id = str(message_id or "").strip()
+    normalized_content_type = str(content_type or "image/png").split(";", 1)[0].strip() or "image/png"
+    normalized_image_source = str(image_source or "generated").strip().lower() or "generated"
+
+    if not normalized_user_id or not normalized_conversation_id or not normalized_message_id:
+        raise ValueError("user_id, conversation_id, and message_id are required")
+    if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
+        raise ValueError("image_bytes are required")
+
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        raise RuntimeError("Blob storage client not available")
+
+    file_content_bytes = bytes(image_bytes)
+    normalized_file_name = _normalize_chat_image_file_name(file_name, normalized_content_type)
+    blob_path = (
+        f"{normalized_user_id}/{normalized_conversation_id}/images/"
+        f"{normalized_message_id}/{normalized_file_name}"
+    )
+    blob_client = blob_service_client.get_blob_client(
+        container=storage_account_personal_chat_container_name,
+        blob=blob_path,
+    )
+    blob_client.upload_blob(
+        file_content_bytes,
+        overwrite=True,
+        metadata={
+            "conversation_id": normalized_conversation_id,
+            "user_id": normalized_user_id,
+            "message_id": normalized_message_id,
+            "chat_image": "true",
+            "image_source": normalized_image_source,
+        },
+    )
+
+    log_event(
+        "[SimpleChat] Chat image saved to blob storage",
+        {
+            "conversation_id": normalized_conversation_id,
+            "message_id": normalized_message_id,
+            "blob_container": storage_account_personal_chat_container_name,
+            "blob_path": blob_path,
+            "content_type": normalized_content_type,
+            "image_source": normalized_image_source,
+            "image_size": len(file_content_bytes),
+        },
+        debug_only=True,
+    )
+
+    return {
+        "content": f"/api/image/{normalized_message_id}",
+        "filename": normalized_file_name,
+        "file_content_source": "blob",
+        "blob_container": storage_account_personal_chat_container_name,
+        "blob_path": blob_path,
+        "mime_type": normalized_content_type,
+        "image_size": len(file_content_bytes),
+    }
 
 
 def create_group_for_current_user(name: str, description: str = "") -> Dict[str, Any]:

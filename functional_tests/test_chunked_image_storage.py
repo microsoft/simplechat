@@ -2,12 +2,14 @@
 # test_chunked_image_storage.py
 """
 Functional test for chunked image storage helpers.
-Version: 0.241.022
-Implemented in: 0.241.022
+Version: 0.241.032
+Implemented in: 0.241.032
 
 This test ensures that large image payloads are split across safe document
 sizes, preserve chunk metadata, and rehydrate back into either inline data URLs
-or image endpoint references depending on response size.
+or image endpoint references depending on response size. It also validates that
+blob-backed image messages hydrate to authenticated image routes without
+reassembling inline content.
 """
 
 import os
@@ -23,6 +25,7 @@ from functions_image_messages import (  # noqa: E402
     IMAGE_MESSAGE_SAFE_CONTENT_LIMIT,
     build_image_message_documents,
     hydrate_image_messages,
+    is_blob_backed_image_message,
 )
 
 
@@ -101,8 +104,37 @@ def test_hydration_keeps_small_images_inline():
     assert hydrated_messages[0]['metadata'].get('is_large_image') is None
 
 
+def test_hydration_uses_image_endpoint_for_blob_backed_images():
+    """Validate that blob-backed images return the authenticated image path."""
+    blob_backed_message = {
+        'id': 'image-message-4',
+        'conversation_id': 'conversation-4',
+        'role': 'image',
+        'content': '/api/image/image-message-4',
+        'file_content_source': 'blob',
+        'blob_container': 'personal-chat',
+        'blob_path': 'user-1/conversation-4/images/image-message-4/image.png',
+        'mime_type': 'image/png',
+        'metadata': {
+            'is_user_upload': True,
+        },
+    }
+
+    hydrated_messages = hydrate_image_messages(
+        [blob_backed_message],
+        image_url_builder=lambda image_id: f'/api/image/{image_id}',
+    )
+
+    assert is_blob_backed_image_message(blob_backed_message) is True
+    assert len(hydrated_messages) == 1
+    assert hydrated_messages[0]['content'] == '/api/image/image-message-4'
+    assert hydrated_messages[0]['metadata']['is_blob_backed'] is True
+    assert hydrated_messages[0]['metadata'].get('is_large_image') is None
+
+
 if __name__ == '__main__':
     test_large_images_split_into_multiple_documents()
     test_hydration_uses_image_endpoint_for_large_responses()
     test_hydration_keeps_small_images_inline()
+    test_hydration_uses_image_endpoint_for_blob_backed_images()
     print('Chunked image storage checks passed.')
