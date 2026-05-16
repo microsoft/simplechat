@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.153"
+VERSION = "0.241.154"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -115,6 +115,7 @@ SECURITY_HEADERS = {
         #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
+        "frame-src 'self' blob:; "
         "object-src 'none'; "
         "frame-ancestors 'self'; "
         "base-uri 'self';"
@@ -192,6 +193,7 @@ IDLE_TIMEOUT_EXEMPT_PATHS = {
     '/logout/local',
     '/getAToken',
     '/getATokenApi',
+    '/ci-auth/session',
     '/robots933456.txt',
     '/favicon.ico'
 }
@@ -209,6 +211,13 @@ CLIENT_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
+ENABLE_CI_BEARER_SESSION_AUTH = os.getenv("ENABLE_CI_BEARER_SESSION_AUTH", "false").lower() == "true"
+CI_BEARER_SESSION_ALLOWED_APP_IDS = [
+    app_id.strip().lower()
+    for app_id in os.getenv("CI_BEARER_SESSION_ALLOWED_APP_IDS", "").split(",")
+    if app_id.strip()
+]
+CI_BEARER_SESSION_REQUIRED_ROLE = os.getenv("CI_BEARER_SESSION_REQUIRED_ROLE", "Admin")
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom

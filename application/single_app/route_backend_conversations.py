@@ -101,8 +101,6 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
 
     return conversation_item
 
-    return conversation_item
-
 
 def _load_scope_lock_conversation(conversation_id, user_id):
     try:
@@ -139,6 +137,7 @@ def _persist_scope_lock_update(conversation_item, conversation_kind, user_id, ne
     conversation_item['last_updated'] = timestamp
     cosmos_conversations_container.upsert_item(conversation_item)
     return conversation_item
+
 
 def register_route_backend_conversations(app):
 

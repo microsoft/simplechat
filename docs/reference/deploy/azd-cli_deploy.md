@@ -75,6 +75,7 @@ This is the primary recommended deployment path for the repo.
 
 ### Required Software
 - **Azure Developer CLI** ([install guide](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd))
+- **Python 3.12** ([download](https://www.python.org/downloads/)) with `python` available on Windows and `python3` available on Linux/macOS. The `deployers/azure.yaml` `preprovision` and `postprovision` hooks call Python for prerequisite validation, dependency installation, and post-provision configuration.
 - **Git** for repository cloning
 - **Azure CLI** (usually installed with azd)
 

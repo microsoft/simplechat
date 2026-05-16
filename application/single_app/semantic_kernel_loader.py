@@ -37,6 +37,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
+from config import cognitive_services_scope
 from functions_keyvault import (
     SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
     SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
@@ -308,6 +309,9 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             return custom_authority
         return AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
 
+    def resolve_aoai_scope():
+        return str(cognitive_services_scope or "").strip()
+
     def resolve_foundry_scope(auth_settings, endpoint=None):
         custom_scope = (auth_settings.get("foundry_scope") or "").strip()
         if custom_scope:
@@ -347,9 +351,10 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 authority=authority,
             )
 
-        scope = "https://cognitiveservices.azure.com/.default"
         if provider in ("aifoundry", "new_foundry"):
             scope = resolve_foundry_scope(auth_settings, endpoint=endpoint)
+        else:
+            scope = resolve_aoai_scope()
 
         return get_bearer_token_provider(credential, scope)
 

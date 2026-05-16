@@ -49,21 +49,112 @@ classification_banner:
 navigation:
   show_sections: true
   main_links:
-    - title: Home
-      url: /
-      icon: bi bi-house-fill
-    - title: Getting Started
-      url: /setup_instructions/
-      icon: bi bi-rocket-takeoff
-    - title: Contributing
-      url: /contributing/
-      icon: bi bi-git
-    - title: Features
-      url: /features/
-      icon: bi bi-stars
-    - title: FAQ
-      url: /faqs/
-      icon: bi bi-question-circle
+    - title: Guide
+      url: /tutorials/
+      match: /tutorials/
+      icon: bi bi-signpost-split
+    - title: API
+      url: /reference/api_reference/
+      match: /reference/
+      icon: bi bi-braces
+    - title: Examples
+      url: /explanation/scenarios/
+      match: /explanation/scenarios/
+      icon: bi bi-collection-play
+    - title: Changelog
+      url: /explanation/release_notes/
+      match: /explanation/release_notes/
+      icon: bi bi-clock-history
+  sidebar_sections:
+    - title: Start here
+      links:
+        - title: Overview
+          url: /
+          icon: bi bi-house-fill
+        - title: Getting Started
+          url: /setup_instructions/
+          icon: bi bi-rocket-takeoff
+        - title: Feature Map
+          url: /features/
+          icon: bi bi-stars
+        - title: Latest Release
+          url: /latest-release/
+          match: /latest-release/
+          icon: bi bi-megaphone
+        - title: FAQ
+          url: /faqs/
+          icon: bi bi-question-circle
+    - title: Learn the product
+      links:
+        - title: Tutorials
+          url: /tutorials/
+          match: /tutorials/
+          icon: bi bi-mortarboard
+        - title: Application Workflows
+          url: /application_workflows/
+          icon: bi bi-diagram-3
+        - title: Add Documents
+          url: /how-to/add_documents/
+          icon: bi bi-file-earmark-arrow-up
+        - title: Create Agents
+          url: /how-to/create_agents/
+          icon: bi bi-robot
+        - title: Solution Demos
+          url: /demos/
+          icon: bi bi-play-circle
+    - title: Operate on Azure
+      links:
+        - title: Admin Configuration
+          url: /admin_configuration/
+          icon: bi bi-sliders
+        - title: Deployment Reference
+          url: /reference/deploy/
+          match: /reference/deploy/
+          icon: bi bi-cloud-arrow-up
+        - title: Application Scaling
+          url: /application_scaling/
+          icon: bi bi-speedometer2
+        - title: Enterprise Networking
+          url: /how-to/enterprise_networking/
+          icon: bi bi-diagram-2
+        - title: Troubleshooting
+          url: /troubleshooting/
+          icon: bi bi-wrench-adjustable-circle
+    - title: Extend and integrate
+      links:
+        - title: External Applications
+          url: /external_apps_overview/
+          icon: bi bi-window-stack
+        - title: ServiceNow Guides
+          url: /how-to/agents/ServiceNow/
+          match: /how-to/agents/ServiceNow/
+          icon: bi bi-plug
+        - title: Managed Identity
+          url: /how-to/use_managed_identity/
+          icon: bi bi-person-badge
+        - title: API Reference
+          url: /reference/api_reference/
+          icon: bi bi-braces
+        - title: Feature Reference
+          url: /reference/features/
+          icon: bi bi-grid-1x2
+    - title: Deep reference
+      links:
+        - title: Architecture
+          url: /explanation/architecture/
+          icon: bi bi-diagram-3
+        - title: Design Principles
+          url: /explanation/design_principles/
+          icon: bi bi-lightbulb
+        - title: Feature Guidance
+          url: /explanation/feature_guidance/
+          icon: bi bi-signpost
+        - title: Release Notes
+          url: /explanation/release_notes/
+          icon: bi bi-clock-history
+        - title: Contributing
+          url: /contributing/
+          icon: bi bi-git
   external_links:
     - title: GitHub Repository
       url: https://github.com/microsoft/simplechat

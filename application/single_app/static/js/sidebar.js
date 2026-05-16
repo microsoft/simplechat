@@ -1,3 +1,5 @@
+// sidebar.js
+
 // Sidebar Navigation Functionality
 
 /**
@@ -57,6 +59,126 @@ function updateNavLayoutToggleText(navLayout) {
   }
 }
 
+function getSidebarElements() {
+  return {
+    body: document.body,
+    sidebar: document.getElementById('sidebar-nav'),
+    toggleButton: document.getElementById('sidebar-toggle-btn'),
+    floatingButton: document.getElementById('floating-expand-btn'),
+    mainContent: document.getElementById('main-content'),
+    allContentElements: document.querySelectorAll('.main-content, .container, .container-fluid, #main-content')
+  };
+}
+
+function syncSidebarControls(isExpanded, toggleButton, floatingButton) {
+  document.querySelectorAll('[data-sidebar-toggle="toggle"]').forEach((control) => {
+    control.setAttribute('aria-expanded', String(isExpanded));
+  });
+
+  if (floatingButton) {
+    floatingButton.classList.toggle('d-none', isExpanded);
+    floatingButton.classList.toggle('sidebar-floating-expand-visible', !isExpanded);
+    floatingButton.setAttribute('aria-hidden', String(isExpanded));
+  }
+}
+
+function setSidebarExpandedState(isExpanded) {
+  const {
+    body,
+    sidebar,
+    toggleButton,
+    floatingButton,
+    mainContent,
+    allContentElements
+  } = getSidebarElements();
+
+  if (!body || !sidebar) {
+    return false;
+  }
+
+  sidebar.classList.toggle('sidebar-expanded', isExpanded);
+  sidebar.classList.toggle('sidebar-collapsed', !isExpanded);
+  body.classList.toggle('sidebar-collapsed', !isExpanded);
+
+  allContentElements.forEach((element) => {
+    element.style.marginLeft = isExpanded ? '' : '0px';
+    element.style.maxWidth = isExpanded ? '' : '100%';
+  });
+
+  if (mainContent) {
+    mainContent.classList.toggle('sidebar-padding', isExpanded);
+  }
+
+  syncSidebarControls(isExpanded, toggleButton, floatingButton);
+  return isExpanded;
+}
+
+function toggleSidebar(event) {
+  if (event) {
+    event.preventDefault();
+  }
+
+  const { sidebar } = getSidebarElements();
+  if (!sidebar) {
+    return false;
+  }
+
+  const isExpanded = sidebar.classList.contains('sidebar-expanded') && !sidebar.classList.contains('sidebar-collapsed');
+  return setSidebarExpandedState(!isExpanded);
+}
+
+function initializeSidebarToggleButtons() {
+  document.querySelectorAll('[data-sidebar-toggle="toggle"]').forEach((button) => {
+    if (button.dataset.sidebarToggleBound === 'true') {
+      return;
+    }
+
+    button.dataset.sidebarToggleBound = 'true';
+    button.addEventListener('click', toggleSidebar);
+  });
+
+  const { body, sidebar } = getSidebarElements();
+  if (!body || !sidebar) {
+    return;
+  }
+
+  const isExpanded = !body.classList.contains('sidebar-collapsed') && !sidebar.classList.contains('sidebar-collapsed');
+  setSidebarExpandedState(isExpanded);
+}
+
+function initializeChatSidebarDrawer() {
+  const sidebar = document.querySelector('#sidebar-nav[data-navigation-drawer="chat-rail"]');
+  if (!sidebar || typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) {
+    return;
+  }
+
+  if (sidebar.dataset.chatSidebarDrawerBound === 'true') {
+    return;
+  }
+
+  sidebar.dataset.chatSidebarDrawerBound = 'true';
+
+  sidebar.addEventListener('click', (event) => {
+    if (window.innerWidth > 991) {
+      return;
+    }
+
+    const dismissTrigger = event.target.closest('a[href], #sidebar-new-chat-btn, .sidebar-conversation-item');
+    if (!dismissTrigger || dismissTrigger.matches('a[href^="#"]')) {
+      return;
+    }
+
+    const offcanvasInstance = bootstrap.Offcanvas.getInstance(sidebar);
+    if (offcanvasInstance) {
+      offcanvasInstance.hide();
+    }
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.toggleSidebar = toggleSidebar;
+}
+
 // Initialize sidebar navigation functionality
 document.addEventListener('DOMContentLoaded', () => {
   // On click, toggle nav layout in user settings and reload
@@ -102,6 +224,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Default to top nav if error
     updateNavLayoutToggleText('top');
   });
+
+  initializeSidebarToggleButtons();
+  initializeChatSidebarDrawer();
 });
 
 // Export functions for use in other modules if needed
@@ -109,6 +234,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     getUserSettings,
     setUserNavLayout,
-    updateNavLayoutToggleText
+    updateNavLayoutToggleText,
+    toggleSidebar,
+    setSidebarExpandedState
   };
 }

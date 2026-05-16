@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for authenticated request login activity tracking.
-Version: 0.241.142
-Implemented in: 0.241.142
+Version: 0.241.154
+Implemented in: 0.241.130
 
 This test ensures that passive authenticated browser requests emit a throttled
 login activity record and that explicit OAuth callback logins do not double
@@ -91,7 +91,7 @@ def assert_true(condition, message):
 
 
 def test_authenticated_request_login_is_throttled():
-    print('Testing throttled authenticated-request login activity...')
+    print('🔍 Testing throttled authenticated-request login activity...')
     fake_container = FakeContainer()
     activity_logging = load_functions_activity_logging(fake_container)
     fake_session = FakeSession()
@@ -131,7 +131,7 @@ def test_authenticated_request_login_is_throttled():
 
 
 def test_callback_login_marks_session_to_avoid_duplicate_redirect_logging():
-    print('Testing callback-login dedup on immediate redirect...')
+    print('🔍 Testing callback-login dedup on immediate redirect...')
     fake_container = FakeContainer()
     activity_logging = load_functions_activity_logging(fake_container)
     fake_session = FakeSession()
@@ -153,7 +153,7 @@ def test_callback_login_marks_session_to_avoid_duplicate_redirect_logging():
 
 
 def test_non_get_requests_do_not_emit_login_activity():
-    print('Testing non-GET request exclusion...')
+    print('🔍 Testing non-GET request exclusion...')
     fake_container = FakeContainer()
     activity_logging = load_functions_activity_logging(fake_container)
     fake_session = FakeSession()
@@ -181,12 +181,12 @@ if __name__ == '__main__':
     for test in tests:
         try:
             test()
-            print(f'{test.__name__} passed')
+            print(f'✅ {test.__name__} passed')
         except Exception as exc:
             failures += 1
-            print(f'{test.__name__} failed: {exc}')
+            print(f'❌ {test.__name__} failed: {exc}')
 
     if failures:
         sys.exit(1)
 
-    print('All authenticated request login activity tests passed')
+    print('✅ All authenticated request login activity tests passed')

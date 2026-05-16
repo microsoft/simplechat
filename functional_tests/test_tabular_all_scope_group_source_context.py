@@ -2,7 +2,7 @@
 # test_tabular_all_scope_group_source_context.py
 """
 Functional test for all-scope tabular group source context handling.
-Version: 0.241.017
+Version: 0.241.154
 Implemented in: 0.240.032; 0.240.041; 0.240.042; 0.240.043; 0.240.048; 0.240.049; 0.241.016
 
 This test ensures mixed-scope workspace search keeps per-file group/public
@@ -79,7 +79,7 @@ def read_config_version():
     """Extract the current application version from config.py."""
     with open(CONFIG_FILE, 'r', encoding='utf-8') as file_handle:
         for line in file_handle:
-            if line.startswith('VERSION = '):
+            if line.strip().startswith('VERSION = '):
                 return line.split('=', 1)[1].strip().strip('"')
     raise AssertionError('VERSION assignment not found in config.py')
 
@@ -209,7 +209,7 @@ def test_route_uses_context_aware_tabular_analysis_and_version_bump():
     ]
     missing = [snippet for snippet in required_snippets if snippet not in source]
     assert not missing, f'Missing route integration snippets: {missing}'
-    assert read_config_version() == '0.241.017'
+    assert read_config_version() == '0.241.154'
 
     print('✅ Route integration and version bump passed')
     return True

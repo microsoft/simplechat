@@ -30,9 +30,12 @@ Install these tools before starting the deployment flow:
     Download: https://learn.microsoft.com/cli/azure/install-azure-cli
 2. Azure Developer CLI (`azd`)
     Download: https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd
-3. PowerShell 7
+3. Python 3.12
+    Download: https://www.python.org/downloads/
+    The AZD preprovision and postprovision hooks in [deployers/azure.yaml](./deployers/azure.yaml) run Python scripts for prerequisite validation, dependency installation, and post-provision configuration. Make sure `python` is available on Windows and `python3` is available on Linux/macOS before running `azd up`.
+4. PowerShell 7
     Download: https://learn.microsoft.com/powershell/scripting/install/installing-powershell
-4. Visual Studio Code
+5. Visual Studio Code
     Download: https://code.visualstudio.com/download
 
 Shell guidance:
@@ -50,7 +53,7 @@ Minimum access and setup:
 
 ### Pre-Configuration:
 
-The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenant. 
+The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenant.
 
 #### Create the application registration:
 
@@ -69,11 +72,11 @@ If you type `appName = "simplechat"` in PowerShell, PowerShell treats `appName` 
 
 This main README uses PowerShell examples consistently. Linux and macOS users should run the same script with `pwsh`. If you prefer bash for the surrounding shell commands, use the shell-specific examples in [deployers/bicep/README.md](./deployers/bicep/README.md).
 
-The following script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.  
+The following script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.
 
 > [!TIP]
 >
-> The web service name may be overriden with the `-AppServceName` parameter. 
+> The web service name may be overriden with the `-AppServceName` parameter.
 
 > [!TIP]
 >
@@ -83,6 +86,14 @@ The following script will create an Entra Enterprise Application, with an App Re
 .\Initialize-EntraApplication.ps1 -AppName $appName -Environment $environment -AppRolesJsonPath "./azurecli/appRegistrationRoles.json"
 ```
 
+By default, the script saves the app registration values that `azd up` needs into the resolved AZD environment:
+
+- `ENTERPRISE_APP_CLIENT_ID`
+- `ENTERPRISE_APP_SERVICE_PRINCIPAL_ID`
+- `ENTERPRISE_APP_CLIENT_SECRET`
+
+Use `-AzdEnvironmentName <name>` to target a specific AZD environment, or `-SkipAzdEnvironmentUpdate` when running the registration as a standalone/manual workflow.
+
 Linux and macOS example:
 
 ```bash
@@ -91,7 +102,7 @@ pwsh ./Initialize-EntraApplication.ps1 -AppName simplechat -Environment dev -App
 
 > [!NOTE]
 >
-> Be sure to save this information as it will not be available after the window is closed.*
+> If the script cannot update the AZD environment, save the displayed values manually and set them later with `azd env set`.
 
 ```========================================
 App Registration Created Successfully!
@@ -160,10 +171,10 @@ Select the new environment
 azd env select $environment
 ```
 
-This step will begin the deployment process.  
+This step will begin the deployment process.
 
 ```powershell
-azd up 
+azd up
 ```
 
 ## Deployment Runtime Notes
@@ -174,7 +185,7 @@ azd up
 > The container deployments of Simple Chat does NOT need this step, when you run `azd up` for new installs or `azd deploy` for updates, the container is configured to run with gunicorn.
 
 - The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are **container-based** App Service deployments.
-- For those container deployments, do **not** set an App Service Stack Settings Startup command. 
+- For those container deployments, do **not** set an App Service Stack Settings Startup command.
     - The container already starts Gunicorn through `application/single_app/Dockerfile`.
 - If your environment needs private or self-signed certificate authorities for outbound TLS checks to internal services, add them during image build using [docs/how-to/docker_customization.md](docs/how-to/docker_customization.md).
 

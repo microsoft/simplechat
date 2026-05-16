@@ -14,6 +14,24 @@ const modelDropdownText = modelDropdownButton
 const modelSearchInput = document.getElementById('model-search-input');
 const modelDropdownItems = document.getElementById('model-dropdown-items');
 
+const FLOATING_SELECTOR_DROPDOWN_CONFIG = {
+    boundary: 'viewport',
+    reference: 'toggle',
+    autoClose: 'outside',
+    popperConfig: {
+        strategy: 'fixed',
+        modifiers: [
+            {
+                name: 'preventOverflow',
+                options: {
+                    boundary: 'viewport',
+                    padding: 12,
+                },
+            },
+        ],
+    },
+};
+
 let modelSelectorController = null;
 let scopeChangeListenerInitialized = false;
 let suppressScopeNarrowing = false;
@@ -484,6 +502,7 @@ export function initializeModelSelector() {
             emptyMessage: 'No models available',
             emptySearchMessage: 'No matching models found',
             getOptionSearchText: option => option.dataset.searchText || option.textContent.trim(),
+            dropdownConfig: FLOATING_SELECTOR_DROPDOWN_CONFIG,
         });
     }
 

@@ -24,6 +24,15 @@ let userPrompts = [];
 let groupPrompts = [];
 let publicPrompts = [];
 
+function notifyMobileSelectorActivated(selectorId, dropdownButtonId) {
+  window.dispatchEvent(new CustomEvent("chat:toolbar-selector-activated", {
+    detail: {
+      selectorId,
+      dropdownButtonId,
+    },
+  }));
+}
+
 function getPreloadedPromptOptions() {
   return Array.isArray(window.chatPromptOptions) ? window.chatPromptOptions : [];
 }
@@ -242,7 +251,9 @@ export function initializePromptInteractions() {
 
             if (isActive) {
                 promptSelectionContainer.style.display = "block";
-                loadAllPrompts();
+            loadAllPrompts().finally(() => {
+              notifyMobileSelectorActivated("prompt-selection-container", "prompt-dropdown-button");
+            });
                 userInput.classList.add("with-prompt-active");
                 userInput.focus();
                 updateSendButtonVisibility();

@@ -1,6 +1,6 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.002, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.154, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
@@ -256,6 +256,55 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Azure AI Search filter construction now escapes OData literals for document, user, group, shared, and public workspace identifiers, and the Control Center public workspace view now renders untrusted workspace metadata as inert text instead of raw HTML.
     *   Added focused functional and UI regression coverage for the authorization and escaping paths, plus versioned fix documentation for the full hardening pass.
     *   (Ref: `functions_search.py`, `functions_group.py`, `route_backend_users.py`, `route_backend_group_prompts.py`, `route_backend_control_center.py`, `route_backend_chats.py`, `control-center.js`, `test_security_authorization_hardening.py`, `test_control_center_public_workspace_escaping.py`)
+
+### **(v0.241.008)**
+
+#### New Features
+
+*   **Staging Branch UI Test CI/CD**
+    *   Added a protected GitHub Actions workflow for the `Staging` branch that deploys the Azure Developer CLI staging environment, waits for App Service warm-up, and runs live UI smoke coverage before the environment is considered healthy.
+    *   Added a reusable staging bootstrap script for GitHub OIDC app registration, federated credentials, Azure role assignments, GitHub Environment variables, App Service CI authentication settings, and Microsoft Playwright Workspace wiring.
+    *   (Ref: `.github/workflows/staging-azd-ui-tests.yml`, `deployers/Initialize-GitHubActionsStaging.ps1`, `docs/explanation/features/v0.241.014/STAGING_UI_CICD.md`, `test_staging_ui_cicd_workflow.py`)
+
+*   **Microsoft Playwright Workspaces Staging Runner**
+    *   Added Azure-hosted Playwright Workspace support for staging smoke tests, including Node-based Playwright service execution and matching Python smoke coverage for the staging chat experience.
+    *   (Ref: `ui_tests/playwright-workspaces/`, `ui_tests/test_staging_chat_smoke.py`, `PLAYWRIGHT_SERVICE_URL`)
+
+*   **Service Principal Authentication for CI UI Tests**
+    *   Added a disabled-by-default `/ci-auth/session` endpoint so staging UI tests can create a Flask session from a fresh Entra access token minted by the GitHub OIDC service principal.
+    *   (Ref: `functions_authentication.py`, `route_frontend_authentication.py`, `config.py`, `appRegistrationRoles.json`, `SIMPLECHAT_UI_AUTH_RESOURCE`, `ENABLE_CI_BEARER_SESSION_AUTH`)
+
+*   **Profile Sidebar Toggle Style Preference**
+    *   Added a profile navigation preference for large versus compact sidebar hide controls and applied it across full and compact sidebar templates.
+    *   (Ref: `profile.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `route_backend_users.py`, `test_profile_sidebar_toggle_style_preference.py`)
+
+#### User Interface Enhancements
+
+*   **GitHub Pages Documentation Redesign**
+    *   Redesigned the GitHub Pages documentation shell with fixed top navigation, curated sidebar sections, responsive mobile drawer, documentation search, and a right-side page rail.
+    *   (Ref: `docs/_layouts/default.html`, `docs/_includes/sidebar_nav.html`, `docs/assets/css/main.scss`, `docs/assets/js/main.js`, `docs/index.md`, `ui_tests/test_docs_showcase_pages.py`)
+
+*   **Chat and Sidebar Icon-Only Controls**
+    *   Refined the chat conversation info button and compact sidebar toggle so they render as quiet icon-only controls while preserving accessible focus states.
+    *   (Ref: `chats.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `test_chat_sidebar_toggle_controls.py`)
+
+#### Bug Fixes
+
+*   **SQL ODBC Driver 18 Container Support**
+    *   Fixed SQL Server and Azure SQL actions in container deployments by installing Microsoft ODBC Driver 18, copying native driver registration and unixODBC libraries into the distroless runtime, and retrying saved Driver 17 connection strings with Driver 18 only when the failure is a missing-driver error.
+    *   (Ref: `Dockerfile`, `sql_odbc_utils.py`, `sql_schema_plugin.py`, `sql_query_plugin.py`, `route_backend_plugins.py`, `test_sql_odbc_driver_18_support.py`)
+
+*   **Entra Application Deployment Stability**
+    *   Hardened Entra app registration scripts for Microsoft Graph MFA or conditional-access prompts and persisted app registration outputs into the selected AZD environment.
+    *   (Ref: `Initialize-EntraApplication.ps1`, `test_entra_application_graph_mfa_auth.py`, `test_entra_application_azd_env_persistence.py`)
+
+*   **Public Workspace Manage Script Syntax Fix**
+    *   Fixed the public workspace management page script so pending request handlers and delegated member-search selection initialize without parser errors.
+    *   (Ref: `manage_public_workspace.js`, `test_public_workspace_manage_script_syntax_fix.py`, `test_public_workspace_manage_script_parse.py`)
+
+*   **Chat Document Dropdown Viewport Fit Fix**
+    *   Fixed grounded-search document dropdown placement so long document lists stay inside short and mobile-influenced viewports.
+    *   (Ref: `chat-documents.js`, `test_chat_document_dropdown_viewport_fit.py`)
 
 ### **(v0.241.007)**
 

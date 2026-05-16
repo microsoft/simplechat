@@ -1,8 +1,8 @@
 # test_stored_xss_chat_workspace_rendering_fix.py
 """
 Functional test for stored XSS chat and workspace rendering hardening.
-Version: 0.241.017
-Implemented in: 0.241.017
+Version: 0.241.154
+Implemented in: 0.241.022
 
 This test ensures chat agent display names, workspace member display names,
 and Graph user search filters are safely encoded before HTML or OData
@@ -54,7 +54,7 @@ FIX_DOC = os.path.join(
     "docs",
     "explanation",
     "fixes",
-    "v0.241.017",
+    "v0.241.022",
     "STORED_XSS_AGENT_AND_MEMBER_RENDERING_FIX.md",
 )
 
@@ -66,7 +66,7 @@ def read_file_text(file_path):
 
 def read_config_version():
     for line in read_file_text(CONFIG_FILE).splitlines():
-        if line.startswith("VERSION = "):
+        if line.strip().startswith("VERSION = "):
             return line.split("=", 1)[1].strip().strip('"')
     raise AssertionError("VERSION assignment not found in config.py")
 
@@ -192,7 +192,7 @@ def test_fix_documentation_and_version_exist():
     """Verify the version bump and fix documentation landed for this change."""
     print("🔍 Testing stored XSS rendering fix documentation and version...")
 
-    assert read_config_version() == "0.241.017"
+    assert read_config_version() == "0.241.154"
     assert os.path.exists(FIX_DOC), f"Expected fix documentation at {FIX_DOC}"
 
     print("✅ Stored XSS rendering fix documentation and version passed")

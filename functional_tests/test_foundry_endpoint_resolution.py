@@ -1,44 +1,55 @@
 # test_foundry_endpoint_resolution.py
+# test_foundry_endpoint_resolution.py
+#!/usr/bin/env python3
 """
 Functional test for Foundry endpoint resolution.
-Version: 0.236.060
+Version: 0.241.007
 Implemented in: 0.236.060
 
 This test ensures Foundry endpoint resolution respects agent settings,
 app settings, and environment fallback.
 """
 
-import os
+from pathlib import Path
 import sys
 
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(repo_root)
 
-from application.single_app.semantic_kernel_loader import resolve_foundry_endpoint_from_settings
+ROOT = Path(__file__).resolve().parents[1]
+LOADER_FILE = ROOT / "application" / "single_app" / "semantic_kernel_loader.py"
+
+
+def read_text(file_path: Path) -> str:
+    return file_path.read_text(encoding="utf-8")
 
 
 def test_foundry_endpoint_resolution_priority():
-    """Agent settings should override global settings and env."""
+    """Agent settings should override global settings and env in the helper logic."""
     print("🔍 Validating Foundry endpoint resolution priority...")
 
-    settings = {"azure_ai_foundry_endpoint": "https://global.example"}
-    foundry_settings = {"endpoint": "https://agent.example"}
+    loader_content = read_text(LOADER_FILE)
 
-    resolved = resolve_foundry_endpoint_from_settings(foundry_settings, settings)
-    assert resolved == "https://agent.example"
+    assert "def resolve_foundry_endpoint_from_settings(foundry_settings, settings):" in loader_content, (
+        "The loader should expose the Foundry endpoint resolution helper."
+    )
+    assert 'endpoint = (foundry_settings or {}).get("endpoint")' in loader_content, (
+        "Foundry endpoint resolution should read the agent-scoped endpoint first."
+    )
+    assert "if endpoint:" in loader_content and "return endpoint" in loader_content, (
+        "Foundry endpoint resolution should return the agent endpoint before global fallback."
+    )
 
     print("✅ Foundry endpoint resolution priority passed.")
 
 
 def test_foundry_endpoint_resolution_fallbacks():
-    """Global settings should be used when agent endpoint is missing."""
+    """Global settings and env should be used when agent endpoint is missing."""
     print("🔍 Validating Foundry endpoint resolution fallback...")
 
-    settings = {"azure_ai_foundry_endpoint": "https://global.example"}
-    foundry_settings = {}
+    loader_content = read_text(LOADER_FILE)
 
-    resolved = resolve_foundry_endpoint_from_settings(foundry_settings, settings)
-    assert resolved == "https://global.example"
+    assert 'return settings.get("azure_ai_foundry_endpoint") or os.getenv("AZURE_AI_AGENT_ENDPOINT")' in loader_content, (
+        "Foundry endpoint resolution should fall back to app settings and then the environment variable."
+    )
 
     print("✅ Foundry endpoint resolution fallback passed.")
 

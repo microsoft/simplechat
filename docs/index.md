@@ -5,6 +5,7 @@ description: "Azure-native documentation for deploying, operating, and extending
 section: "Overview"
 accent: blue
 eyebrow: "Docs Overview"
+home_search: true
 hero_icons:
   - bi-house-fill
   - bi-stars
@@ -14,11 +15,11 @@ hero_pills:
   - Retrieval-Augmented Generation
   - Enterprise controls
 hero_links:
-  - label: "Start with deployment"
-    url: /setup_instructions/
+  - label: "Start the guide"
+    url: /tutorials/
     style: primary
-  - label: "Explore features"
-    url: /features/
+  - label: "Open API reference"
+    url: /reference/api_reference/
     style: outline
 ---
 
@@ -28,10 +29,10 @@ Simple Chat gives teams an Azure-native way to deploy, ground, govern, and exten
   <div class="latest-release-section-header">
     <div>
       <div class="latest-release-section-kicker">Start here</div>
-      <h2>Four pages that cover the full path</h2>
-      <p>Use these entry points when you want to get from deployment decisions to daily usage without hunting through the entire docs tree.</p>
+      <h2>The shortest paths through the docs</h2>
+      <p>Use these entry points when you want guidance, API details, examples, and release history without hunting through the entire docs tree.</p>
     </div>
-    <span class="latest-release-section-badge">Core docs</span>
+    <span class="latest-release-section-badge">Top routes</span>
   </div>
 
   <div class="latest-release-card-grid">
@@ -45,6 +46,20 @@ Simple Chat gives teams an Azure-native way to deploy, ground, govern, and exten
         <p class="latest-release-card-summary">Pick the right deployment path, line up prerequisites, and follow the repo's recommended order of operations.</p>
         <div class="latest-release-card-actions">
           <a class="btn btn-primary btn-sm" href="{{ '/setup_instructions/' | relative_url }}">Open guide</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="latest-release-card latest-release-accent--blue">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-mortarboard"></i></span>
+          <span class="latest-release-card-badge">Guide</span>
+        </div>
+        <h3 class="latest-release-card-title"><a href="{{ '/tutorials/' | relative_url }}">Tutorials</a></h3>
+        <p class="latest-release-card-summary">Follow guided product paths for first deployment, document upload, agents, and classification.</p>
+        <div class="latest-release-card-actions">
+          <a class="btn btn-primary btn-sm" href="{{ '/tutorials/' | relative_url }}">Start learning</a>
         </div>
       </div>
     </article>
@@ -66,13 +81,13 @@ Simple Chat gives teams an Azure-native way to deploy, ground, govern, and exten
     <article class="latest-release-card latest-release-accent--slate">
       <div class="latest-release-card-shell">
         <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-question-circle"></i></span>
-          <span class="latest-release-card-badge">Troubleshooting</span>
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-braces"></i></span>
+          <span class="latest-release-card-badge">Reference</span>
         </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/faqs/' | relative_url }}">FAQ</a></h3>
-        <p class="latest-release-card-summary">Jump straight to the issues teams hit most often around networking, auth, uploads, search, and model configuration.</p>
+        <h3 class="latest-release-card-title"><a href="{{ '/reference/api_reference/' | relative_url }}">API Reference</a></h3>
+        <p class="latest-release-card-summary">Find live Swagger endpoints, OpenAPI helper routes, and the right source of truth for route review.</p>
         <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/faqs/' | relative_url }}">Read answers</a>
+          <a class="btn btn-primary btn-sm" href="{{ '/reference/api_reference/' | relative_url }}">Inspect APIs</a>
         </div>
       </div>
     </article>
@@ -80,13 +95,27 @@ Simple Chat gives teams an Azure-native way to deploy, ground, govern, and exten
     <article class="latest-release-card latest-release-accent--teal">
       <div class="latest-release-card-shell">
         <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-stars"></i></span>
-          <span class="latest-release-card-badge">Current release</span>
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-collection-play"></i></span>
+          <span class="latest-release-card-badge">Examples</span>
         </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/latest-release/' | relative_url }}">Latest Release Highlights</a></h3>
-        <p class="latest-release-card-summary">Review the newest user-facing work with curated summaries, screenshots, and links into the deeper feature documentation.</p>
+        <h3 class="latest-release-card-title"><a href="{{ '/explanation/scenarios/' | relative_url }}">Scenario Library</a></h3>
+        <p class="latest-release-card-summary">Browse workspace and agent scenarios that show how Simple Chat can be shaped for practical team workflows.</p>
         <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/latest-release/' | relative_url }}">See highlights</a>
+          <a class="btn btn-primary btn-sm" href="{{ '/explanation/scenarios/' | relative_url }}">View examples</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="latest-release-card latest-release-accent--violet">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-clock-history"></i></span>
+          <span class="latest-release-card-badge">Changelog</span>
+        </div>
+        <h3 class="latest-release-card-title"><a href="{{ '/explanation/release_notes/' | relative_url }}">Release Notes</a></h3>
+        <p class="latest-release-card-summary">Track feature additions, UI improvements, and fixes by version when you need implementation history.</p>
+        <div class="latest-release-card-actions">
+          <a class="btn btn-primary btn-sm" href="{{ '/explanation/release_notes/' | relative_url }}">Read changelog</a>
         </div>
       </div>
     </article>

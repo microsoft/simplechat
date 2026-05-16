@@ -203,6 +203,7 @@ export function createSearchableSingleSelect({
     emptySearchMessage,
     getOptionLabel,
     getOptionSearchText,
+    dropdownConfig,
 }) {
     if (!selectEl || !dropdownEl || !buttonEl || !buttonTextEl || !menuEl || !searchInputEl || !itemsContainerEl) {
         return null;
@@ -210,6 +211,9 @@ export function createSearchableSingleSelect({
 
     const readOptionLabel = getOptionLabel || (option => option.textContent.trim());
     const readOptionSearchText = getOptionSearchText || (option => option.textContent.trim());
+    const resolvedDropdownConfig = dropdownConfig || {
+        autoClose: 'outside',
+    };
 
     const getTopLevelEntries = () => Array.from(selectEl.children).filter(child => {
         const tagName = child.tagName;
@@ -339,9 +343,7 @@ export function createSearchableSingleSelect({
         selectEl.dispatchEvent(new Event('change', { bubbles: true }));
 
         try {
-            bootstrap.Dropdown.getOrCreateInstance(buttonEl, {
-                autoClose: 'outside'
-            }).hide();
+            bootstrap.Dropdown.getOrCreateInstance(buttonEl, resolvedDropdownConfig).hide();
         } catch (error) {
             console.error('Error hiding dropdown after selection:', error);
         }
@@ -405,9 +407,7 @@ export function createSearchableSingleSelect({
     });
 
     try {
-        bootstrap.Dropdown.getOrCreateInstance(buttonEl, {
-            autoClose: 'outside'
-        });
+        bootstrap.Dropdown.getOrCreateInstance(buttonEl, resolvedDropdownConfig);
     } catch (error) {
         console.error('Error initializing searchable select:', error);
     }

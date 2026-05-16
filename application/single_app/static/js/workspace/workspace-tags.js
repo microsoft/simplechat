@@ -6,7 +6,7 @@ import { showTagManagementModal } from "./workspace-tag-management.js";
 
 // ============= State Variables =============
 let workspaceTags = []; // All available workspace tags with colors
-let currentView = 'list'; // 'list' or 'grid'
+let currentView = 'list'; // 'list', 'cards', or 'grid' (folders)
 let selectedTagFilter = [];
 let currentFolder = null;    // null = folder overview, string = tag name being viewed
 let currentFolderType = null; // null | 'tag' | 'classification'
@@ -59,12 +59,20 @@ export function initializeTags() {
         });
     }
     
-    // Load saved view preference
-    const savedView = localStorage.getItem('personalWorkspaceViewPreference');
-    if (savedView === 'grid') {
-        document.getElementById('docs-view-grid').checked = true;
-        switchView('grid');
+    const preferredView = getPreferredWorkspaceView();
+    const cardsRadio = document.getElementById('docs-view-cards');
+    const gridRadio = document.getElementById('docs-view-grid');
+    const listRadio = document.getElementById('docs-view-list');
+
+    if (preferredView === 'cards' && cardsRadio) {
+        cardsRadio.checked = true;
+    } else if (preferredView === 'grid' && gridRadio) {
+        gridRadio.checked = true;
+    } else if (listRadio) {
+        listRadio.checked = true;
     }
+
+    switchView(preferredView);
 }
 
 // ============= Load Workspace Tags =============
@@ -99,12 +107,21 @@ export async function loadWorkspaceTags() {
 
 function setupViewSwitcher() {
     const listRadio = document.getElementById('docs-view-list');
+    const cardsRadio = document.getElementById('docs-view-cards');
     const gridRadio = document.getElementById('docs-view-grid');
     
     if (listRadio) {
         listRadio.addEventListener('change', () => {
             if (listRadio.checked) {
                 switchView('list');
+            }
+        });
+    }
+
+    if (cardsRadio) {
+        cardsRadio.addEventListener('change', () => {
+            if (cardsRadio.checked) {
+                switchView('cards');
             }
         });
     }
@@ -118,11 +135,47 @@ function setupViewSwitcher() {
     }
 }
 
+function getPreferredWorkspaceView() {
+    const savedView = localStorage.getItem('personalWorkspaceViewPreference');
+    if (savedView === 'cards' || savedView === 'grid' || savedView === 'list') {
+        return savedView;
+    }
+
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+        return window.matchMedia('(max-width: 991.98px)').matches ? 'cards' : 'list';
+    }
+
+    return 'list';
+}
+
+function showViewElement(element, displayClass = null) {
+    if (!element) {
+        return;
+    }
+
+    element.classList.remove('d-none');
+    if (displayClass) {
+        element.classList.add(displayClass);
+    }
+}
+
+function hideViewElement(element, displayClass = null) {
+    if (!element) {
+        return;
+    }
+
+    element.classList.add('d-none');
+    if (displayClass) {
+        element.classList.remove(displayClass);
+    }
+}
+
 function switchView(view) {
-    currentView = view;
+    currentView = view === 'grid' || view === 'cards' ? view : 'list';
     localStorage.setItem('personalWorkspaceViewPreference', view);
 
     const listView = document.getElementById('documents-list-view');
+    const cardView = document.getElementById('documents-card-view');
     const gridView = document.getElementById('documents-grid-view');
     const viewInfo = document.getElementById('docs-view-info');
     const listControls = document.getElementById('list-controls-bar');
@@ -130,8 +183,10 @@ function switchView(view) {
 
     const filterBtn = document.getElementById('docs-filters-toggle-btn');
     const filterCollapse = document.getElementById('docs-filters-collapse');
+    const selectionModeActive = document.getElementById('documents-table')?.classList.contains('selection-mode')
+        || document.getElementById('documents-card-view')?.classList.contains('selection-mode');
 
-    if (view === 'list') {
+    if (currentView === 'list' || currentView === 'cards') {
         // Reset folder drill-down state
         currentFolder = null;
         currentFolderType = null;
@@ -142,24 +197,51 @@ function switchView(view) {
         const tagContainer = document.getElementById('tag-folders-container');
         if (tagContainer) tagContainer.className = 'row g-2';
 
-        listView.style.display = 'block';
-        gridView.style.display = 'none';
-        if (listControls) listControls.style.display = 'flex';
-        if (gridControls) gridControls.style.display = 'none';
-        if (filterBtn) filterBtn.style.display = '';
-        if (viewInfo) viewInfo.textContent = '';
-        // Trigger reload of documents if needed
-        window.fetchUserDocuments?.();
+        if (currentView === 'list') {
+            showViewElement(listView);
+            hideViewElement(cardView);
+            if (viewInfo) {
+                viewInfo.textContent = '';
+            }
+        } else {
+            hideViewElement(listView);
+            showViewElement(cardView);
+            if (viewInfo) {
+                viewInfo.textContent = 'Cards surface status, metadata, and quick actions.';
+            }
+        }
+
+        hideViewElement(gridView);
+        showViewElement(listControls, 'd-flex');
+        hideViewElement(gridControls, 'd-flex');
+        if (filterBtn) {
+            filterBtn.classList.remove('d-none');
+        }
+
+        if (typeof window.renderWorkspaceDocumentView === 'function') {
+            window.renderWorkspaceDocumentView();
+        } else {
+            window.fetchUserDocuments?.();
+        }
     } else {
-        listView.style.display = 'none';
-        gridView.style.display = 'block';
-        if (listControls) listControls.style.display = 'none';
-        if (gridControls) gridControls.style.display = 'flex';
+        hideViewElement(listView);
+        hideViewElement(cardView);
+        showViewElement(gridView);
+        hideViewElement(listControls, 'd-flex');
+        showViewElement(gridControls, 'd-flex');
         // Hide list view filters in grid folder overview
-        if (filterBtn) filterBtn.style.display = 'none';
+        if (filterBtn) {
+            filterBtn.classList.add('d-none');
+        }
         if (filterCollapse) {
             const bsCollapse = bootstrap.Collapse.getInstance(filterCollapse);
             if (bsCollapse) bsCollapse.hide();
+        }
+        if (viewInfo) {
+            viewInfo.textContent = 'Browse folders by tag and classification.';
+        }
+        if (selectionModeActive && typeof window.toggleSelectionMode === 'function') {
+            window.toggleSelectionMode();
         }
         renderGridView();
     }
@@ -167,13 +249,27 @@ function switchView(view) {
 
 
 export function setWorkspaceView(view) {
-    const normalizedView = view === 'grid' ? 'grid' : 'list';
+    const normalizedView = view === 'grid' || view === 'cards' ? view : 'list';
     const listRadio = document.getElementById('docs-view-list');
+    const cardsRadio = document.getElementById('docs-view-cards');
     const gridRadio = document.getElementById('docs-view-grid');
 
     if (normalizedView === 'grid') {
         if (gridRadio) {
             gridRadio.checked = true;
+        }
+        if (cardsRadio) {
+            cardsRadio.checked = false;
+        }
+        if (listRadio) {
+            listRadio.checked = false;
+        }
+    } else if (normalizedView === 'cards') {
+        if (cardsRadio) {
+            cardsRadio.checked = true;
+        }
+        if (gridRadio) {
+            gridRadio.checked = false;
         }
         if (listRadio) {
             listRadio.checked = false;
@@ -181,6 +277,9 @@ export function setWorkspaceView(view) {
     } else {
         if (listRadio) {
             listRadio.checked = true;
+        }
+        if (cardsRadio) {
+            cardsRadio.checked = false;
         }
         if (gridRadio) {
             gridRadio.checked = false;

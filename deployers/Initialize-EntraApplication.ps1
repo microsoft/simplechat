@@ -26,6 +26,13 @@
     Optional Azure cloud name. You can pass AzureCloud, AzureUSGovernment, or a custom Azure CLI cloud name.
     If omitted during interactive use, the script prompts for the target cloud before login.
 
+.PARAMETER AzdEnvironmentName
+    Optional azd environment name where the created app registration values should be saved.
+    If omitted, the script uses AZURE_ENV_NAME, then .azure/config.json defaultEnvironment, then Environment.
+
+.PARAMETER SkipAzdEnvironmentUpdate
+    Skip saving app registration values to the azd environment. Use this for standalone/manual registration flows.
+
 .EXAMPLE
     .\Initialize-EntraApplication.ps1 -AppName "simplechat" -Environment "dev" 
 
@@ -60,7 +67,13 @@ param(
     [string]$AppRolesJsonPath = "./appRegistrationRoles.json",
 
     [Parameter(Mandatory = $false)]
-    [string]$AzureCloudEnvironment
+    [string]$AzureCloudEnvironment,
+
+    [Parameter(Mandatory = $false)]
+    [string]$AzdEnvironmentName,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$SkipAzdEnvironmentUpdate
 )
 
 # Script configuration
@@ -96,6 +109,236 @@ function Get-CommandOutputText {
     }
 
     return (($CommandOutput | Out-String).Trim())
+}
+
+function Test-AzureCliInteractionRequiredMessage {
+    param([string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    return (
+        $Message -match 'AADSTS50076' -or
+        $Message -match 'AADSTS50079' -or
+        $Message -match 'invalid_grant' -or
+        $Message -match 'interaction_required' -or
+        $Message -match 'InteractionRequired' -or
+        $Message -match 'Response_Status\.Status_InteractionRequired' -or
+        $Message -match 'multi-factor authentication' -or
+        $Message -match 'claims challenge' -or
+        $Message -match 'claims_challenge'
+    )
+}
+
+function Get-GraphResource {
+    param([string]$GraphUrl)
+
+    if ([string]::IsNullOrWhiteSpace($GraphUrl)) {
+        throw "Graph URL is required to build the Microsoft Graph resource."
+    }
+
+    return $GraphUrl.TrimEnd('/')
+}
+
+function Get-GraphAccessScope {
+    param([string]$GraphUrl)
+
+    $graphResource = Get-GraphResource -GraphUrl $GraphUrl
+    return "$graphResource/.default"
+}
+
+function Get-AzureCliGraphLoginCommand {
+    param(
+        [string]$TenantId,
+        [string]$GraphScope
+    )
+
+    return "az login --tenant `"$TenantId`" --scope `"$GraphScope`""
+}
+
+function Test-AzureCliGraphAccess {
+    param(
+        [string]$TenantId,
+        [string]$GraphResource
+    )
+
+    $tokenOutput = az account get-access-token `
+        --tenant $TenantId `
+        --resource $GraphResource `
+        --query expiresOn `
+        --output tsv `
+        --only-show-errors 2>&1
+    $tokenExitCode = $LASTEXITCODE
+    $tokenOutputText = Get-CommandOutputText -CommandOutput $tokenOutput
+
+    return [PSCustomObject]@{
+        Succeeded  = ($tokenExitCode -eq 0)
+        OutputText = $tokenOutputText
+    }
+}
+
+function Invoke-AzureCliGraphLogin {
+    param(
+        [string]$TenantId,
+        [string]$GraphScope
+    )
+
+    $loginCommand = Get-AzureCliGraphLoginCommand -TenantId $TenantId -GraphScope $GraphScope
+    Write-WarningMessage "Azure CLI requires an interactive Microsoft Graph sign-in for this tenant."
+    Write-InfoMessage "Running: $loginCommand"
+
+    az login --tenant $TenantId --scope $GraphScope | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Azure CLI Microsoft Graph login failed. Run '$loginCommand' manually, then rerun this script. If Azure CLI keeps using stale credentials, run 'az logout' before logging in again."
+    }
+}
+
+function Ensure-AzureCliGraphAuthenticated {
+    param(
+        [string]$TenantId,
+        [string]$GraphUrl
+    )
+
+    $graphResource = Get-GraphResource -GraphUrl $GraphUrl
+    $graphScope = Get-GraphAccessScope -GraphUrl $GraphUrl
+
+    Write-InfoMessage "Validating Azure CLI Microsoft Graph access..."
+    $tokenResult = Test-AzureCliGraphAccess -TenantId $TenantId -GraphResource $graphResource
+
+    if ($tokenResult.Succeeded) {
+        Write-SuccessMessage "Azure CLI Microsoft Graph access is available"
+        return
+    }
+
+    if (Test-AzureCliInteractionRequiredMessage -Message $tokenResult.OutputText) {
+        $loginCommand = Get-AzureCliGraphLoginCommand -TenantId $TenantId -GraphScope $graphScope
+
+        if (-not [Environment]::UserInteractive) {
+            throw "Azure CLI requires multi-factor authentication for Microsoft Graph. Run '$loginCommand' interactively, then rerun this script. If Azure CLI keeps using stale credentials, run 'az logout' before logging in again."
+        }
+
+        Invoke-AzureCliGraphLogin -TenantId $TenantId -GraphScope $graphScope
+
+        $retryTokenResult = Test-AzureCliGraphAccess -TenantId $TenantId -GraphResource $graphResource
+        if ($retryTokenResult.Succeeded) {
+            Write-SuccessMessage "Azure CLI Microsoft Graph access is available"
+            return
+        }
+
+        throw "Azure CLI still could not acquire a Microsoft Graph token after interactive login. Azure CLI returned: $($retryTokenResult.OutputText)"
+    }
+
+    throw "Azure CLI could not acquire a Microsoft Graph token for tenant '$TenantId'. Azure CLI returned: $($tokenResult.OutputText)"
+}
+
+function Invoke-AzureCliJson {
+    param(
+        [string]$Description,
+        [scriptblock]$Command
+    )
+
+    $commandOutput = & $Command 2>&1
+    $commandExitCode = $LASTEXITCODE
+    $commandOutputText = Get-CommandOutputText -CommandOutput $commandOutput
+
+    if ($commandExitCode -ne 0) {
+        throw "$Description failed. Azure CLI returned: $commandOutputText"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($commandOutputText)) {
+        throw "$Description returned no JSON output."
+    }
+
+    try {
+        return $commandOutputText | ConvertFrom-Json
+    }
+    catch {
+        throw "$Description returned invalid JSON. Azure CLI output: $commandOutputText"
+    }
+}
+
+function Test-AzdCliInstalled {
+    return ($null -ne (Get-Command azd -ErrorAction SilentlyContinue))
+}
+
+function Resolve-AzdEnvironmentName {
+    param(
+        [string]$RequestedEnvironmentName,
+        [string]$DeploymentEnvironment
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedEnvironmentName)) {
+        return $RequestedEnvironmentName.Trim()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
+        return $env:AZURE_ENV_NAME.Trim()
+    }
+
+    $azdConfigPath = Join-Path $PSScriptRoot ".azure\config.json"
+    if (Test-Path $azdConfigPath) {
+        try {
+            $azdConfig = Get-Content -Path $azdConfigPath -Raw | ConvertFrom-Json
+            if (-not [string]::IsNullOrWhiteSpace($azdConfig.defaultEnvironment)) {
+                return $azdConfig.defaultEnvironment.Trim()
+            }
+        }
+        catch {
+            Write-WarningMessage "Could not read azd default environment from '$azdConfigPath': $_"
+        }
+    }
+
+    return $DeploymentEnvironment
+}
+
+function Set-AzdEnvironmentValue {
+    param(
+        [string]$EnvironmentName,
+        [string]$Name,
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($EnvironmentName)) {
+        throw "azd environment name is required."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        throw "azd environment value name is required."
+    }
+
+    $setOutput = azd env set --environment $EnvironmentName $Name $Value 2>&1
+    $setExitCode = $LASTEXITCODE
+    $setOutputText = Get-CommandOutputText -CommandOutput $setOutput
+
+    if ($setExitCode -ne 0) {
+        throw "Failed to save '$Name' to azd environment '$EnvironmentName'. azd returned: $setOutputText"
+    }
+}
+
+function Save-EntraRegistrationToAzdEnvironment {
+    param(
+        [string]$EnvironmentName,
+        [string]$ClientId,
+        [string]$ClientSecret,
+        [string]$ServicePrincipalId
+    )
+
+    if (-not (Test-AzdCliInstalled)) {
+        Write-WarningMessage "azd is not installed or is not on PATH. App registration values were not saved to an azd environment."
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($EnvironmentName)) {
+        Write-WarningMessage "Could not resolve an azd environment name. App registration values were not saved to azd."
+        return
+    }
+
+    Write-InfoMessage "Saving app registration values to azd environment '$EnvironmentName'..."
+    Set-AzdEnvironmentValue -EnvironmentName $EnvironmentName -Name "ENTERPRISE_APP_CLIENT_ID" -Value $ClientId
+    Set-AzdEnvironmentValue -EnvironmentName $EnvironmentName -Name "ENTERPRISE_APP_SERVICE_PRINCIPAL_ID" -Value $ServicePrincipalId
+    Set-AzdEnvironmentValue -EnvironmentName $EnvironmentName -Name "ENTERPRISE_APP_CLIENT_SECRET" -Value $ClientSecret
+    Write-SuccessMessage "App registration values saved to azd environment '$EnvironmentName'"
 }
 
 function Test-PermissionGrantRequiredMessage {
@@ -498,6 +741,7 @@ try {
     # Get Graph URL
     $graphUrl = Get-GraphUrl -CloudName $cloudEnvironment
     Write-InfoMessage "Graph URL: $graphUrl"
+    Ensure-AzureCliGraphAuthenticated -TenantId $tenantId -GraphUrl $graphUrl
     
     # Get App Service domain
     $appServiceDomain = Get-AppServiceDomain -CloudName $cloudEnvironment
@@ -525,7 +769,9 @@ try {
     
     Write-InfoMessage "Checking if app registration already exists: $appRegistrationName"
     
-    $existingApp = az ad app list --display-name $appRegistrationName --output json | ConvertFrom-Json
+    $existingApp = Invoke-AzureCliJson -Description "Check app registration '$appRegistrationName'" -Command {
+        az ad app list --display-name $appRegistrationName --output json --only-show-errors
+    }
     
     if ($existingApp -and $existingApp.Count -gt 0) {
         Write-WarningMessage "App registration '$appRegistrationName' already exists"
@@ -535,10 +781,13 @@ try {
     else {
         Write-InfoMessage "Creating new app registration: $appRegistrationName"
         
-        $appRegistration = az ad app create `
-            --display-name $appRegistrationName `
-            --web-redirect-uris $redirectUri1 $redirectUri2 $redirectUri3 `
-            --output json | ConvertFrom-Json
+        $appRegistration = Invoke-AzureCliJson -Description "Create app registration '$appRegistrationName'" -Command {
+            az ad app create `
+                --display-name $appRegistrationName `
+                --web-redirect-uris $redirectUri1 $redirectUri2 $redirectUri3 `
+                --output json `
+                --only-show-errors
+        }
         
         if (-not $appRegistration) {
             throw "Failed to create app registration"
@@ -555,7 +804,9 @@ try {
     
     Write-InfoMessage "Checking if service principal exists..."
     
-    $existingSp = az ad sp list --filter "appId eq '$($appRegistration.appId)'" --output json | ConvertFrom-Json
+    $existingSp = Invoke-AzureCliJson -Description "Check service principal for app '$($appRegistration.appId)'" -Command {
+        az ad sp list --filter "appId eq '$($appRegistration.appId)'" --output json --only-show-errors
+    }
     
     if ($existingSp -and $existingSp.Count -gt 0) {
         Write-InfoMessage "Service principal already exists"
@@ -564,7 +815,9 @@ try {
     else {
         Write-InfoMessage "Creating service principal..."
         
-        $servicePrincipal = az ad sp create --id $appRegistration.appId --output json | ConvertFrom-Json
+        $servicePrincipal = Invoke-AzureCliJson -Description "Create service principal for app '$($appRegistration.appId)'" -Command {
+            az ad sp create --id $appRegistration.appId --output json --only-show-errors
+        }
         
         if (-not $servicePrincipal) {
             throw "Failed to create service principal"
@@ -772,6 +1025,28 @@ try {
     }
     
     Write-SuccessMessage "Client secret generated successfully"
+
+    if ($SkipAzdEnvironmentUpdate) {
+        Write-InfoMessage "Skipping azd environment update because -SkipAzdEnvironmentUpdate was specified."
+    }
+    else {
+        $resolvedAzdEnvironmentName = Resolve-AzdEnvironmentName `
+            -RequestedEnvironmentName $AzdEnvironmentName `
+            -DeploymentEnvironment $Environment
+
+        try {
+            Save-EntraRegistrationToAzdEnvironment `
+                -EnvironmentName $resolvedAzdEnvironmentName `
+                -ClientId $appRegistration.appId `
+                -ClientSecret $clientSecret `
+                -ServicePrincipalId $servicePrincipal.id
+        }
+        catch {
+            Write-WarningMessage "App registration was created, but azd environment values could not be saved: $_"
+            Write-InfoMessage "You can save them manually with: azd env set --environment `"$resolvedAzdEnvironmentName`" ENTERPRISE_APP_CLIENT_ID `"$($appRegistration.appId)`""
+            Write-InfoMessage "Then set ENTERPRISE_APP_SERVICE_PRINCIPAL_ID and ENTERPRISE_APP_CLIENT_SECRET for the same azd environment."
+        }
+    }
     
     #endregion
     

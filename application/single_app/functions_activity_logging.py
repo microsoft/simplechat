@@ -14,6 +14,24 @@ from functions_debug import debug_print
 from config import cosmos_activity_logs_container
 
 
+def coerce_activity_log_user_id(user_id: Any) -> str:
+    """Extract a stable string user id from a scalar or session-style identity payload."""
+    if user_id is None:
+        return ''
+
+    if isinstance(user_id, str):
+        return user_id.strip()
+
+    if isinstance(user_id, dict):
+        for key in ('oid', 'sub', 'id', 'user_id'):
+            candidate = user_id.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return ''
+
+    return str(user_id).strip()
+
+
 USER_LOGIN_ACTIVITY_SESSION_KEY = 'last_user_login_activity_epoch'
 USER_LOGIN_ACTIVITY_MIN_INTERVAL_SECONDS = 15 * 60
 
@@ -1784,14 +1802,15 @@ def log_general_admin_action(
     """
 
     try:
+        normalized_admin_user_id = coerce_activity_log_user_id(admin_user_id)
         activity_record = {
             'id': str(uuid.uuid4()),
-            'user_id': admin_user_id,
+            'user_id': normalized_admin_user_id,
             'activity_type': 'admin_action',
             'timestamp': datetime.utcnow().isoformat(),
             'created_at': datetime.utcnow().isoformat(),
             'admin': {
-                'user_id': admin_user_id,
+                'user_id': normalized_admin_user_id,
                 'email': admin_email
             },
             'action': action,
@@ -1818,7 +1837,7 @@ def log_general_admin_action(
         log_event(
             message=f"Error logging admin action: {str(e)}",
             extra={
-                'admin_user_id': admin_user_id,
+                'admin_user_id': normalized_admin_user_id,
                 'admin_email': admin_email,
                 'action': action,
                 'error': str(e)

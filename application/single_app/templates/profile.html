@@ -241,6 +241,14 @@
         padding: 2rem 1rem;
         text-align: center;
     }
+
+    .fact-memory-delete-modal-stacked {
+        --bs-modal-zindex: 1065;
+    }
+
+    .modal-backdrop.fact-memory-delete-backdrop-stacked {
+        --bs-backdrop-zindex: 1060;
+    }
     
     @keyframes spin {
         0% { transform: rotate(0deg); }
@@ -482,6 +490,61 @@
             role="tabpanel"
             aria-labelledby="profile-settings-tab"
         >
+
+    {% set sidebar_toggle_style = user_settings.get('settings', {}).get('sidebarToggleStyle', 'large') %}
+    <div class="section-card" id="navigation-preferences">
+        <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+            <div class="d-flex gap-3 align-items-start">
+                <span class="preference-card-icon">
+                    <i class="bi bi-layout-sidebar"></i>
+                </span>
+                <div>
+                    <h5 class="mb-2"><i class="bi bi-window-sidebar me-2"></i>Navigation Preferences</h5>
+                    <p class="text-muted mb-2">Choose how the sidebar hide control appears for your account.</p>
+                    <p class="small text-muted mb-0">The compact option places an icon next to the sidebar logo or title when those are enabled.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 align-items-center mt-1">
+            <div class="col-lg-8">
+                <div class="btn-group mt-3" role="group" aria-label="Sidebar hide button size">
+                    <input
+                        type="radio"
+                        class="btn-check"
+                        name="sidebar-toggle-style"
+                        id="sidebar-toggle-style-large"
+                        value="large"
+                        autocomplete="off"
+                        {% if sidebar_toggle_style != 'compact' %}checked{% endif %}
+                    />
+                    <label class="btn btn-outline-secondary" for="sidebar-toggle-style-large">
+                        <i class="bi bi-card-heading me-1"></i>Large
+                    </label>
+
+                    <input
+                        type="radio"
+                        class="btn-check"
+                        name="sidebar-toggle-style"
+                        id="sidebar-toggle-style-compact"
+                        value="compact"
+                        autocomplete="off"
+                        {% if sidebar_toggle_style == 'compact' %}checked{% endif %}
+                    />
+                    <label class="btn btn-outline-secondary" for="sidebar-toggle-style-compact">
+                        <i class="bi bi-layout-sidebar me-1"></i>Compact
+                    </label>
+                </div>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <button type="button" class="btn btn-primary" id="save-navigation-preferences-btn">
+                    <i class="bi bi-save me-1"></i>Save Navigation Preference
+                </button>
+            </div>
+        </div>
+
+        <div id="navigation-preference-status" class="preference-status small mt-3 text-muted"></div>
+    </div>
 
     <div class="section-card" id="tutorial-preferences">
         <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
@@ -732,7 +795,7 @@
                 <button type="button" class="btn btn-sm btn-outline-primary" id="tts-preview-btn" onclick="playVoicePreview()">
                     <i class="bi bi-play-circle me-1"></i>Play Sample
                 </button>
-                <button type="button" class="btn btn-sm btn-outline-danger" id="tts-stop-btn" onclick="stopVoicePreview()" style="display: none;">
+                <button type="button" class="btn btn-sm btn-outline-danger d-none" id="tts-stop-btn" onclick="stopVoicePreview()">
                     <i class="bi bi-stop-circle me-1"></i>Stop
                 </button>
                 <span id="tts-preview-status" class="text-muted small"></span>
@@ -1360,16 +1423,16 @@ let loginChart, conversationChart, documentChart, tokenChart, storageChart;
 let factMemoryEntries = [];
 let filteredFactMemoryEntries = [];
 let factMemoryCurrentPage = 1;
+let pendingFactMemoryDeleteId = null;
+let factMemoryDeleteModalInstance = null;
+let factMemoryManagerModalInstance = null;
 const FACT_MEMORY_PAGE_SIZE = 5;
 const FACT_MEMORY_TYPE_INSTRUCTION = 'instruction';
 const FACT_MEMORY_TYPE_FACT = 'fact';
 const FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer';
-const FACT_MEMORY_DELETE_BACKDROP_CLASS = 'fact-memory-delete-backdrop';
-const FACT_MEMORY_DELETE_BACKDROP_Z_INDEX = '1060';
-const FACT_MEMORY_DELETE_MODAL_Z_INDEX = '1065';
-let pendingFactMemoryDeleteId = null;
-let factMemoryDeleteModalInstance = null;
-let factMemoryManagerModalInstance = null;
+let pendingFactMemoryDeleteTrigger = null;
+const FACT_MEMORY_DELETE_MODAL_STACKED_CLASS = 'fact-memory-delete-modal-stacked';
+const FACT_MEMORY_DELETE_BACKDROP_STACKED_CLASS = 'fact-memory-delete-backdrop-stacked';
 
 console.log('Profile page script loaded - preparing to initialize');
 
@@ -1452,7 +1515,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     loadRetentionSettings();
     handleProfileFeatureAction();
+    loadNavigationPreferences();
     loadTutorialPreferences();
+    initializeFactMemoryModalInstances();
     loadFactMemory();
     loadMicrophoneSettings();
     loadUserMetrics();
@@ -1493,6 +1558,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 renderFactMemoryModalList();
             }
         });
+    }
+
+    const saveNavigationPreferencesButton = document.getElementById('save-navigation-preferences-btn');
+    if (saveNavigationPreferencesButton) {
+        saveNavigationPreferencesButton.addEventListener('click', saveNavigationPreferences);
     }
     
     // Initialize TTS settings if enabled
@@ -1551,6 +1621,103 @@ function loadUserMetrics() {
         })
         .catch(error => {
             console.error('Error loading user metrics:', error);
+        });
+}
+
+function updateNavigationPreferenceStatus(message, type = 'muted') {
+    const statusElement = document.getElementById('navigation-preference-status');
+    if (!statusElement) {
+        return;
+    }
+
+    const classMap = {
+        muted: 'text-muted',
+        info: 'text-info',
+        success: 'text-success',
+        danger: 'text-danger'
+    };
+
+    statusElement.textContent = message || '';
+    statusElement.className = `preference-status small mt-3 ${classMap[type] || classMap.muted}`;
+}
+
+function getSelectedSidebarToggleStyle() {
+    const selectedInput = document.querySelector('input[name="sidebar-toggle-style"]:checked');
+    return selectedInput && selectedInput.value === 'compact' ? 'compact' : 'large';
+}
+
+function setSelectedSidebarToggleStyle(style) {
+    const normalizedStyle = style === 'compact' ? 'compact' : 'large';
+    const selectedInput = document.getElementById(`sidebar-toggle-style-${normalizedStyle}`);
+    if (selectedInput) {
+        selectedInput.checked = true;
+    }
+}
+
+function loadNavigationPreferences() {
+    const largeInput = document.getElementById('sidebar-toggle-style-large');
+    const compactInput = document.getElementById('sidebar-toggle-style-compact');
+    if (!largeInput || !compactInput) {
+        return;
+    }
+
+    fetch('/api/user/settings')
+        .then(response => response.json())
+        .then(data => {
+            setSelectedSidebarToggleStyle(data.settings?.sidebarToggleStyle || 'large');
+            updateNavigationPreferenceStatus('The large sidebar hide control is used by default until you change this setting.');
+        })
+        .catch(error => {
+            console.error('Error loading navigation preferences:', error);
+            updateNavigationPreferenceStatus('Unable to refresh navigation preference from the server. The current page state is still shown.', 'danger');
+        });
+}
+
+function saveNavigationPreferences() {
+    const button = document.getElementById('save-navigation-preferences-btn');
+    if (!button) {
+        return;
+    }
+
+    const selectedStyle = getSelectedSidebarToggleStyle();
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+    updateNavigationPreferenceStatus('Saving your navigation preference...', 'info');
+
+    fetch('/api/user/settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            settings: {
+                sidebarToggleStyle: selectedStyle
+            }
+        })
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to save navigation preference');
+            }
+
+            return response.json();
+        })
+        .then(() => {
+            const message = selectedStyle === 'compact'
+                ? 'The compact sidebar hide control will be used on your next page load.'
+                : 'The large sidebar hide control will be used on your next page load.';
+
+            updateNavigationPreferenceStatus(message, 'success');
+            showToastMessage('Navigation preference saved successfully', 'success');
+        })
+        .catch(error => {
+            console.error('Error saving navigation preference:', error);
+            updateNavigationPreferenceStatus('Failed to save navigation preference. Please try again.', 'danger');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
         });
 }
 
@@ -1634,6 +1801,100 @@ function getFactMemoryTypeBadgeClass(memoryType) {
 
 function buildFactMemoryMetaText(fact) {
     return `${getFactMemoryTypeLabel(fact.memory_type)} memory · Updated ${formatFactMemoryDate(fact.updated_at)}`;
+}
+
+function initializeFactMemoryModalInstances() {
+    if (typeof bootstrap === 'undefined') {
+        return;
+    }
+
+    const managerModalElement = document.getElementById('factMemoryManagerModal');
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+
+    if (managerModalElement) {
+        factMemoryManagerModalInstance = bootstrap.Modal.getOrCreateInstance(managerModalElement);
+    }
+
+    if (!deleteModalElement) {
+        return;
+    }
+
+    if (deleteModalElement.parentElement !== document.body) {
+        document.body.appendChild(deleteModalElement);
+    }
+
+    factMemoryDeleteModalInstance = bootstrap.Modal.getOrCreateInstance(deleteModalElement);
+
+    if (!deleteModalElement.dataset.bound) {
+        deleteModalElement.addEventListener('show.bs.modal', handleFactMemoryDeleteModalShow);
+        deleteModalElement.addEventListener('shown.bs.modal', handleFactMemoryDeleteModalShown);
+        deleteModalElement.addEventListener('hidden.bs.modal', handleFactMemoryDeleteModalHidden);
+        deleteModalElement.dataset.bound = 'true';
+    }
+}
+
+function isFactMemoryManagerModalOpen() {
+    const managerModalElement = document.getElementById('factMemoryManagerModal');
+    return Boolean(managerModalElement && managerModalElement.classList.contains('show'));
+}
+
+function getLatestModalBackdrop() {
+    const backdrops = document.querySelectorAll('.modal-backdrop');
+    return backdrops.length ? backdrops[backdrops.length - 1] : null;
+}
+
+function handleFactMemoryDeleteModalShow() {
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+    if (!deleteModalElement) {
+        return;
+    }
+
+    const shouldStackAboveManager = isFactMemoryManagerModalOpen();
+    deleteModalElement.classList.toggle(FACT_MEMORY_DELETE_MODAL_STACKED_CLASS, shouldStackAboveManager);
+    deleteModalElement.dataset.stackWithManager = shouldStackAboveManager ? 'true' : 'false';
+}
+
+function handleFactMemoryDeleteModalShown() {
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+    if (!deleteModalElement || deleteModalElement.dataset.stackWithManager !== 'true') {
+        return;
+    }
+
+    const latestBackdrop = getLatestModalBackdrop();
+    if (latestBackdrop) {
+        latestBackdrop.classList.add(FACT_MEMORY_DELETE_BACKDROP_STACKED_CLASS);
+    }
+}
+
+function handleFactMemoryDeleteModalHidden() {
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+    const searchInput = document.getElementById('fact-memory-search-input');
+    const focusTarget = pendingFactMemoryDeleteTrigger && document.contains(pendingFactMemoryDeleteTrigger)
+        ? pendingFactMemoryDeleteTrigger
+        : searchInput;
+
+    if (deleteModalElement) {
+        deleteModalElement.classList.remove(FACT_MEMORY_DELETE_MODAL_STACKED_CLASS);
+        deleteModalElement.dataset.stackWithManager = 'false';
+    }
+
+    document.querySelectorAll(`.modal-backdrop.${FACT_MEMORY_DELETE_BACKDROP_STACKED_CLASS}`).forEach((backdrop) => {
+        backdrop.classList.remove(FACT_MEMORY_DELETE_BACKDROP_STACKED_CLASS);
+    });
+
+    pendingFactMemoryDeleteId = null;
+    pendingFactMemoryDeleteTrigger = null;
+
+    if (!isFactMemoryManagerModalOpen()) {
+        return;
+    }
+
+    document.body.classList.add('modal-open');
+    if (focusTarget) {
+        window.setTimeout(() => {
+            focusTarget.focus({ preventScroll: true });
+        }, 0);
+    }
 }
 
 function updateFactMemorySummary() {
@@ -1791,7 +2052,7 @@ function renderFactMemoryModalList() {
         deleteButton.className = 'btn btn-outline-danger btn-sm';
         deleteButton.setAttribute('aria-label', 'Delete memory');
         deleteButton.innerHTML = '<i class="bi bi-trash me-1"></i>Delete';
-        deleteButton.addEventListener('click', () => requestFactMemoryDelete(fact.id));
+        deleteButton.addEventListener('click', () => requestFactMemoryDelete(fact.id, deleteButton));
 
         actions.appendChild(saveButton);
         actions.appendChild(deleteButton);
@@ -1807,71 +2068,15 @@ function renderFactMemoryModalList() {
 }
 
 function openFactMemoryModal() {
+    initializeFactMemoryModalInstances();
     const modalElement = document.getElementById('factMemoryManagerModal');
-    if (!modalElement || typeof bootstrap === 'undefined') {
+    if (!modalElement || typeof bootstrap === 'undefined' || !factMemoryManagerModalInstance) {
         return;
-    }
-
-    if (!factMemoryManagerModalInstance) {
-        factMemoryManagerModalInstance = new bootstrap.Modal(modalElement);
     }
 
     factMemoryCurrentPage = 1;
     renderFactMemoryModalList();
     factMemoryManagerModalInstance.show();
-}
-
-function getLatestModalBackdrop() {
-    const backdrops = document.querySelectorAll('.modal-backdrop');
-    return backdrops.length ? backdrops[backdrops.length - 1] : null;
-}
-
-function applyFactMemoryDeleteModalStacking() {
-    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
-    const managerModalElement = document.getElementById('factMemoryManagerModal');
-    if (!deleteModalElement || !managerModalElement || !managerModalElement.classList.contains('show')) {
-        return;
-    }
-
-    deleteModalElement.style.zIndex = FACT_MEMORY_DELETE_MODAL_Z_INDEX;
-
-    const backdrop = getLatestModalBackdrop();
-    if (backdrop) {
-        backdrop.classList.add(FACT_MEMORY_DELETE_BACKDROP_CLASS);
-        backdrop.style.zIndex = FACT_MEMORY_DELETE_BACKDROP_Z_INDEX;
-    }
-}
-
-function resetFactMemoryDeleteModalStacking() {
-    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
-    if (deleteModalElement) {
-        deleteModalElement.style.zIndex = '';
-    }
-
-    document.querySelectorAll(`.${FACT_MEMORY_DELETE_BACKDROP_CLASS}`).forEach((backdrop) => {
-        backdrop.style.zIndex = '';
-        backdrop.classList.remove(FACT_MEMORY_DELETE_BACKDROP_CLASS);
-    });
-
-    const managerModalElement = document.getElementById('factMemoryManagerModal');
-    if (managerModalElement && managerModalElement.classList.contains('show')) {
-        document.body.classList.add('modal-open');
-    }
-}
-
-function ensureFactMemoryDeleteModalInstance() {
-    const modalElement = document.getElementById('factMemoryDeleteModal');
-    if (!modalElement || typeof bootstrap === 'undefined') {
-        return null;
-    }
-
-    if (!factMemoryDeleteModalInstance) {
-        modalElement.addEventListener('shown.bs.modal', applyFactMemoryDeleteModalStacking);
-        modalElement.addEventListener('hidden.bs.modal', resetFactMemoryDeleteModalStacking);
-        factMemoryDeleteModalInstance = new bootstrap.Modal(modalElement);
-    }
-
-    return factMemoryDeleteModalInstance;
 }
 
 async function loadFactMemory() {
@@ -2023,14 +2228,23 @@ async function saveFactMemory(factId) {
     }
 }
 
-function requestFactMemoryDelete(factId) {
+function requestFactMemoryDelete(factId, triggerElement = null) {
     pendingFactMemoryDeleteId = factId;
-    const deleteModal = ensureFactMemoryDeleteModalInstance();
-    if (!deleteModal) {
+    pendingFactMemoryDeleteTrigger = triggerElement && document.contains(triggerElement)
+        ? triggerElement
+        : null;
+
+    initializeFactMemoryModalInstances();
+
+    const modalElement = document.getElementById('factMemoryDeleteModal');
+    if (!modalElement || typeof bootstrap === 'undefined' || !factMemoryDeleteModalInstance) {
+        pendingFactMemoryDeleteId = null;
+        pendingFactMemoryDeleteTrigger = null;
+        updateFactMemoryStatus('Delete confirmation dialog is unavailable. Refresh the page and try again.', 'danger');
         return;
     }
 
-    deleteModal.show();
+    factMemoryDeleteModalInstance.show();
 }
 
 async function confirmDeleteFactMemory() {
@@ -2057,6 +2271,7 @@ async function confirmDeleteFactMemory() {
         }
 
         if (factMemoryDeleteModalInstance) {
+            pendingFactMemoryDeleteTrigger = null;
             factMemoryDeleteModalInstance.hide();
         }
         pendingFactMemoryDeleteId = null;
@@ -2935,8 +3150,21 @@ function exportActivityData() {
 let ttsVoices = [];
 let currentAudio = null;
 
+function setTtsPreviewButtonState(isPlaying) {
+    const previewButton = document.getElementById('tts-preview-btn');
+    const stopButton = document.getElementById('tts-stop-btn');
+    if (!previewButton || !stopButton) {
+        return;
+    }
+
+    previewButton.classList.toggle('d-none', isPlaying);
+    stopButton.classList.toggle('d-none', !isPlaying);
+}
+
 async function loadTTSSettings() {
     try {
+        setTtsPreviewButtonState(false);
+
         // Load available voices
         const voicesResponse = await fetch('/api/chat/tts/voices');
         const voicesData = await voicesResponse.json();
@@ -3012,9 +3240,9 @@ function updateVoicePreview() {
     if (currentAudio) {
         currentAudio.pause();
         currentAudio = null;
-        document.getElementById('tts-preview-btn').style.display = 'inline-block';
-        document.getElementById('tts-stop-btn').style.display = 'none';
     }
+
+    setTtsPreviewButtonState(false);
 }
 
 async function playVoicePreview() {
@@ -3028,7 +3256,6 @@ async function playVoicePreview() {
     
     const speed = parseFloat(document.getElementById('tts-speed-slider').value);
     const previewBtn = document.getElementById('tts-preview-btn');
-    const stopBtn = document.getElementById('tts-stop-btn');
     const statusSpan = document.getElementById('tts-preview-status');
     
     try {
@@ -3062,20 +3289,17 @@ async function playVoicePreview() {
         
         currentAudio = new Audio(audioUrl);
         currentAudio.onplay = () => {
-            previewBtn.style.display = 'none';
-            stopBtn.style.display = 'inline-block';
+            setTtsPreviewButtonState(true);
             statusSpan.textContent = 'Playing...';
         };
         currentAudio.onended = () => {
-            previewBtn.style.display = 'inline-block';
-            stopBtn.style.display = 'none';
+            setTtsPreviewButtonState(false);
             previewBtn.disabled = false;
             statusSpan.textContent = '';
             URL.revokeObjectURL(audioUrl);
         };
         currentAudio.onerror = () => {
-            previewBtn.style.display = 'inline-block';
-            stopBtn.style.display = 'none';
+            setTtsPreviewButtonState(false);
             previewBtn.disabled = false;
             statusSpan.textContent = '';
             showToastMessage('Error playing audio', 'danger');
@@ -3086,6 +3310,7 @@ async function playVoicePreview() {
     } catch (error) {
         console.error('Error playing voice preview:', error);
         showToastMessage('Failed to play voice preview', 'danger');
+        setTtsPreviewButtonState(false);
         previewBtn.disabled = false;
         statusSpan.textContent = '';
     }
@@ -3095,10 +3320,10 @@ function stopVoicePreview() {
     if (currentAudio) {
         currentAudio.pause();
         currentAudio = null;
-        document.getElementById('tts-preview-btn').style.display = 'inline-block';
-        document.getElementById('tts-stop-btn').style.display = 'none';
         document.getElementById('tts-preview-status').textContent = '';
     }
+
+    setTtsPreviewButtonState(false);
 }
 
 async function saveTTSSettings() {

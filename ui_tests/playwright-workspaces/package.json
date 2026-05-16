@@ -1,0 +1,14 @@
+{
+  "name": "simplechat-playwright-workspaces",
+  "version": "0.241.018",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:staging:azure": "playwright test staging-chat-smoke.spec.js --config=playwright.service.config.js --workers=1"
+  },
+  "devDependencies": {
+    "@azure/identity": "4.13.1",
+    "@azure/playwright": "1.1.5",
+    "@playwright/test": "1.60.0"
+  }
+}

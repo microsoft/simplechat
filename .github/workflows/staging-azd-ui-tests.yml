@@ -1,0 +1,290 @@
+name: Staging AZD Deploy and UI Smoke Tests
+
+on:
+  push:
+    branches:
+      - Staging
+  workflow_dispatch:
+    inputs:
+      azd_command:
+        description: "azd command to run before UI tests"
+        required: true
+        default: "up"
+        type: choice
+        options:
+          - up
+          - deploy
+      pytest_target:
+        description: "pytest target for staging UI validation"
+        required: true
+        default: "ui_tests/test_staging_chat_smoke.py"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: simplechat-staging-azd-ui-tests
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-ui-smoke:
+    name: Deploy staging and run UI smoke tests
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ vars.STAGING_GITHUB_ENVIRONMENT || 'Staging' }}
+    timeout-minutes: 180
+    env:
+      AZD_COMMAND: ${{ github.event.inputs.azd_command || 'up' }}
+      PYTEST_TARGET: ${{ github.event.inputs.pytest_target || 'ui_tests/test_staging_chat_smoke.py' }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus' }}
+      AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME || 'staging' }}
+      DEPLOYMENT_APPNAME: ${{ vars.DEPLOYMENT_APPNAME || 'simplechat' }}
+      SIMPLECHAT_UI_BASE_URL: ${{ vars.SIMPLECHAT_UI_BASE_URL }}
+      SIMPLECHAT_UI_AUTH_RESOURCE: ${{ vars.SIMPLECHAT_UI_AUTH_RESOURCE }}
+      PLAYWRIGHT_SERVICE_URL: ${{ vars.PLAYWRIGHT_SERVICE_URL }}
+      AZD_ENV_FILE_B64: ${{ secrets.AZD_ENV_FILE_B64 }}
+      SIMPLECHAT_UI_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_STORAGE_STATE_B64 }}
+      SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64 }}
+      SIMPLECHAT_UI_ARTIFACT_DIR: ui_tests/artifacts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate required environment values
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_LOCATION AZURE_ENV_NAME DEPLOYMENT_APPNAME PLAYWRIGHT_SERVICE_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            printf 'Missing required GitHub Environment variables/secrets:\n'
+            printf '  - %s\n' "${missing[@]}"
+            exit 1
+          fi
+
+          if [[ -z "${SIMPLECHAT_UI_STORAGE_STATE_B64:-}" && -z "${SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64:-}" && -z "${SIMPLECHAT_UI_AUTH_RESOURCE:-}" ]]; then
+            echo "Missing UI authentication. Set SIMPLECHAT_UI_AUTH_RESOURCE for CI bearer auth or SIMPLECHAT_UI_STORAGE_STATE_B64/SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64 for browser session auth."
+            exit 1
+          fi
+
+          case "$AZD_COMMAND" in
+            up|deploy) ;;
+            *) echo "Unsupported azd command: $AZD_COMMAND"; exit 1 ;;
+          esac
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Azure Developer CLI
+        uses: Azure/setup-azd@v2
+
+      - name: Authenticate Azure Developer CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          azd auth login \
+            --client-id "$AZURE_CLIENT_ID" \
+            --federated-credential-provider github \
+            --tenant-id "$AZURE_TENANT_ID"
+
+      - name: Restore azd environment
+        shell: bash
+        working-directory: deployers
+        run: |
+          set -euo pipefail
+
+          mkdir -p ".azure/$AZURE_ENV_NAME"
+
+          if [[ -n "${AZD_ENV_FILE_B64:-}" ]]; then
+            printf '%s' "$AZD_ENV_FILE_B64" | base64 -d > ".azure/$AZURE_ENV_NAME/.env"
+          fi
+
+          cat > .azure/config.json <<EOF
+          {"defaultEnvironment":"$AZURE_ENV_NAME"}
+          EOF
+
+          if [[ -f ".azure/$AZURE_ENV_NAME/.env" ]]; then
+            azd env select "$AZURE_ENV_NAME"
+          else
+            azd env new "$AZURE_ENV_NAME" \
+              --location "$AZURE_LOCATION" \
+              --subscription "$AZURE_SUBSCRIPTION_ID" \
+              --no-prompt
+          fi
+
+          azd env set AZURE_SUBSCRIPTION_ID "$AZURE_SUBSCRIPTION_ID"
+          azd env set AZURE_LOCATION "$AZURE_LOCATION"
+          azd env set DEPLOYMENT_APPNAME "$DEPLOYMENT_APPNAME"
+
+      - name: Run azd deployment
+        shell: bash
+        working-directory: deployers
+        run: |
+          set -euo pipefail
+
+          if [[ "$AZD_COMMAND" == "up" ]]; then
+            azd up --no-prompt
+          else
+            azd deploy --no-prompt
+          fi
+
+      - name: Resolve staging URL
+        shell: bash
+        working-directory: deployers
+        run: |
+          set -euo pipefail
+
+          base_url="${SIMPLECHAT_UI_BASE_URL:-}"
+          if [[ -z "$base_url" ]]; then
+            resource_group="$(azd env get-value var_rgName 2>/dev/null || true)"
+            web_service="$(azd env get-value var_webService 2>/dev/null || true)"
+
+            if [[ -z "$resource_group" || -z "$web_service" ]]; then
+              resource_group="${DEPLOYMENT_APPNAME}-${AZURE_ENV_NAME}-rg"
+              web_service="${DEPLOYMENT_APPNAME}-${AZURE_ENV_NAME}-app"
+            fi
+
+            host_name="$(az webapp show \
+              --name "$web_service" \
+              --resource-group "$resource_group" \
+              --subscription "$AZURE_SUBSCRIPTION_ID" \
+              --query defaultHostName \
+              -o tsv)"
+            base_url="https://$host_name"
+          fi
+
+          base_url="${base_url%/}"
+          echo "SIMPLECHAT_UI_BASE_URL=$base_url" >> "$GITHUB_ENV"
+          echo "Resolved staging URL: $base_url"
+
+      - name: Acquire SimpleChat UI access token
+        if: ${{ env.SIMPLECHAT_UI_AUTH_RESOURCE != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          access_token="$(az account get-access-token --resource "$SIMPLECHAT_UI_AUTH_RESOURCE" --query accessToken -o tsv)"
+          if [[ -z "$access_token" ]]; then
+            echo "Failed to acquire SimpleChat UI access token."
+            exit 1
+          fi
+          echo "::add-mask::$access_token"
+          echo "SIMPLECHAT_UI_ACCESS_TOKEN=$access_token" >> "$GITHUB_ENV"
+
+      - name: Wait for staging health check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          no_auth_health_url="$SIMPLECHAT_UI_BASE_URL/external/healthcheckz"
+          auth_health_url="$SIMPLECHAT_UI_BASE_URL/external/healthcheck"
+          chat_url="$SIMPLECHAT_UI_BASE_URL/chats"
+
+          echo "Waiting up to 15 minutes for staging to finish App Service warm-up."
+          for attempt in {1..90}; do
+            no_auth_status="$(curl -k -sS --connect-timeout 10 --max-time 20 -o /tmp/simplechat-healthz.txt -w '%{http_code}' "$no_auth_health_url" || true)"
+            auth_status="$(curl -k -sS --connect-timeout 10 --max-time 20 -o /tmp/simplechat-health.txt -w '%{http_code}' "$auth_health_url" || true)"
+            chat_status="$(curl -k -sS --connect-timeout 10 --max-time 20 -o /tmp/simplechat-chat.txt -w '%{http_code}' "$chat_url" || true)"
+
+            if [[ "$no_auth_status" == "200" || "$auth_status" == "200" || "$chat_status" == "302" || "$chat_status" == "401" || "$chat_status" == "403" ]]; then
+              echo "Staging health check passed."
+              exit 0
+            fi
+
+            echo "Health check attempt $attempt failed. healthcheckz=$no_auth_status healthcheck=$auth_status chats=$chat_status"
+            if (( attempt % 6 == 0 )); then
+              echo "Recent health response sample:"
+              head -c 1000 /tmp/simplechat-healthz.txt || true
+              echo ""
+            fi
+            sleep 10
+          done
+
+          echo "Staging health check did not pass within the expected 15-minute warm-up window."
+          exit 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui_tests/playwright-workspaces/package-lock.json
+
+      - name: Install UI test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r ui_tests/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Install Playwright Workspaces dependencies
+        shell: bash
+        working-directory: ui_tests/playwright-workspaces
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: Restore Playwright storage state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p ui_tests/artifacts/auth
+
+          if [[ -n "${SIMPLECHAT_UI_STORAGE_STATE_B64:-}" ]]; then
+            printf '%s' "$SIMPLECHAT_UI_STORAGE_STATE_B64" | base64 -d > ui_tests/artifacts/auth/storage_state.json
+            echo "SIMPLECHAT_UI_STORAGE_STATE=$PWD/ui_tests/artifacts/auth/storage_state.json" >> "$GITHUB_ENV"
+          fi
+
+          if [[ -n "${SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64:-}" ]]; then
+            printf '%s' "$SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64" | base64 -d > ui_tests/artifacts/auth/admin_storage_state.json
+            echo "SIMPLECHAT_UI_ADMIN_STORAGE_STATE=$PWD/ui_tests/artifacts/auth/admin_storage_state.json" >> "$GITHUB_ENV"
+            if [[ -z "${SIMPLECHAT_UI_STORAGE_STATE_B64:-}" ]]; then
+              echo "SIMPLECHAT_UI_STORAGE_STATE=$PWD/ui_tests/artifacts/auth/admin_storage_state.json" >> "$GITHUB_ENV"
+            fi
+          fi
+
+      - name: Run staging UI smoke test in Playwright Workspaces
+        shell: bash
+        working-directory: ui_tests/playwright-workspaces
+        run: |
+          set -euo pipefail
+          npm run test:staging:azure
+
+      - name: Run staging UI smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest "$PYTEST_TARGET" -m ui -ra
+
+      - name: Upload UI test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-ui-test-artifacts
+          path: |
+            ui_tests/artifacts
+            ui_tests/playwright-workspaces/playwright-report
+            ui_tests/playwright-workspaces/test-results
+          if-no-files-found: ignore

@@ -22,6 +22,24 @@ const agentDropdownText = agentDropdownButton
 const agentSearchInput = document.getElementById('agent-search-input');
 const agentDropdownItems = document.getElementById('agent-dropdown-items');
 
+const FLOATING_SELECTOR_DROPDOWN_CONFIG = {
+    boundary: 'viewport',
+    reference: 'toggle',
+    autoClose: 'outside',
+    popperConfig: {
+        strategy: 'fixed',
+        modifiers: [
+            {
+                name: 'preventOverflow',
+                options: {
+                    boundary: 'viewport',
+                    padding: 12,
+                },
+            },
+        ],
+    },
+};
+
 let agentSelectorController = null;
 let scopeChangeListenerInitialized = false;
 let pendingScopeNarrowingAgent = null;
@@ -30,6 +48,15 @@ let dropdownHideListenerInitialized = false;
 
 function hasAgentInteractionControls() {
     return Boolean(enableAgentsBtn && agentSelectContainer && agentSelect);
+}
+
+function notifyMobileSelectorActivated(selectorId, dropdownButtonId) {
+    window.dispatchEvent(new CustomEvent('chat:toolbar-selector-activated', {
+        detail: {
+            selectorId,
+            dropdownButtonId,
+        },
+    }));
 }
 
 function initializeAgentSelector() {
@@ -48,6 +75,7 @@ function initializeAgentSelector() {
         placeholderText: 'Select an Agent',
         emptyMessage: 'No agents available',
         emptySearchMessage: 'No matching agents found',
+        dropdownConfig: FLOATING_SELECTOR_DROPDOWN_CONFIG,
     });
 
     return agentSelectorController;
@@ -451,6 +479,7 @@ export async function initializeAgentInteractions() {
             if (modelSelectContainer) modelSelectContainer.style.display = "none";
             // Populate agent dropdown
             await populateAgentDropdown();
+            notifyMobileSelectorActivated('agent-select-container', 'agent-dropdown-button');
         } else {
             agentSelectContainer.style.display = "none";
             if (modelSelectContainer) modelSelectContainer.style.display = "block";

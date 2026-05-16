@@ -964,8 +964,9 @@ register_route_backend_user_agreement(app)
 # ------------------- API Thoughts Routes ----------------
 register_route_backend_thoughts(app)
 
-# ------------------- Extenral Health Routes ----------
+# ------------------- External Health Routes ----------
 register_route_external_health(app)
+register_no_auth_health(app)
 
 if __name__ == '__main__':
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"

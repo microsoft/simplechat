@@ -1,6 +1,10 @@
 # functions_authentication.py
 
+import base64
+import json
+
 from config import *
+from functions_appinsights import log_event
 from functions_settings import *
 from functions_debug import debug_print
 
@@ -524,6 +528,107 @@ def validate_bearer_token(token):
         return False, f"Invalid token: {e}"
     except Exception as e:
         return False, f"An unexpected error occurred during token validation: {e}"
+
+def _extract_easy_auth_claims():
+    """Extract claims injected by App Service Authentication after token validation."""
+    encoded_principal = request.headers.get('X-MS-CLIENT-PRINCIPAL')
+    if not encoded_principal:
+        return None
+
+    try:
+        principal = json.loads(base64.b64decode(encoded_principal).decode('utf-8'))
+    except (ValueError, TypeError, json.JSONDecodeError) as ex:
+        log_event(
+            "[CIAuth] Failed to parse App Service Authentication principal header.",
+            extra={"error": str(ex)},
+            debug_only=True,
+            category="CIAuth",
+        )
+        return None
+
+    data = {}
+    roles = []
+    for claim in principal.get('claims', []):
+        claim_type = claim.get('typ') or claim.get('type')
+        claim_value = claim.get('val') or claim.get('value')
+        if not claim_type or claim_value is None:
+            continue
+
+        normalized_claim_type = claim_type.rsplit('/', 1)[-1]
+        if normalized_claim_type in {'role', 'roles'}:
+            roles.append(claim_value)
+        elif normalized_claim_type in {'appid', 'azp', 'oid', 'sub', 'tid', 'name', 'aud', 'iss'}:
+            data[normalized_claim_type] = claim_value
+        elif claim_type.endswith('/objectidentifier'):
+            data['oid'] = claim_value
+        elif claim_type.endswith('/tenantid'):
+            data['tid'] = claim_value
+
+    if roles:
+        data['roles'] = roles
+    data.setdefault('name', principal.get('userDetails'))
+    data.setdefault('oid', request.headers.get('X-MS-CLIENT-PRINCIPAL-ID'))
+    return data
+
+def create_ci_bearer_session():
+    """Create a Flask session from a validated CI app-only bearer token."""
+    if not ENABLE_CI_BEARER_SESSION_AUTH:
+        log_event(
+            "[CIAuth] CI bearer session auth requested while disabled.",
+            debug_only=True,
+            category="CIAuth",
+        )
+        return jsonify({"error": "disabled", "message": "CI bearer session authentication is disabled."}), 404
+
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        is_valid, data = validate_bearer_token(token)
+        if not is_valid:
+            log_event(
+                "[CIAuth] CI bearer session token validation failed.",
+                extra={"reason": data},
+                debug_only=True,
+                category="CIAuth",
+            )
+            return jsonify({"error": "unauthorized", "message": "Bearer token is invalid."}), 401
+    else:
+        data = _extract_easy_auth_claims()
+        if not data:
+            return jsonify({"error": "unauthorized", "message": "Bearer token is required."}), 401
+
+    roles = data.get("roles") if isinstance(data, dict) else None
+    required_role = CI_BEARER_SESSION_REQUIRED_ROLE or "Admin"
+    if not roles or required_role not in roles:
+        return jsonify({"error": "forbidden", "message": f"{required_role} app role is required."}), 403
+
+    caller_app_id = (data.get("appid") or data.get("azp") or "").lower()
+    if CI_BEARER_SESSION_ALLOWED_APP_IDS and caller_app_id not in CI_BEARER_SESSION_ALLOWED_APP_IDS:
+        log_event(
+            "[CIAuth] CI bearer session caller app id was not allowed.",
+            extra={"caller_app_id": caller_app_id},
+            debug_only=True,
+            category="CIAuth",
+        )
+        return jsonify({"error": "forbidden", "message": "Caller application is not allowed."}), 403
+
+    session_user = dict(data)
+    session_user.setdefault("name", data.get("name") or data.get("appidacr") or "SimpleChat CI")
+    session_user.setdefault("preferred_username", f"ci:{caller_app_id or 'unknown'}")
+    session_user.setdefault("oid", data.get("oid") or data.get("sub") or caller_app_id)
+    session_user["roles"] = roles
+    session_user["ci_bearer_session"] = True
+
+    session["user"] = session_user
+    session["last_activity_epoch"] = int(time.time())
+
+    log_event(
+        "[CIAuth] CI bearer session established.",
+        extra={"caller_app_id": caller_app_id, "required_role": required_role},
+        debug_only=True,
+        category="CIAuth",
+    )
+    return jsonify({"authenticated": True, "roles": roles}), 200
 
 def accesstoken_required(f):
     @wraps(f)

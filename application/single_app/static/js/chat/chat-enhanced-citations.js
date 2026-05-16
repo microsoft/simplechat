@@ -60,7 +60,7 @@ export async function showEnhancedCitationModal(docId, pageNumberOrTimestamp, ci
             showImageModal(docId, docMetadata.file_name);
             break;
         case 'pdf':
-            showPdfModal(docId, pageNumberOrTimestamp, citationId);
+            await showPdfModal(docId, pageNumberOrTimestamp, citationId);
             break;
         case 'video':
             // For video/audio files, pageNumberOrTimestamp is actually the chunk_sequence (seconds offset)
@@ -127,13 +127,65 @@ export function showImageModal(docId, fileName) {
     modalInstance.show();
 }
 
+function fallBackToTextCitation(citationId) {
+    if (!citationId) {
+        return;
+    }
+
+    import('./chat-citations.js').then(module => {
+        module.fetchCitedText(citationId);
+    }).catch(error => {
+        console.error('Failed to fall back to text citation:', error);
+    });
+}
+
+function revokePdfFrameObjectUrl(pdfFrame) {
+    const currentObjectUrl = pdfFrame.dataset.objectUrl;
+    if (!currentObjectUrl) {
+        return;
+    }
+
+    URL.revokeObjectURL(currentObjectUrl);
+    delete pdfFrame.dataset.objectUrl;
+}
+
+function bindPdfModalCleanup(pdfModal, pdfFrame) {
+    if (pdfModal.dataset.cleanupBound === 'true') {
+        return;
+    }
+
+    pdfModal.addEventListener('hidden.bs.modal', () => {
+        revokePdfFrameObjectUrl(pdfFrame);
+        pdfFrame.removeAttribute('src');
+    });
+    pdfModal.dataset.cleanupBound = 'true';
+}
+
+async function getResponseErrorMessage(response, fallbackMessage) {
+    const contentType = response.headers.get('Content-Type') || '';
+
+    if (contentType.includes('application/json')) {
+        const errorData = await response.json().catch(() => null);
+        if (errorData && errorData.error) {
+            return errorData.error;
+        }
+    }
+
+    const errorText = await response.text().catch(() => '');
+    if (errorText) {
+        return errorText;
+    }
+
+    return fallbackMessage;
+}
+
 /**
  * Show PDF modal using server-side rendering
  * @param {string} docId - Document ID  
  * @param {string|number} pageNumber - Page number
  * @param {string} citationId - Citation ID for fallback
  */
-export function showPdfModal(docId, pageNumber, citationId) {
+export async function showPdfModal(docId, pageNumber, citationId) {
     console.log(`Showing PDF modal for docId: ${docId}, page: ${pageNumber}`);
     showLoadingIndicator();
     
@@ -149,31 +201,53 @@ export function showPdfModal(docId, pageNumber, citationId) {
     
     const pdfFrame = pdfModal.querySelector('#pdfFrame');
     const pdfTitle = pdfModal.querySelector('#pdfModalTitle');
-    
-    // Set the PDF source directly to our server-side rendering endpoint
-    pdfFrame.src = pdfUrl;
+    bindPdfModalCleanup(pdfModal, pdfFrame);
+    revokePdfFrameObjectUrl(pdfFrame);
+    pdfFrame.removeAttribute('src');
     pdfTitle.textContent = `PDF Document - Page ${pageNumber}`;
-    
-    // Handle loading and error states
-    pdfFrame.onload = function() {
-        hideLoadingIndicator();
-        console.log('PDF loaded successfully');
-    };
-    
-    pdfFrame.onerror = function() {
-        hideLoadingIndicator();
-        console.error('Failed to load PDF');
-        showToast('Failed to load PDF document', 'error');
-        
-        // Fall back to text citation
-        import('./chat-citations.js').then(module => {
-            module.fetchCitedText(citationId);
+
+    try {
+        const response = await fetch(pdfUrl, {
+            credentials: 'same-origin',
         });
-    };
-    
-    // Show the modal
-    const modalInstance = new bootstrap.Modal(pdfModal);
-    modalInstance.show();
+
+        if (!response.ok) {
+            const errorMessage = await getResponseErrorMessage(
+                response,
+                `Failed to load PDF document (${response.status}).`
+            );
+            throw new Error(errorMessage);
+        }
+
+        const pdfBlob = await response.blob();
+        const pdfObjectUrl = URL.createObjectURL(pdfBlob);
+        const viewerPage = response.headers.get('X-Sub-PDF-Page') || '1';
+
+        pdfFrame.dataset.objectUrl = pdfObjectUrl;
+        pdfFrame.onload = function() {
+            hideLoadingIndicator();
+            console.log(`PDF loaded successfully for docId: ${docId}, page: ${pageNumber}`);
+        };
+
+        pdfFrame.onerror = function() {
+            hideLoadingIndicator();
+            revokePdfFrameObjectUrl(pdfFrame);
+            console.error(`Failed to render PDF frame for docId: ${docId}, page: ${pageNumber}`);
+            showToast('Failed to render PDF document.', 'danger');
+            fallBackToTextCitation(citationId);
+        };
+
+        pdfFrame.src = `${pdfObjectUrl}#page=${encodeURIComponent(viewerPage)}`;
+
+        const modalInstance = bootstrap.Modal.getOrCreateInstance(pdfModal);
+        modalInstance.show();
+    } catch (error) {
+        hideLoadingIndicator();
+        revokePdfFrameObjectUrl(pdfFrame);
+        console.error('Failed to load PDF document:', error);
+        showToast(error.message || 'Failed to load PDF document.', 'danger');
+        fallBackToTextCitation(citationId);
+    }
 }
 
 /**
@@ -350,21 +424,10 @@ async function downloadTabularFile(downloadUrl, fallbackFilename, downloadBtn) {
         });
 
         if (!response.ok) {
-            let errorMessage = `Could not download file (${response.status}).`;
-            const contentType = response.headers.get('Content-Type') || '';
-
-            if (contentType.includes('application/json')) {
-                const errorData = await response.json().catch(() => null);
-                if (errorData && errorData.error) {
-                    errorMessage = errorData.error;
-                }
-            } else {
-                const errorText = await response.text().catch(() => '');
-                if (errorText) {
-                    errorMessage = errorText;
-                }
-            }
-
+            const errorMessage = await getResponseErrorMessage(
+                response,
+                `Could not download file (${response.status}).`
+            );
             throw new Error(errorMessage);
         }
 

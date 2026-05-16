@@ -464,7 +464,7 @@ function renderContextSection(context) {
     const safeDisplayName = escapeHtml(displayName);
     const safePrimaryScope = escapeHtml(primary.scope);
     const safePrimaryId = escapeHtml(primary.id);
-    const groupContextBadge = primary.scope === 'group' ? '<span class="badge bg-secondary me-2">group</span>' : '';
+    const singleUserGroupBadge = primary.scope === 'group' ? '<span class="badge bg-secondary me-2">single-user</span>' : '';
     
     html += `
       <div class="mb-3">
@@ -472,8 +472,7 @@ function renderContextSection(context) {
         <div class="ms-3 mt-1">
           <div class="d-flex align-items-center mb-2">
             <span class="badge bg-primary me-2">${safePrimaryScope}</span>
-            <span class="fw-bold">${safeDisplayName}</span>
-            ${groupContextBadge}
+            ${singleUserGroupBadge}
             <span class="fw-bold">${safeDisplayName}</span>
           </div>
           ${primary.name ? `<div class="small text-muted">ID: ${safePrimaryId}</div>` : ''}

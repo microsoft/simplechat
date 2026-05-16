@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - Development
-      - staging
+      - Staging
     paths:
       - 'application/single_app/**/*.py'
       - 'scripts/check_swagger_routes.py'

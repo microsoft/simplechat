@@ -1,4 +1,4 @@
-name: Enforce Branch Protection Flow (Development → Staging → Main)
+name: Enforce Branch Protection Flow (Development -> Staging -> Main)
 
 on:
   pull_request:
@@ -11,20 +11,20 @@ jobs:
   enforce-branch-flow:
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if PR→staging doesn't come from development
+      - name: Fail if PR into Staging does not come from Development
         if: >
-          github.event.pull_request.base.ref == 'staging' &&
-          github.event.pull_request.head.ref != 'development'
+          github.event.pull_request.base.ref == 'Staging' &&
+          github.event.pull_request.head.ref != 'Development'
         run: |
-          echo "::error ::Pull requests into 'staging' must originate from branch 'development'."
+          echo "::error ::Pull requests into 'Staging' must originate from branch 'Development'."
           exit 1
 
-      - name: Fail if PR→main doesn't come from staging
+      - name: Fail if PR into main does not come from Staging
         if: >
           github.event.pull_request.base.ref == 'main' &&
-          github.event.pull_request.head.ref != 'staging'
+          github.event.pull_request.head.ref != 'Staging'
         run: |
-          echo "::error ::Pull requests into 'main' must originate from branch 'staging'."
+          echo "::error ::Pull requests into 'main' must originate from branch 'Staging'."
           exit 1
 
       - name: Branch flow validated

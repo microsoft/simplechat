@@ -18,6 +18,29 @@ RUN update-ca-trust enable \
 
 ENV PYTHONUNBUFFERED=1
 
+ENV ACCEPT_EULA=Y
+
+RUN set -eux; \
+    printf '%s\n' \
+        '[packages-microsoft-com-prod]' \
+        'name=packages-microsoft-com-prod' \
+        'baseurl=https://packages.microsoft.com/azurelinux/3.0/prod/ms-non-oss/x86_64' \
+        'enabled=1' \
+        'gpgcheck=1' \
+        'gpgkey=https://packages.microsoft.com/keys/microsoft.asc' \
+        > /etc/yum.repos.d/packages-microsoft-com-prod.repo; \
+    tdnf install -y msodbcsql18 unixODBC; \
+    driver_lib="$(find /opt/microsoft/msodbcsql18/lib64 -name 'libmsodbcsql-*.so*' | sort | tail -n 1)"; \
+    test -n "${driver_lib}"; \
+    printf '[ODBC Driver 18 for SQL Server]\nDescription=Microsoft ODBC Driver 18 for SQL Server\nDriver=%s\nUsageCount=1\n' "${driver_lib}" > /etc/odbcinst.ini; \
+    mkdir -p /odbc-runtime/usr/lib64; \
+    for lib in /usr/lib64/libodbc* /usr/lib/libodbc* /usr/lib64/libltdl* /usr/lib/libltdl*; do \
+        if [ -e "${lib}" ]; then cp -a "${lib}" /odbc-runtime/usr/lib64/; fi; \
+    done; \
+    find /odbc-runtime/usr/lib64 -maxdepth 1 -name 'libodbc*' | grep -q .; \
+    find /odbc-runtime/usr/lib64 -maxdepth 1 -name 'libltdl*' | grep -q .; \
+    tdnf clean all
+
 RUN set -eux; \
     tdnf install -y curl ca-certificates; \
     printf '%s\n' \
@@ -95,6 +118,7 @@ ENV HOME=/home/nonroot \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
+    LD_LIBRARY_PATH=/usr/lib64:/opt/microsoft/msodbcsql18/lib64 \
     SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
     SSL_CERT_DIR=/etc/ssl/certs \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-bundle.crt

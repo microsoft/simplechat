@@ -1,102 +1,79 @@
+// dark-mode.js
 /**
- * Dark Mode Toggle Functionality
- * Handles theme switching between light and dark modes
+ * Light and dark theme switching for the documentation site.
  */
 
 (function() {
-  'use strict';
+    "use strict";
 
-  // Theme constants
-  const THEME_KEY = 'simplechat-theme';
-  const THEMES = {
-    LIGHT: 'light',
-    DARK: 'dark'
-  };
+    const THEME_KEY = "simplechat-theme";
+    const THEMES = {
+        LIGHT: "light",
+        DARK: "dark"
+    };
 
-  // Get current theme
-  function getCurrentTheme() {
-    return localStorage.getItem(THEME_KEY) || THEMES.LIGHT;
-  }
+    function getCurrentTheme() {
+        return localStorage.getItem(THEME_KEY) || THEMES.LIGHT;
+    }
 
-  // Set theme
-  function setTheme(theme) {
-    document.documentElement.setAttribute('data-bs-theme', theme);
-    localStorage.setItem(THEME_KEY, theme);
-    
-    // Update toggle buttons text/icons
-    updateToggleButtons(theme);
-    
-    // Trigger custom event for other components
-    document.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme } }));
-  }
+    function updateToggleButtons(theme) {
+        const toggles = document.querySelectorAll(".dark-mode-toggle");
+        const isDark = theme === THEMES.DARK;
 
-  // Update toggle button states
-  function updateToggleButtons(theme) {
-    const toggles = document.querySelectorAll('.dark-mode-toggle');
-    toggles.forEach(toggle => {
-      const lightElements = toggle.querySelectorAll('.d-light-mode-only');
-      const darkElements = toggle.querySelectorAll('.d-dark-mode-only');
-      
-      if (theme === THEMES.DARK) {
-        lightElements.forEach(el => el.style.display = 'none');
-        darkElements.forEach(el => el.style.display = 'inline');
-      } else {
-        lightElements.forEach(el => el.style.display = 'inline');
-        darkElements.forEach(el => el.style.display = 'none');
-      }
-    });
-  }
+        toggles.forEach(function(toggle) {
+            toggle.classList.toggle("is-dark", isDark);
+            toggle.setAttribute("aria-label", isDark ? "Switch to light mode" : "Switch to dark mode");
+        });
+    }
 
-  // Toggle theme
-  function toggleTheme() {
-    const currentTheme = getCurrentTheme();
-    const newTheme = currentTheme === THEMES.LIGHT ? THEMES.DARK : THEMES.LIGHT;
-    setTheme(newTheme);
-  }
+    function setTheme(theme) {
+        document.documentElement.setAttribute("data-bs-theme", theme);
+        localStorage.setItem(THEME_KEY, theme);
+        updateToggleButtons(theme);
+        document.dispatchEvent(new CustomEvent("themeChanged", { detail: { theme } }));
+    }
 
-  // Initialize theme on page load
-  function initTheme() {
-    const savedTheme = getCurrentTheme();
-    setTheme(savedTheme);
-  }
+    function toggleTheme() {
+        const currentTheme = getCurrentTheme();
+        const newTheme = currentTheme === THEMES.LIGHT ? THEMES.DARK : THEMES.LIGHT;
+        setTheme(newTheme);
+    }
 
-  // Set up event listeners
-  function setupEventListeners() {
-    // Handle toggle button clicks
-    document.addEventListener('click', function(e) {
-      if (e.target.closest('.dark-mode-toggle')) {
-        e.preventDefault();
-        toggleTheme();
-      }
-    });
+    function initTheme() {
+        setTheme(getCurrentTheme());
+    }
 
-    // Handle keyboard shortcuts (Ctrl/Cmd + Shift + L)
-    document.addEventListener('keydown', function(e) {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'L') {
-        e.preventDefault();
-        toggleTheme();
-      }
-    });
-  }
+    function setupEventListeners() {
+        document.addEventListener("click", function(event) {
+            if (event.target.closest(".dark-mode-toggle")) {
+                event.preventDefault();
+                toggleTheme();
+            }
+        });
 
-  // Initialize when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-      initTheme();
-      setupEventListeners();
-    });
-  } else {
-    initTheme();
-    setupEventListeners();
-  }
+        document.addEventListener("keydown", function(event) {
+            if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === "L") {
+                event.preventDefault();
+                toggleTheme();
+            }
+        });
+    }
 
-  // Expose utilities globally
-  window.SimpleChat = window.SimpleChat || {};
-  window.SimpleChat.Theme = {
-    getCurrentTheme,
-    setTheme,
-    toggleTheme,
-    THEMES
-  };
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", function() {
+            initTheme();
+            setupEventListeners();
+        });
+    } else {
+        initTheme();
+        setupEventListeners();
+    }
 
+    window.SimpleChat = window.SimpleChat || {};
+    window.SimpleChat.Theme = {
+        getCurrentTheme,
+        setTheme,
+        toggleTheme,
+        THEMES
+    };
 })();

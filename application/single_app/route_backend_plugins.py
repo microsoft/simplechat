@@ -9,6 +9,11 @@ from azure.identity import DefaultAzureCredential
 from flask import Blueprint, jsonify, request, current_app
 from semantic_kernel_plugins.plugin_loader import get_all_plugin_metadata
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
+from semantic_kernel_plugins.sql_odbc_utils import (
+    DEFAULT_SQL_SERVER_ODBC_DRIVER,
+    build_sql_server_odbc_connection_string,
+    connect_with_sql_server_odbc_fallback,
+)
 from functions_settings import get_settings, is_tabular_processing_enabled, update_settings
 from functions_authentication import *
 from functions_appinsights import log_event
@@ -1299,21 +1304,30 @@ def test_sql_connection():
         if database_type == 'sqlserver':
             import pyodbc
             if connection_method == 'connection_string' and connection_string:
-                conn = pyodbc.connect(connection_string, timeout=timeout)
+                conn = connect_with_sql_server_odbc_fallback(
+                    pyodbc.connect,
+                    connection_string,
+                    connect_kwargs={"timeout": timeout},
+                    log_source="PluginSqlConnectionTest",
+                )
             else:
                 if not server or not database:
                     return jsonify({'success': False, 'error': 'Server and database are required for individual parameters connection.'}), 400
-                drv = driver or 'ODBC Driver 18 for SQL Server'
-                conn_str = f"DRIVER={{{drv}}};SERVER={server};DATABASE={database}"
-                if port:
-                    conn_str += f",{port}"
-                if auth_type == 'username_password' and username and password:
-                    conn_str += f";UID={username};PWD={password}"
-                elif auth_type == 'managed_identity':
-                    conn_str += ";Authentication=ActiveDirectoryMsi"
-                elif auth_type == 'integrated':
-                    conn_str += ";Trusted_Connection=yes"
-                conn = pyodbc.connect(conn_str, timeout=timeout)
+                conn_str = build_sql_server_odbc_connection_string(
+                    server=server,
+                    database=database,
+                    driver=driver or DEFAULT_SQL_SERVER_ODBC_DRIVER,
+                    port=port,
+                    username=username if auth_type == 'username_password' else None,
+                    password=password if auth_type == 'username_password' else None,
+                    auth_type=auth_type,
+                )
+                conn = connect_with_sql_server_odbc_fallback(
+                    pyodbc.connect,
+                    conn_str,
+                    connect_kwargs={"timeout": timeout},
+                    log_source="PluginSqlConnectionTest",
+                )
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()

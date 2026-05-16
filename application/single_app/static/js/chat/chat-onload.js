@@ -10,6 +10,7 @@ import {
     filterDocumentsBySelectedTags,
     setScopeFromUrlParam,
     ensureSearchDocumentsVisible,
+    showSearchDocumentsPanel,
     openScopeDropdown,
     openTagsDropdown,
 } from "./chat-documents.js";
@@ -204,13 +205,12 @@ window.addEventListener('DOMContentLoaded', async () => {
               })
           })
           .then(response => response.json())
-          .then(data => {
+          .then(async data => {
               if (data.message) {
                   console.log('Active public workspace set successfully');
                   
                   // Auto-open search documents section
-                  localSearchDocsBtn.classList.add("active");
-                  searchDocumentsContainer.style.display = "block";
+                  await showSearchDocumentsPanel();
                   
                   // Set scope to public
                   setScopeFromUrlParam("public", { workspaceId: workspaceParam });
@@ -238,8 +238,7 @@ window.addEventListener('DOMContentLoaded', async () => {
           });
       } else if (localSearchDocsParam && localSearchDocsBtn && localDocScopeSel && localDocSelectEl && searchDocumentsContainer) {
           console.log("Handling document URL parameters."); // Log
-          localSearchDocsBtn.classList.add("active");
-          searchDocumentsContainer.style.display = "block";
+          await showSearchDocumentsPanel();
           if (localDocScopeParam) {
               setScopeFromUrlParam(localDocScopeParam, { groupId: groupIdParam, workspaceId: workspaceIdParam });
           }
@@ -342,8 +341,7 @@ window.addEventListener('DOMContentLoaded', async () => {
           }
       } else if (openSearchParam && scopeParam === "public" && localSearchDocsBtn && localDocScopeSel && searchDocumentsContainer) {
           // Handle openSearch=1&scope=public from public directory chat button
-          localSearchDocsBtn.classList.add("active");
-          searchDocumentsContainer.style.display = "block";
+          await showSearchDocumentsPanel();
           setScopeFromUrlParam("public");
           populateDocumentSelectScope();
           loadTagsForScope();

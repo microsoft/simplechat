@@ -91,7 +91,7 @@ async function fetchPlugins() {
         document.getElementById('plugins-list-view'),
         document.getElementById('plugins-grid-view')
       );
-    });
+    }, { mobileDefault: 'grid' });
     
     // Set up the create action button
     const createPluginBtn = document.getElementById('create-plugin-btn');
