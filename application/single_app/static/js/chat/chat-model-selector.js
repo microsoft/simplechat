@@ -1,6 +1,6 @@
 // chat-model-selector.js
 
-import { createSearchableSingleSelect } from './chat-searchable-select.js';
+import { createFloatingSearchableSelectDropdownConfig, createSearchableSingleSelect } from './chat-searchable-select.js';
 import { getEffectiveScopes, setEffectiveScopes } from './chat-documents.js';
 import { getConversationFilteringContext } from './chat-conversation-scope.js';
 
@@ -14,23 +14,7 @@ const modelDropdownText = modelDropdownButton
 const modelSearchInput = document.getElementById('model-search-input');
 const modelDropdownItems = document.getElementById('model-dropdown-items');
 
-const FLOATING_SELECTOR_DROPDOWN_CONFIG = {
-    boundary: 'viewport',
-    reference: 'toggle',
-    autoClose: 'outside',
-    popperConfig: {
-        strategy: 'fixed',
-        modifiers: [
-            {
-                name: 'preventOverflow',
-                options: {
-                    boundary: 'viewport',
-                    padding: 12,
-                },
-            },
-        ],
-    },
-};
+const FLOATING_SELECTOR_DROPDOWN_CONFIG = createFloatingSearchableSelectDropdownConfig();
 
 let modelSelectorController = null;
 let scopeChangeListenerInitialized = false;

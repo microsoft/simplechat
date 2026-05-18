@@ -1,6 +1,6 @@
-# Profile Safety Category Tags Fix - v0.241.035
+# Profile Safety Category Tags Fix - v0.241.036
 
-Fixed in version: **0.241.035**
+Fixed in version: **0.241.036**
 
 ## Issue Description
 
@@ -12,9 +12,9 @@ The profile tab formatted every stored `triggered_categories` entry as plain tex
 
 ## Version Implemented
 
-Implemented in version: **0.241.035**
+Implemented in version: **0.241.036**
 
-The application version was updated in `application/single_app/config.py` from `0.241.034` to `0.241.035` for this code change.
+The application version is tracked in `application/single_app/config.py` and now reads `0.241.036` for this code change.
 
 ## Technical Details
 

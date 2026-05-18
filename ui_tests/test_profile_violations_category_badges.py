@@ -1,8 +1,8 @@
 # test_profile_violations_category_badges.py
 """
 UI test for profile safety violation category badges.
-Version: 0.241.035
-Implemented in: 0.241.035
+Version: 0.241.036
+Implemented in: 0.241.036
 
 This test ensures profile safety violation categories render as tag badges and
 hide categories with severity below 1 in both the table and detail modal.

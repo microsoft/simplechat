@@ -5,7 +5,7 @@ import {
     getUserSetting,
     setUserSetting
 } from '../agents_common.js';
-import { createSearchableSingleSelect } from './chat-searchable-select.js';
+import { createFloatingSearchableSelectDropdownConfig, createSearchableSingleSelect } from './chat-searchable-select.js';
 import { getEffectiveScopes, isScopeLocked, setEffectiveScopes } from './chat-documents.js';
 import { getConversationFilteringContext } from './chat-conversation-scope.js';
 
@@ -22,23 +22,7 @@ const agentDropdownText = agentDropdownButton
 const agentSearchInput = document.getElementById('agent-search-input');
 const agentDropdownItems = document.getElementById('agent-dropdown-items');
 
-const FLOATING_SELECTOR_DROPDOWN_CONFIG = {
-    boundary: 'viewport',
-    reference: 'toggle',
-    autoClose: 'outside',
-    popperConfig: {
-        strategy: 'fixed',
-        modifiers: [
-            {
-                name: 'preventOverflow',
-                options: {
-                    boundary: 'viewport',
-                    padding: 12,
-                },
-            },
-        ],
-    },
-};
+const FLOATING_SELECTOR_DROPDOWN_CONFIG = createFloatingSearchableSelectDropdownConfig();
 
 let agentSelectorController = null;
 let scopeChangeListenerInitialized = false;
