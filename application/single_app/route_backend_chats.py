@@ -41,7 +41,11 @@ from functions_group import find_group_by_id, get_group_model_endpoints, get_use
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
 from functions_assistant_table_exports import build_assistant_table_csv_export
-from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
+from functions_chart_operations import (
+    INLINE_CHART_BLOCK_LANGUAGE,
+    build_proactive_chart_guidance_message,
+    user_request_supports_proactive_charts,
+)
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -3347,15 +3351,8 @@ def user_requested_chart_visualization(user_message):
 
 
 def build_chart_tool_usage_system_message():
-    """Instruct the outer agent handoff to prefer the real chart action over ASCII output."""
-    return (
-        "If the user explicitly asks for a chart, graph, plot, or visualization and a chart action/tool is available, "
-        "use that chart action/tool to produce a real inline chart. "
-        "Do not substitute ASCII bars, text-only pseudo-charts, or a promise to create a chart later when the chart tool is available. "
-        "If computed tabular results are already present in system messages, use those tool-backed values as the chart data source whenever they are sufficient. "
-        "Still include a table when the user asked for one. "
-        "If no chart action/tool is available, say briefly that a real chart tool is unavailable instead of pretending an ASCII chart satisfies the request."
-    )
+    """Instruct final generation to create useful inline charts in analytical outputs."""
+    return build_proactive_chart_guidance_message()
 
 
 def insert_system_message_after_existing_system_messages(conversation_history, system_message_content):
@@ -3390,9 +3387,12 @@ def insert_system_message_after_existing_system_messages(conversation_history, s
 
 
 def maybe_append_chart_tool_system_message(conversation_history, user_message, selected_agent=None):
-    """Add chart-tool guidance when the user asked for a chart."""
+    """Add chart guidance for explicit chart requests and analytical outputs."""
     del selected_agent
-    if not user_requested_chart_visualization(user_message):
+    if not (
+        user_requested_chart_visualization(user_message)
+        or user_request_supports_proactive_charts(user_message)
+    ):
         return conversation_history
 
     return insert_system_message_after_existing_system_messages(
@@ -11602,12 +11602,11 @@ def register_route_backend_chats(app):
 
                     if settings.get('enable_enhanced_citations', False):
                         image_mime_type, image_bytes = _resolve_generated_image_bytes(generated_image_url)
-                        image_file_extension = mimetypes.guess_extension(image_mime_type) or '.png'
                         blob_image_info = upload_chat_image_bytes_for_user(
                             user_id=user_id,
                             conversation_id=conversation_id,
                             message_id=image_message_id,
-                            file_name=f"{image_message_id}{image_file_extension}",
+                            file_name=f"{image_message_id}.png",
                             image_bytes=image_bytes,
                             content_type=image_mime_type,
                             image_source='generated',

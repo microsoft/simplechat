@@ -9,7 +9,9 @@ user prompt explicitly asks for a supported export format such as a
 presentation, markdown document, or email, that the buttons persist when the
 conversation history is reloaded, that inline create actions show a pending
 label while the export is being prepared, and that PowerPoint exports prefer
-attached generated Markdown artifacts when present.
+attached generated Markdown artifacts when present. It also ensures streaming
+assistant placeholders do not expose export/create actions before the final
+message is available.
 """
 
 import json
@@ -295,6 +297,119 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
 
         no_export_message = page.locator('[data-message-id="assistant-no-export-response"]')
         expect(no_export_message.locator('.inline-assistant-export-actions')).to_have_count(0)
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_streaming_assistant_reply_hides_export_actions_until_complete(playwright):
+    """Validate streaming placeholders do not show create/export controls."""
+    _require_ui_env()
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 1440, "height": 900},
+    )
+    page = context.new_page()
+
+    page.route(
+        "**/api/user/settings",
+        lambda route: _fulfill_json(route, {"selected_agent": None, "settings": {"enable_agents": False}}),
+    )
+    page.route("**/api/get_conversations", lambda route: _fulfill_json(route, {"conversations": []}))
+
+    try:
+        page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        page.wait_for_selector("#chatbox")
+        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
+
+        page.evaluate(
+            """
+            async () => {
+                const conversationId = 'streaming-export-actions-test';
+                currentConversationId = conversationId;
+                window.currentConversationId = conversationId;
+
+                const messagesModule = await import('/static/js/chat/chat-messages.js');
+                messagesModule.appendMessage(
+                    'You',
+                    'Please create a PowerPoint deck for this analysis.',
+                    null,
+                    'user-streaming-export-request',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'user-streaming-export-request',
+                        role: 'user',
+                        content: 'Please create a PowerPoint deck for this analysis.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI',
+                    '<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> Streaming...</span>',
+                    null,
+                    'temp_ai_streaming-export-actions',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    null,
+                    false
+                );
+            }
+            """
+        )
+
+        streaming_message = page.locator('[data-message-id="temp_ai_streaming-export-actions"]')
+        expect(streaming_message).to_be_visible()
+        expect(streaming_message.locator('.inline-assistant-export-actions')).to_have_count(0)
+        expect(streaming_message.locator('.dropdown-export-md-btn')).to_have_count(0)
+        expect(streaming_message.locator('.dropdown-export-word-btn')).to_have_count(0)
+        expect(streaming_message.locator('.dropdown-export-ppt-btn')).to_have_count(0)
+        expect(streaming_message.locator('.dropdown-open-email-btn')).to_have_count(0)
+
+        page.evaluate(
+            """
+            async () => {
+                document.querySelector('[data-message-id="temp_ai_streaming-export-actions"]')?.remove();
+
+                const messagesModule = await import('/static/js/chat/chat-messages.js');
+                messagesModule.appendMessage(
+                    'AI',
+                    'The PowerPoint deck is ready.',
+                    null,
+                    'assistant-complete-export-response',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-complete-export-response',
+                        role: 'assistant',
+                        content: 'The PowerPoint deck is ready.',
+                    },
+                    true
+                );
+            }
+            """
+        )
+
+        completed_message = page.locator('[data-message-id="assistant-complete-export-response"]')
+        expect(completed_message.locator('.inline-assistant-export-actions')).to_be_visible()
+        expect(completed_message.locator('.inline-export-ppt-btn')).to_be_visible()
+        expect(completed_message.locator('.dropdown-export-ppt-btn')).to_have_count(1)
     finally:
         context.close()
         browser.close()

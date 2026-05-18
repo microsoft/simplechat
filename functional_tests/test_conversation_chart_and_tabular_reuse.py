@@ -2,12 +2,13 @@
 # test_conversation_chart_and_tabular_reuse.py
 """
 Functional test for conversation chart abilities and reusable tabular analysis.
-Version: 0.241.031
-Implemented in: 0.241.031
+Version: 0.241.033
+Implemented in: 0.241.031; proactive chart guidance added in 0.241.033
 
 This test ensures the built-in chart plugin is loaded as a conversation-level
 Semantic Kernel ability and workflow tabular analysis imports a reusable helper
-surface instead of depending directly on the chat route.
+surface instead of depending directly on the chat route. It also validates that
+analytical chat and workflow outputs can proactively include inline charts.
 """
 
 import ast
@@ -26,7 +27,7 @@ TABULAR_ANALYSIS_FILE = APP_ROOT / "functions_tabular_analysis.py"
 SEMANTIC_KERNEL_LOADER_FILE = APP_ROOT / "semantic_kernel_loader.py"
 CHAT_ROUTE_FILE = APP_ROOT / "route_backend_chats.py"
 WORKFLOW_RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
-EXPECTED_VERSION = "0.241.031"
+EXPECTED_VERSION = "0.241.033"
 
 TARGET_CHART_HELPERS = {
     "user_requested_chart_visualization",
@@ -57,7 +58,17 @@ def load_chart_helpers():
         if isinstance(node, ast.FunctionDef) and node.name in TARGET_CHART_HELPERS
     ]
     module = ast.Module(body=selected_nodes, type_ignores=[])
-    namespace = {"re": re}
+    sys.path.insert(0, str(APP_ROOT))
+    from functions_chart_operations import (  # pylint: disable=import-error,import-outside-toplevel
+        build_proactive_chart_guidance_message,
+        user_request_supports_proactive_charts,
+    )
+
+    namespace = {
+        "re": re,
+        "build_proactive_chart_guidance_message": build_proactive_chart_guidance_message,
+        "user_request_supports_proactive_charts": user_request_supports_proactive_charts,
+    }
     exec(compile(module, str(CHAT_ROUTE_FILE), "exec"), namespace)
     return namespace
 
@@ -116,6 +127,29 @@ def test_chart_handoff_applies_without_selected_agent() -> None:
     print("PASS: chart handoff without selected agent")
 
 
+def test_proactive_chart_guidance_for_analytical_outputs() -> None:
+    print("Testing proactive chart guidance for analytical outputs...")
+
+    helpers = load_chart_helpers()
+    maybe_append = helpers["maybe_append_chart_tool_system_message"]
+
+    history = [
+        {"role": "system", "content": "Existing system guidance"},
+        {"role": "user", "content": "Develop a PowerPoint presentation from this sales dataset."},
+    ]
+    updated_history = maybe_append(history, history[-1]["content"], None)
+
+    assert len(updated_history) == 3, updated_history
+    guidance = updated_history[1]["content"]
+    assert "[Proactive Analytical Chart Guidance]" in guidance, guidance
+    assert "proactively include inline charts" in guidance, guidance
+    assert "multiple high-value charts" in guidance, guidance
+    assert "Place each chart immediately after" in guidance, guidance
+    assert "```simplechart``` blocks" in guidance, guidance
+
+    print("PASS: proactive chart guidance for analytical outputs")
+
+
 def test_kernel_fallback_allows_core_tool_invocation() -> None:
     print("Testing kernel fallback function choice behavior...")
 
@@ -167,13 +201,40 @@ def test_workflows_use_tabular_analysis_import_surface() -> None:
     print("PASS: workflow tabular import surface")
 
 
+def test_workflow_prompts_apply_proactive_chart_guidance() -> None:
+    print("Testing workflow proactive chart guidance wiring...")
+
+    workflow_content = read_text(WORKFLOW_RUNNER_FILE)
+    chart_operations_content = read_text(CHART_OPERATIONS_FILE)
+
+    assert "PROACTIVE_CHART_GUIDANCE_MARKER = '[Proactive Analytical Chart Guidance]'" in chart_operations_content, (
+        "Expected a reusable proactive chart guidance marker."
+    )
+    assert "def append_proactive_chart_guidance(prompt_text, force=False):" in chart_operations_content, (
+        "Expected reusable helper for prompt-level proactive chart guidance."
+    )
+    assert "from functions_chart_operations import append_proactive_chart_guidance" in workflow_content, (
+        "Expected workflows to import reusable proactive chart guidance."
+    )
+    assert workflow_content.count("append_proactive_chart_guidance(") >= 3, (
+        "Expected tabular analysis, tabular comparison, and general workflow generation to apply chart guidance."
+    )
+    assert "def _build_workflow_generation_prompt(task_prompt):" in workflow_content, (
+        "Expected general workflow generation prompt wrapper."
+    )
+
+    print("PASS: workflow proactive chart guidance wiring")
+
+
 def run_tests() -> bool:
     tests = [
         test_version_bumped_for_feature,
         test_chart_plugin_is_core_conversation_ability,
         test_chart_handoff_applies_without_selected_agent,
+        test_proactive_chart_guidance_for_analytical_outputs,
         test_kernel_fallback_allows_core_tool_invocation,
         test_workflows_use_tabular_analysis_import_surface,
+        test_workflow_prompts_apply_proactive_chart_guidance,
     ]
     results = []
 

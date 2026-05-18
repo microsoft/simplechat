@@ -37,6 +37,7 @@ from config import (
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
+from functions_chart_operations import append_proactive_chart_guidance
 from functions_collaboration import (
     create_collaboration_message_notifications,
     get_collaboration_conversation,
@@ -732,7 +733,10 @@ def _build_tabular_analysis_action_prompt(analysis_prompt, tabular_documents):
     prompt_sections.append(
         'Write one cohesive analysis that highlights concrete facts, counts, trends, anomalies, risks, open questions, and recommended follow-up based on the computed results.'
     )
-    return '\n\n'.join(section for section in prompt_sections if section)
+    return append_proactive_chart_guidance(
+        '\n\n'.join(section for section in prompt_sections if section),
+        force=True,
+    )
 
 
 def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, right_documents):
@@ -766,7 +770,14 @@ def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, ri
     prompt_sections.append(
         'Explain what matches, what differs, what changed, what is missing, and which discrepancies or risks matter most for the user request. Organize the answer clearly by target document when there is more than one.'
     )
-    return '\n\n'.join(section for section in prompt_sections if section)
+    return append_proactive_chart_guidance(
+        '\n\n'.join(section for section in prompt_sections if section),
+        force=True,
+    )
+
+
+def _build_workflow_generation_prompt(task_prompt):
+    return append_proactive_chart_guidance(task_prompt)
 
 
 def _build_tabular_analysis_request_prompt(action_type, task_prompt, tabular_document):
@@ -2665,7 +2676,7 @@ def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=Non
 
     completion = client.chat.completions.create(
         model=deployment_name,
-        messages=[{'role': 'user', 'content': workflow.get('task_prompt', '')}],
+        messages=[{'role': 'user', 'content': _build_workflow_generation_prompt(workflow.get('task_prompt', ''))}],
     )
     reply = ''
     if getattr(completion, 'choices', None):
@@ -3252,7 +3263,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 loaded_agent = next(iter(agent_objs.values()))
 
             result = asyncio.run(loaded_agent.invoke([
-                ChatMessageContent(role='user', content=workflow.get('task_prompt', '')),
+                ChatMessageContent(role='user', content=_build_workflow_generation_prompt(workflow.get('task_prompt', ''))),
             ]))
             reply = str(result)
             agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)

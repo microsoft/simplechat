@@ -256,6 +256,73 @@
         return cell;
     }
 
+    function normalizeSafetySeverity(severity) {
+        const parsedSeverity = Number(severity);
+        return Number.isFinite(parsedSeverity) ? parsedSeverity : null;
+    }
+
+    function getTriggeredCategoryEntries(logItem) {
+        const categories = Array.isArray(logItem.triggered_categories) ? logItem.triggered_categories : [];
+        return categories.reduce(function (entries, entry) {
+            const categoryName = String(entry.category || '').trim();
+            const severity = normalizeSafetySeverity(entry.severity);
+            if (categoryName && severity >= 1 && severity <= 4) {
+                entries.push({ category: categoryName, severity });
+            }
+            return entries;
+        }, []);
+    }
+
+    function getSafetyCategoryBadgeVariant(severity) {
+        if (severity >= 4) {
+            return 'danger';
+        }
+        if (severity === 3) {
+            return 'warning';
+        }
+        if (severity === 2) {
+            return 'info';
+        }
+        return 'secondary';
+    }
+
+    function createSafetyCategoryBadge(entry) {
+        const badge = document.createElement('span');
+        badge.className = `badge rounded-pill text-bg-${getSafetyCategoryBadgeVariant(entry.severity)}`;
+        badge.textContent = entry.category;
+        badge.title = `Severity ${entry.severity}`;
+        return badge;
+    }
+
+    function appendSafetyCategoryBadges(container, logItem, emptyText) {
+        if (!container) {
+            return;
+        }
+
+        clearElement(container);
+        const entries = getTriggeredCategoryEntries(logItem);
+        if (!entries.length) {
+            const emptyElement = document.createElement('span');
+            emptyElement.className = 'text-muted small';
+            emptyElement.textContent = emptyText || '-';
+            container.appendChild(emptyElement);
+            return;
+        }
+
+        entries.forEach(function (entry) {
+            container.appendChild(createSafetyCategoryBadge(entry));
+        });
+    }
+
+    function createSafetyCategoryCell(logItem) {
+        const cell = document.createElement('td');
+        const wrapper = document.createElement('div');
+        wrapper.className = 'd-flex flex-wrap gap-1';
+        appendSafetyCategoryBadges(wrapper, logItem, '-');
+        cell.appendChild(wrapper);
+        return cell;
+    }
+
     const workspaceTabConfigs = {
         groups: {
             type: 'groups',
@@ -1086,7 +1153,7 @@
 
         clearElement(tbody);
         if (!items.length) {
-            renderTableMessageRow(tbody, 8, 'No feedback found for the current filters.', false);
+            renderTableMessageRow(tbody, 6, 'No feedback found for the current filters.', false);
             return;
         }
 
@@ -1096,11 +1163,9 @@
 
             row.appendChild(createTextCell(formatDateTime(item.timestamp)));
             row.appendChild(createTextCell(item.prompt || '', 'table-message-cell', item.prompt || ''));
-            row.appendChild(createTextCell(item.aiResponse || '', 'table-message-cell', item.aiResponse || ''));
             row.appendChild(createTextCell(item.feedbackType || ''));
             row.appendChild(createTextCell(item.reason || '', 'table-note-cell', item.reason || ''));
             row.appendChild(createTextCell(adminReview.acknowledged ? 'Yes' : 'No'));
-            row.appendChild(createTextCell(adminReview.actionTaken || '', 'table-note-cell', adminReview.actionTaken || ''));
 
             const detailsCell = document.createElement('td');
             detailsCell.className = 'table-details-cell';
@@ -1132,7 +1197,7 @@
             return;
         }
 
-        renderTableMessageRow(tbody, 8, 'Loading feedback...', false);
+        renderTableMessageRow(tbody, 6, 'Loading feedback...', false);
         clearElement(paginationContainer);
 
         try {
@@ -1152,7 +1217,7 @@
                 }
             );
         } catch (error) {
-            renderTableMessageRow(tbody, 8, `Error loading feedback: ${error.message}`, true);
+            renderTableMessageRow(tbody, 6, `Error loading feedback: ${error.message}`, true);
         }
     }
 
@@ -1200,17 +1265,10 @@
 
         items.forEach(function (logItem) {
             const row = document.createElement('tr');
-            const categories = Array.isArray(logItem.triggered_categories)
-                ? logItem.triggered_categories.map(function (entry) {
-                    const categoryName = entry.category || '';
-                    const severity = entry.severity;
-                    return severity == null ? categoryName : `${categoryName}(s=${severity})`;
-                }).join(', ')
-                : '';
 
             row.appendChild(createTextCell(logItem.id || '', 'table-note-cell', logItem.id || ''));
             row.appendChild(createTextCell(logItem.message || '', 'table-message-cell', logItem.message || ''));
-            row.appendChild(createTextCell(categories || '', 'table-note-cell', categories || ''));
+            row.appendChild(createSafetyCategoryCell(logItem));
             row.appendChild(createTextCell(logItem.status || 'New'));
             row.appendChild(createTextCell(logItem.action || 'None'));
             row.appendChild(createTextCell(logItem.user_notes || '', 'table-note-cell', logItem.user_notes || ''));
@@ -1282,17 +1340,9 @@
             return;
         }
 
-        const categories = Array.isArray(selectedItem.triggered_categories)
-            ? selectedItem.triggered_categories.map(function (entry) {
-                const categoryName = entry.category || '';
-                const severity = entry.severity;
-                return severity == null ? categoryName : `${categoryName}(s=${severity})`;
-            }).join(', ')
-            : '';
-
         setTextContent('profile-violation-detail-id', selectedItem.id || '');
         setTextContent('profile-violation-detail-message', selectedItem.message || '');
-        setTextContent('profile-violation-detail-categories', categories || '');
+        appendSafetyCategoryBadges(document.getElementById('profile-violation-detail-categories'), selectedItem, '-');
         setTextContent('profile-violation-detail-status', selectedItem.status || 'New');
         setTextContent('profile-violation-detail-action', selectedItem.action || 'None');
         document.getElementById('profile-violation-detail-hidden-id').value = selectedItem.id || '';

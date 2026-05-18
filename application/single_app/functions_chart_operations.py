@@ -2,12 +2,39 @@
 """Shared configuration helpers for the built-in chart action."""
 
 import json
+import re
 
 
 CHART_PLUGIN_TYPE = 'chart'
 CORE_CHART_PLUGIN_NAME = 'conversation_charts'
 CHART_DEFAULT_ENDPOINT = 'chart://internal'
 INLINE_CHART_BLOCK_LANGUAGE = 'simplechart'
+PROACTIVE_CHART_GUIDANCE_MARKER = '[Proactive Analytical Chart Guidance]'
+
+PROACTIVE_CHART_REQUEST_MARKERS = (
+    'analyze',
+    'analysis',
+    'compare',
+    'comparison',
+    'review',
+    'report',
+    'presentation',
+    'powerpoint',
+    'slide deck',
+    'deck',
+    'markdown',
+    'executive summary',
+    'dashboard',
+    'insights',
+    'trend',
+    'trends',
+    'metrics',
+    'dataset',
+    'data set',
+    'workbook',
+    'spreadsheet',
+    'csv',
+)
 
 CHART_KIND_ALIASES = {
     'line': 'line',
@@ -168,3 +195,53 @@ def build_inline_chart_markdown(chart_payload):
         f"{json.dumps(chart_payload, separators=(',', ':'))}\n"
         f"```"
     )
+
+
+def user_request_supports_proactive_charts(user_message):
+    """Return True when an analytical output request should consider charts proactively."""
+    normalized_message = re.sub(r'\s+', ' ', str(user_message or '').strip().lower())
+    if not normalized_message:
+        return False
+
+    if any(marker in normalized_message for marker in PROACTIVE_CHART_REQUEST_MARKERS):
+        return True
+
+    return bool(
+        re.search(
+            r'\b(?:summari[sz]e|evaluate|assess|explain|find|identify)\b[^.!?\n]{0,120}'
+            r'\b(?:data|numbers|totals|counts|revenue|cost|spend|volume|rate|percentage|percent|variance)\b',
+            normalized_message,
+        )
+    )
+
+
+def build_proactive_chart_guidance_message():
+    """Build reusable guidance for proactive, inline analytical chart creation."""
+    return (
+        f"{PROACTIVE_CHART_GUIDANCE_MARKER}\n"
+        "When chart-worthy numeric or categorical data is present, proactively include inline charts as part of the answer, "
+        "generated Markdown, report, workflow output, or presentation-ready content. The user does not need to explicitly ask for charts. "
+        "For comprehensive analysis, comparison, reporting, or slide-deck style output, include multiple high-value charts when the data supports multiple distinct patterns. "
+        "Use 2 to 5 charts for broad reviews, one chart for narrow findings, and no charts when the available evidence is too thin or purely textual. "
+        "Place each chart immediately after the paragraph, table, section, or finding it supports; do not collect charts only at the end unless the user asks for an appendix. "
+        "Choose chart types from the discovered data shape: line or area for time trends; bar for category comparisons; stacked bar or stacked line for category composition over groups or time; "
+        "doughnut or pie only for small part-to-whole splits; scatter or bubble for relationships between numeric measures; radar for compact multi-metric profiles. "
+        "Use tool-backed tabular results, computed aggregates, or explicitly cited source values as chart data. Do not invent values, and summarize omitted categories when charting top-N slices. "
+        "When a chart action/tool is available, call it for each useful chart and insert the returned chart_markdown exactly where the visual belongs in the generated content. "
+        f"If a chart action/tool is unavailable but inline chart blocks are supported, emit compact ```{INLINE_CHART_BLOCK_LANGUAGE}``` blocks with version 1, kind, chartType, title, data.labels, data.datasets, options, and summary fields."
+    )
+
+
+def append_proactive_chart_guidance(prompt_text, force=False):
+    """Append proactive chart guidance to analytical prompts when appropriate."""
+    normalized_prompt = str(prompt_text or '').strip()
+    if not normalized_prompt:
+        return build_proactive_chart_guidance_message() if force else normalized_prompt
+
+    if PROACTIVE_CHART_GUIDANCE_MARKER in normalized_prompt:
+        return normalized_prompt
+
+    if not force and not user_request_supports_proactive_charts(normalized_prompt):
+        return normalized_prompt
+
+    return f"{normalized_prompt}\n\n{build_proactive_chart_guidance_message()}"

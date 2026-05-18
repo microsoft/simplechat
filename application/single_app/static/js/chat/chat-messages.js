@@ -2171,6 +2171,24 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return INLINE_ASSISTANT_EXPORT_ACTION_ORDER.filter(actionType => actionTypes.has(actionType));
   }
 
+  function isStreamingAssistantPlaceholder(messageId, fullMessageObject = null) {
+    const normalizedMessageId = String(messageId || '').trim();
+    if (normalizedMessageId.startsWith('temp_ai_')) {
+      return true;
+    }
+
+    const metadata = fullMessageObject?.metadata;
+    return Boolean(
+      metadata?.is_streaming_placeholder
+      || metadata?.streaming_placeholder
+      || metadata?.stream_status === 'streaming'
+    );
+  }
+
+  function shouldRenderCompletedAssistantActions(messageId, fullMessageObject = null) {
+    return !isStreamingAssistantPlaceholder(messageId, fullMessageObject);
+  }
+
   function buildInlineAssistantExportActionsHtml(messageId) {
     const previousMessage = getMostRecentRenderedMessage();
     if (!(previousMessage instanceof HTMLElement) || !previousMessage.classList.contains('user-message')) {
@@ -3025,10 +3043,16 @@ export function appendMessage(
     }
 
     const messageConversationId = resolveMessageConversationId(fullMessageObject);
+    const renderCompletedAssistantActions = shouldRenderCompletedAssistantActions(
+      messageId,
+      fullMessageObject
+    );
 
     const renderedAiContent = renderAiMessageContent(messageContent);
     const htmlContent = renderedAiContent.htmlContent;
-  const inlineAssistantExportActionsHtml = buildInlineAssistantExportActionsHtml(messageId);
+    const inlineAssistantExportActionsHtml = renderCompletedAssistantActions
+      ? buildInlineAssistantExportActionsHtml(messageId)
+      : '';
 
     const mainMessageHtml = `<div class="message-text">${htmlContent}</div>`; // Renamed for clarity
 
@@ -3065,6 +3089,13 @@ export function appendMessage(
                 <i class="bi ${maskIcon}"></i>
             </button>
         `;
+    const exportMenuItemsHtml = renderCompletedAssistantActions ? `
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
+            <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+            <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+            <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
+            <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
     const actionsDropdownHtml = `
             <div class="dropdown">
                 <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
@@ -3074,12 +3105,7 @@ export function appendMessage(
                     <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                     <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
                     ${feedbackHtml}
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
-                    <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
-                    <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
-                    <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
-                    <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
+            ${exportMenuItemsHtml}
                 </ul>
             </div>
         `;
@@ -3194,6 +3220,9 @@ export function appendMessage(
               messageDiv.dataset.replyPreviewText = buildPlainTextPreview(renderedAiContent.previewMarkdown);
 
     messageDiv.classList.add(messageClass); // Add AI message class
+    if (!renderCompletedAssistantActions) {
+      messageDiv.dataset.messageComplete = 'false';
+    }
     chatbox.appendChild(messageDiv); // Append AI message
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     

@@ -236,6 +236,66 @@
         white-space: nowrap;
     }
 
+    .profile-feedback-table-wrapper {
+        overflow-x: hidden;
+        width: 100%;
+    }
+
+    #profile-feedback-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+
+    #profile-feedback-table th,
+    #profile-feedback-table td {
+        overflow-wrap: anywhere;
+        vertical-align: middle;
+        white-space: normal;
+    }
+
+    #profile-feedback-table th:nth-child(1),
+    #profile-feedback-table td:nth-child(1) {
+        width: 15%;
+    }
+
+    #profile-feedback-table th:nth-child(2),
+    #profile-feedback-table td:nth-child(2) {
+        width: 30%;
+    }
+
+    #profile-feedback-table th:nth-child(3),
+    #profile-feedback-table td:nth-child(3) {
+        width: 12%;
+    }
+
+    #profile-feedback-table th:nth-child(4),
+    #profile-feedback-table td:nth-child(4) {
+        width: 18%;
+    }
+
+    #profile-feedback-table th:nth-child(5),
+    #profile-feedback-table td:nth-child(5) {
+        width: 13%;
+    }
+
+    #profile-feedback-table th:nth-child(6),
+    #profile-feedback-table td:nth-child(6) {
+        width: 12%;
+    }
+
+    #profile-feedback-table .table-message-cell,
+    #profile-feedback-table .table-note-cell,
+    #profile-feedback-table .table-details-cell {
+        max-width: none;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+    }
+
+    #profile-feedback-table .table-details-cell .btn {
+        white-space: nowrap;
+    }
+
     .profile-empty-state {
         color: var(--bs-secondary-color);
         padding: 2rem 1rem;
@@ -1232,23 +1292,21 @@
                     </div>
                 </div>
 
-                <div class="table-responsive">
+                <div class="profile-feedback-table-wrapper">
                     <table class="table table-striped align-middle" id="profile-feedback-table">
                         <thead>
                             <tr>
                                 <th>Timestamp</th>
                                 <th>Prompt</th>
-                                <th>AI Response</th>
                                 <th>Feedback</th>
                                 <th>Reason</th>
                                 <th>Acknowledged</th>
-                                <th>Admin Action</th>
                                 <th class="table-details-cell">Details</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr class="table-loading-row">
-                                <td colspan="8">
+                                <td colspan="6">
                                     <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
                                     Loading feedback...
                                 </td>

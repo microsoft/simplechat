@@ -1,0 +1,125 @@
+<!-- profile_violations_harness.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Profile Violations Harness</title>
+</head>
+<body>
+    <main>
+        <ul id="profileTabs">
+            <li><button class="active" data-profile-tab="violations" type="button">Violations</button></li>
+        </ul>
+
+        <section id="profile-violations-pane">
+            <div id="profile-violations-total-count"></div>
+            <div id="profile-violations-open-count"></div>
+            <div id="profile-violations-resolved-count"></div>
+            <div id="profile-violations-recent-count"></div>
+
+            <label for="profile-violations-filter-status">Status</label>
+            <select id="profile-violations-filter-status"><option value="">(All)</option></select>
+            <label for="profile-violations-filter-action">Action</label>
+            <select id="profile-violations-filter-action"><option value="">(All)</option></select>
+            <button id="profile-violations-apply-filters-btn" type="button">Apply Filters</button>
+            <button id="profile-violations-clear-filters-btn" type="button">Clear Filters</button>
+
+            <table id="profile-violations-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Message</th>
+                        <th>Triggered Categories</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                        <th>Your Notes</th>
+                        <th>View/Edit</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+
+            <label for="profile-violations-page-size">Violation items per page</label>
+            <select id="profile-violations-page-size"><option value="10" selected>10</option></select>
+            <div id="profile-violations-pagination"></div>
+        </section>
+
+        <section id="profileViolationDetailModal">
+            <p id="profile-violation-detail-id"></p>
+            <p id="profile-violation-detail-message"></p>
+            <p id="profile-violation-detail-categories"></p>
+            <p id="profile-violation-detail-status"></p>
+            <p id="profile-violation-detail-action"></p>
+            <input id="profile-violation-detail-hidden-id" type="hidden" />
+            <textarea id="profile-violation-detail-user-notes"></textarea>
+            <div id="profile-violation-save-status"></div>
+            <button id="profile-violation-save-btn" type="button">Save Notes</button>
+        </section>
+    </main>
+
+    <script>
+    window.profilePageConfig = {
+        initialTab: 'violations',
+        feedbackEnabled: false,
+        contentSafetyEnabled: true,
+        groupWorkspacesEnabled: false,
+        publicWorkspacesEnabled: false,
+        canCreateGroups: false,
+        canCreatePublicWorkspaces: false,
+    };
+
+    const profileSafetyLog = {
+        id: 'profile-safety-1',
+        message: 'Unsafe profile sample for review.',
+        triggered_categories: [
+            { category: 'Hate', severity: 0 },
+            { category: 'Violence', severity: 2 },
+            { category: 'SelfHarm', severity: 4 },
+        ],
+        status: 'New',
+        action: 'None',
+        user_notes: '',
+    };
+
+    function jsonResponse(payload, status) {
+        return Promise.resolve({
+            ok: status == null || status < 400,
+            status: status || 200,
+            json: function () {
+                return Promise.resolve(payload);
+            },
+        });
+    }
+
+    window.fetch = function (url, options) {
+        const urlText = String(url);
+        if (urlText.includes('/api/safety/logs/my/stats')) {
+            return jsonResponse({
+                total_count: 1,
+                new_count: 1,
+                in_review_count: 0,
+                resolved_count: 0,
+                recent_30_day_count: 1,
+            });
+        }
+
+        if (urlText.includes('/api/safety/logs/my?')) {
+            return jsonResponse({
+                logs: [profileSafetyLog],
+                page: 1,
+                page_size: 10,
+                total_count: 1,
+            });
+        }
+
+        if (options && options.method === 'PATCH') {
+            return jsonResponse({ message: 'Saved.' });
+        }
+
+        return jsonResponse({ message: `Unhandled test URL: ${urlText}` }, 404);
+    };
+    </script>
+    <script src="/application/single_app/static/js/profile/profile-tabs.js"></script>
+</body>
+</html>

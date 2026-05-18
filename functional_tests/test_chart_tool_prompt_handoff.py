@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Functional test for chart-tool prompt handoff.
-Version: 0.241.077
-Implemented in: 0.241.077
+Version: 0.241.033
+Implemented in: 0.241.031; proactive chart guidance updated in 0.241.033
 
 This test ensures chart requests sent to a selected agent are nudged toward the
-inline chart action instead of ASCII pseudo-charts.
+inline chart action instead of ASCII pseudo-charts. It also verifies the shared
+proactive chart guidance helper can be used by the isolated route helper tests.
 """
 
 import ast
@@ -39,7 +40,16 @@ def load_prompt_helpers():
             selected_nodes.append(node)
 
     module = ast.Module(body=selected_nodes, type_ignores=[])
-    namespace = {'re': re}
+    from functions_chart_operations import (  # pylint: disable=import-error,import-outside-toplevel
+        build_proactive_chart_guidance_message,
+        user_request_supports_proactive_charts,
+    )
+
+    namespace = {
+        're': re,
+        'build_proactive_chart_guidance_message': build_proactive_chart_guidance_message,
+        'user_request_supports_proactive_charts': user_request_supports_proactive_charts,
+    }
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
     return namespace, route_content
 

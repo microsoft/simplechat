@@ -14,14 +14,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Enabled Semantic Kernel auto tool invocation in the model-only fallback path so core conversation tools can be called when chart requests are routed through the kernel.
     *   (Ref: conversation charts, workflow tabular analysis, `semantic_kernel_loader.py`, `route_backend_chats.py`, `functions_tabular_analysis.py`, `functions_workflow_runner.py`, `test_conversation_chart_and_tabular_reuse.py`)
 
-#### User Interface Enhancements
-
-*   **Workspace Prompt Card Views and Workflow Card Actions**
-    *   Added list/card view switching for prompts in personal, group, and public workspaces so prompts can be browsed with the same card-style pattern used by workspace documents.
-    *   Prompt cards now open prompt details from the card body while preserving explicit view, edit, and delete actions based on workspace permissions.
-    *   Workflow cards now open edit on card click, show Run and Activity as primary card actions, and move Run, Activity, History, Edit, and Delete into a three-dot overflow menu.
-    *   (Ref: prompt card views, workflow card actions, `workspace-prompts.js`, `workspace_workflows.js`, `group_workspaces.html`, `public_workspace.js`, `workspace-responsive.css`, `test_workspace_prompt_card_views.py`)
-
 ### **(v0.241.029)**
 
 #### User Interface Enhancements
