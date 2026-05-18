@@ -793,6 +793,30 @@ def _build_tabular_analysis_request_prompt(action_type, task_prompt, tabular_doc
     return str(task_prompt or '').strip()
 
 
+def _build_tabular_document_action_thought_callback(thought_tracker=None, live_thought_callback=None):
+    if thought_tracker is None and not callable(live_thought_callback):
+        return None
+
+    def callback(thought_payload):
+        payload = thought_payload if isinstance(thought_payload, dict) else {}
+        live_payload = dict(payload)
+
+        if thought_tracker is not None:
+            thought_tracker.add_thought(
+                str(payload.get('step_type') or 'tabular_analysis').strip() or 'tabular_analysis',
+                str(payload.get('content') or '').strip(),
+                detail=payload.get('detail'),
+                activity=payload.get('activity'),
+            )
+            live_payload['message_id'] = getattr(thought_tracker, 'message_id', None)
+            live_payload['step_index'] = thought_tracker.current_index - 1
+
+        if callable(live_thought_callback):
+            live_thought_callback(live_payload)
+
+    return callback
+
+
 def _maybe_execute_tabular_document_action(
     action_type,
     workflow,
@@ -800,6 +824,8 @@ def _maybe_execute_tabular_document_action(
     settings,
     conversation_id='',
     invoke_prompt=None,
+    thought_tracker=None,
+    live_thought_callback=None,
 ):
     if action_type not in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
         return None
@@ -839,6 +865,10 @@ def _maybe_execute_tabular_document_action(
         )
     generated_tabular_outputs = []
     task_prompt = str(workflow.get('task_prompt', '') or '').strip()
+    tabular_post_processing_thought_callback = _build_tabular_document_action_thought_callback(
+        thought_tracker=thought_tracker,
+        live_thought_callback=live_thought_callback,
+    )
 
     try:
         for tabular_document in tabular_documents:
@@ -870,6 +900,8 @@ def _maybe_execute_tabular_document_action(
                         'group_id': tabular_document.get('group_id'),
                         'public_workspace_id': tabular_document.get('public_workspace_id'),
                     }],
+                    thought_tracker=thought_tracker,
+                    live_thought_callback=live_thought_callback,
                 )
             )
             if not str(tabular_analysis or '').strip():
@@ -907,6 +939,7 @@ def _maybe_execute_tabular_document_action(
                         gpt_model=gpt_model,
                         settings=settings,
                         conversation_id=conversation_id,
+                        thought_callback=tabular_post_processing_thought_callback,
                     )
                 )
                 if generated_tabular_output:
@@ -2790,6 +2823,8 @@ def _execute_document_analysis_workflow(
                     settings,
                     conversation_id=conversation_id,
                     invoke_prompt=invoke_prompt,
+                    thought_tracker=thought_tracker,
+                    live_thought_callback=external_activity_callback,
                 )
                 if tabular_action_payload:
                     analysis_result = tabular_action_payload.get('result') or {}
@@ -2879,6 +2914,8 @@ def _execute_document_analysis_workflow(
         settings,
         conversation_id=conversation_id,
         invoke_prompt=invoke_model_prompt,
+        thought_tracker=thought_tracker,
+        live_thought_callback=external_activity_callback,
     )
     if tabular_action_payload:
         analysis_result = tabular_action_payload.get('result') or {}
@@ -3012,6 +3049,8 @@ def _execute_document_comparison_workflow(
                     settings,
                     conversation_id=conversation_id,
                     invoke_prompt=invoke_prompt,
+                    thought_tracker=thought_tracker,
+                    live_thought_callback=external_activity_callback,
                 )
                 if tabular_action_payload:
                     comparison_result = tabular_action_payload.get('result') or {}
@@ -3094,6 +3133,8 @@ def _execute_document_comparison_workflow(
         settings,
         conversation_id=conversation_id,
         invoke_prompt=invoke_model_prompt,
+        thought_tracker=thought_tracker,
+        live_thought_callback=external_activity_callback,
     )
     if tabular_action_payload:
         comparison_result = tabular_action_payload.get('result') or {}

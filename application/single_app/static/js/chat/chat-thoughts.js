@@ -9,6 +9,8 @@ let lastSeenThoughtMessageId = null;
 let activeStreamingThoughtTargetId = null;
 let activeStreamingServerMessageId = null;
 const streamingAgentActivityStates = new Map();
+const progressDetailsExpandedStates = new Map();
+let progressDetailsToggleListenerAttached = false;
 
 // ---------------------------------------------------------------------------
 // Icon map: step_type → Bootstrap Icon class
@@ -75,7 +77,98 @@ function renderProgressBar(percent, status, failedWindows, ariaLabel) {
     </div>`;
 }
 
-function renderDocumentAnalysisProgress(thoughtData) {
+function getSafeDomIdPart(value) {
+    const normalizedValue = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80);
+    return normalizedValue || `progress-${Date.now()}`;
+}
+
+function resolveProgressDetailsKey(thoughtData, documents, options = {}) {
+    const explicitKey = String(options.progressKey || thoughtData?.message_id || activeStreamingThoughtTargetId || '').trim();
+    if (explicitKey) {
+        return `document-analysis:${explicitKey}`;
+    }
+
+    const documentKey = documents
+        .map(document => document.document_id || document.document_name || document.file_name || document.title || '')
+        .filter(Boolean)
+        .join('|')
+        .slice(0, 160);
+    const progress = thoughtData?.progress && typeof thoughtData.progress === 'object' ? thoughtData.progress : {};
+    const overall = progress.overall && typeof progress.overall === 'object' ? progress.overall : {};
+
+    return `document-analysis:${overall.phase || 'progress'}:${overall.document_count || documents.length}:${documentKey}`;
+}
+
+function isProgressDetailsExpanded(progressDetailsKey) {
+    return progressDetailsExpandedStates.get(progressDetailsKey) === true;
+}
+
+function renderProgressDetailsToggle(progressDetailsKey, detailsId, isExpanded) {
+    const title = isExpanded ? 'Hide document details' : 'Show document details';
+    const iconClass = isExpanded ? 'bi-chevron-up' : 'bi-chevron-down';
+
+    return `<button type="button" class="btn btn-sm btn-outline-secondary action-progress-details-toggle" data-progress-details-key="${escapeHtml(progressDetailsKey)}" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-controls="${escapeHtml(detailsId)}" aria-label="${title}" title="${title}">
+        <i class="bi ${iconClass}" aria-hidden="true"></i>
+    </button>`;
+}
+
+function updateProgressDetailsToggleButton(toggleButton, isExpanded) {
+    const title = isExpanded ? 'Hide document details' : 'Show document details';
+    const iconElement = toggleButton.querySelector('i');
+
+    toggleButton.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+    toggleButton.setAttribute('aria-label', title);
+    toggleButton.setAttribute('title', title);
+
+    if (iconElement) {
+        iconElement.classList.toggle('bi-chevron-up', isExpanded);
+        iconElement.classList.toggle('bi-chevron-down', !isExpanded);
+    }
+}
+
+function setProgressDetailsExpanded(toggleButton, isExpanded) {
+    const progressDetailsKey = toggleButton.dataset.progressDetailsKey || '';
+    const detailsId = toggleButton.getAttribute('aria-controls') || '';
+    const detailsElement = detailsId ? document.getElementById(detailsId) : null;
+
+    if (progressDetailsKey) {
+        progressDetailsExpandedStates.set(progressDetailsKey, isExpanded);
+    }
+    if (detailsElement) {
+        detailsElement.classList.toggle('d-none', !isExpanded);
+    }
+
+    updateProgressDetailsToggleButton(toggleButton, isExpanded);
+}
+
+function handleProgressDetailsToggleClick(event) {
+    const eventTarget = event.target;
+    if (!eventTarget || typeof eventTarget.closest !== 'function') {
+        return;
+    }
+
+    const toggleButton = eventTarget.closest('.action-progress-details-toggle');
+    if (!toggleButton) {
+        return;
+    }
+
+    event.preventDefault();
+    const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
+    setProgressDetailsExpanded(toggleButton, !isExpanded);
+}
+
+function ensureProgressDetailsToggleListener() {
+    if (progressDetailsToggleListenerAttached || typeof document === 'undefined') {
+        return;
+    }
+
+    document.addEventListener('click', handleProgressDetailsToggleClick);
+    progressDetailsToggleListenerAttached = true;
+}
+
+function renderDocumentAnalysisProgress(thoughtData, options = {}) {
+    ensureProgressDetailsToggleListener();
+
     const progress = thoughtData.progress && typeof thoughtData.progress === 'object' ? thoughtData.progress : {};
     const overall = progress.overall && typeof progress.overall === 'object' ? progress.overall : {};
     const documents = Array.isArray(progress.documents) ? progress.documents : [];
@@ -120,8 +213,20 @@ function renderDocumentAnalysisProgress(thoughtData) {
             ${renderProgressBar(documentPercent, document.status, document.failed_windows, `${documentName} analysis progress`)}
         </div>`;
     }).join('');
+    const hasDocumentDetails = documents.length > 0;
+    const progressDetailsKey = resolveProgressDetailsKey(thoughtData, documents, options);
+    const progressDetailsId = `document-analysis-details-${getSafeDomIdPart(progressDetailsKey)}`;
+    const progressDetailsExpanded = isProgressDetailsExpanded(progressDetailsKey);
+    const progressDetailsToggleHtml = hasDocumentDetails
+        ? renderProgressDetailsToggle(progressDetailsKey, progressDetailsId, progressDetailsExpanded)
+        : '';
+    const progressDetailsHtml = hasDocumentDetails
+        ? `<div id="${escapeHtml(progressDetailsId)}" class="document-analysis-progress-details${progressDetailsExpanded ? '' : ' d-none'}">
+            ${documentsHtml}
+        </div>`
+        : '<div class="text-muted small">Preparing document progress...</div>';
 
-    return `<div class="streaming-thought-display">
+    return `<div class="streaming-thought-display document-analysis-progress-card" data-progress-details-key="${escapeHtml(progressDetailsKey)}">
         <div class="card border-info-subtle shadow-sm">
             <div class="card-body py-3 px-3">
                 <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
@@ -132,12 +237,15 @@ function renderDocumentAnalysisProgress(thoughtData) {
                             <div class="text-muted small">${escapeHtml(overallDetailText)}</div>
                         </div>
                     </div>
-                    <span class="badge text-bg-light border">${overallPercent}%</span>
+                    <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                        <span class="badge text-bg-light border">${overallPercent}%</span>
+                        ${progressDetailsToggleHtml}
+                    </div>
                 </div>
                 <div class="mb-3">
                     ${renderProgressBar(overallPercent, overallStatus, overall.failed_windows, 'Overall analysis progress')}
                 </div>
-                ${documentsHtml || '<div class="text-muted small">Preparing document progress...</div>'}
+                ${progressDetailsHtml}
             </div>
         </div>
     </div>`;

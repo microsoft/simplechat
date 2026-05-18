@@ -2,12 +2,13 @@
 # test_tabular_document_actions_workflow.py
 """
 Functional test for tabular document-action workflow support.
-Version: 0.241.023
-Implemented in: 0.241.140
+Version: 0.241.038
+Implemented in: 0.241.038
 
 This test ensures tabular document actions reuse the shared tabular analysis
 path for Analyze and comparison workflows instead of relying only on the
-search-grounded chat path, including row-linked related-document evidence.
+search-grounded chat path, including row-linked related-document evidence and
+live tabular activity thoughts.
 """
 
 from pathlib import Path
@@ -70,10 +71,38 @@ def test_analyze_and_compare_dispatch_use_tabular_helper() -> None:
     print("Analyze and comparison dispatch checks passed")
 
 
+def test_tabular_document_actions_stream_live_activity() -> None:
+    print("Testing tabular document-action live thought plumbing...")
+
+    workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
+
+    assert 'def _build_tabular_document_action_thought_callback(' in workflow_runner_content, (
+        "Expected a bridge that persists and streams tabular post-processing thoughts."
+    )
+    assert 'thought_tracker=None,' in workflow_runner_content, (
+        "Expected the tabular document-action helper to accept a ThoughtTracker."
+    )
+    assert 'live_thought_callback=None,' in workflow_runner_content, (
+        "Expected the tabular document-action helper to accept a live thought callback."
+    )
+    assert 'thought_tracker=thought_tracker,\n                    live_thought_callback=live_thought_callback,' in workflow_runner_content, (
+        "Expected run_tabular_analysis_with_thought_tracking to receive the live tracker plumbing."
+    )
+    assert 'thought_callback=tabular_post_processing_thought_callback,' in workflow_runner_content, (
+        "Expected generated tabular output post-processing to publish live activity thoughts."
+    )
+    assert workflow_runner_content.count('live_thought_callback=external_activity_callback') >= 4, (
+        "Expected analyze and comparison model/agent paths to stream tabular activity through the document-action callback."
+    )
+
+    print("Tabular document-action live thought plumbing checks passed")
+
+
 def run_tests() -> bool:
     tests = [
         test_shared_tabular_document_action_helper_exists,
         test_analyze_and_compare_dispatch_use_tabular_helper,
+        test_tabular_document_actions_stream_live_activity,
     ]
     results = []
 

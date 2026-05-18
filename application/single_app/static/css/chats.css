@@ -3613,6 +3613,21 @@ mark.search-highlight {
     border-color: rgba(13, 110, 253, 0.25) !important;
 }
 
+.action-progress-details-toggle {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: 1.75rem;
+    justify-content: center;
+    line-height: 1;
+    padding: 0;
+    width: 1.75rem;
+}
+
+.action-progress-details-toggle i {
+    font-size: 0.85rem;
+}
+
 /* Dark mode: lighter accent colors */
 [data-bs-theme="dark"] .streaming-thought-display .badge {
     background-color: rgba(13, 202, 240, 0.15) !important;
