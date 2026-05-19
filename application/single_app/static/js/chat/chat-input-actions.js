@@ -15,6 +15,7 @@ import { loadMessages } from "./chat-messages.js";
 
 const imageGenBtn = document.getElementById("image-generate-btn");
 const webSearchBtn = document.getElementById("search-web-btn");
+const sourceReviewBtn = document.getElementById("source-review-btn");
 const chooseFileBtn = document.getElementById("choose-file-btn");
 const fileInputEl = document.getElementById("file-input");
 const uploadBtn = document.getElementById("upload-btn");
@@ -480,6 +481,7 @@ if (imageGenBtn) {
     const isImageGenEnabled = this.classList.contains("active");
     const docBtn = document.getElementById("search-documents-btn");
     const webBtn = document.getElementById("search-web-btn");
+    const sourcesBtn = document.getElementById("source-review-btn");
     const fileBtn = document.getElementById("choose-file-btn");
     const modelSelectContainer = document.getElementById("model-select-container");
 
@@ -492,6 +494,10 @@ if (imageGenBtn) {
         webBtn.disabled = true;
         webBtn.classList.remove("active");
       }
+      if (sourcesBtn) {
+        sourcesBtn.disabled = true;
+        sourcesBtn.classList.remove("active");
+      }
       if (fileBtn) {
         fileBtn.disabled = true;
         fileBtn.classList.remove("active");
@@ -502,6 +508,7 @@ if (imageGenBtn) {
     } else {
       if (docBtn) docBtn.disabled = false;
       if (webBtn) webBtn.disabled = false;
+      if (sourcesBtn) sourcesBtn.disabled = false;
       if (fileBtn) fileBtn.disabled = false;
       if (modelSelectContainer) {
         modelSelectContainer.style.display = "block";
@@ -543,6 +550,12 @@ if (webSearchBtn) {
     this.classList.toggle("active");
     const isActive = this.classList.contains("active");
     updateWebSearchNotice(isActive);
+  });
+}
+
+if (sourceReviewBtn) {
+  sourceReviewBtn.addEventListener("click", function () {
+    this.classList.toggle("active");
   });
 }
 

@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_group import get_group_model_endpoints, require_active_group, update_active_group_for_user
 from functions_settings import *
+from functions_file_sync import FILE_SYNC_MANAGER_ROLES, is_file_sync_enabled_for_group
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_group_workspaces(app):
@@ -22,6 +23,11 @@ def register_route_frontend_group_workspaces(app):
             active_group_id = require_active_group(user_id)
         except (ValueError, LookupError, PermissionError):
             active_group_id = None
+        try:
+            require_active_group(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
+            file_sync_enabled = is_file_sync_enabled_for_group(settings, active_group_id) if active_group_id else False
+        except (ValueError, LookupError, PermissionError):
+            file_sync_enabled = False
         enable_document_classification = settings.get('enable_document_classification', False)
         enable_file_sharing = settings.get('enable_file_sharing', False)
         enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
@@ -87,7 +93,8 @@ def register_route_frontend_group_workspaces(app):
             legacy_docs_count=legacy_count,
             allowed_extensions=allowed_extensions_str,
             group_model_endpoints=group_model_endpoints,
-            global_model_endpoints=global_model_endpoints
+            global_model_endpoints=global_model_endpoints,
+            file_sync_enabled=file_sync_enabled
         )
 
     @app.route('/set_active_group', methods=['POST'])

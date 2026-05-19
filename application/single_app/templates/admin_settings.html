@@ -1080,6 +1080,11 @@
                                             <input type="number" class="form-control" id="document_action_analyze_chat_max_documents" name="document_action_analyze_chat_max_documents" min="2" max="300" value="{{ analyze_capability.chat_max_documents }}" />
                                         </div>
                                     </div>
+                                        <div class="col-md-4">
+                                            <label for="source_review_max_seed_pages_per_turn" class="form-label">Max Seed Pages per Turn</label>
+                                            <input type="number" min="1" max="10" class="form-control" id="source_review_max_seed_pages_per_turn" name="source_review_max_seed_pages_per_turn" value="{{ settings.source_review_max_seed_pages_per_turn or 3 }}">
+                                            <div class="form-text">Limits initial search-result pages so Deep Source Review keeps budget for child source pages.</div>
+                                        </div>
                                     <div class="d-flex justify-content-between small text-muted">
                                         <span>2</span>
                                         <span>300</span>
@@ -1922,7 +1927,7 @@
                                             {% for feature in release_group.features %}
                                             <div class="col-md-6">
                                                 <div class="form-check border rounded p-3 h-100">
-                                                    <input class="form-check-input" type="checkbox" id="support_latest_feature_{{ feature.id }}" name="support_latest_feature_{{ feature.id }}"
+                                                <input type="number" min="0" max="2" class="form-control" id="source_review_max_depth" name="source_review_max_depth" value="{{ settings.source_review_max_depth if settings.source_review_max_depth is not none else 2 }}">
                                                         {% if settings.support_latest_features_visibility.get(feature.id, true) %}checked{% endif %}>
                                                     <label class="form-check-label ms-2" for="support_latest_feature_{{ feature.id }}">
                                                         <span class="fw-semibold d-block">{{ feature.title }}</span>
@@ -5396,6 +5401,154 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="source-review-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0"><i class="bi bi-link-45deg me-2"></i>Source Review</h5>
+                        <span class="badge text-bg-secondary">Optional</span>
+                    </div>
+                    <p class="text-muted mb-2">Review specific source pages and, when enabled, follow a bounded set of relevant links from source indexes.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_source_review"
+                            name="enable_source_review"
+                            {% if settings.enable_source_review %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_source_review">Enable Source Review for chat</label>
+                    </div>
+
+                    <div id="source_review_settings" class="{% if not settings.enable_source_review %}d-none{% endif %}">
+                        <div class="alert alert-info small mb-3">
+                            Server-side protections always block non-HTTP(S) URLs, private or internal IP ranges, localhost, single-label hosts, credentialed URLs, excessive redirects, unsupported content types, oversized pages, and requests beyond the configured page budget.
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="source_review_default_mode" class="form-label">Default Mode</label>
+                                <select class="form-select" id="source_review_default_mode" name="source_review_default_mode">
+                                    {% set source_review_default_mode = settings.source_review_default_mode or 'manual' %}
+                                    <option value="manual" {% if source_review_default_mode == 'manual' %}selected{% endif %}>Manual toggle only</option>
+                                    <option value="auto_for_urls" {% if source_review_default_mode == 'auto_for_urls' %}selected{% endif %}>Auto when message has URLs</option>
+                                    <option value="auto_with_web_search" {% if source_review_default_mode == 'auto_with_web_search' %}selected{% endif %}>Auto with URLs or web search</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="source_review_max_pages_per_turn" class="form-label">Max Pages per Turn</label>
+                                <input type="number" min="1" max="10" class="form-control" id="source_review_max_pages_per_turn" name="source_review_max_pages_per_turn" value="{{ settings.source_review_max_pages_per_turn or 5 }}">
+                                <div class="form-text">Hard limit: 10 pages.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="source_review_timeout_seconds" class="form-label">Timeout per Turn</label>
+                                <input type="number" min="3" max="30" class="form-control" id="source_review_timeout_seconds" name="source_review_timeout_seconds" value="{{ settings.source_review_timeout_seconds or 20 }}">
+                                <div class="form-text">Hard limit: 30 seconds.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="source_review_max_redirects" class="form-label">Max Redirects</label>
+                                <input type="number" min="0" max="5" class="form-control" id="source_review_max_redirects" name="source_review_max_redirects" value="{{ settings.source_review_max_redirects if settings.source_review_max_redirects is not none else 3 }}">
+                                <div class="form-text">Every redirect target is revalidated.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="source_review_max_bytes_per_page_mb" class="form-label">Max MB per Page</label>
+                                <input type="number" min="1" max="5" class="form-control" id="source_review_max_bytes_per_page_mb" name="source_review_max_bytes_per_page_mb" value="{{ (((settings.source_review_max_bytes_per_page|default(2000000, true)|int) / 1000000)|round(0, 'ceil'))|int }}">
+                                <div class="form-text">Hard limit: 5 MB.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="source_review_max_depth" class="form-label">Deep Review Depth</label>
+                                <input type="number" min="0" max="1" class="form-control" id="source_review_max_depth" name="source_review_max_depth" value="{{ settings.source_review_max_depth if settings.source_review_max_depth is not none else 1 }}">
+                                <div class="form-text">Depth 1 follows selected links from seed pages.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="enable_deep_source_review"
+                                        name="enable_deep_source_review"
+                                        {% if settings.enable_deep_source_review %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label ms-2" for="enable_deep_source_review">Enable Deep Source Review</label>
+                                </div>
+                                <div id="source_review_deep_settings" class="form-text {% if not settings.enable_deep_source_review %}d-none{% endif %}">Deep review follows only scored, policy-approved links within the page and depth budgets.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="source_review_enable_llm_planning"
+                                        name="source_review_enable_llm_planning"
+                                        {% if settings.source_review_enable_llm_planning %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label ms-2" for="source_review_enable_llm_planning">Use model-assisted link planning</label>
+                                </div>
+                                <div class="form-text">When Deep Source Review has candidate links, the selected chat model can rank those candidates before the server fetches them.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="source_review_allow_js_rendering"
+                                        name="source_review_allow_js_rendering"
+                                        {% if settings.source_review_allow_js_rendering %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label ms-2" for="source_review_allow_js_rendering">Allow JavaScript rendering fallback</label>
+                                </div>
+                                <div class="form-text">Requires Playwright browser runtime support on the app host.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="source_review_respect_robots_txt"
+                                        name="source_review_respect_robots_txt"
+                                        {% if settings.source_review_respect_robots_txt %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label ms-2" for="source_review_respect_robots_txt">Respect robots.txt</label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="source_review_audit_logging"
+                                        name="source_review_audit_logging"
+                                        {% if settings.source_review_audit_logging %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label ms-2" for="source_review_audit_logging">Log Source Review activity</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-6">
+                                <label for="source_review_allowed_domains" class="form-label">Allowed Domains</label>
+                                <textarea class="form-control" id="source_review_allowed_domains" name="source_review_allowed_domains" rows="3" placeholder="example.com&#10;*.contoso.com">{{ settings.source_review_allowed_domains|join('\n') if settings.source_review_allowed_domains else '' }}</textarea>
+                                <div class="form-text">Leave blank to allow any public domain that passes safety checks.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="source_review_blocked_domains" class="form-label">Blocked Domains</label>
+                                <textarea class="form-control" id="source_review_blocked_domains" name="source_review_blocked_domains" rows="3" placeholder="example.org&#10;*.contoso.net">{{ settings.source_review_blocked_domains|join('\n') if settings.source_review_blocked_domains else '' }}</textarea>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="source_review_allowed_users" class="form-label">Allowed Users</label>
+                                <textarea class="form-control" id="source_review_allowed_users" name="source_review_allowed_users" rows="3" placeholder="user@contoso.com&#10;00000000-0000-0000-0000-000000000000">{{ settings.source_review_allowed_users|join('\n') if settings.source_review_allowed_users else '' }}</textarea>
+                                <div class="form-text">Leave blank to allow all signed-in users unless blocked.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="source_review_blocked_users" class="form-label">Blocked Users</label>
+                                <textarea class="form-control" id="source_review_blocked_users" name="source_review_blocked_users" rows="3" placeholder="user@contoso.com&#10;00000000-0000-0000-0000-000000000000">{{ settings.source_review_blocked_users|join('\n') if settings.source_review_blocked_users else '' }}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="modal fade" id="web-search-consent-modal" tabindex="-1" aria-labelledby="web-search-consent-title" aria-hidden="true">
                     <div class="modal-dialog modal-dialog-centered modal-lg">
                         <div class="modal-content">
@@ -5441,6 +5594,11 @@
                     <div>
                         
                         <div id="non_apim_ai_search_settings" {% if settings.enable_ai_search_apim %}style="display: none;"{% endif %}>
+                            <div class="col-md-6">
+                                <label for="source_review_js_load_more_clicks" class="form-label">Rendered Load More Clicks</label>
+                                <input type="number" min="0" max="12" class="form-control" id="source_review_js_load_more_clicks" name="source_review_js_load_more_clicks" value="{{ settings.source_review_js_load_more_clicks if settings.source_review_js_load_more_clicks is not none else 6 }}">
+                                <div class="form-text">When JavaScript rendering is enabled, Source Review can click visible Load More controls until the date range is visible, no new content appears, or this cap is reached.</div>
+                            </div>
                             <div class="mb-3">
                                 <label for="azure_ai_search_endpoint" class="form-label">Search Endpoint</label>
                                 <input

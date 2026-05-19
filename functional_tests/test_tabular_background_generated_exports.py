@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""
+Functional test for durable tabular generated-output background exports.
+Version: 0.241.048
+Implemented in: 0.241.048
+
+This test ensures that large tabular structured exports are wired through the
+durable background queue, status API, and chat progress UI without requiring
+live Azure services.
+"""
+
+import ast
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT = REPO_ROOT / 'application' / 'single_app'
+EXPORT_MODULE = APP_ROOT / 'functions_tabular_generated_exports.py'
+CHAT_ROUTE = APP_ROOT / 'route_backend_chats.py'
+CHAT_MESSAGES_JS = APP_ROOT / 'static' / 'js' / 'chat' / 'chat-messages.js'
+BACKGROUND_TASKS = APP_ROOT / 'background_tasks.py'
+CONFIG = APP_ROOT / 'config.py'
+
+
+def read_text(path):
+    """Read a source file as UTF-8 text."""
+    return path.read_text(encoding='utf-8')
+
+
+def parse_python(path):
+    """Parse a Python source file and fail clearly on syntax errors."""
+    return ast.parse(read_text(path), filename=str(path))
+
+
+def get_function(module_tree, function_name):
+    """Find a top-level function definition in an AST tree."""
+    for node in module_tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
+            return node
+    return None
+
+
+def assert_contains(source_text, needle, description):
+    """Assert that a source file contains an expected implementation marker."""
+    if needle not in source_text:
+        raise AssertionError(f'Missing {description}: {needle}')
+
+
+def test_export_runner_module():
+    """Validate that the durable export runner exposes the required lifecycle."""
+    module_tree = parse_python(EXPORT_MODULE)
+    function_names = {
+        node.name
+        for node in module_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    required_functions = {
+        'should_queue_tabular_generated_output_background',
+        'queue_tabular_generated_output_run',
+        'get_tabular_generated_output_run_status',
+        'build_background_tabular_generated_output_metadata',
+        'process_tabular_generated_output_run',
+        'check_due_tabular_generated_output_runs_once',
+    }
+
+    missing_functions = required_functions - function_names
+    if missing_functions:
+        raise AssertionError(f'Missing runner functions: {sorted(missing_functions)}')
+
+    source_text = read_text(EXPORT_MODULE)
+    assert_contains(source_text, "STATUS_QUEUED = 'queued'", 'queued status constant')
+    assert_contains(source_text, 'input_batches.json', 'single staged input-batches blob')
+    assert_contains(source_text, 'output/batch_', 'per-batch output checkpoint blobs')
+    assert_contains(source_text, 'upload_generated_analysis_artifact_for_user', 'background-safe artifact upload')
+    assert_contains(source_text, "'generated_artifact': generated_artifact", 'completed artifact status payload')
+    assert_contains(source_text, '_mark_run_retryable', 'retryable transient failure requeue')
+    assert_contains(source_text, 'transient_failure_count', 'bounded transient failure counter')
+    assert_contains(source_text, 'APIConnectionError', 'OpenAI connection error retry classification')
+    assert_contains(source_text, 'c.status = @failed', 'retryable failed-run scheduler pickup')
+
+
+def test_chat_route_wires_background_exports():
+    """Validate chat route queueing, metadata normalization, and status endpoint wiring."""
+    module_tree = parse_python(CHAT_ROUTE)
+    maybe_create = get_function(module_tree, 'maybe_create_tabular_generated_output')
+    if maybe_create is None:
+        raise AssertionError('maybe_create_tabular_generated_output was not found')
+
+    maybe_create_arg_names = [arg.arg for arg in maybe_create.args.args]
+    if 'user_id' not in maybe_create_arg_names:
+        raise AssertionError('maybe_create_tabular_generated_output must accept user_id')
+
+    source_text = read_text(CHAT_ROUTE)
+    assert_contains(source_text, 'should_queue_tabular_generated_output_background', 'background queue decision')
+    assert_contains(source_text, 'queue_tabular_generated_output_run(', 'background queue creation')
+    assert_contains(source_text, 'build_background_tabular_generated_output_metadata', 'background metadata handoff')
+    assert_contains(source_text, "'/api/tabular/generated-output/runs/<run_id>'", 'run status API route')
+    assert_contains(source_text, '@swagger_route(security=get_auth_security())', 'secured status route decorator')
+    assert_contains(source_text, "output_metadata.get('background_export')", 'background assistant handoff message')
+
+
+def test_background_scheduler_and_config_registered():
+    """Validate the scheduler and Cosmos container registration are present."""
+    background_source = read_text(BACKGROUND_TASKS)
+    assert_contains(background_source, 'check_due_tabular_generated_output_runs_once', 'background export scheduler import')
+    assert_contains(background_source, 'run_tabular_generated_output_scheduler_loop', 'background export scheduler loop')
+    assert_contains(background_source, "'tabular_generated_output_scheduler_scan'", 'distributed scheduler lock')
+
+    config_source = read_text(CONFIG)
+    assert_contains(config_source, 'cosmos_tabular_export_runs_container_name', 'export runs container name')
+    assert_contains(config_source, 'tabular_export_runs', 'export runs Cosmos container')
+    assert_contains(config_source, 'PartitionKey(path="/user_id")', 'per-user partition key')
+
+
+def test_chat_ui_renders_and_polls_background_exports():
+    """Validate browser progress UI support for queued background exports."""
+    source_text = read_text(CHAT_MESSAGES_JS)
+    assert_contains(source_text, 'background_export', 'background export normalization')
+    assert_contains(source_text, 'createBackgroundGeneratedOutputStatusBlock', 'background progress card')
+    assert_contains(source_text, 'refreshBackgroundGeneratedOutputStatus', 'status refresh function')
+    assert_contains(source_text, '/api/tabular/generated-output/runs/', 'status polling endpoint')
+    assert_contains(source_text, 'textContent', 'safe text rendering boundary')
+
+
+def main():
+    """Run all checks and report a compact summary."""
+    tests = [
+        test_export_runner_module,
+        test_chat_route_wires_background_exports,
+        test_background_scheduler_and_config_registered,
+        test_chat_ui_renders_and_polls_background_exports,
+    ]
+    results = []
+
+    for test in tests:
+        print(f'Running {test.__name__}...')
+        try:
+            test()
+            print(f'PASS {test.__name__}')
+            results.append(True)
+        except Exception as exc:
+            print(f'FAIL {test.__name__}: {exc}')
+            results.append(False)
+
+    passed = sum(1 for result in results if result)
+    print(f'Results: {passed}/{len(results)} tests passed')
+    return all(results)
+
+
+if __name__ == '__main__':
+    sys.exit(0 if main() else 1)

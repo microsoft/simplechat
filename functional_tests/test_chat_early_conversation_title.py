@@ -2,8 +2,8 @@
 # test_chat_early_conversation_title.py
 """
 Functional test for early conversation title assignment.
-Version: 0.241.040
-Implemented in: 0.241.040
+Version: 0.241.042
+Implemented in: 0.241.042
 
 This test ensures new chat conversations derive a useful title from the first
 submitted message and stream that metadata before long-running document actions
@@ -50,7 +50,7 @@ def test_chat_early_conversation_title():
     """Verify early title derivation, persistence, and streaming hooks exist."""
     print("Testing early conversation title assignment...")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.040"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.241.042"')
     assert_contains(OPERATIONS_FILE, "def derive_conversation_title_from_message(content: str) -> str:")
     assert_contains(OPERATIONS_FILE, "normalized_content = re.sub")
 
@@ -75,7 +75,7 @@ def test_chat_early_conversation_title():
     assert_contains(CHAT_STREAMING_JS, "if (data.type === 'conversation_metadata')")
     assert_contains(CHAT_STREAMING_JS, "applyConversationMetadataUpdate(conversationId, metadataUpdates);")
 
-    assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.040**")
+    assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.042**")
     assert_contains(FIX_DOC_FILE, "before `_execute_document_action_workflow(...)` begins")
 
     print("Early conversation title checks passed.")

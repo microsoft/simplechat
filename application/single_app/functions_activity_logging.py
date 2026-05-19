@@ -1957,6 +1957,63 @@ def log_general_admin_action(
         debug_print(f"⚠️  Warning: Failed to log admin action: {str(e)}")
 
 
+def log_file_sync_activity(
+    user_id: str,
+    action: str,
+    scope_type: str,
+    source_id: str,
+    source_name: Optional[str] = None,
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
+    additional_context: Optional[dict] = None
+) -> None:
+    """Log a File Sync activity event to the activity_logs container."""
+    normalized_user_id = coerce_activity_log_user_id(user_id)
+    now = datetime.utcnow().isoformat()
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': normalized_user_id,
+            'activity_type': 'file_sync',
+            'timestamp': now,
+            'created_at': now,
+            'action': action,
+            'description': f"File Sync {action.replace('_', ' ')}",
+            'workspace_type': scope_type,
+            'workspace_context': {
+                'scope_type': scope_type,
+                'source_id': source_id,
+                'source_name': source_name,
+                'group_id': group_id,
+                'public_workspace_id': public_workspace_id
+            }
+        }
+
+        if additional_context:
+            activity_record['additional_context'] = additional_context
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"File Sync activity logged: {action}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"File Sync activity logged: {action}")
+    except Exception as e:
+        log_event(
+            message=f"Error logging File Sync activity: {str(e)}",
+            extra={
+                'user_id': normalized_user_id,
+                'action': action,
+                'scope_type': scope_type,
+                'source_id': source_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Warning: Failed to log File Sync activity: {str(e)}")
+
+
 # === AGENT & ACTION ACTIVITY LOGGING ===
 def log_agent_creation(
     user_id: str,

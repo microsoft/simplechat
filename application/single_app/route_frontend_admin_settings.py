@@ -5,6 +5,7 @@ from functions_documents import *
 from functions_authentication import *
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, parse_source_review_list
 from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
@@ -189,6 +190,9 @@ def register_route_frontend_admin_settings(app):
 
         if 'web_search_consent_accepted' not in settings:
             settings['web_search_consent_accepted'] = False
+        for source_review_key, source_review_default in SOURCE_REVIEW_DEFAULTS.items():
+            if source_review_key not in settings:
+                settings[source_review_key] = list(source_review_default) if isinstance(source_review_default, list) else source_review_default
         
         # --- Add default for swagger documentation ---
         if 'enable_swagger' not in settings:
@@ -579,6 +583,72 @@ def register_route_frontend_admin_settings(app):
                     consent_text=web_search_consent_message,
                     source='admin_settings'
                 )
+
+            existing_source_review_max_bytes = parse_admin_int(
+                settings.get('source_review_max_bytes_per_page'),
+                2000000,
+                'source_review_max_bytes_per_page',
+                2000000
+            )
+            source_review_max_bytes_mb = max(
+                1,
+                parse_admin_int(
+                    form_data.get('source_review_max_bytes_per_page_mb'),
+                    max(1, int(existing_source_review_max_bytes / 1000000)),
+                    'source_review_max_bytes_per_page_mb',
+                    2
+                )
+            )
+            source_review_settings = get_source_review_config({
+                'enable_source_review': form_data.get('enable_source_review') == 'on',
+                'enable_deep_source_review': form_data.get('enable_deep_source_review') == 'on',
+                'source_review_default_mode': form_data.get('source_review_default_mode', 'manual'),
+                'source_review_max_pages_per_turn': parse_admin_int(
+                    form_data.get('source_review_max_pages_per_turn'),
+                    settings.get('source_review_max_pages_per_turn', 5),
+                    'source_review_max_pages_per_turn',
+                    5
+                ),
+                'source_review_max_seed_pages_per_turn': parse_admin_int(
+                    form_data.get('source_review_max_seed_pages_per_turn'),
+                    settings.get('source_review_max_seed_pages_per_turn', 3),
+                    'source_review_max_seed_pages_per_turn',
+                    3
+                ),
+                'source_review_max_depth': parse_admin_int(
+                    form_data.get('source_review_max_depth'),
+                    settings.get('source_review_max_depth', 2),
+                    'source_review_max_depth',
+                    2
+                ),
+                'source_review_timeout_seconds': parse_admin_int(
+                    form_data.get('source_review_timeout_seconds'),
+                    settings.get('source_review_timeout_seconds', 20),
+                    'source_review_timeout_seconds',
+                    20
+                ),
+                'source_review_max_redirects': parse_admin_int(
+                    form_data.get('source_review_max_redirects'),
+                    settings.get('source_review_max_redirects', 3),
+                    'source_review_max_redirects',
+                    3
+                ),
+                'source_review_max_bytes_per_page': source_review_max_bytes_mb * 1000000,
+                'source_review_enable_llm_planning': form_data.get('source_review_enable_llm_planning') == 'on',
+                'source_review_allow_js_rendering': form_data.get('source_review_allow_js_rendering') == 'on',
+                'source_review_js_load_more_clicks': parse_admin_int(
+                    form_data.get('source_review_js_load_more_clicks'),
+                    settings.get('source_review_js_load_more_clicks', 6),
+                    'source_review_js_load_more_clicks',
+                    6
+                ),
+                'source_review_respect_robots_txt': form_data.get('source_review_respect_robots_txt') == 'on',
+                'source_review_allowed_domains': parse_source_review_list(form_data.get('source_review_allowed_domains')),
+                'source_review_blocked_domains': parse_source_review_list(form_data.get('source_review_blocked_domains')),
+                'source_review_allowed_users': parse_source_review_list(form_data.get('source_review_allowed_users')),
+                'source_review_blocked_users': parse_source_review_list(form_data.get('source_review_blocked_users')),
+                'source_review_audit_logging': form_data.get('source_review_audit_logging') == 'on',
+            })
 
             # --- Handle Document Classification Toggle ---
             enable_document_classification = form_data.get('enable_document_classification') == 'on'
@@ -1412,6 +1482,26 @@ def register_route_frontend_admin_settings(app):
                         }
                     }
                 },
+
+                # Search (Source Review)
+                'enable_source_review': source_review_settings['enable_source_review'],
+                'enable_deep_source_review': source_review_settings['enable_deep_source_review'],
+                'source_review_default_mode': source_review_settings['source_review_default_mode'],
+                'source_review_max_pages_per_turn': source_review_settings['source_review_max_pages_per_turn'],
+                'source_review_max_seed_pages_per_turn': source_review_settings['source_review_max_seed_pages_per_turn'],
+                'source_review_max_depth': source_review_settings['source_review_max_depth'],
+                'source_review_timeout_seconds': source_review_settings['source_review_timeout_seconds'],
+                'source_review_max_redirects': source_review_settings['source_review_max_redirects'],
+                'source_review_max_bytes_per_page': source_review_settings['source_review_max_bytes_per_page'],
+                'source_review_enable_llm_planning': source_review_settings['source_review_enable_llm_planning'],
+                'source_review_allow_js_rendering': source_review_settings['source_review_allow_js_rendering'],
+                'source_review_js_load_more_clicks': source_review_settings['source_review_js_load_more_clicks'],
+                'source_review_respect_robots_txt': source_review_settings['source_review_respect_robots_txt'],
+                'source_review_allowed_domains': source_review_settings['source_review_allowed_domains'],
+                'source_review_blocked_domains': source_review_settings['source_review_blocked_domains'],
+                'source_review_allowed_users': source_review_settings['source_review_allowed_users'],
+                'source_review_blocked_users': source_review_settings['source_review_blocked_users'],
+                'source_review_audit_logging': source_review_settings['source_review_audit_logging'],
 
                 # Search (AI Search Direct & APIM)
                 'azure_ai_search_endpoint': form_data.get('azure_ai_search_endpoint', '').strip(),

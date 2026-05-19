@@ -1,0 +1,1209 @@
+# functions_tabular_generated_exports.py
+"""Durable background runs for large tabular generated exports."""
+
+import asyncio
+import csv
+import io
+import json
+import logging
+import os
+import re
+import socket
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from flask import current_app, has_app_context
+from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
+from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
+
+from config import (
+    CLIENTS,
+    cognitive_services_scope,
+    cosmos_tabular_export_runs_container,
+    storage_account_personal_chat_container_name,
+)
+from functions_appinsights import log_event
+from functions_settings import get_settings
+from functions_simplechat_operations import upload_generated_analysis_artifact_for_user
+
+
+TABULAR_EXPORT_RUN_TYPE = 'tabular_generated_output_run'
+TABULAR_EXPORT_STATUS_QUEUED = 'queued'
+TABULAR_EXPORT_STATUS_RUNNING = 'running'
+TABULAR_EXPORT_STATUS_COMPLETED = 'completed'
+TABULAR_EXPORT_STATUS_FAILED = 'failed'
+TABULAR_EXPORT_STATUS_CANCELED = 'canceled'
+TABULAR_EXPORT_TERMINAL_STATUSES = {
+    TABULAR_EXPORT_STATUS_COMPLETED,
+    TABULAR_EXPORT_STATUS_FAILED,
+    TABULAR_EXPORT_STATUS_CANCELED,
+}
+
+TABULAR_EXPORT_DEFAULT_INLINE_MAX_BATCHES = 75
+TABULAR_EXPORT_DEFAULT_INLINE_MAX_ROWS = 500
+TABULAR_EXPORT_DEFAULT_BATCH_RETRY_ATTEMPTS = 2
+TABULAR_EXPORT_DEFAULT_LEASE_SECONDS = 300
+TABULAR_EXPORT_DEFAULT_STALE_SECONDS = 420
+TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 1
+TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES = 20
+TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS = 30
+TABULAR_EXPORT_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+TABULAR_EXPORT_RETRYABLE_EXCEPTION_NAMES = {
+    'APIConnectionError',
+    'APITimeoutError',
+    'APIStatusError',
+    'InternalServerError',
+    'RateLimitError',
+    'ServiceRequestError',
+    'ServiceResponseError',
+    'ServiceResponseTimeoutError',
+    'HttpResponseError',
+    'TimeoutError',
+    'ConnectionError',
+}
+TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS = (
+    'api connection error',
+    'apiconnectionerror',
+    'connection error',
+    'connection aborted',
+    'connection reset',
+    'server disconnected',
+    'service unavailable',
+    'temporarily unavailable',
+    'too many requests',
+    'rate limit',
+    'timed out',
+    'timeout',
+    'worker exiting',
+    'worker restart',
+)
+
+
+def _now_utc():
+    return datetime.now(timezone.utc)
+
+
+def _now_iso():
+    return _now_utc().isoformat()
+
+
+def _safe_int(value, default=0, minimum=None, maximum=None):
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        parsed_value = default
+
+    if minimum is not None:
+        parsed_value = max(minimum, parsed_value)
+    if maximum is not None:
+        parsed_value = min(maximum, parsed_value)
+    return parsed_value
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _settings_bool(settings, key, default=False):
+    value = (settings or {}).get(key, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _settings_int(settings, key, default, minimum=None, maximum=None):
+    return _safe_int((settings or {}).get(key, default), default=default, minimum=minimum, maximum=maximum)
+
+
+def _iter_exception_chain(exc):
+    visited = set()
+    pending = [exc]
+    while pending:
+        current = pending.pop(0)
+        if current is None:
+            continue
+        current_id = id(current)
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        yield current
+
+        for related in (getattr(current, '__cause__', None), getattr(current, '__context__', None)):
+            if related is not None:
+                pending.append(related)
+        for arg in getattr(current, 'args', ()) or ():
+            if isinstance(arg, BaseException):
+                pending.append(arg)
+
+
+def _exception_status_code(exc):
+    for candidate in _iter_exception_chain(exc):
+        status_code = getattr(candidate, 'status_code', None)
+        if status_code is None:
+            response = getattr(candidate, 'response', None)
+            status_code = getattr(response, 'status_code', None) if response is not None else None
+        parsed_status_code = _safe_int(status_code, default=0)
+        if parsed_status_code:
+            return parsed_status_code
+    return 0
+
+
+def _is_retryable_export_error_message(error_message):
+    normalized_message = str(error_message or '').lower()
+    return any(marker in normalized_message for marker in TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS)
+
+
+def _is_retryable_export_error(exc):
+    status_code = _exception_status_code(exc)
+    if status_code in TABULAR_EXPORT_RETRYABLE_STATUS_CODES:
+        return True
+
+    for candidate in _iter_exception_chain(exc):
+        class_name = candidate.__class__.__name__
+        if class_name in TABULAR_EXPORT_RETRYABLE_EXCEPTION_NAMES:
+            return True
+        if _is_retryable_export_error_message(candidate):
+            return True
+    return _is_retryable_export_error_message(exc)
+
+
+def _sanitize_file_base_name(file_name):
+    base_name = os.path.splitext(str(file_name or '').strip())[0]
+    normalized_base_name = re.sub(r'[^A-Za-z0-9._-]+', '_', base_name).strip('._')
+    return normalized_base_name or 'tabular_output'
+
+
+def _build_generated_file_name(source_file_name, output_format):
+    timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    normalized_extension = 'csv' if str(output_format or '').strip().lower() == 'csv' else 'json'
+    return f"{_sanitize_file_base_name(source_file_name)}_generated_{timestamp_suffix}.{normalized_extension}"
+
+
+def _serialize_generated_output_value(value):
+    if value is None:
+        return ''
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, default=str, ensure_ascii=False)
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+    return str(value)
+
+
+def _build_generated_output_csv(entries):
+    ordered_columns = []
+    seen_columns = set()
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        for key in entry.keys():
+            normalized_key = str(key or '').strip()
+            if not normalized_key or normalized_key in seen_columns:
+                continue
+            seen_columns.add(normalized_key)
+            ordered_columns.append(normalized_key)
+
+    if not ordered_columns:
+        ordered_columns = ['value']
+
+    output_buffer = io.StringIO()
+    writer = csv.DictWriter(output_buffer, fieldnames=ordered_columns)
+    writer.writeheader()
+    for entry in entries or []:
+        serialized_row = {}
+        if isinstance(entry, dict):
+            for field_name in ordered_columns:
+                serialized_row[field_name] = _serialize_generated_output_value(entry.get(field_name))
+        writer.writerow(serialized_row)
+    return output_buffer.getvalue()
+
+
+def _get_blob_service_client():
+    blob_service_client = CLIENTS.get('storage_account_office_docs_client')
+    if not blob_service_client:
+        raise RuntimeError('Blob storage client not available')
+    return blob_service_client
+
+
+def _input_blob_path(user_id, conversation_id, run_id, batch_number):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/input/batch_{batch_number:06d}.json"
+
+
+def _input_batches_blob_path(user_id, conversation_id, run_id):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/input/input_batches.json"
+
+
+def _output_blob_path(user_id, conversation_id, run_id, batch_number):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/output/batch_{batch_number:06d}.json"
+
+
+def _upload_json_blob(blob_path, payload, metadata=None):
+    blob_client = _get_blob_service_client().get_blob_client(
+        container=storage_account_personal_chat_container_name,
+        blob=blob_path,
+    )
+    blob_client.upload_blob(
+        json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8'),
+        overwrite=True,
+        metadata={str(key): str(value) for key, value in (metadata or {}).items()},
+    )
+
+
+def _download_json_blob(blob_path):
+    blob_client = _get_blob_service_client().get_blob_client(
+        container=storage_account_personal_chat_container_name,
+        blob=blob_path,
+    )
+    raw_content = blob_client.download_blob().readall()
+    if isinstance(raw_content, bytes):
+        raw_content = raw_content.decode('utf-8')
+    return json.loads(raw_content or 'null')
+
+
+def _blob_exists(blob_path):
+    blob_client = _get_blob_service_client().get_blob_client(
+        container=storage_account_personal_chat_container_name,
+        blob=blob_path,
+    )
+    return bool(blob_client.exists())
+
+
+def _clean_generated_json_code_fence(response_content):
+    cleaned = str(response_content or '').strip()
+    if not cleaned:
+        return ''
+
+    cleaned = re.sub(r'(?is)^```(?:json)?\s*', '', cleaned)
+    cleaned = re.sub(r'(?is)\s*```$', '', cleaned)
+    return cleaned.strip()
+
+
+def _parse_generated_json_entries(response_content):
+    cleaned = _clean_generated_json_code_fence(response_content)
+    if not cleaned:
+        return None
+
+    decoder = json.JSONDecoder()
+    parsed_value = None
+    try:
+        parsed_value, _ = decoder.raw_decode(cleaned)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed_value = None
+
+    if parsed_value is None:
+        for start_index, character in enumerate(cleaned):
+            if character not in '[{':
+                continue
+            try:
+                parsed_value, _ = decoder.raw_decode(cleaned[start_index:])
+                break
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+
+    if isinstance(parsed_value, dict):
+        return [parsed_value]
+    if isinstance(parsed_value, list) and all(isinstance(item, dict) for item in parsed_value):
+        return parsed_value
+    return None
+
+
+def _truncate_response_preview(response_content, max_chars=400):
+    cleaned = _clean_generated_json_code_fence(response_content)
+    normalized = re.sub(r'\s+', ' ', cleaned).strip()
+    if not normalized:
+        return ''
+    if len(normalized) <= max_chars:
+        return normalized
+    return f"{normalized[:max_chars]}..."
+
+
+def _build_batch_prompt(user_question, batch_rows, batch_index, total_batches, source_file_name, selected_sheet=''):
+    source_file_name = str(source_file_name or 'unknown file').strip() or 'unknown file'
+    selected_sheet = str(selected_sheet or '').strip()
+    batch_rows_json = json.dumps(batch_rows, indent=2, default=str, ensure_ascii=False)
+    selected_sheet_line = f"Worksheet: {selected_sheet}\n" if selected_sheet else ''
+
+    return (
+        'Transform the tabular input rows below into structured output for the user.\n\n'
+        f'User instructions:\n{user_question}\n\n'
+        'Return ONLY a valid JSON array.\n'
+        f'Return exactly {len(batch_rows)} JSON object(s), one per input row, in the same order.\n'
+        'Do not drop, merge, summarize, or cap rows.\n'
+        'Input rows may include normalized helper fields such as comment_id, body_text, source_file, attachment_present, attachment_names, and attachment_text. Use those normalized fields when they are present.\n'
+        'Input rows may include a referenced_documents array containing row-linked evidence from explicitly referenced non-tabular documents. Use that evidence as part of the source row context when it is relevant to the requested output.\n'
+        'If referenced_documents contains excerpt text or attachment_text is present, treat that excerpt content as available attachment text. Do not say attachment text is unavailable when such excerpts are present.\n'
+        'If a requested field cannot be derived, include the field with null or an empty string instead of omitting the row.\n'
+        'Do not wrap the JSON in markdown fences.\n\n'
+        f'Source file: {source_file_name}\n'
+        f'{selected_sheet_line}'
+        f'Batch: {batch_index + 1}/{total_batches}\n\n'
+        f'Input rows:\n{batch_rows_json}'
+    )
+
+
+def _build_chat_service(gpt_model, settings):
+    enable_gpt_apim = settings.get('enable_gpt_apim', False)
+    if enable_gpt_apim:
+        return AzureChatCompletion(
+            service_id='tabular-generated-output-background',
+            deployment_name=gpt_model,
+            endpoint=settings.get('azure_apim_gpt_endpoint'),
+            api_key=settings.get('azure_apim_gpt_subscription_key'),
+            api_version=settings.get('azure_apim_gpt_api_version'),
+        )
+
+    auth_type = settings.get('azure_openai_gpt_authentication_type')
+    if auth_type == 'managed_identity':
+        token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
+        return AzureChatCompletion(
+            service_id='tabular-generated-output-background',
+            deployment_name=gpt_model,
+            endpoint=settings.get('azure_openai_gpt_endpoint'),
+            api_version=settings.get('azure_openai_gpt_api_version'),
+            ad_token_provider=token_provider,
+        )
+
+    return AzureChatCompletion(
+        service_id='tabular-generated-output-background',
+        deployment_name=gpt_model,
+        endpoint=settings.get('azure_openai_gpt_endpoint'),
+        api_key=settings.get('azure_openai_gpt_key'),
+        api_version=settings.get('azure_openai_gpt_api_version'),
+    )
+
+
+async def _generate_batch_entries(
+    chat_service,
+    user_question,
+    batch_rows,
+    batch_index,
+    total_batches,
+    source_file_name,
+    selected_sheet,
+    retry_attempts,
+    run_id,
+):
+    batch_number = batch_index + 1
+    batch_prompt = _build_batch_prompt(
+        user_question,
+        batch_rows,
+        batch_index,
+        total_batches,
+        source_file_name,
+        selected_sheet=selected_sheet,
+    )
+
+    parsed_entries = None
+    raw_response_content = ''
+    mismatch_count = 0
+    for attempt_number in range(1, retry_attempts + 1):
+        chat_history = SKChatHistory()
+        chat_history.add_system_message(
+            'You transform tabular input rows into deterministic structured output. '
+            'Return only a valid JSON array with one object per input row. '
+            'Never add markdown, explanation text, or omit rows.'
+        )
+        if attempt_number > 1:
+            chat_history.add_system_message(
+                f'The previous attempt did not return the required {len(batch_rows)} JSON object(s). '
+                'Retry now and preserve the input row count exactly.'
+            )
+        chat_history.add_user_message(batch_prompt)
+
+        execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output-background')
+        result = await chat_service.get_chat_message_contents(chat_history, execution_settings)
+        raw_response_content = result[0].content if result and result[0].content else ''
+        parsed_entries = _parse_generated_json_entries(raw_response_content) if raw_response_content else None
+        parsed_entry_count = len(parsed_entries) if parsed_entries is not None else 0
+        if parsed_entries is not None and parsed_entry_count == len(batch_rows):
+            return parsed_entries, mismatch_count
+
+        mismatch_count += 1
+        log_event(
+            '[Tabular Generated Output] Background export batch attempt mismatch',
+            {
+                'run_id': run_id,
+                'batch_number': batch_number,
+                'batch_count': total_batches,
+                'attempt_number': attempt_number,
+                'expected_row_count': len(batch_rows),
+                'parsed_row_count': parsed_entry_count,
+                'response_char_count': len(raw_response_content),
+                'response_preview': _truncate_response_preview(raw_response_content),
+            },
+            debug_only=True,
+        )
+
+    raise ValueError(
+        f'Background structured export batch {batch_number}/{total_batches} returned '
+        f'{len(parsed_entries) if parsed_entries is not None else 0} object(s) for {len(batch_rows)} input row(s).'
+    )
+
+
+def should_queue_tabular_generated_output_background(row_count, batch_count, settings=None):
+    """Return True when a structured generated export should run durably in the background."""
+    settings = settings or {}
+    if not _settings_bool(settings, 'enable_tabular_generated_output_background_exports', True):
+        return False
+
+    inline_max_rows = _settings_int(
+        settings,
+        'tabular_generated_output_inline_max_rows',
+        TABULAR_EXPORT_DEFAULT_INLINE_MAX_ROWS,
+        minimum=1,
+    )
+    inline_max_batches = _settings_int(
+        settings,
+        'tabular_generated_output_inline_max_batches',
+        TABULAR_EXPORT_DEFAULT_INLINE_MAX_BATCHES,
+        minimum=1,
+    )
+    return _safe_int(row_count) > inline_max_rows or _safe_int(batch_count) > inline_max_batches
+
+
+def _build_run_public_status(run):
+    if not isinstance(run, dict):
+        return None
+
+    batch_count = _safe_int(run.get('batch_count'))
+    completed_batches = _safe_int(run.get('completed_batches'))
+    row_count = _safe_int(run.get('row_count'))
+    processed_rows = _safe_int(run.get('processed_rows'))
+    progress_percent = 0.0
+    if batch_count:
+        progress_percent = round((completed_batches / batch_count) * 100, 2)
+
+    final_artifact = run.get('final_artifact') or {}
+    generated_artifact = None
+    if final_artifact.get('artifact_message_id'):
+        generated_artifact = {
+            'capability': final_artifact.get('capability') or 'tabular',
+            'artifact_message_id': final_artifact.get('artifact_message_id'),
+            'conversation_id': run.get('conversation_id'),
+            'file_name': final_artifact.get('file_name') or run.get('generated_file_name'),
+            'output_format': final_artifact.get('output_format') or run.get('output_format'),
+            'row_count': processed_rows or row_count,
+            'storage_scope': 'chat',
+            'source_file_name': run.get('source_file_name'),
+            'selected_sheet': run.get('selected_sheet'),
+        }
+
+    return {
+        'run_id': run.get('id'),
+        'conversation_id': run.get('conversation_id'),
+        'status': run.get('status'),
+        'source_file_name': run.get('source_file_name'),
+        'selected_sheet': run.get('selected_sheet'),
+        'output_format': run.get('output_format'),
+        'row_count': row_count,
+        'processed_rows': processed_rows,
+        'batch_count': batch_count,
+        'completed_batches': completed_batches,
+        'progress_percent': progress_percent,
+        'created_at': run.get('created_at'),
+        'started_at': run.get('started_at'),
+        'updated_at': run.get('updated_at'),
+        'completed_at': run.get('completed_at'),
+        'last_heartbeat_at': run.get('last_heartbeat_at'),
+        'last_message': run.get('last_message'),
+        'last_error': run.get('last_error'),
+        'estimated_remaining_seconds': run.get('estimated_remaining_seconds'),
+        'estimated_total_seconds': run.get('estimated_total_seconds'),
+        'mismatch_count': _safe_int(run.get('mismatch_count')),
+        'retry_count': _safe_int(run.get('retry_count')),
+        'artifact_message_id': final_artifact.get('artifact_message_id'),
+        'file_name': final_artifact.get('file_name') or run.get('generated_file_name'),
+        'generated_artifact': generated_artifact,
+        'capability': 'tabular',
+        'background_export': not (
+            str(run.get('status') or '').strip().lower() == TABULAR_EXPORT_STATUS_COMPLETED
+            and generated_artifact
+        ),
+    }
+
+
+def build_background_tabular_generated_output_metadata(run):
+    """Build assistant metadata for a queued or running background export."""
+    public_status = _build_run_public_status(run) or {}
+    public_status.update({
+        'export_run_id': public_status.get('run_id'),
+        'background_export': True,
+        'capability': 'tabular',
+        'summary': (
+            f"Queued structured {str(public_status.get('output_format') or 'json').upper()} export "
+            f"for {public_status.get('row_count', 0)} row(s) across {public_status.get('batch_count', 0)} batch(es)."
+        ),
+    })
+    return public_status
+
+
+def get_tabular_generated_output_run_status(user_id, run_id):
+    normalized_user_id = str(user_id or '').strip()
+    normalized_run_id = str(run_id or '').strip()
+    if not normalized_user_id or not normalized_run_id:
+        return None
+
+    try:
+        run = cosmos_tabular_export_runs_container.read_item(
+            item=normalized_run_id,
+            partition_key=normalized_user_id,
+        )
+    except CosmosResourceNotFoundError:
+        return None
+    return _build_run_public_status(run)
+
+
+def _read_run(user_id, run_id):
+    return cosmos_tabular_export_runs_container.read_item(
+        item=run_id,
+        partition_key=user_id,
+    )
+
+
+def _replace_run(run):
+    return cosmos_tabular_export_runs_container.replace_item(
+        item=run.get('id'),
+        body=run,
+        etag=run.get('_etag'),
+        match_condition=MatchConditions.IfNotModified,
+    )
+
+
+def _upsert_run(run):
+    return cosmos_tabular_export_runs_container.upsert_item(run)
+
+
+def _lease_holder_id():
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+
+
+def _is_stale_running_run(run, settings):
+    stale_seconds = _settings_int(
+        settings,
+        'tabular_generated_output_stale_seconds',
+        TABULAR_EXPORT_DEFAULT_STALE_SECONDS,
+        minimum=60,
+    )
+    last_heartbeat = str(run.get('last_heartbeat_at') or run.get('updated_at') or '').strip()
+    if not last_heartbeat:
+        return True
+    try:
+        last_heartbeat_time = datetime.fromisoformat(last_heartbeat)
+    except ValueError:
+        return True
+    if last_heartbeat_time.tzinfo is None:
+        last_heartbeat_time = last_heartbeat_time.replace(tzinfo=timezone.utc)
+    return last_heartbeat_time <= _now_utc() - timedelta(seconds=stale_seconds)
+
+
+def _try_claim_run(user_id, run_id, settings):
+    try:
+        run = _read_run(user_id, run_id)
+    except CosmosResourceNotFoundError:
+        return None
+
+    status = str(run.get('status') or '').strip().lower()
+    if status in TABULAR_EXPORT_TERMINAL_STATUSES:
+        retryable_failed_run = (
+            status == TABULAR_EXPORT_STATUS_FAILED
+            and _is_retryable_export_error_message(run.get('last_error'))
+            and _safe_int(run.get('transient_failure_count')) < _settings_int(
+                settings,
+                'tabular_generated_output_max_transient_failures',
+                TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES,
+                minimum=1,
+                maximum=100,
+            )
+        )
+        if not retryable_failed_run:
+            return None
+    if status == TABULAR_EXPORT_STATUS_RUNNING and not _is_stale_running_run(run, settings):
+        return None
+
+    lease_seconds = _settings_int(
+        settings,
+        'tabular_generated_output_lease_seconds',
+        TABULAR_EXPORT_DEFAULT_LEASE_SECONDS,
+        minimum=60,
+    )
+    now = _now_utc()
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_RUNNING,
+        'started_at': run.get('started_at') or now.isoformat(),
+        'updated_at': now.isoformat(),
+        'completed_at': None,
+        'last_heartbeat_at': now.isoformat(),
+        'lease_holder_id': _lease_holder_id(),
+        'lease_expires_at': (now + timedelta(seconds=lease_seconds)).isoformat(),
+        'last_message': 'Background structured export is running',
+    })
+    try:
+        return _replace_run(run)
+    except Exception as exc:
+        status_code = getattr(exc, 'status_code', None)
+        if status_code not in (409, 412):
+            log_event(
+                '[Tabular Generated Output] Background export run claim failed',
+                {'run_id': run_id, 'user_id': user_id, 'status_code': status_code, 'error': str(exc)},
+                level=logging.WARNING,
+            )
+        return None
+
+
+def _mark_run_failed(run, error_message):
+    now = _now_iso()
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_FAILED,
+        'updated_at': now,
+        'completed_at': now,
+        'last_heartbeat_at': now,
+        'last_error': str(error_message or 'Unknown error')[:1000],
+        'last_message': 'Background structured export failed',
+    })
+    _upsert_run(run)
+    log_event(
+        '[Tabular Generated Output] Background export run failed',
+        {
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'user_id': run.get('user_id'),
+            'completed_batches': run.get('completed_batches'),
+            'batch_count': run.get('batch_count'),
+            'processed_rows': run.get('processed_rows'),
+            'row_count': run.get('row_count'),
+            'error': str(error_message or '')[:1000],
+        },
+        level=logging.ERROR,
+        exceptionTraceback=True,
+    )
+    return run
+
+
+def _mark_run_retryable(run, error_message, settings):
+    transient_failure_count = _safe_int(run.get('transient_failure_count')) + 1
+    max_transient_failures = _settings_int(
+        settings,
+        'tabular_generated_output_max_transient_failures',
+        TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES,
+        minimum=1,
+        maximum=100,
+    )
+    if transient_failure_count > max_transient_failures:
+        return _mark_run_failed(
+            run,
+            f'Max transient retry attempts exceeded; last error: {error_message}',
+        )
+
+    now = _now_utc()
+    retry_delay_seconds = min(300, 15 * transient_failure_count)
+    next_attempt_at = (now + timedelta(seconds=retry_delay_seconds)).isoformat()
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_QUEUED,
+        'updated_at': now.isoformat(),
+        'completed_at': None,
+        'last_heartbeat_at': now.isoformat(),
+        'lease_holder_id': None,
+        'lease_expires_at': None,
+        'last_error': str(error_message or 'Transient background export error')[:1000],
+        'last_message': 'Background structured export will resume after a transient connection error',
+        'transient_failure_count': transient_failure_count,
+        'next_attempt_at': next_attempt_at,
+    })
+    _upsert_run(run)
+    log_event(
+        '[Tabular Generated Output] Background export run requeued after transient failure',
+        {
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'user_id': run.get('user_id'),
+            'completed_batches': run.get('completed_batches'),
+            'batch_count': run.get('batch_count'),
+            'processed_rows': run.get('processed_rows'),
+            'row_count': run.get('row_count'),
+            'transient_failure_count': transient_failure_count,
+            'max_transient_failures': max_transient_failures,
+            'next_attempt_at': next_attempt_at,
+            'error': str(error_message or '')[:1000],
+        },
+        level=logging.WARNING,
+    )
+    return run
+
+
+def _update_run_progress(run, completed_batches, processed_rows, batch_rows, batch_elapsed_seconds, mismatch_count=0):
+    now = _now_utc()
+    started_at = str(run.get('started_at') or '').strip()
+    elapsed_seconds = 0.0
+    if started_at:
+        try:
+            started_time = datetime.fromisoformat(started_at)
+            if started_time.tzinfo is None:
+                started_time = started_time.replace(tzinfo=timezone.utc)
+            elapsed_seconds = max((now - started_time).total_seconds(), 0.0)
+        except ValueError:
+            elapsed_seconds = 0.0
+
+    batch_count = _safe_int(run.get('batch_count'))
+    estimated_total_seconds = None
+    estimated_remaining_seconds = None
+    if completed_batches > 0 and batch_count > 0:
+        seconds_per_batch = elapsed_seconds / completed_batches
+        estimated_total_seconds = round(seconds_per_batch * batch_count, 1)
+        estimated_remaining_seconds = round(seconds_per_batch * max(batch_count - completed_batches, 0), 1)
+
+    run.update({
+        'completed_batches': completed_batches,
+        'processed_rows': processed_rows,
+        'updated_at': now.isoformat(),
+        'last_heartbeat_at': now.isoformat(),
+        'estimated_total_seconds': estimated_total_seconds,
+        'estimated_remaining_seconds': estimated_remaining_seconds,
+        'mismatch_count': _safe_int(run.get('mismatch_count')) + _safe_int(mismatch_count),
+        'last_message': f"Processed structured export batch {completed_batches} of {batch_count}",
+    })
+    recent_batches = list(run.get('recent_batches') or [])[-9:]
+    recent_batches.append({
+        'batch_number': completed_batches,
+        'row_count': _safe_int(batch_rows),
+        'elapsed_seconds': round(_safe_float(batch_elapsed_seconds), 3),
+        'completed_at': now.isoformat(),
+    })
+    run['recent_batches'] = recent_batches
+
+    return _upsert_run(run)
+
+
+def _log_progress_if_due(run, last_logged_at):
+    now_monotonic = time.monotonic()
+    if last_logged_at and now_monotonic - last_logged_at < TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS:
+        return last_logged_at
+
+    batch_count = _safe_int(run.get('batch_count'))
+    completed_batches = _safe_int(run.get('completed_batches'))
+    progress_percent = round((completed_batches / batch_count) * 100, 2) if batch_count else 0.0
+    log_event(
+        '[Tabular Generated Output] Background export progress',
+        {
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'user_id': run.get('user_id'),
+            'source_file_name': run.get('source_file_name'),
+            'output_format': run.get('output_format'),
+            'completed_batches': completed_batches,
+            'batch_count': batch_count,
+            'processed_rows': run.get('processed_rows'),
+            'row_count': run.get('row_count'),
+            'progress_percent': progress_percent,
+            'estimated_remaining_seconds': run.get('estimated_remaining_seconds'),
+            'mismatch_count': run.get('mismatch_count'),
+        },
+        debug_only=True,
+    )
+    return now_monotonic
+
+
+def _assemble_output_entries(run):
+    output_entries = []
+    user_id = run.get('user_id')
+    conversation_id = run.get('conversation_id')
+    run_id = run.get('id')
+    batch_count = _safe_int(run.get('batch_count'))
+    for batch_number in range(1, batch_count + 1):
+        batch_blob_path = _output_blob_path(user_id, conversation_id, run_id, batch_number)
+        batch_entries = _download_json_blob(batch_blob_path)
+        if isinstance(batch_entries, list):
+            output_entries.extend(batch_entries)
+    return output_entries
+
+
+def _complete_run(run):
+    output_entries = _assemble_output_entries(run)
+    output_format = str(run.get('output_format') or 'json').strip().lower() or 'json'
+    if output_format == 'csv':
+        serialized_output = _build_generated_output_csv(output_entries)
+    else:
+        serialized_output = json.dumps(output_entries, indent=2, default=str, ensure_ascii=False)
+
+    generated_file_name = run.get('generated_file_name') or _build_generated_file_name(
+        run.get('source_file_name'),
+        output_format,
+    )
+    upload_result = upload_generated_analysis_artifact_for_user(
+        current_user_id=run.get('user_id'),
+        conversation_id=run.get('conversation_id'),
+        file_name=generated_file_name,
+        file_content=serialized_output,
+        capability='tabular',
+        output_format=output_format,
+        summary=(
+            f"Saved {len(output_entries)} row(s) to {generated_file_name} "
+            'from a durable background tabular export.'
+        ),
+    )
+    uploaded_message = upload_result.get('message') or {}
+    now = _now_iso()
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'updated_at': now,
+        'completed_at': now,
+        'last_heartbeat_at': now,
+        'processed_rows': len(output_entries),
+        'completed_batches': _safe_int(run.get('batch_count')),
+        'last_message': 'Background structured export completed',
+        'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+        'final_artifact': {
+            'artifact_message_id': uploaded_message.get('id'),
+            'file_name': uploaded_message.get('file_name') or generated_file_name,
+            'blob_container': uploaded_message.get('blob_container'),
+            'blob_path': uploaded_message.get('blob_path'),
+            'capability': uploaded_message.get('capability') or 'tabular',
+            'output_format': uploaded_message.get('output_format') or output_format,
+        },
+        'estimated_remaining_seconds': 0,
+    })
+    _upsert_run(run)
+    log_event(
+        '[Tabular Generated Output] Background export completed',
+        {
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'user_id': run.get('user_id'),
+            'source_file_name': run.get('source_file_name'),
+            'output_format': output_format,
+            'row_count': len(output_entries),
+            'batch_count': run.get('batch_count'),
+            'artifact_message_id': uploaded_message.get('id'),
+            'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+        },
+        level=logging.INFO,
+    )
+    return run
+
+
+def process_tabular_generated_output_run(run_id, user_id):
+    """Process or resume a checkpointed tabular generated-output run."""
+    normalized_run_id = str(run_id or '').strip()
+    normalized_user_id = str(user_id or '').strip()
+    if not normalized_run_id or not normalized_user_id:
+        return None
+
+    settings = get_settings()
+    run = _try_claim_run(normalized_user_id, normalized_run_id, settings)
+    if not run:
+        return None
+
+    try:
+        retry_attempts = _settings_int(
+            settings,
+            'tabular_generated_output_batch_retry_attempts',
+            TABULAR_EXPORT_DEFAULT_BATCH_RETRY_ATTEMPTS,
+            minimum=1,
+            maximum=5,
+        )
+        chat_service = _build_chat_service(run.get('gpt_model'), settings)
+        completed_batches = _safe_int(run.get('completed_batches'))
+        processed_rows = _safe_int(run.get('processed_rows'))
+        batch_count = _safe_int(run.get('batch_count'))
+        last_logged_at = 0.0
+        input_batches = None
+        input_batches_blob_path = str(run.get('input_blob_path') or '').strip()
+        if input_batches_blob_path:
+            input_batches = _download_json_blob(input_batches_blob_path)
+            if not isinstance(input_batches, list):
+                raise ValueError('Input batches blob was not a JSON array')
+
+        log_event(
+            '[Tabular Generated Output] Background export run started',
+            {
+                'run_id': normalized_run_id,
+                'conversation_id': run.get('conversation_id'),
+                'user_id': normalized_user_id,
+                'source_file_name': run.get('source_file_name'),
+                'output_format': run.get('output_format'),
+                'row_count': run.get('row_count'),
+                'batch_count': batch_count,
+                'resume_completed_batches': completed_batches,
+            },
+            level=logging.INFO,
+        )
+
+        for batch_number in range(completed_batches + 1, batch_count + 1):
+            mismatch_count = 0
+            batch_started_at = time.monotonic()
+            input_blob_path = _input_blob_path(
+                normalized_user_id,
+                run.get('conversation_id'),
+                normalized_run_id,
+                batch_number,
+            )
+            output_blob_path = _output_blob_path(
+                normalized_user_id,
+                run.get('conversation_id'),
+                normalized_run_id,
+                batch_number,
+            )
+
+            if _blob_exists(output_blob_path):
+                batch_entries = _download_json_blob(output_blob_path)
+                batch_row_count = len(batch_entries) if isinstance(batch_entries, list) else 0
+            else:
+                if isinstance(input_batches, list):
+                    try:
+                        batch_rows = input_batches[batch_number - 1]
+                    except IndexError as exc:
+                        raise ValueError(f'Input batch {batch_number}/{batch_count} is missing') from exc
+                else:
+                    batch_rows = _download_json_blob(input_blob_path)
+                if not isinstance(batch_rows, list):
+                    raise ValueError(f'Input batch {batch_number}/{batch_count} was not a JSON array')
+                log_event(
+                    '[Tabular Generated Output] Building background structured export batch',
+                    {
+                        'run_id': normalized_run_id,
+                        'source_file_name': run.get('source_file_name'),
+                        'output_format': run.get('output_format'),
+                        'batch_number': batch_number,
+                        'batch_count': batch_count,
+                        'row_count': len(batch_rows),
+                    },
+                    debug_only=True,
+                )
+                batch_entries, mismatch_count = asyncio.run(
+                    _generate_batch_entries(
+                        chat_service,
+                        run.get('user_question'),
+                        batch_rows,
+                        batch_number - 1,
+                        batch_count,
+                        run.get('source_file_name'),
+                        run.get('selected_sheet'),
+                        retry_attempts,
+                        normalized_run_id,
+                    )
+                )
+                _upload_json_blob(
+                    output_blob_path,
+                    batch_entries,
+                    metadata={
+                        'run_id': normalized_run_id,
+                        'conversation_id': run.get('conversation_id'),
+                        'batch_number': batch_number,
+                        'generated_output': 'true',
+                    },
+                )
+                batch_row_count = len(batch_entries)
+                if mismatch_count:
+                    run['retry_count'] = _safe_int(run.get('retry_count')) + max(mismatch_count - 1, 0)
+
+            completed_batches = batch_number
+            processed_rows += batch_row_count
+            run = _update_run_progress(
+                run,
+                completed_batches,
+                processed_rows,
+                batch_row_count,
+                time.monotonic() - batch_started_at,
+                mismatch_count=mismatch_count,
+            )
+            last_logged_at = _log_progress_if_due(run, last_logged_at)
+
+        return _complete_run(run)
+    except Exception as exc:
+        if _is_retryable_export_error(exc):
+            return _mark_run_retryable(run, exc, settings)
+        return _mark_run_failed(run, exc)
+
+
+def submit_tabular_generated_output_run(run_id, user_id):
+    """Submit a queued export run to the app executor when one is available."""
+    if not has_app_context():
+        return False
+
+    executor = current_app.extensions.get('executor')
+    if executor and hasattr(executor, 'submit_stored'):
+        executor.submit_stored(
+            f'tabular_generated_output_{run_id}',
+            process_tabular_generated_output_run,
+            run_id=run_id,
+            user_id=user_id,
+        )
+        return True
+    if executor and hasattr(executor, 'submit'):
+        executor.submit(process_tabular_generated_output_run, run_id, user_id)
+        return True
+    return False
+
+
+def queue_tabular_generated_output_run(
+    user_id,
+    conversation_id,
+    user_question,
+    source_candidate,
+    output_format,
+    row_batches,
+    gpt_model,
+    settings=None,
+):
+    """Stage batch input blobs, create a run record, and submit background processing."""
+    normalized_user_id = str(user_id or '').strip()
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_user_id or not normalized_conversation_id:
+        raise ValueError('user_id and conversation_id are required for background tabular export')
+
+    run_id = str(uuid.uuid4())
+    source_candidate = source_candidate if isinstance(source_candidate, dict) else {}
+    source_file_name = str(source_candidate.get('filename') or 'tabular_output').strip() or 'tabular_output'
+    selected_sheet = str(source_candidate.get('selected_sheet') or '').strip()
+    normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
+    generated_file_name = _build_generated_file_name(source_file_name, normalized_output_format)
+    row_batches = list(row_batches or [])
+    staged_row_count = 0
+    staged_char_count = 0
+    normalized_row_batches = []
+
+    for index, batch_rows in enumerate(row_batches, start=1):
+        if not isinstance(batch_rows, list):
+            batch_rows = list(batch_rows or [])
+        normalized_row_batches.append(batch_rows)
+        staged_row_count += len(batch_rows)
+        staged_char_count += len(json.dumps(batch_rows, default=str, ensure_ascii=False))
+
+    input_blob_path = _input_batches_blob_path(normalized_user_id, normalized_conversation_id, run_id)
+    _upload_json_blob(
+        input_blob_path,
+        normalized_row_batches,
+        metadata={
+            'run_id': run_id,
+            'conversation_id': normalized_conversation_id,
+            'generated_output_input': 'true',
+            'batch_count': len(normalized_row_batches),
+        },
+    )
+
+    now = _now_iso()
+    run = {
+        'id': run_id,
+        'type': TABULAR_EXPORT_RUN_TYPE,
+        'user_id': normalized_user_id,
+        'conversation_id': normalized_conversation_id,
+        'status': TABULAR_EXPORT_STATUS_QUEUED,
+        'created_at': now,
+        'updated_at': now,
+        'started_at': None,
+        'completed_at': None,
+        'last_heartbeat_at': None,
+        'user_question': str(user_question or ''),
+        'source_file_name': source_file_name,
+        'selected_sheet': selected_sheet,
+        'output_format': normalized_output_format,
+        'gpt_model': str(gpt_model or '').strip(),
+        'generated_file_name': generated_file_name,
+        'row_count': staged_row_count,
+        'batch_count': len(row_batches),
+        'completed_batches': 0,
+        'processed_rows': 0,
+        'input_blob_container': storage_account_personal_chat_container_name,
+        'input_blob_path': input_blob_path,
+        'input_blob_prefix': f'{normalized_user_id}/{normalized_conversation_id}/generated/tabular_runs/{run_id}/input/',
+        'output_blob_container': storage_account_personal_chat_container_name,
+        'output_blob_prefix': f'{normalized_user_id}/{normalized_conversation_id}/generated/tabular_runs/{run_id}/output/',
+        'staged_input_char_count': staged_char_count,
+        'mismatch_count': 0,
+        'retry_count': 0,
+        'recent_batches': [],
+        'last_message': 'Queued background structured export',
+        'last_error': None,
+        'final_artifact': None,
+    }
+    cosmos_tabular_export_runs_container.create_item(body=run)
+    submitted = submit_tabular_generated_output_run(run_id, normalized_user_id)
+    run['submitted_to_executor'] = submitted
+
+    log_event(
+        '[Tabular Generated Output] Queued background export run',
+        {
+            'run_id': run_id,
+            'conversation_id': normalized_conversation_id,
+            'user_id': normalized_user_id,
+            'source_file_name': source_file_name,
+            'selected_sheet': selected_sheet,
+            'output_format': normalized_output_format,
+            'row_count': staged_row_count,
+            'batch_count': len(row_batches),
+            'staged_input_char_count': staged_char_count,
+            'submitted_to_executor': submitted,
+        },
+        level=logging.INFO,
+    )
+    return run
+
+
+def check_due_tabular_generated_output_runs_once(limit=None):
+    """Resume queued or stale tabular generated-output runs."""
+    settings = get_settings()
+    scan_limit = _safe_int(
+        limit,
+        default=_settings_int(
+            settings,
+            'tabular_generated_output_scheduler_scan_limit',
+            TABULAR_EXPORT_DEFAULT_SCAN_LIMIT,
+            minimum=1,
+            maximum=10,
+        ),
+        minimum=1,
+        maximum=10,
+    )
+    query = (
+        f"SELECT TOP {scan_limit} * FROM c "
+        "WHERE c.type = @type AND ("
+        "c.status = @queued OR c.status = @running OR "
+        "(c.status = @failed AND IS_DEFINED(c.last_error) AND ("
+        "CONTAINS(c.last_error, @api_connection_error) OR "
+        "CONTAINS(c.last_error, @connection_error) OR "
+        "CONTAINS(c.last_error, @timeout_error) OR "
+        "CONTAINS(c.last_error, @rate_limit_error))) "
+        "AND (NOT IS_DEFINED(c.next_attempt_at) OR IS_NULL(c.next_attempt_at) OR c.next_attempt_at <= @now) "
+        "ORDER BY c.updated_at ASC"
+    )
+    candidates = list(cosmos_tabular_export_runs_container.query_items(
+        query=query,
+        parameters=[
+            {'name': '@type', 'value': TABULAR_EXPORT_RUN_TYPE},
+            {'name': '@queued', 'value': TABULAR_EXPORT_STATUS_QUEUED},
+            {'name': '@running', 'value': TABULAR_EXPORT_STATUS_RUNNING},
+            {'name': '@failed', 'value': TABULAR_EXPORT_STATUS_FAILED},
+            {'name': '@api_connection_error', 'value': 'APIConnectionError'},
+            {'name': '@connection_error', 'value': 'Connection error'},
+            {'name': '@timeout_error', 'value': 'timeout'},
+            {'name': '@rate_limit_error', 'value': 'RateLimit'},
+            {'name': '@now', 'value': _now_iso()},
+        ],
+        enable_cross_partition_query=True,
+    ))
+
+    processed = []
+    for run in candidates:
+        status = str(run.get('status') or '').strip().lower()
+        if status == TABULAR_EXPORT_STATUS_RUNNING and not _is_stale_running_run(run, settings):
+            continue
+        processed_run = process_tabular_generated_output_run(run.get('id'), run.get('user_id'))
+        if processed_run:
+            processed.append(processed_run.get('id'))
+
+    if processed:
+        log_event(
+            '[Tabular Generated Output] Background scheduler processed export runs',
+            {'run_ids': processed, 'processed_count': len(processed)},
+            debug_only=True,
+        )
+    return processed

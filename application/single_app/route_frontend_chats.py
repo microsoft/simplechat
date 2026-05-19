@@ -5,6 +5,7 @@ from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
+from functions_source_review import is_source_review_enabled_for_user
 from functions_documents import *
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
 from functions_group_agents import get_group_agents
@@ -263,6 +264,19 @@ def register_route_frontend_chats(app):
         user_settings = get_user_settings(user_id)
         user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         public_settings = sanitize_settings_for_user(settings)
+        current_user_info = get_current_user_info() or {}
+        source_review_enabled_for_user = is_source_review_enabled_for_user(
+            settings,
+            user_id,
+            user_email=current_user_info.get('email')
+        )
+        for source_review_key in list(public_settings.keys()):
+            if source_review_key.startswith('source_review_') or source_review_key == 'enable_deep_source_review':
+                public_settings.pop(source_review_key, None)
+        public_settings['enable_source_review'] = source_review_enabled_for_user
+        public_settings['enable_deep_source_review'] = bool(
+            source_review_enabled_for_user and settings.get('enable_deep_source_review', False)
+        )
         enable_user_feedback = public_settings.get("enable_user_feedback", False)
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
         enable_document_classification = public_settings.get("enable_document_classification", False)

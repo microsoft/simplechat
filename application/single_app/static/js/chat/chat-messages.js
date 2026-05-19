@@ -1334,6 +1334,8 @@ const promptSelectionContainer = document.getElementById(
 );
 const chatbox = document.getElementById("chatbox");
 const modelSelect = document.getElementById("model-select");
+let followUpAutoSendFrame = null;
+let followUpAutoSendCancel = null;
 
 // Function to show/hide send button based on content
 export function updateSendButtonVisibility() {
@@ -2102,6 +2104,284 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     };
   }
 
+  export function extractSuggestedFollowUpPrompts(markdownText) {
+    const rawText = String(markdownText || '').trim();
+    if (!rawText) {
+      return [];
+    }
+
+    const withoutCodeBlocks = rawText.replace(/```[\s\S]*?```/g, '');
+    const triggerIndex = findFollowUpTriggerIndex(withoutCodeBlocks);
+    if (triggerIndex < 0) {
+      return [];
+    }
+
+    const suggestionText = withoutCodeBlocks.slice(triggerIndex).split('\n').slice(0, 16).join('\n');
+    const suggestions = [];
+    const seenSuggestions = new Set();
+    const suggestionCandidates = extractFollowUpSuggestionCandidates(suggestionText);
+
+    suggestionCandidates.forEach(candidateText => {
+      const cleanedCandidate = normalizeSuggestedPromptText(candidateText);
+      if (!isUsefulFollowUpSuggestion(cleanedCandidate)) {
+        return;
+      }
+
+      const promptText = buildFollowUpPrompt(cleanedCandidate);
+      const dedupeKey = promptText.toLowerCase();
+      if (seenSuggestions.has(dedupeKey)) {
+        return;
+      }
+
+      seenSuggestions.add(dedupeKey);
+      suggestions.push({
+        label: formatSuggestedPromptLabel(cleanedCandidate),
+        prompt: promptText,
+      });
+    });
+
+    return suggestions.slice(0, 3);
+  }
+
+  function findFollowUpTriggerIndex(text) {
+    const triggers = [
+      /if\s+you\s+want[,\s]/i,
+      /do\s+you\s+want\s+me\s+to/i,
+      /i\s+can\s+(?:also\s+)?(?:do|create|give|build|prepare|provide)/i,
+      /next\s+step/i,
+      /would\s+you\s+like\b/i,
+      /which\s+format\s+do\s+you\s+want/i,
+      /suggested\s+(?:follow[-\s]?ups|prompts|next\s+steps|actions)/i,
+      /follow[-\s]?up\s+(?:options|questions|prompts)/i,
+    ];
+    const indexes = triggers
+      .map(pattern => {
+        const match = pattern.exec(text);
+        return match ? match.index : -1;
+      })
+      .filter(index => index >= 0);
+    return indexes.length ? Math.min(...indexes) : -1;
+  }
+
+  function extractFollowUpSuggestionCandidates(text) {
+    const candidates = [];
+    const lines = String(text || '').split('\n');
+
+    lines.forEach(line => {
+      const normalizedLine = String(line || '').trim();
+      if (!normalizedLine) {
+        return;
+      }
+
+      const candidateMatch = normalizedLine.match(/^\s*(?:[-*]\s+|\d+[.)]\s+)(.+)$/);
+      if (candidateMatch) {
+        candidates.push(candidateMatch[1]);
+        return;
+      }
+
+      extractQuestionFollowUpCandidates(normalizedLine).forEach(candidate => {
+        candidates.push(candidate);
+      });
+    });
+
+    return candidates;
+  }
+
+  function extractQuestionFollowUpCandidates(line) {
+    const questionPattern = /(?:^|\s)(?:or\s+)?(?:do\s+you\s+want\s+me\s+to|do\s+you\s+want\s+(?:a|an|the)|would\s+you\s+like\s+me\s+to|would\s+you\s+like|would\s+you\s+prefer|should\s+i|want\s+me\s+to)\b[^?]*\?/gi;
+    const matches = String(line || '').match(questionPattern) || [];
+
+    return matches
+      .map(match => normalizeFollowUpQuestionCandidate(match))
+      .filter(Boolean);
+  }
+
+  function normalizeFollowUpQuestionCandidate(text) {
+    let candidate = String(text || '')
+      .replace(/^\s*or\s+/i, '')
+      .replace(/\?+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const questionScaffolds = [
+      /^do\s+you\s+want\s+me\s+to\s+(.+)$/i,
+      /^do\s+you\s+want\s+(.+)$/i,
+      /^would\s+you\s+like\s+me\s+to\s+(.+)$/i,
+      /^would\s+you\s+like\s+(.+)$/i,
+      /^would\s+you\s+prefer\s+(?:that\s+i\s+)?(.+)$/i,
+      /^should\s+i\s+(.+)$/i,
+      /^want\s+me\s+to\s+(.+)$/i,
+    ];
+
+    for (const scaffoldPattern of questionScaffolds) {
+      const scaffoldMatch = candidate.match(scaffoldPattern);
+      if (scaffoldMatch) {
+        candidate = scaffoldMatch[1];
+        break;
+      }
+    }
+
+    return normalizeFollowUpPromptPerspective(candidate);
+  }
+
+  function normalizeFollowUpPromptPerspective(text) {
+    return String(text || '')
+      .replace(/\bwalk\s+you\s+through\b/gi, 'walk me through')
+      .replace(/\bgive\s+you\b/gi, 'give me')
+      .replace(/\bshow\s+you\b/gi, 'show me')
+      .replace(/\bsend\s+you\b/gi, 'send me')
+      .replace(/\btell\s+you\b/gi, 'tell me')
+      .replace(/\bfor\s+you\b/gi, 'for me')
+      .trim();
+  }
+
+  function normalizeSuggestedPromptText(text) {
+    return String(text || '')
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+      .replace(/[*_`#>]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/[.?!:;]+$/, '')
+      .slice(0, 180);
+  }
+
+  function formatSuggestedPromptLabel(text) {
+    const normalizedText = String(text || '').trim();
+    if (!normalizedText) {
+      return normalizedText;
+    }
+    return `${normalizedText.charAt(0).toUpperCase()}${normalizedText.slice(1)}`;
+  }
+
+  function isUsefulFollowUpSuggestion(text) {
+    if (!text || text.length < 8 || text.length > 180) {
+      return false;
+    }
+    if (/^https?:\/\//i.test(text)) {
+      return false;
+    }
+    return /\b(create|build|make|draft|prepare|provide|give|show|list|summarize|compare|export|format|table|csv|markdown|analyze|review|search|find|explain|clarify|expand|rank|filter)\b/i.test(text)
+      || /^(a|an)\s+/i.test(text);
+  }
+
+  function buildFollowUpPrompt(suggestionText) {
+    const trimmedSuggestion = String(suggestionText || '').trim();
+    if (/^(please|create|build|make|draft|prepare|provide|give|show|list|summarize|compare|export|analyze|review|search|find|explain|clarify|expand|rank|filter)\b/i.test(trimmedSuggestion)) {
+      return trimmedSuggestion;
+    }
+    if (/^(a|an)\s+/i.test(trimmedSuggestion)) {
+      return `Please provide ${trimmedSuggestion.charAt(0).toLowerCase()}${trimmedSuggestion.slice(1)}.`;
+    }
+    return `Please ${trimmedSuggestion.charAt(0).toLowerCase()}${trimmedSuggestion.slice(1)}.`;
+  }
+
+  function renderSuggestedFollowUpButtons(messageDiv, markdownText) {
+    const suggestions = extractSuggestedFollowUpPrompts(markdownText);
+    if (!suggestions.length) {
+      return;
+    }
+
+    const messageText = messageDiv.querySelector('.message-text');
+    if (!messageText) {
+      return;
+    }
+
+    const container = document.createElement('div');
+    container.className = 'assistant-follow-up-actions';
+
+    suggestions.forEach(suggestion => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-sm btn-outline-primary assistant-follow-up-action';
+      button.textContent = suggestion.label;
+      button.title = 'Use this as the next prompt';
+      button.addEventListener('click', () => {
+        stageFollowUpPrompt(suggestion.prompt);
+      });
+      container.appendChild(button);
+    });
+
+    messageText.insertAdjacentElement('afterend', container);
+  }
+
+  function stageFollowUpPrompt(promptText) {
+    if (!userInput) {
+      return;
+    }
+    clearFollowUpAutoSendCountdown();
+    userInput.value = String(promptText || '').trim();
+    userInput.style.height = '';
+    userInput.style.height = `${Math.min(userInput.scrollHeight, 200)}px`;
+    userInput.dispatchEvent(new Event('input', { bubbles: true }));
+    updateSendButtonVisibility();
+    userInput.focus();
+    startFollowUpAutoSendCountdown();
+  }
+
+  function startFollowUpAutoSendCountdown() {
+    if (!sendBtn) {
+      return;
+    }
+
+    const totalCountdownMs = 5000;
+    const originalHtml = sendBtn.innerHTML;
+    const originalDisabled = sendBtn.disabled;
+    const progressElement = document.createElement('span');
+    progressElement.className = 'follow-up-send-progress';
+    progressElement.setAttribute('aria-hidden', 'true');
+    sendBtn.classList.add('follow-up-auto-send-active');
+    sendBtn.appendChild(progressElement);
+
+    followUpAutoSendCancel = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      clearFollowUpAutoSendCountdown(originalHtml, originalDisabled);
+      showToast('Follow-up prompt staged. Click Send when ready.', 'info');
+    };
+    sendBtn.addEventListener('click', followUpAutoSendCancel, true);
+
+    const startTime = Date.now();
+    const updateProgress = () => {
+      const progress = Math.min((Date.now() - startTime) / totalCountdownMs, 1);
+      progressElement.style.setProperty('--follow-up-send-progress', `${progress * 100}%`);
+
+      if (progress < 1) {
+        followUpAutoSendFrame = requestAnimationFrame(updateProgress);
+        return;
+      }
+
+      clearFollowUpAutoSendCountdown(originalHtml, originalDisabled);
+      sendMessage();
+    };
+
+    followUpAutoSendFrame = requestAnimationFrame(updateProgress);
+  }
+
+  function clearFollowUpAutoSendCountdown(originalHtml = null, originalDisabled = null) {
+    if (followUpAutoSendFrame) {
+      cancelAnimationFrame(followUpAutoSendFrame);
+      followUpAutoSendFrame = null;
+    }
+    if (sendBtn && followUpAutoSendCancel) {
+      sendBtn.removeEventListener('click', followUpAutoSendCancel, true);
+    }
+    followUpAutoSendCancel = null;
+    if (sendBtn) {
+      const progressElement = sendBtn.querySelector('.follow-up-send-progress');
+      if (progressElement) {
+        progressElement.remove();
+      }
+      sendBtn.classList.remove('follow-up-auto-send-active');
+      if (originalHtml !== null) {
+        sendBtn.innerHTML = originalHtml;
+      }
+      if (originalDisabled !== null) {
+        sendBtn.disabled = originalDisabled;
+      }
+    }
+  }
+
   function getLatestUserPromptText() {
     if (!chatbox) {
       return '';
@@ -2237,7 +2517,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const normalizedArtifactMessageId = String(output.artifact_message_id || '').trim();
     const normalizedDocumentId = String(output.document_id || '').trim();
-    if (!normalizedArtifactMessageId && !normalizedDocumentId) {
+    const normalizedExportRunId = String(output.export_run_id || output.run_id || '').trim();
+    const isBackgroundExport = Boolean(output.background_export) && Boolean(normalizedExportRunId);
+    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport) {
       return null;
     }
 
@@ -2246,6 +2528,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       capability: String(output.capability || defaultCapability || 'analysis').trim().toLowerCase() || 'analysis',
       artifact_message_id: normalizedArtifactMessageId,
       document_id: normalizedDocumentId,
+      export_run_id: normalizedExportRunId,
+      run_id: normalizedExportRunId,
+      background_export: isBackgroundExport,
     };
   }
 
@@ -2267,6 +2552,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
       const dedupeKey = normalizedArtifact.artifact_message_id
         || normalizedArtifact.document_id
+        || normalizedArtifact.export_run_id
         || `${String(normalizedArtifact.file_name || '').trim()}:${String(normalizedArtifact.output_format || '').trim()}`;
 
       if (seenArtifacts.has(dedupeKey)) {
@@ -2288,6 +2574,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   }
 
   function getGeneratedTabularStorageNote(outputMetadata) {
+    if (outputMetadata?.background_export) {
+      return 'Continuing in the background. Progress is checkpointed and the download will appear here when complete.';
+    }
+
     const storageScope = String(outputMetadata?.storage_scope || '').trim().toLowerCase();
     if (storageScope === 'chat') {
       return 'Saved to this chat for download in this conversation.';
@@ -2303,6 +2593,48 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     return normalizedRowCount.toLocaleString();
+  }
+
+  function clampGeneratedOutputProgress(value) {
+    const numericValue = Number.parseFloat(value);
+    if (!Number.isFinite(numericValue)) {
+      return 0;
+    }
+
+    return Math.max(0, Math.min(100, numericValue));
+  }
+
+  function calculateGeneratedOutputProgress(outputMetadata) {
+    const explicitPercent = Number.parseFloat(outputMetadata?.progress_percent);
+    if (Number.isFinite(explicitPercent)) {
+      return clampGeneratedOutputProgress(explicitPercent);
+    }
+
+    const completedBatches = Number.parseInt(outputMetadata?.completed_batches, 10);
+    const batchCount = Number.parseInt(outputMetadata?.batch_count, 10);
+    if (Number.isFinite(completedBatches) && Number.isFinite(batchCount) && batchCount > 0) {
+      return clampGeneratedOutputProgress((completedBatches / batchCount) * 100);
+    }
+
+    return 0;
+  }
+
+  function formatGeneratedOutputStatusLabel(status) {
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    if (normalizedStatus === 'completed') {
+      return 'Complete';
+    }
+    if (normalizedStatus === 'failed') {
+      return 'Failed';
+    }
+    if (normalizedStatus === 'canceled') {
+      return 'Canceled';
+    }
+    if (normalizedStatus === 'running') {
+      return 'Running';
+    }
+
+    return 'Queued';
   }
 
   function formatGeneratedTabularPreviewValue(value, maxLength = 120) {
@@ -2697,6 +3029,175 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
+  function updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata) {
+    const statusLabel = formatGeneratedOutputStatusLabel(outputMetadata?.status);
+    const completedBatches = Number.parseInt(outputMetadata?.completed_batches, 10);
+    const batchCount = Number.parseInt(outputMetadata?.batch_count, 10);
+    const processedRows = Number.parseInt(outputMetadata?.processed_rows, 10);
+    const rowCount = Number.parseInt(outputMetadata?.row_count, 10);
+    const progressPercent = calculateGeneratedOutputProgress(outputMetadata);
+    const progressPercentLabel = `${Math.round(progressPercent)}%`;
+
+    if (statusElements.statusBadge) {
+      statusElements.statusBadge.textContent = statusLabel;
+      statusElements.statusBadge.className = 'badge text-bg-info';
+      if (String(outputMetadata?.status || '').toLowerCase() === 'completed') {
+        statusElements.statusBadge.className = 'badge text-bg-success';
+      } else if (String(outputMetadata?.status || '').toLowerCase() === 'failed') {
+        statusElements.statusBadge.className = 'badge text-bg-danger';
+      }
+    }
+
+    if (statusElements.progressBar) {
+      statusElements.progressBar.style.width = progressPercentLabel;
+      statusElements.progressBar.setAttribute('aria-valuenow', String(Math.round(progressPercent)));
+      statusElements.progressBar.textContent = progressPercentLabel;
+    }
+
+    const detailParts = [];
+    if (Number.isFinite(completedBatches) && Number.isFinite(batchCount) && batchCount > 0) {
+      detailParts.push(`${completedBatches.toLocaleString()} of ${batchCount.toLocaleString()} batches`);
+    }
+    if (Number.isFinite(processedRows) && Number.isFinite(rowCount) && rowCount > 0) {
+      detailParts.push(`${processedRows.toLocaleString()} of ${rowCount.toLocaleString()} rows`);
+    }
+
+    if (statusElements.detailText) {
+      statusElements.detailText.textContent = detailParts.length
+        ? detailParts.join(' | ')
+        : 'Waiting for the background worker to start.';
+    }
+
+    if (statusElements.updatedText) {
+      const updatedAt = String(outputMetadata?.updated_at || outputMetadata?.created_at || '').trim();
+      statusElements.updatedText.textContent = updatedAt ? `Last update: ${updatedAt}` : '';
+    }
+  }
+
+  function createBackgroundGeneratedOutputStatusBlock(outputMetadata) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'generated-tabular-background-status mt-3';
+
+    const statusRow = document.createElement('div');
+    statusRow.className = 'd-flex flex-wrap align-items-center gap-2 mb-2 small';
+
+    const statusLabel = document.createElement('span');
+    statusLabel.className = 'fw-semibold';
+    statusLabel.textContent = 'Background export';
+    statusRow.appendChild(statusLabel);
+
+    const statusBadge = document.createElement('span');
+    statusBadge.className = 'badge text-bg-info';
+    statusRow.appendChild(statusBadge);
+    wrapper.appendChild(statusRow);
+
+    const progress = document.createElement('div');
+    progress.className = 'progress';
+    progress.setAttribute('role', 'progressbar');
+    progress.setAttribute('aria-valuemin', '0');
+    progress.setAttribute('aria-valuemax', '100');
+
+    const progressBar = document.createElement('div');
+    progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+    progress.appendChild(progressBar);
+    wrapper.appendChild(progress);
+
+    const detailText = document.createElement('div');
+    detailText.className = 'small text-muted mt-2';
+    wrapper.appendChild(detailText);
+
+    const updatedText = document.createElement('div');
+    updatedText.className = 'small text-muted';
+    wrapper.appendChild(updatedText);
+
+    const statusElements = {
+      statusBadge,
+      progressBar,
+      detailText,
+      updatedText,
+    };
+    updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
+
+    return {
+      wrapper,
+      statusElements,
+    };
+  }
+
+  async function refreshBackgroundGeneratedOutputStatus(outputMetadata, card, statusElements = {}) {
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+    if (!runId || !(card instanceof HTMLElement) || !document.body.contains(card)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/tabular/generated-output/runs/${encodeURIComponent(runId)}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responseData?.error || `Server responded with status ${response.status}`);
+      }
+
+      const runStatus = responseData?.run || {};
+      const generatedArtifact = runStatus?.generated_artifact || null;
+      Object.assign(outputMetadata, runStatus, {
+        export_run_id: runStatus.run_id || runId,
+        run_id: runStatus.run_id || runId,
+        background_export: String(runStatus.status || '').toLowerCase() !== 'completed' || !generatedArtifact,
+      });
+
+      if (String(runStatus.status || '').toLowerCase() === 'completed' && generatedArtifact) {
+        Object.assign(outputMetadata, generatedArtifact, {
+          background_export: false,
+          status: 'completed',
+          export_run_id: runStatus.run_id || runId,
+          run_id: runStatus.run_id || runId,
+        });
+        const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+        card.replaceWith(refreshedCard);
+        return;
+      }
+
+      updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
+    } catch (error) {
+      if (statusElements.detailText) {
+        statusElements.detailText.textContent = error.message || 'Could not refresh export progress.';
+      }
+    }
+  }
+
+  function scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, statusElements = {}) {
+    if (!(card instanceof HTMLElement) || card.dataset.backgroundExportPolling === 'true') {
+      return;
+    }
+
+    const status = String(outputMetadata?.status || '').trim().toLowerCase();
+    if (!outputMetadata?.background_export || status === 'completed' || status === 'failed' || status === 'canceled') {
+      return;
+    }
+
+    card.dataset.backgroundExportPolling = 'true';
+    const pollOnce = async () => {
+      card.dataset.backgroundExportPolling = 'false';
+      await refreshBackgroundGeneratedOutputStatus(outputMetadata, card, statusElements);
+      const currentStatus = String(outputMetadata?.status || '').trim().toLowerCase();
+      if (
+        document.body.contains(card)
+        && outputMetadata?.background_export
+        && currentStatus !== 'completed'
+        && currentStatus !== 'failed'
+        && currentStatus !== 'canceled'
+      ) {
+        setTimeout(() => scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, statusElements), 10000);
+      }
+    };
+    setTimeout(pollOnce, 2000);
+  }
+
   function createGeneratedAnalysisArtifactCard(outputMetadata) {
     const card = document.createElement('section');
     card.className = 'generated-tabular-output-card border rounded p-3 mt-3';
@@ -2764,6 +3265,13 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       card.appendChild(summaryText);
     }
 
+    let backgroundStatusElements = null;
+    if (outputMetadata?.background_export) {
+      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(outputMetadata);
+      backgroundStatusElements = backgroundStatusBlock.statusElements;
+      card.appendChild(backgroundStatusBlock.wrapper);
+    }
+
     if (previewRows.length || previewItems.length || previewLines.length || previewText) {
       const previewLabel = document.createElement('div');
       previewLabel.className = 'small fw-semibold mt-3 mb-2';
@@ -2786,6 +3294,24 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const actions = document.createElement('div');
     actions.className = 'd-flex flex-wrap gap-2 mt-3';
+
+    if (outputMetadata?.background_export) {
+      const refreshStatusButton = document.createElement('button');
+      refreshStatusButton.type = 'button';
+      refreshStatusButton.className = 'btn btn-sm btn-outline-secondary generated-tabular-refresh-status-btn';
+      refreshStatusButton.textContent = 'Refresh Status';
+      refreshStatusButton.addEventListener('click', async () => {
+        refreshStatusButton.disabled = true;
+        refreshStatusButton.textContent = 'Refreshing...';
+        await refreshBackgroundGeneratedOutputStatus(outputMetadata, card, backgroundStatusElements || {});
+        refreshStatusButton.disabled = false;
+        refreshStatusButton.textContent = 'Refresh Status';
+      });
+      actions.appendChild(refreshStatusButton);
+      card.appendChild(actions);
+      scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, backgroundStatusElements || {});
+      return card;
+    }
 
     const downloadButton = document.createElement('button');
     downloadButton.type = 'button';
@@ -3224,6 +3750,7 @@ export function appendMessage(
       messageDiv.dataset.messageComplete = 'false';
     }
     chatbox.appendChild(messageDiv); // Append AI message
+    renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.previewMarkdown);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     
     // Auto-play TTS if enabled (only for new messages, not when loading history)
@@ -4278,6 +4805,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const finalGroupId = finalGroupIds[0] || group_id || null;
   const webSearchToggle = document.getElementById('search-web-btn');
   const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains('active') : false;
+  const sourceReviewToggle = document.getElementById('source-review-btn');
+  const sourceReviewEnabled = sourceReviewToggle ? sourceReviewToggle.classList.contains('active') : false;
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
   const selectedTags = getSelectedTags();
   const documentActionType = hybridSearchEnabled ? getDocumentActionType() : DOCUMENT_ACTION_NONE;
@@ -4309,6 +4838,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
     web_search_enabled: webSearchEnabled,
+    source_review_enabled: sourceReviewEnabled,
     selected_document_id: selectedDocumentId,
     selected_document_ids: selectedDocumentIds,
     classifications: null,
@@ -4367,6 +4897,8 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'image_generation'
     : hasAgentTarget
     ? 'agent'
+    : messageData.source_review_enabled
+    ? 'source_review'
     : messageData.web_search_enabled
     ? 'web_search'
     : messageData.hybrid_search
@@ -6424,6 +6956,7 @@ function executeMessageDeletion(deleteThread = false) {
 window.chatMessages = {
   applySearchHighlight,
   clearSearchHighlight,
+  extractSuggestedFollowUpPrompts,
   scrollToMessageSmooth
 };
 

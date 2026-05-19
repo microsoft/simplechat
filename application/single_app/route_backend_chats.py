@@ -36,6 +36,7 @@ from flask import Response, copy_current_request_context, g, has_request_context
 from functions_authentication import *
 from functions_search import *
 from functions_settings import *
+from functions_source_review import compact_source_review_result_for_metadata, normalize_review_url, perform_source_review, should_auto_enable_source_review
 from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
@@ -80,6 +81,12 @@ from functions_simplechat_operations import (
     derive_conversation_title_from_message,
     upload_chat_image_bytes_for_user,
     upload_generated_analysis_artifact_for_current_user,
+)
+from functions_tabular_generated_exports import (
+    build_background_tabular_generated_output_metadata,
+    get_tabular_generated_output_run_status,
+    queue_tabular_generated_output_run,
+    should_queue_tabular_generated_output_background,
 )
 
 
@@ -216,7 +223,8 @@ def _normalize_generated_analysis_artifact_metadata(raw_artifact, default_capabi
 
     artifact_message_id = str(raw_artifact.get('artifact_message_id') or '').strip()
     document_id = str(raw_artifact.get('document_id') or '').strip()
-    if not artifact_message_id and not document_id:
+    export_run_id = str(raw_artifact.get('export_run_id') or raw_artifact.get('run_id') or '').strip()
+    if not artifact_message_id and not document_id and not export_run_id:
         return None
 
     normalized_artifact = dict(raw_artifact)
@@ -228,6 +236,9 @@ def _normalize_generated_analysis_artifact_metadata(raw_artifact, default_capabi
         normalized_artifact['artifact_message_id'] = artifact_message_id
     if document_id:
         normalized_artifact['document_id'] = document_id
+    if export_run_id:
+        normalized_artifact['export_run_id'] = export_run_id
+        normalized_artifact['background_export'] = bool(raw_artifact.get('background_export', True))
 
     normalized_output_format = str(raw_artifact.get('output_format') or '').strip().lower()
     if normalized_output_format:
@@ -259,6 +270,7 @@ def _build_generated_analysis_metadata(
         dedupe_key = (
             normalized_artifact.get('artifact_message_id')
             or normalized_artifact.get('document_id')
+            or normalized_artifact.get('export_run_id')
             or f"{normalized_artifact.get('file_name')}:{normalized_artifact.get('output_format')}"
         )
         if dedupe_key in seen_artifacts:
@@ -2949,6 +2961,17 @@ def _build_tabular_generated_output_system_message(output_metadata):
     file_name = str(output_metadata.get('file_name') or 'generated output').strip() or 'generated output'
     row_count = _safe_int(output_metadata.get('row_count'))
 
+    if output_metadata.get('background_export'):
+        run_id = str(output_metadata.get('export_run_id') or output_metadata.get('run_id') or '').strip()
+        batch_count = _safe_int(output_metadata.get('batch_count'))
+        return (
+            f'A durable background {output_format} export has been queued for {row_count} row(s) '
+            f'across {batch_count} batch(es). '
+            'Do not claim the full export is attached yet. Tell the user the export is continuing in the background, '
+            'that progress is checkpointed, and that the downloadable file will appear in the chat when the run completes. '
+            f'Run id: {run_id}.'
+        )
+
     return (
         f'A full downloadable {output_format} export containing {row_count} row(s) has already been prepared '
         f'for the user and attached to this chat as "{file_name}". '
@@ -2977,6 +3000,8 @@ def _log_tabular_generated_output_handoff(conversation_id, user_question, output
             'output_format': output_metadata.get('output_format'),
             'row_count': output_metadata.get('row_count'),
             'source_file_name': output_metadata.get('source_file_name'),
+            'background_export': bool(output_metadata.get('background_export')),
+            'export_run_id': output_metadata.get('export_run_id') or output_metadata.get('run_id'),
             'structured_output_requested': question_requests_tabular_structured_object_output(user_question),
         },
         debug_only=True,
@@ -2990,6 +3015,8 @@ async def _generate_tabular_structured_output_entries(
     settings,
     output_format='json',
     thought_callback=None,
+    user_id=None,
+    conversation_id=None,
 ):
     from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
@@ -3062,6 +3089,53 @@ async def _generate_tabular_structured_output_entries(
             batch_count=total_batches,
         ),
     )
+
+    if should_queue_tabular_generated_output_background(len(rows), total_batches, settings):
+        if user_id and conversation_id:
+            background_run = queue_tabular_generated_output_run(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_question=user_question,
+                source_candidate=source_candidate,
+                output_format=normalized_output_format,
+                row_batches=row_batches,
+                gpt_model=gpt_model,
+                settings=settings,
+            )
+            background_metadata = build_background_tabular_generated_output_metadata(background_run)
+            await emit_tabular_post_processing_thought(
+                thought_callback,
+                f"Queued structured {output_format_label} export to continue in the background",
+                detail=(
+                    f"run_id={background_metadata.get('export_run_id')}; "
+                    f"rows={len(rows)}; batches={total_batches}; checkpointed=true"
+                ),
+                activity=build_tabular_post_processing_activity_payload(
+                    'tabular.generated_output',
+                    f"Structured {output_format_label} export queued",
+                    'running',
+                    phase='queued',
+                    output_format=normalized_output_format,
+                    file_name=source_candidate.get('filename'),
+                    batch_index=0,
+                    batch_count=total_batches,
+                ),
+            )
+            return background_metadata
+
+        log_event(
+            '[Tabular Generated Output] Background export was eligible but lacked user or conversation context',
+            {
+                'source_file_name': source_candidate.get('filename'),
+                'output_format': normalized_output_format,
+                'row_count': len(rows),
+                'batch_count': total_batches,
+                'has_user_id': bool(user_id),
+                'has_conversation_id': bool(conversation_id),
+            },
+            level=logging.WARNING,
+        )
+
     merged_entries = []
     for batch_index, batch_rows in enumerate(row_batches):
         batch_number = batch_index + 1
@@ -3195,6 +3269,7 @@ async def maybe_create_tabular_generated_output(
     settings,
     conversation_id,
     thought_callback=None,
+    user_id=None,
 ):
     """Build, upload, and describe a generated tabular JSON/CSV export when requested."""
     if not question_requests_tabular_generated_output(user_question):
@@ -3258,9 +3333,13 @@ async def maybe_create_tabular_generated_output(
             settings,
             output_format=output_format,
             thought_callback=thought_callback,
+            user_id=user_id,
+            conversation_id=conversation_id,
         )
         if output_entries is None:
             return None
+        if isinstance(output_entries, dict) and output_entries.get('background_export'):
+            return output_entries
     else:
         output_entries = rows
 
@@ -10217,6 +10296,7 @@ def register_route_backend_chats(app):
                 conversation_id = str(conversation_id).strip() or None
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
+            source_review_enabled = data.get('source_review_enabled')
             selected_document_id = data.get('selected_document_id')
             selected_document_ids = data.get('selected_document_ids', [])
             # Backwards compat: if no multi-select but single ID is set, wrap in list
@@ -10327,6 +10407,7 @@ def register_route_backend_chats(app):
             hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
             web_search_citations_list = []
+            source_review_result = {}
             generated_tabular_outputs_list = []
             generated_analysis_artifacts_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
@@ -10350,8 +10431,19 @@ def register_route_backend_chats(app):
                 hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
             if isinstance(web_search_enabled, str):
                 web_search_enabled = web_search_enabled.lower() == 'true'
+            if isinstance(source_review_enabled, str):
+                source_review_enabled = source_review_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
+            current_user_info = get_current_user_info() or {}
+            current_user_email = current_user_info.get('email')
+            source_review_enabled = bool(source_review_enabled) or should_auto_enable_source_review(
+                settings,
+                user_id,
+                user_message,
+                bool(web_search_enabled),
+                user_email=current_user_email,
+            )
 
             original_hybrid_search_enabled = bool(hybrid_search_enabled)
             history_grounded_search_used = False
@@ -11803,6 +11895,7 @@ def register_route_backend_chats(app):
                     settings=settings,
                     conversation_id=conversation_id,
                     thought_callback=record_tabular_post_processing_thought,
+                    user_id=user_id,
                 ))
                 if tabular_generated_output:
                     generated_tabular_outputs_list.append(tabular_generated_output)
@@ -11866,6 +11959,55 @@ def register_route_backend_chats(app):
                 )
                 if web_search_citations_list:
                     thought_tracker.add_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
+
+            if source_review_enabled:
+                thought_tracker.add_thought('source_review', "Reviewing source pages for supporting evidence")
+                source_review_result = perform_source_review(
+                    settings=settings,
+                    user_id=user_id,
+                    user_email=current_user_email,
+                    user_message=user_message,
+                    web_search_citations=web_search_citations_list,
+                    conversation_id=conversation_id,
+                    source_review_planner_client=gpt_client,
+                    source_review_planner_model=gpt_model,
+                )
+                source_review_message = source_review_result.get('system_message') if isinstance(source_review_result, dict) else None
+                if source_review_message:
+                    system_messages_for_augmentation.append(source_review_message)
+                    existing_source_urls = {
+                        citation.get('url')
+                        for citation in web_search_citations_list
+                        if isinstance(citation, dict) and citation.get('url')
+                    }
+                    for citation in source_review_result.get('citations', []):
+                        citation_url = citation.get('url') if isinstance(citation, dict) else None
+                        if citation_url and citation_url not in existing_source_urls:
+                            web_search_citations_list.append(citation)
+                            existing_source_urls.add(citation_url)
+                    coverage = source_review_result.get('coverage', {})
+                    planner_status = 'deterministic'
+                    if coverage.get('llm_planning_used'):
+                        planner_status = 'used'
+                    elif coverage.get('llm_planning_attempted'):
+                        planner_status = 'attempted'
+                    thought_tracker.add_thought(
+                        'source_review',
+                        f"Reviewed {coverage.get('pages_reviewed', 0)} source pages",
+                        detail=(
+                            f"seed={coverage.get('seed_pages_reviewed', 0)}, "
+                            f"child={coverage.get('child_pages_reviewed', 0)}, "
+                            f"planner={planner_status}, "
+                            f"load_more={coverage.get('load_more_clicks_succeeded', 0)}, "
+                            f"skipped={coverage.get('pages_skipped', 0)}"
+                        )
+                    )
+                else:
+                    thought_tracker.add_thought(
+                        'source_review',
+                        "Source Review did not add page evidence",
+                        detail=source_review_result.get('skipped_reason') if isinstance(source_review_result, dict) else None
+                    )
 
         # region 5 - FINAL conversation history preparation
             # ---------------------------------------------------------------------
@@ -12030,6 +12172,7 @@ def register_route_backend_chats(app):
                         settings=settings,
                         conversation_id=conversation_id,
                         thought_callback=record_tabular_post_processing_thought,
+                        user_id=user_id,
                     ))
                     if chat_tabular_generated_output:
                         generated_tabular_outputs_list.append(chat_tabular_generated_output)
@@ -12963,6 +13106,7 @@ def register_route_backend_chats(app):
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
                     'history_context': history_debug_info,
+                    'source_review': compact_source_review_result_for_metadata(source_review_result),
                     **generated_analysis_metadata,
                     'thread_info': {
                         'thread_id': user_thread_id,  # Same thread as user message
@@ -13094,6 +13238,7 @@ def register_route_backend_chats(app):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
                 'web_search_citations': web_search_citations_list,
+                'source_review': compact_source_review_result_for_metadata(source_review_result),
                 'agent_citations': prepared_agent_citations,
                 'metadata': assistant_doc.get('metadata', {}),
                 'reload_messages': reload_messages_required,
@@ -13139,6 +13284,8 @@ def register_route_backend_chats(app):
         try:
             data = request.get_json()
             user_id = get_current_user_id()
+            current_user_info = get_current_user_info() or {}
+            current_user_email = current_user_info.get('email')
             settings = get_settings()
             request_start_time = time.time()
         except Exception as e:
@@ -13306,6 +13453,7 @@ def register_route_backend_chats(app):
                 conversation_id = finalized_conversation_id
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
+                source_review_enabled = data.get('source_review_enabled')
                 selected_document_id = data.get('selected_document_id')
                 selected_document_ids = data.get('selected_document_ids', [])
                 # Backwards compat: if no multi-select but single ID is set, wrap in list
@@ -13443,6 +13591,7 @@ def register_route_backend_chats(app):
                 hybrid_citations_list = []
                 agent_citations_list = []
                 web_search_citations_list = []
+                source_review_result = {}
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
@@ -13464,6 +13613,15 @@ def register_route_backend_chats(app):
                     hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
                 if isinstance(web_search_enabled, str):
                     web_search_enabled = web_search_enabled.lower() == 'true'
+                if isinstance(source_review_enabled, str):
+                    source_review_enabled = source_review_enabled.lower() == 'true'
+                source_review_enabled = bool(source_review_enabled) or should_auto_enable_source_review(
+                    settings,
+                    user_id,
+                    user_message,
+                    bool(web_search_enabled),
+                    user_email=current_user_email,
+                )
                 original_hybrid_search_enabled = bool(hybrid_search_enabled)
                 history_grounded_search_used = False
                 history_only_answerability = None
@@ -13479,6 +13637,7 @@ def register_route_backend_chats(app):
                     "[Streaming] Normalized toggles | "
                     f"hybrid_search={hybrid_search_enabled} | "
                     f"web_search={web_search_enabled} | "
+                    f"source_review={source_review_enabled} | "
                     f"chat_type={chat_type}"
                 )
                 
@@ -14461,6 +14620,7 @@ def register_route_backend_chats(app):
                         settings=settings,
                         conversation_id=conversation_id,
                         thought_callback=record_and_publish_streaming_thought,
+                        user_id=user_id,
                     ))
                     if tabular_generated_output:
                         generated_tabular_outputs_list.append(tabular_generated_output)
@@ -14541,6 +14701,58 @@ def register_route_backend_chats(app):
                             f"[Streaming] Web search completed | citations={len(web_search_citations_list)}"
                         )
                         yield emit_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
+
+                if source_review_enabled:
+                    debug_print(
+                        f"[Streaming] Starting Source Review for conversation_id={conversation_id}"
+                    )
+                    yield emit_thought('source_review', "Reviewing source pages for supporting evidence")
+                    source_review_result = perform_source_review(
+                        settings=settings,
+                        user_id=user_id,
+                        user_email=current_user_email,
+                        user_message=user_message,
+                        web_search_citations=web_search_citations_list,
+                        conversation_id=conversation_id,
+                        source_review_planner_client=gpt_client,
+                        source_review_planner_model=gpt_model,
+                    )
+                    source_review_message = source_review_result.get('system_message') if isinstance(source_review_result, dict) else None
+                    if source_review_message:
+                        system_messages_for_augmentation.append(source_review_message)
+                        existing_source_urls = {
+                            citation.get('url')
+                            for citation in web_search_citations_list
+                            if isinstance(citation, dict) and citation.get('url')
+                        }
+                        for citation in source_review_result.get('citations', []):
+                            citation_url = citation.get('url') if isinstance(citation, dict) else None
+                            if citation_url and citation_url not in existing_source_urls:
+                                web_search_citations_list.append(citation)
+                                existing_source_urls.add(citation_url)
+                        coverage = source_review_result.get('coverage', {})
+                        planner_status = 'deterministic'
+                        if coverage.get('llm_planning_used'):
+                            planner_status = 'used'
+                        elif coverage.get('llm_planning_attempted'):
+                            planner_status = 'attempted'
+                        yield emit_thought(
+                            'source_review',
+                            f"Reviewed {coverage.get('pages_reviewed', 0)} source pages",
+                            detail=(
+                                f"seed={coverage.get('seed_pages_reviewed', 0)}, "
+                                f"child={coverage.get('child_pages_reviewed', 0)}, "
+                                f"planner={planner_status}, "
+                                f"load_more={coverage.get('load_more_clicks_succeeded', 0)}, "
+                                f"skipped={coverage.get('pages_skipped', 0)}"
+                            )
+                        )
+                    else:
+                        yield emit_thought(
+                            'source_review',
+                            "Source Review did not add page evidence",
+                            detail=source_review_result.get('skipped_reason') if isinstance(source_review_result, dict) else None
+                        )
 
                 # Update message chat type
                 message_chat_type = None
@@ -14676,6 +14888,7 @@ def register_route_backend_chats(app):
                             settings=settings,
                             conversation_id=conversation_id,
                             thought_callback=record_and_publish_streaming_thought,
+                            user_id=user_id,
                         ))
                         if chat_tabular_generated_output:
                             generated_tabular_outputs_list.append(chat_tabular_generated_output)
@@ -15315,6 +15528,7 @@ def register_route_backend_chats(app):
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
                             'history_context': history_debug_info,
+                            'source_review': compact_source_review_result_for_metadata(source_review_result),
                             **generated_analysis_metadata,
                             'thread_info': {
                                 'thread_id': user_thread_id,
@@ -15442,6 +15656,7 @@ def register_route_backend_chats(app):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
+                        'source_review': compact_source_review_result_for_metadata(source_review_result),
                         'agent_citations': prepared_agent_citations,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
@@ -15497,6 +15712,7 @@ def register_route_backend_chats(app):
                                 'error': error_msg,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
+                                'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 **generated_analysis_metadata,
                                 'thread_info': {
                                     'thread_id': user_thread_id,
@@ -15536,6 +15752,21 @@ def register_route_backend_chats(app):
         stream_status = stream_session.get_status_snapshot() if stream_session else _build_stream_status_payload(None)
         stream_status['conversation_id'] = conversation_id
         return jsonify(stream_status)
+
+    @app.route('/api/tabular/generated-output/runs/<run_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def tabular_generated_output_run_status_api(run_id):
+        """Return durable generated-output run progress for the current user."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        run_status = get_tabular_generated_output_run_status(user_id, run_id)
+        if not run_status:
+            return jsonify({'error': 'Tabular generated-output run not found'}), 404
+        return jsonify({'success': True, 'run': run_status})
 
     @app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -16844,6 +17075,45 @@ def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, s
     return citations
 
 
+def _append_source_review_web_citation(web_search_citations_list, raw_citation, source_label='web_search'):
+    """Append a normalized URL citation for Source Review seed discovery."""
+    if not isinstance(web_search_citations_list, list):
+        return False
+    serializable = make_json_serializable(raw_citation)
+    if not isinstance(serializable, dict):
+        serializable = {'url': str(raw_citation or '')}
+
+    raw_url = serializable.get('url') or serializable.get('href') or serializable.get('link')
+    normalized_url, _reason = normalize_review_url(raw_url)
+    if not normalized_url:
+        return False
+
+    existing_urls = set()
+    for existing_citation in web_search_citations_list:
+        if not isinstance(existing_citation, dict):
+            continue
+        existing_url, _existing_reason = normalize_review_url(
+            existing_citation.get('url') or existing_citation.get('href') or existing_citation.get('link')
+        )
+        if existing_url:
+            existing_urls.add(existing_url)
+    if normalized_url in existing_urls:
+        return False
+
+    citation_title = (
+        serializable.get('title')
+        or serializable.get('name')
+        or serializable.get('tool_name')
+        or normalized_url
+    )
+    web_search_citations_list.append({
+        'url': normalized_url,
+        'title': str(citation_title or normalized_url).strip()[:300],
+        'source': source_label,
+    })
+    return True
+
+
 def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, int]:
     if not isinstance(metadata, Mapping):
         debug_print(
@@ -17102,8 +17372,16 @@ def perform_web_search(
         web_citations = _extract_web_search_citations_from_content(result.message)
         debug_print(f"[WebSearch] Extracted {len(web_citations)} web citations from message content")
         if web_citations:
-            web_search_citations_list.extend(web_citations)
+            appended_message_citations = 0
+            for web_citation in web_citations:
+                if _append_source_review_web_citation(
+                    web_search_citations_list,
+                    web_citation,
+                    source_label='web_search_message',
+                ):
+                    appended_message_citations += 1
             debug_print(f"[WebSearch] Total web_search_citations_list now has {len(web_search_citations_list)} citations")
+            debug_print(f"[WebSearch] Added {appended_message_citations} message citation(s) for Source Review")
         else:
             debug_print("[WebSearch] No web citations extracted from message content")
     else:
@@ -17128,7 +17406,13 @@ def perform_web_search(
                 "timestamp": datetime.utcnow().isoformat(),
                 "success": True,
             })
+            _append_source_review_web_citation(
+                web_search_citations_list,
+                serializable,
+                source_label='foundry_citation',
+            )
         debug_print(f"[WebSearch] Total agent_citations_list now has {len(agent_citations_list)} citations")
+        debug_print(f"[WebSearch] Total Source Review citation seeds now has {len(web_search_citations_list)} citations")
     else:
         debug_print("[WebSearch] No citations in result.citations to process")
 

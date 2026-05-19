@@ -8,6 +8,11 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from functions_file_sync import (
+    FILE_SYNC_SCOPE_PUBLIC,
+    apply_synced_document_delete_action,
+    build_synced_document_delete_guard,
+)
 from functions_notifications import create_notification, delete_notifications_by_metadata
 from functions_simplechat_operations import download_blob_content, queue_generated_document_processing
 from utils_cache import invalidate_public_workspace_search_cache
@@ -471,7 +476,24 @@ def register_route_backend_public_documents(app):
         delete_mode = request.args.get('delete_mode', 'all_versions')
         if delete_mode not in {'all_versions', 'current_only'}:
             return jsonify({'error': 'Invalid delete mode'}), 400
+        file_sync_delete_action = request.args.get('file_sync_delete_action')
+        file_sync_guard = build_synced_document_delete_guard(
+            FILE_SYNC_SCOPE_PUBLIC,
+            doc_id,
+            user_id,
+            public_workspace_id=active_ws,
+            requested_action=file_sync_delete_action,
+        )
+        if file_sync_guard:
+            return jsonify(file_sync_guard), 409
         try:
+            apply_synced_document_delete_action(
+                FILE_SYNC_SCOPE_PUBLIC,
+                doc_id,
+                user_id,
+                file_sync_delete_action,
+                public_workspace_id=active_ws,
+            )
             delete_result = delete_document_revision(
                 user_id=user_id,
                 document_id=doc_id,

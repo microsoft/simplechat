@@ -4,6 +4,81 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.046)**
+
+#### New Features
+
+*   **Source Review Load More Support**
+    *   Source Review can now use the optional rendered-page path to click visible Load More, Show More, View More, and related archive controls on source pages before extracting links and evidence.
+    *   Load More clicks are bounded by a configurable admin cap, stop early when no new content appears, and can stop when requested date-range evidence is visible for prompts such as past three years.
+    *   Existing SSRF, redirect, timeout, page-budget, and content-type protections remain enforced.
+    *   (Ref: Source Review Load More, `functions_source_review.py`, `admin_settings.html`, `test_source_review_security.py`)
+
+#### User Interface Enhancements
+
+*   **Assistant Follow-Up Prompt Actions**
+    *   Chat responses that include visible next-step options can now render those options as prompt buttons under the assistant message.
+    *   Clicking a prompt action stages the text in the chat input and starts a cancelable send countdown, making suggested next steps easier to continue while keeping the user in control.
+    *   (Ref: chat follow-up actions, `chat-messages.js`, `chats.css`, `test_chat_follow_up_prompt_actions.py`)
+
+### **(v0.241.045)**
+
+#### Bug Fixes
+
+*   **Source Review Citation Seeding and Second-Hop Traversal**
+    *   Source Review now receives the full Foundry web-search citation set, not only URLs that appeared in the web-search answer text, so official sources returned as raw citations can be reviewed directly.
+    *   Added a configurable seed-page budget so initial search-result pages cannot consume the entire Source Review page budget before child source pages are inspected.
+    *   Raised bounded Deep Source Review depth to support one additional hop, allowing flows such as official news archive -> press-release section -> year/detail page while preserving page, redirect, timeout, type, and SSRF limits.
+    *   (Ref: Web Search citations, Deep Source Review, `route_backend_chats.py`, `functions_source_review.py`, `admin_settings.html`, `test_web_search_current_message_only.py`, `test_source_review_deep_traversal.py`)
+
+### **(v0.241.044)**
+
+#### Bug Fixes
+
+*   **Deep Source Review Link Prioritization and Audit Detail**
+    *   Fixed Deep Source Review link extraction so relevant press-release/archive links are scored before link inventory limits are applied, preventing noisy navigation links from crowding out useful source-detail candidates.
+    *   Generic archive traversal now rejects shallow same-domain navigation such as About and Careers pages unless the link has a stronger source/archive signal.
+    *   Source Review audit logs and thought details now expose seed pages, child pages, Deep Source Review usage, planner attempted/used state, planner candidate count, and selected planner URLs.
+    *   (Ref: Deep Source Review, Source Review audit logging, `functions_source_review.py`, `route_backend_chats.py`, `test_source_review_deep_traversal.py`)
+
+### **(v0.241.043)**
+
+#### New Features
+
+*   **Source Review Model-Assisted Link Planning**
+    *   Deep Source Review can now ask the selected chat model to rank server-extracted child links before additional source pages are fetched, improving general multi-source research without adding question-specific heuristics.
+    *   The planner is bounded to already extracted, policy-approved candidate URLs; invented URLs are ignored and deterministic ordering remains the fallback.
+    *   Added admin control for enabling model-assisted link planning and functional coverage for candidate validation and planner-driven ordering.
+    *   (Ref: Deep Source Review, Source Review link planning, `functions_source_review.py`, `route_backend_chats.py`, `admin_settings.html`, `test_source_review_deep_traversal.py`)
+
+### **(v0.241.042)**
+
+#### New Features
+
+*   **File Sync for Workspace Documents**
+    *   Added an optional SMB-based File Sync capability for personal, group, and public workspaces, with scope-specific enablement, allow/block controls, and Redis readiness gating before sync can be enabled.
+    *   Sync sources support UNC paths, credentials with optional Azure Key Vault storage, fixed and parent-folder-derived tags, include/exclude filters, file type filters, manual runs, scheduled runs, history, counts, and debug logging.
+    *   Synced remote file changes reuse the existing same-name document upload behavior to create document versions, and synced-document deletes now ask whether to delete locally only or ignore the remote path for future runs.
+    *   Added Control Center activity-log support for File Sync events and admin warnings for scale and performance considerations.
+    *   (Ref: File Sync, SMB sync sources, workspace Sync tab, `functions_file_sync.py`, `route_backend_file_sync.py`, `workspace-file-sync.js`, `test_file_sync_capability.py`, `FILE_SYNC.md`)
+
+#### Bug Fixes
+
+*   **Deep Source Review Traversal Balance**
+    *   Improved Deep Source Review so seed/archive pages are reviewed before child links consume the remaining page budget, giving multi-source research requests better coverage across official sources.
+    *   Child-link scoring now favors generic release/detail archive patterns and downranks common navigation pages without adding company-specific heuristics.
+    *   (Ref: Deep Source Review, `functions_source_review.py`, `test_source_review_deep_traversal.py`, `SOURCE_REVIEW_DEEP_TRAVERSAL_FIX.md`)
+
+### **(v0.241.041)**
+
+#### New Features
+
+*   **Source Review for Web Evidence**
+    *   Added an optional chat **Sources** toggle that reviews source pages from pasted URLs and Web Search citations before the final model response is generated.
+    *   Deep Source Review can follow a bounded set of relevant links from source indexes while enforcing SSRF protections, redirect/page-size/time limits, robots.txt handling, and prompt-injection isolation for fetched page text.
+    *   Added admin controls for Source Review defaults, page budgets, domain/user allowlists and blocklists, optional JavaScript rendering fallback, and audit logging.
+    *   (Ref: Source Review, `functions_source_review.py`, `route_backend_chats.py`, `admin_settings.html`, `chats.html`, `test_source_review_security.py`, `SOURCE_REVIEW.md`)
+
 ### **(v0.241.031)**
 
 #### New Features

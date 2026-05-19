@@ -1,8 +1,8 @@
 # test_chat_stream_early_title_update.py
 """
 UI test for early chat stream title updates.
-Version: 0.241.040
-Implemented in: 0.241.040
+Version: 0.241.042
+Implemented in: 0.241.042
 
 This test ensures early conversation metadata stream events update the active
 conversation title in the chat UI while untrusted title text remains inert.

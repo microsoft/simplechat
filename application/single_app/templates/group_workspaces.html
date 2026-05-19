@@ -376,6 +376,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <label class="form-label" for="group-workspace-section-select">Section</label>
       <select class="form-select" id="group-workspace-section-select" data-workspace-section-select aria-label="Select group workspace section">
         <option value="documents-tab-btn">Group Documents</option>
+        {% if file_sync_enabled %}
+          <option value="sync-tab-btn">Sync</option>
+        {% endif %}
         <option value="prompts-tab-btn">Group Prompts</option>
         {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
           {% if settings.allow_group_agents %}
@@ -408,6 +411,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Documents
       </button>
     </li>
+    {% if file_sync_enabled %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="sync-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#sync-tab"
+        type="button"
+        role="tab"
+        aria-controls="sync-tab"
+        aria-selected="false"
+      >
+        Sync
+      </button>
+    </li>
+    {% endif %}
     <li class="nav-item" role="presentation">
       <button
         class="nav-link"
@@ -795,6 +814,24 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <!-- End Card -->
     </div>
     <!-- End Documents Tab -->
+
+    {% if file_sync_enabled %}
+    <!-- ============= GROUP SYNC TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="sync-tab"
+      role="tabpanel"
+      aria-labelledby="sync-tab-btn"
+    >
+      <div class="card p-3 my-3">
+        <div
+          id="file-sync-root"
+          data-scope="group"
+          data-api-base="/api/file-sync/group"
+        ></div>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- ============= GROUP PROMPTS TAB ============= -->
     <div
@@ -1685,6 +1722,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script src="/static/js/workspace/group-documents-sharing.js"></script>
 <script src="/static/js/workspace_sidebar_nav.js"></script>
 <script src="{{ url_for('static', filename='js/workspace_section_switcher.js') }}"></script>
+{% if file_sync_enabled %}
+<script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
+{% endif %}
 
 <script>
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
@@ -2077,8 +2117,82 @@ app_settings.app_title }} {% endblock %} {% block head %}
     });
   }
 
-  async function requestGroupDocumentDeletion(documentId, deleteMode) {
+  function promptGroupSyncedDocumentDeleteAction(deleteInfo) {
+    if (!isGroupDocumentDeleteModalReady()) {
+      showGroupDocumentDeleteFeedback("Delete confirmation dialog is unavailable. Refresh the page and try again.");
+      return Promise.resolve(null);
+    }
+
+    if (groupDocumentDeleteModalTitle) {
+      groupDocumentDeleteModalTitle.textContent = "Delete Synced Group Document";
+    }
+
+    const body = document.createElement("div");
+    const intro = document.createElement("p");
+    intro.className = "mb-2";
+    intro.textContent = deleteInfo.message || "This document was created by File Sync.";
+    body.appendChild(intro);
+
+    if (deleteInfo.file_sync && deleteInfo.file_sync.relative_path) {
+      const path = document.createElement("p");
+      path.className = "mb-2 small text-muted";
+      path.textContent = deleteInfo.file_sync.relative_path;
+      body.appendChild(path);
+    }
+
+    const choice = document.createElement("p");
+    choice.className = "mb-0";
+    choice.textContent = "Choose whether this remote file should be ignored by future sync runs.";
+    body.appendChild(choice);
+    groupDocumentDeleteModalBody.replaceChildren(body);
+
+    const currentLabel = groupDeleteCurrentBtn.textContent;
+    const allLabel = groupDeleteAllBtn.textContent;
+    groupDeleteCurrentBtn.textContent = "Delete Only";
+    groupDeleteAllBtn.textContent = "Delete and Ignore Remote";
+
+    return new Promise((resolve) => {
+      let settled = false;
+
+      const cleanup = () => {
+        groupDocumentDeleteModalElement.removeEventListener("hidden.bs.modal", handleHidden);
+        groupDeleteCurrentBtn.removeEventListener("click", handleDeleteOnly);
+        groupDeleteAllBtn.removeEventListener("click", handleIgnoreRemote);
+        groupDeleteCurrentBtn.textContent = currentLabel;
+        groupDeleteAllBtn.textContent = allLabel;
+      };
+
+      const finalize = (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+
+      const handleHidden = () => finalize(null);
+      const handleDeleteOnly = () => {
+        groupDocumentDeleteModal.hide();
+        finalize("delete_only");
+      };
+      const handleIgnoreRemote = () => {
+        groupDocumentDeleteModal.hide();
+        finalize("ignore_remote");
+      };
+
+      groupDocumentDeleteModalElement.addEventListener("hidden.bs.modal", handleHidden);
+      groupDeleteCurrentBtn.addEventListener("click", handleDeleteOnly);
+      groupDeleteAllBtn.addEventListener("click", handleIgnoreRemote);
+      groupDocumentDeleteModal.show();
+    });
+  }
+
+  async function requestGroupDocumentDeletion(documentId, deleteMode, fileSyncDeleteAction = null) {
     const query = new URLSearchParams({ delete_mode: deleteMode });
+    if (fileSyncDeleteAction) {
+      query.set("file_sync_delete_action", fileSyncDeleteAction);
+    }
     const response = await fetch(
       `/api/group_documents/${documentId}?${query.toString()}`,
       { method: "DELETE" }
@@ -2092,6 +2206,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
 
     if (!response.ok) {
+      if (response.status === 409 && responseData.error === "synced_document_delete_requires_action" && !fileSyncDeleteAction) {
+        const syncAction = await promptGroupSyncedDocumentDeleteAction(responseData);
+        if (!syncAction) {
+          throw { error: "Deletion canceled" };
+        }
+        return requestGroupDocumentDeletion(documentId, deleteMode, syncAction);
+      }
       throw responseData.error
         ? responseData
         : { error: `Server responded with status ${response.status}` };
@@ -2977,43 +3098,42 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   function deleteGroupSelectedDocuments() {
     if (groupSelectedDocuments.size === 0) return;
-    
-    if (!confirm(`Are you sure you want to delete ${groupSelectedDocuments.size} selected document(s)? This action cannot be undone.`)) {
-      return;
-    }
 
-    const deleteBtn = document.getElementById("group-delete-selected-btn");
-    if (deleteBtn) {
-      deleteBtn.disabled = true;
-      deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Deleting...`;
-    }
+    promptGroupDeleteMode(groupSelectedDocuments.size).then((deleteMode) => {
+      if (!deleteMode) {
+        return;
+      }
 
-    const deletePromises = Array.from(groupSelectedDocuments).map(docId =>
-      fetch(`/api/group_documents/${docId}`, { method: "DELETE" })
-        .then(response => response.ok ? response.json() : Promise.reject(response))
-    );
+      const deleteBtn = document.getElementById("group-delete-selected-btn");
+      if (deleteBtn) {
+        deleteBtn.disabled = true;
+        deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Deleting...`;
+      }
 
-    Promise.allSettled(deletePromises)
-      .then(results => {
-        const successful = results.filter(r => r.status === 'fulfilled').length;
-        const failed = results.filter(r => r.status === 'rejected').length;
-        
-        if (failed > 0) {
-          alert(`Deleted ${successful} document(s). ${failed} failed to delete.`);
-        } else {
-          console.log(`Successfully deleted ${successful} document(s)`);
-        }
-        
-        groupSelectedDocuments.clear();
-        updateGroupBulkActionButtons();
-        fetchGroupDocuments();
-      })
-      .finally(() => {
-        if (deleteBtn) {
-          deleteBtn.disabled = false;
+      const deletePromises = Array.from(groupSelectedDocuments).map(docId => requestGroupDocumentDeletion(docId, deleteMode));
+
+      Promise.allSettled(deletePromises)
+        .then(results => {
+          const successful = results.filter(r => r.status === 'fulfilled').length;
+          const failed = results.filter(r => r.status === 'rejected').length;
+
+          if (failed > 0) {
+            showGroupDocumentDeleteFeedback(`Deleted ${successful} document(s). ${failed} failed to delete.`, successful === 0 ? "danger" : "warning");
+          } else {
+            console.log(`Successfully deleted ${successful} document(s)`);
+          }
+
+          groupSelectedDocuments.clear();
+          updateGroupBulkActionButtons();
+          fetchGroupDocuments();
+        })
+        .finally(() => {
+          if (deleteBtn) {
+            deleteBtn.disabled = false;
             deleteBtn.innerHTML = `<i class="bi bi-trash me-1"></i>Delete Selected`;
-        }
-      });
+          }
+        });
+    });
   }
 
   function removeGroupSelectedDocuments() {

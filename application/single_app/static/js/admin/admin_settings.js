@@ -1860,6 +1860,27 @@ function setupToggles() {
         });
     }
 
+    const enableSourceReview = document.getElementById('enable_source_review');
+    const sourceReviewSettings = document.getElementById('source_review_settings');
+    const enableDeepSourceReview = document.getElementById('enable_deep_source_review');
+    const sourceReviewDeepSettings = document.getElementById('source_review_deep_settings');
+
+    if (enableSourceReview && sourceReviewSettings) {
+        toggleVisibility(sourceReviewSettings, enableSourceReview.checked);
+        enableSourceReview.addEventListener('change', function () {
+            toggleVisibility(sourceReviewSettings, this.checked);
+            markFormAsModified();
+        });
+    }
+
+    if (enableDeepSourceReview && sourceReviewDeepSettings) {
+        toggleVisibility(sourceReviewDeepSettings, enableDeepSourceReview.checked);
+        enableDeepSourceReview.addEventListener('change', function () {
+            toggleVisibility(sourceReviewDeepSettings, this.checked);
+            markFormAsModified();
+        });
+    }
+
     const foundryAuthType = document.getElementById('web_search_foundry_auth_type');
     const foundryMiType = document.getElementById('web_search_foundry_managed_identity_type');
     const foundryCloud = document.getElementById('web_search_foundry_cloud');

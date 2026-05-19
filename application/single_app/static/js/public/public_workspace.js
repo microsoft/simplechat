@@ -205,8 +205,82 @@ function promptPublicDeleteMode(documentCount = 1) {
   });
 }
 
-async function requestPublicDocumentDeletion(documentId, deleteMode) {
+function promptPublicSyncedDocumentDeleteAction(deleteInfo) {
+  if (!isPublicDocumentDeleteModalReady()) {
+    showPublicDocumentDeleteFeedback('Delete confirmation dialog is unavailable. Refresh the page and try again.');
+    return Promise.resolve(null);
+  }
+
+  if (publicDocumentDeleteModalTitle) {
+    publicDocumentDeleteModalTitle.textContent = 'Delete Synced Public Document';
+  }
+
+  const body = document.createElement('div');
+  const intro = document.createElement('p');
+  intro.className = 'mb-2';
+  intro.textContent = deleteInfo.message || 'This document was created by File Sync.';
+  body.appendChild(intro);
+
+  if (deleteInfo.file_sync && deleteInfo.file_sync.relative_path) {
+    const path = document.createElement('p');
+    path.className = 'mb-2 small text-muted';
+    path.textContent = deleteInfo.file_sync.relative_path;
+    body.appendChild(path);
+  }
+
+  const choice = document.createElement('p');
+  choice.className = 'mb-0';
+  choice.textContent = 'Choose whether this remote file should be ignored by future sync runs.';
+  body.appendChild(choice);
+  publicDocumentDeleteModalBody.replaceChildren(body);
+
+  const currentLabel = publicDeleteCurrentBtn.textContent;
+  const allLabel = publicDeleteAllBtn.textContent;
+  publicDeleteCurrentBtn.textContent = 'Delete Only';
+  publicDeleteAllBtn.textContent = 'Delete and Ignore Remote';
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const cleanup = () => {
+      publicDocumentDeleteModalElement.removeEventListener('hidden.bs.modal', handleHidden);
+      publicDeleteCurrentBtn.removeEventListener('click', handleDeleteOnly);
+      publicDeleteAllBtn.removeEventListener('click', handleIgnoreRemote);
+      publicDeleteCurrentBtn.textContent = currentLabel;
+      publicDeleteAllBtn.textContent = allLabel;
+    };
+
+    const finalize = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const handleHidden = () => finalize(null);
+    const handleDeleteOnly = () => {
+      publicDocumentDeleteModal.hide();
+      finalize('delete_only');
+    };
+    const handleIgnoreRemote = () => {
+      publicDocumentDeleteModal.hide();
+      finalize('ignore_remote');
+    };
+
+    publicDocumentDeleteModalElement.addEventListener('hidden.bs.modal', handleHidden);
+    publicDeleteCurrentBtn.addEventListener('click', handleDeleteOnly);
+    publicDeleteAllBtn.addEventListener('click', handleIgnoreRemote);
+    publicDocumentDeleteModal.show();
+  });
+}
+
+async function requestPublicDocumentDeletion(documentId, deleteMode, fileSyncDeleteAction = null) {
   const query = new URLSearchParams({ delete_mode: deleteMode });
+  if (fileSyncDeleteAction) {
+    query.set('file_sync_delete_action', fileSyncDeleteAction);
+  }
   const response = await fetch(`/api/public_documents/${documentId}?${query.toString()}`, { method: 'DELETE' });
 
   let responseData = {};
@@ -217,6 +291,13 @@ async function requestPublicDocumentDeletion(documentId, deleteMode) {
   }
 
   if (!response.ok) {
+    if (response.status === 409 && responseData.error === 'synced_document_delete_requires_action' && !fileSyncDeleteAction) {
+      const syncAction = await promptPublicSyncedDocumentDeleteAction(responseData);
+      if (!syncAction) {
+        throw { error: 'Deletion canceled' };
+      }
+      return requestPublicDocumentDeletion(documentId, deleteMode, syncAction);
+    }
     throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
   }
 

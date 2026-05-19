@@ -26,6 +26,7 @@ supported_sources = [
     'action',
     'action-addset',
     'agent',
+    'file-sync',
     'model-endpoint',
     'other'
 ]
@@ -33,7 +34,8 @@ supported_sources = [
 supported_scopes = [
     'global',
     'user',
-    'group'
+    'group',
+    'public'
 ]
 
 supported_action_auth_types = [

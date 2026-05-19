@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.040"
+VERSION = "0.241.048"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -318,6 +318,12 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
+cosmos_tabular_export_runs_container_name = "tabular_export_runs"
+cosmos_tabular_export_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_tabular_export_runs_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
 cosmos_personal_workflows_container_name = "personal_workflows"
 cosmos_personal_workflows_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_personal_workflows_container_name,
@@ -394,6 +400,60 @@ cosmos_public_documents_container_name = "public_documents"
 cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_public_documents_container_name,
     partition_key=PartitionKey(path="/id")
+)
+
+cosmos_personal_file_sync_sources_container_name = "personal_file_sync_sources"
+cosmos_personal_file_sync_sources_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_file_sync_sources_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_group_file_sync_sources_container_name = "group_file_sync_sources"
+cosmos_group_file_sync_sources_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_file_sync_sources_container_name,
+    partition_key=PartitionKey(path="/group_id")
+)
+
+cosmos_public_file_sync_sources_container_name = "public_file_sync_sources"
+cosmos_public_file_sync_sources_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_file_sync_sources_container_name,
+    partition_key=PartitionKey(path="/public_workspace_id")
+)
+
+cosmos_personal_file_sync_items_container_name = "personal_file_sync_items"
+cosmos_personal_file_sync_items_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_file_sync_items_container_name,
+    partition_key=PartitionKey(path="/source_id")
+)
+
+cosmos_group_file_sync_items_container_name = "group_file_sync_items"
+cosmos_group_file_sync_items_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_file_sync_items_container_name,
+    partition_key=PartitionKey(path="/source_id")
+)
+
+cosmos_public_file_sync_items_container_name = "public_file_sync_items"
+cosmos_public_file_sync_items_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_file_sync_items_container_name,
+    partition_key=PartitionKey(path="/source_id")
+)
+
+cosmos_personal_file_sync_runs_container_name = "personal_file_sync_runs"
+cosmos_personal_file_sync_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_file_sync_runs_container_name,
+    partition_key=PartitionKey(path="/source_id")
+)
+
+cosmos_group_file_sync_runs_container_name = "group_file_sync_runs"
+cosmos_group_file_sync_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_file_sync_runs_container_name,
+    partition_key=PartitionKey(path="/source_id")
+)
+
+cosmos_public_file_sync_runs_container_name = "public_file_sync_runs"
+cosmos_public_file_sync_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_file_sync_runs_container_name,
+    partition_key=PartitionKey(path="/source_id")
 )
 
 cosmos_user_settings_container_name = "user_settings"

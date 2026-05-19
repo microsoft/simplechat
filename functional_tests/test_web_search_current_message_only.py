@@ -1,7 +1,7 @@
 # test_web_search_current_message_only.py
 """
 Functional test for current-message-only web search egress.
-Version: 0.241.008
+Version: 0.241.046
 Implemented in: 0.241.008
 
 This test ensures external web search uses only the current user message,
@@ -56,7 +56,6 @@ def test_web_search_query_helper_uses_only_current_message():
     assert helper(None) == ''
 
     print('✅ Outbound web-search query helper passed')
-    return True
 
 
 def test_perform_web_search_uses_explicit_outbound_query_and_empty_metadata():
@@ -88,7 +87,6 @@ def test_perform_web_search_uses_explicit_outbound_query_and_empty_metadata():
         assert snippet not in metadata_block, f'Unexpected outbound metadata snippet present: {snippet}'
 
     print('✅ perform_web_search outbound boundary passed')
-    return True
 
 
 def test_chat_routes_pass_explicit_outbound_web_query():
@@ -107,7 +105,6 @@ def test_chat_routes_pass_explicit_outbound_web_query():
     assert "Based on the recent conversation about:" in source
 
     print('✅ Chat route web-search call-site separation passed')
-    return True
 
 
 def test_search_summary_filters_out_system_messages():
@@ -119,7 +116,22 @@ def test_search_summary_filters_out_system_messages():
     assert "content = build_assistant_history_content_with_citations(msg, content)" in source
 
     print('✅ Search-summary role filtering passed')
-    return True
+
+
+def test_web_search_adds_foundry_citations_to_source_review_seeds():
+    """Verify raw Foundry citations can seed Source Review, not only answer-text links."""
+    print('🔍 Testing Foundry citation seeding for Source Review...')
+
+    source = read_file_text(ROUTE_FILE)
+    perform_source = extract_function_source(source, 'perform_web_search')
+    helper_source = extract_function_source(source, '_append_source_review_web_citation')
+
+    assert '_append_source_review_web_citation(' in perform_source
+    assert "source_label='foundry_citation'" in perform_source
+    assert 'normalize_review_url' in helper_source
+    assert "source_label='web_search_message'" in perform_source
+
+    print('✅ Foundry citation seeding for Source Review passed')
 
 
 if __name__ == '__main__':
@@ -128,6 +140,7 @@ if __name__ == '__main__':
         test_perform_web_search_uses_explicit_outbound_query_and_empty_metadata,
         test_chat_routes_pass_explicit_outbound_web_query,
         test_search_summary_filters_out_system_messages,
+        test_web_search_adds_foundry_citations_to_source_review_seeds,
     ]
 
     for test in tests:

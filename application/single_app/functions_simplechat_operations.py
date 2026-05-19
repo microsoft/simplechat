@@ -512,6 +512,63 @@ def upload_generated_analysis_artifact_for_current_user(
     )
 
 
+def upload_generated_analysis_artifact_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    file_name: str,
+    file_content: Any,
+    capability: str = "analysis",
+    output_format: str = "",
+    summary: str = "",
+) -> Dict[str, Any]:
+    """Upload generated analysis content for a known authorized user outside request context."""
+    normalized_user_id = str(current_user_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_file_name = _normalize_generated_document_file_name(file_name)
+    normalized_capability = str(capability or "analysis").strip().lower() or "analysis"
+    normalized_output_format = str(output_format or "").strip().lower() or os.path.splitext(normalized_file_name)[1].lower().lstrip(".")
+    normalized_summary = str(summary or "").strip()
+
+    if isinstance(file_content, bytes):
+        file_content_bytes = file_content
+    else:
+        file_content_bytes = str(file_content or "").encode("utf-8")
+
+    if not normalized_user_id:
+        raise ValueError("current_user_id is required")
+    if not normalized_conversation_id:
+        raise ValueError("conversation_id is required")
+    if not file_content_bytes.strip():
+        raise ValueError("file_content is required")
+    if not allowed_file(normalized_file_name):
+        raise ValueError("Generated file type is not supported")
+
+    settings = get_settings()
+    max_artifact_size_mb = settings.get("max_generated_chat_artifact_size_mb", 500)
+    try:
+        max_artifact_size_mb = max(1, int(max_artifact_size_mb))
+    except (TypeError, ValueError):
+        max_artifact_size_mb = 500
+
+    max_artifact_size_bytes = max_artifact_size_mb * 1024 * 1024
+    if len(file_content_bytes) > max_artifact_size_bytes:
+        raise ValueError(
+            f"Generated artifact exceeds the {max_artifact_size_mb} MB size limit"
+        )
+
+    return _upload_generated_chat_artifact_for_current_user(
+        current_user_id=normalized_user_id,
+        conversation_id=normalized_conversation_id,
+        normalized_file_name=normalized_file_name,
+        file_content_bytes=file_content_bytes,
+        artifact_metadata={
+            "capability": normalized_capability,
+            "output_format": normalized_output_format,
+            "summary": normalized_summary,
+        },
+    )
+
+
 def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) -> int:
     """Delete blob-backed chat files referenced by the provided message documents."""
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")

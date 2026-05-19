@@ -1,4 +1,4 @@
-# Conversation Early Title Update Fix (v0.241.040)
+# Conversation Early Title Update Fix (v0.241.042)
 
 ## Issue Description
 
@@ -8,9 +8,9 @@ New chat conversations could remain titled **New Conversation** until the full a
 
 The document-action chat path created or loaded the conversation and saved the user's message, but only derived the conversation title after the long document workflow returned. The streaming client also only applied conversation title metadata from the final terminal SSE event, so even standard streaming requests did not update the visible title as early as the backend could determine it.
 
-## Fixed/Implemented in version: **0.241.040**
+## Fixed/Implemented in version: **0.241.042**
 
-The application version was updated in `application/single_app/config.py` from `0.241.039` to `0.241.040` for this fix.
+The application version for this fix is tracked in `application/single_app/config.py` as `0.241.042`.
 
 ## Technical Details
 

@@ -381,6 +381,28 @@ def format_activity_log_details_for_csv(log_record):
         document = log_record.get('document', {})
         return f"File: {document.get('file_name', 'Unknown')}, Updated: {updated_fields}"
 
+    if activity_type == 'file_sync':
+        workspace_context = log_record.get('workspace_context', {})
+        additional_context = log_record.get('additional_context', {})
+        counts = additional_context.get('counts', {})
+        count_parts = [
+            f"{key}: {counts.get(key)}"
+            for key in ['scanned', 'queued', 'unchanged', 'skipped', 'deleted', 'failed']
+            if counts.get(key) is not None
+        ]
+        detail_parts = [
+            f"Action: {log_record.get('action', 'sync_event')}",
+            f"Source: {workspace_context.get('source_name') or additional_context.get('source_name') or 'Unknown Source'}",
+            f"Scope: {workspace_context.get('scope_type') or log_record.get('workspace_type') or 'workspace'}"
+        ]
+        if additional_context.get('run_id'):
+            detail_parts.append(f"Run: {additional_context.get('run_id')}")
+        if count_parts:
+            detail_parts.append(', '.join(count_parts))
+        if additional_context.get('error'):
+            detail_parts.append(f"Error: {additional_context.get('error')}")
+        return '; '.join(detail_parts)
+
     if activity_type == 'token_usage':
         usage = log_record.get('usage', {})
         scope_details = []

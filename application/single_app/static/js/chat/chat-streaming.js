@@ -126,7 +126,8 @@ export function applyStreamingConversationMetadata(data = {}) {
     }
 
     const existingItem = findConversationListItem(conversationId);
-    if (!existingItem && window.chatConversations?.addConversationToList && metadataUpdates.title) {
+    const canAddMissingActiveConversation = !window.currentConversationId || window.currentConversationId === conversationId;
+    if (!existingItem && canAddMissingActiveConversation && window.chatConversations?.addConversationToList && metadataUpdates.title) {
         window.chatConversations.addConversationToList(
             conversationId,
             metadataUpdates.title,

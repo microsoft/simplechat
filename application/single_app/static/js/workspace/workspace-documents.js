@@ -771,8 +771,82 @@ function promptDocumentDeleteMode(documentCount = 1) {
     });
 }
 
-async function requestDocumentDeletion(documentId, deleteMode) {
+function promptSyncedDocumentDeleteAction(deleteInfo) {
+    if (!isDocumentDeleteModalReady()) {
+        showDocumentDeleteFeedback("Delete confirmation dialog is unavailable. Refresh the page and try again.");
+        return Promise.resolve(null);
+    }
+
+    if (documentDeleteModalTitle) {
+        documentDeleteModalTitle.textContent = "Delete Synced Document";
+    }
+
+    const body = document.createElement("div");
+    const intro = document.createElement("p");
+    intro.className = "mb-2";
+    intro.textContent = deleteInfo.message || "This document was created by File Sync.";
+    body.appendChild(intro);
+
+    if (deleteInfo.file_sync && deleteInfo.file_sync.relative_path) {
+        const path = document.createElement("p");
+        path.className = "mb-2 small text-muted";
+        path.textContent = deleteInfo.file_sync.relative_path;
+        body.appendChild(path);
+    }
+
+    const choice = document.createElement("p");
+    choice.className = "mb-0";
+    choice.textContent = "Choose whether this remote file should be ignored by future sync runs.";
+    body.appendChild(choice);
+    documentDeleteModalBody.replaceChildren(body);
+
+    const currentLabel = documentDeleteCurrentBtn.textContent;
+    const allLabel = documentDeleteAllBtn.textContent;
+    documentDeleteCurrentBtn.textContent = "Delete Only";
+    documentDeleteAllBtn.textContent = "Delete and Ignore Remote";
+
+    return new Promise((resolve) => {
+        let settled = false;
+
+        const cleanup = () => {
+            documentDeleteModalElement.removeEventListener("hidden.bs.modal", handleHidden);
+            documentDeleteCurrentBtn.removeEventListener("click", handleDeleteOnly);
+            documentDeleteAllBtn.removeEventListener("click", handleIgnoreRemote);
+            documentDeleteCurrentBtn.textContent = currentLabel;
+            documentDeleteAllBtn.textContent = allLabel;
+        };
+
+        const finalize = (value) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            resolve(value);
+        };
+
+        const handleHidden = () => finalize(null);
+        const handleDeleteOnly = () => {
+            documentDeleteModal.hide();
+            finalize("delete_only");
+        };
+        const handleIgnoreRemote = () => {
+            documentDeleteModal.hide();
+            finalize("ignore_remote");
+        };
+
+        documentDeleteModalElement.addEventListener("hidden.bs.modal", handleHidden);
+        documentDeleteCurrentBtn.addEventListener("click", handleDeleteOnly);
+        documentDeleteAllBtn.addEventListener("click", handleIgnoreRemote);
+        documentDeleteModal.show();
+    });
+}
+
+async function requestDocumentDeletion(documentId, deleteMode, fileSyncDeleteAction = null) {
     const query = new URLSearchParams({ delete_mode: deleteMode });
+    if (fileSyncDeleteAction) {
+        query.set("file_sync_delete_action", fileSyncDeleteAction);
+    }
     const response = await fetch(`/api/documents/${documentId}?${query.toString()}`, { method: "DELETE" });
 
     let responseData = {};
@@ -783,6 +857,13 @@ async function requestDocumentDeletion(documentId, deleteMode) {
     }
 
     if (!response.ok) {
+        if (response.status === 409 && responseData.error === "synced_document_delete_requires_action" && !fileSyncDeleteAction) {
+            const syncAction = await promptSyncedDocumentDeleteAction(responseData);
+            if (!syncAction) {
+                throw { error: "Deletion canceled" };
+            }
+            return requestDocumentDeletion(documentId, deleteMode, syncAction);
+        }
         throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
     }
 

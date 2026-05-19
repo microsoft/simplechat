@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
+from functions_file_sync import FILE_SYNC_MANAGER_ROLES, assert_public_workspace_role, is_file_sync_enabled_for_public_workspace
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_public_workspaces(app):
@@ -21,13 +22,20 @@ def register_route_frontend_public_workspaces(app):
     @user_required
     @enabled_required("enable_public_workspaces")
     def manage_public_workspace(workspace_id):
+        user_id = get_current_user_id()
         settings = get_settings()
         public_settings = sanitize_settings_for_user(settings)
+        try:
+            assert_public_workspace_role(user_id, workspace_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
+            file_sync_enabled = is_file_sync_enabled_for_public_workspace(settings, workspace_id)
+        except (LookupError, PermissionError):
+            file_sync_enabled = False
         return render_template(
             "manage_public_workspace.html",
             settings=public_settings,
             app_settings=public_settings,
-            workspace_id=workspace_id
+            workspace_id=workspace_id,
+            file_sync_enabled=file_sync_enabled
         )
     
     @app.route("/public_workspaces", methods=["GET"])

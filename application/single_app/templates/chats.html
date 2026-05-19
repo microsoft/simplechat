@@ -326,6 +326,15 @@
                             <i class="bi bi-globe"></i> <span class="search-btn-text">Web</span>
                         </button>
                         {% endif %}
+                        {% if settings.enable_source_review %}
+                        <button
+                            id="source-review-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Review source pages for deeper evidence"
+                        >
+                            <i class="bi bi-link-45deg"></i> <span class="search-btn-text">Sources</span>
+                        </button>
+                        {% endif %}
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                         <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
                             <i class="bi bi-lightbulb"></i> <span class="search-btn-text">Prompts</span>
@@ -1407,6 +1416,7 @@
         enable_text_to_speech: {{ app_settings.enable_text_to_speech|tojson }},
         enable_speech_to_text_input: {{ app_settings.enable_speech_to_text_input|tojson }},
         enable_web_search_user_notice: {{ settings.enable_web_search_user_notice|tojson }},
+        enable_source_review: {{ settings.enable_source_review|tojson }},
         enforce_workspace_scope_lock: {{ settings.enforce_workspace_scope_lock|tojson }},
         enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
         enable_thoughts: {{ settings.enable_thoughts|tojson }},

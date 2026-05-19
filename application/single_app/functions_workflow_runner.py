@@ -1434,6 +1434,7 @@ def _maybe_execute_tabular_document_action(
                         settings=settings,
                         conversation_id=conversation_id,
                         thought_callback=tabular_post_processing_thought_callback,
+                        user_id=user_id,
                     )
                 )
                 if generated_tabular_output:

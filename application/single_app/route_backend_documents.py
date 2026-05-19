@@ -6,6 +6,11 @@ from functions_documents import *
 from functions_settings import *
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from functions_file_sync import (
+    FILE_SYNC_SCOPE_PERSONAL,
+    apply_synced_document_delete_action,
+    build_synced_document_delete_guard,
+)
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
@@ -940,8 +945,23 @@ def register_route_backend_documents(app):
         delete_mode = request.args.get('delete_mode', 'all_versions')
         if delete_mode not in {'all_versions', 'current_only'}:
             return jsonify({'error': 'Invalid delete mode'}), 400
+        file_sync_delete_action = request.args.get('file_sync_delete_action')
+        file_sync_guard = build_synced_document_delete_guard(
+            FILE_SYNC_SCOPE_PERSONAL,
+            document_id,
+            user_id,
+            requested_action=file_sync_delete_action,
+        )
+        if file_sync_guard:
+            return jsonify(file_sync_guard), 409
         
         try:
+            apply_synced_document_delete_action(
+                FILE_SYNC_SCOPE_PERSONAL,
+                document_id,
+                user_id,
+                file_sync_delete_action,
+            )
             delete_result = delete_document_revision(user_id, document_id, delete_mode=delete_mode)
             
             # Invalidate search cache since document was deleted

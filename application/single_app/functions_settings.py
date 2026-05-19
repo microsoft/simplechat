@@ -232,6 +232,25 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_file_sharing': False,
         'enforce_workspace_scope_lock': True,
 
+        # File Sync
+        'enable_file_sync': False,
+        'enable_file_sync_personal': True,
+        'enable_file_sync_group': True,
+        'enable_file_sync_public': False,
+        'file_sync_allowed_users': [],
+        'file_sync_blocked_users': [],
+        'file_sync_allowed_groups': [],
+        'file_sync_blocked_groups': [],
+        'file_sync_allowed_public_workspaces': [],
+        'file_sync_blocked_public_workspaces': [],
+        'file_sync_max_sources_per_scope': 10,
+        'file_sync_min_schedule_interval_minutes': 15,
+        'file_sync_max_files_per_run': 1000,
+        'file_sync_max_bytes_per_run': 5368709120,
+        'file_sync_max_concurrent_runs': 2,
+        'file_sync_default_remote_delete_policy': 'ignore',
+        'file_sync_debug_logging': True,
+
         # Multimedia
         'enable_video_file_support': False,
         'enable_audio_file_support': False,
@@ -381,6 +400,26 @@ def get_settings(use_cosmos=False, include_source=False):
                 }
             }
         },
+
+        # Source Review (bounded source-page inspection for web evidence)
+        'enable_source_review': False,
+        'enable_deep_source_review': False,
+        'source_review_default_mode': 'manual',
+        'source_review_max_pages_per_turn': 5,
+        'source_review_max_seed_pages_per_turn': 3,
+        'source_review_max_depth': 2,
+        'source_review_timeout_seconds': 20,
+        'source_review_max_redirects': 3,
+        'source_review_max_bytes_per_page': 2000000,
+        'source_review_enable_llm_planning': True,
+        'source_review_allow_js_rendering': False,
+        'source_review_js_load_more_clicks': 6,
+        'source_review_respect_robots_txt': True,
+        'source_review_allowed_domains': [],
+        'source_review_blocked_domains': [],
+        'source_review_allowed_users': [],
+        'source_review_blocked_users': [],
+        'source_review_audit_logging': True,
 
         # Authentication & Redirect Settings
         'enable_front_door': False,

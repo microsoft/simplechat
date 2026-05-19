@@ -2794,6 +2794,7 @@ class ControlCenter {
             'document_creation': 'Document Created',
             'document_deletion': 'Document Deleted',
             'document_metadata_update': 'Document Metadata Updated',
+            'file_sync': 'File Sync',
             'token_usage': 'Token Usage',
             'group_status_change': 'Group Status Change',
             'group_member_deleted': 'Group Member Deleted',
@@ -2902,6 +2903,31 @@ class ControlCenter {
                 const updatedFileName = log.document?.file_name || 'Unknown';
                 const updatedFields = Object.keys(log.updated_fields || {}).join(', ') || 'N/A';
                 return `File: ${this.escapeHtml(updatedFileName)}<br><small class="text-muted">Updated: ${updatedFields}</small>`;
+
+            case 'file_sync':
+                const fileSyncContext = log.workspace_context || {};
+                const fileSyncAdditionalContext = log.additional_context || {};
+                const fileSyncCounts = fileSyncAdditionalContext.counts || {};
+                const fileSyncAction = this.formatActivityValue(log.action || 'sync_event');
+                const fileSyncSource = fileSyncContext.source_name || fileSyncAdditionalContext.source_name || 'Unknown Source';
+                const fileSyncScope = this.formatActivityValue(fileSyncContext.scope_type || log.workspace_type || 'workspace');
+                const fileSyncDetails = [];
+                if (fileSyncAdditionalContext.run_id) {
+                    fileSyncDetails.push(`Run: ${this.escapeHtml(fileSyncAdditionalContext.run_id)}`);
+                }
+                if (this.isActivityLogValuePresent(fileSyncCounts.scanned)) {
+                    fileSyncDetails.push(`Scanned: ${this.formatActivityLogNumber(fileSyncCounts.scanned)}`);
+                }
+                if (this.isActivityLogValuePresent(fileSyncCounts.queued)) {
+                    fileSyncDetails.push(`Queued: ${this.formatActivityLogNumber(fileSyncCounts.queued)}`);
+                }
+                if (this.isActivityLogValuePresent(fileSyncCounts.failed)) {
+                    fileSyncDetails.push(`Failed: ${this.formatActivityLogNumber(fileSyncCounts.failed)}`);
+                }
+                if (fileSyncAdditionalContext.error) {
+                    fileSyncDetails.push(`Error: ${this.escapeHtml(fileSyncAdditionalContext.error)}`);
+                }
+                return `Action: ${this.escapeHtml(fileSyncAction)}<br>Source: ${this.escapeHtml(fileSyncSource)}<br><small class="text-muted">Scope: ${this.escapeHtml(fileSyncScope)}${fileSyncDetails.length ? ' · ' + fileSyncDetails.join(' · ') : ''}</small>`;
                 
             case 'token_usage':
                 const tokenType = log.token_type || 'unknown';
@@ -3178,6 +3204,30 @@ class ControlCenter {
                 
             case 'document_creation':
                 return `File: ${this.escapeHtml(log.document?.file_name || 'Unknown')}, Type: ${this.escapeHtml(log.document?.file_type || '')}`;
+
+            case 'file_sync': {
+                const workspaceContext = log.workspace_context || {};
+                const additionalContext = log.additional_context || {};
+                const counts = additionalContext.counts || {};
+                const countParts = ['scanned', 'queued', 'unchanged', 'skipped', 'deleted', 'failed']
+                    .filter((key) => this.isActivityLogValuePresent(counts[key]))
+                    .map((key) => `${this.formatActivityValue(key)}: ${this.formatActivityLogNumber(counts[key])}`);
+                const detailParts = [
+                    `Action: ${this.escapeHtml(this.formatActivityValue(log.action || 'sync_event'))}`,
+                    `Source: ${this.escapeHtml(workspaceContext.source_name || additionalContext.source_name || 'Unknown Source')}`,
+                    `Scope: ${this.escapeHtml(this.formatActivityValue(workspaceContext.scope_type || log.workspace_type || 'workspace'))}`
+                ];
+                if (additionalContext.run_id) {
+                    detailParts.push(`Run: ${this.escapeHtml(additionalContext.run_id)}`);
+                }
+                if (countParts.length) {
+                    detailParts.push(countParts.join(', '));
+                }
+                if (additionalContext.error) {
+                    detailParts.push(`Error: ${this.escapeHtml(additionalContext.error)}`);
+                }
+                return detailParts.join(', ');
+            }
                 
             case 'token_usage':
                 return `Type: ${this.escapeHtml(log.token_type || 'unknown')}, Tokens: ${log.usage?.total_tokens || 0}, Model: ${this.escapeHtml(log.usage?.model || 'N/A')}`;
@@ -3243,6 +3293,7 @@ class ControlCenter {
             document_creation: 'bg-primary',
             document_deletion: 'bg-danger',
             document_metadata_update: 'bg-warning text-dark',
+            file_sync: 'bg-info text-dark',
             conversation_creation: 'bg-info text-dark',
             conversation_deletion: 'bg-secondary',
             conversation_archival: 'bg-dark',
@@ -3448,6 +3499,44 @@ class ControlCenter {
                     }
                 );
                 break;
+            case 'file_sync':
+                summaryFields.push(
+                    {
+                        label: 'Action',
+                        value: this.formatActivityValue(log.action || 'sync_event'),
+                        badgeClass: 'bg-info text-dark',
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Source',
+                        value: log.workspace_context?.source_name || log.additional_context?.source_name || 'Unknown Source',
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Scope',
+                        value: this.formatActivityValue(log.workspace_context?.scope_type || log.workspace_type || 'workspace'),
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Scanned',
+                        value: log.additional_context?.counts?.scanned,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Queued',
+                        value: log.additional_context?.counts?.queued,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Failed',
+                        value: log.additional_context?.counts?.failed,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        columnClass: 'col-md-4'
+                    }
+                );
+                break;
             case 'conversation_creation':
             case 'conversation_deletion':
             case 'conversation_archival':
@@ -3525,6 +3614,12 @@ class ControlCenter {
             {
                 label: 'Conversation ID',
                 value: log.chat_details?.conversation_id || log.conversation?.conversation_id,
+                code: true,
+                columnClass: 'col-12'
+            },
+            {
+                label: 'File Sync Source ID',
+                value: workspaceContext.source_id,
                 code: true,
                 columnClass: 'col-12'
             },

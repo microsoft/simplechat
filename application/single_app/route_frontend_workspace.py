@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from functions_file_sync import is_file_sync_enabled_for_user
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_workspace(app):
@@ -21,6 +22,8 @@ def register_route_frontend_workspace(app):
         enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
         enable_video_file_support = settings.get('enable_video_file_support', False)
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
+        user_info = get_current_user_info() or {}
+        file_sync_enabled = is_file_sync_enabled_for_user(settings, user_id, user_info.get('email')) if user_id else False
         if not user_id:
             print("User not authenticated.")
             return redirect(url_for('login'))
@@ -68,7 +71,8 @@ def register_route_frontend_workspace(app):
             legacy_docs_count=legacy_count,
             allowed_extensions=allowed_extensions_str,
             personal_model_endpoints=personal_model_endpoints,
-            global_model_endpoints=global_model_endpoints
+            global_model_endpoints=global_model_endpoints,
+            file_sync_enabled=file_sync_enabled
         )
 
     

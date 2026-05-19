@@ -602,6 +602,9 @@
         <label class="form-label" for="workspace-section-select">Section</label>
         <select class="form-select" id="workspace-section-select" data-workspace-section-select aria-label="Select workspace section">
           <option value="documents-tab-btn">Your Documents</option>
+          {% if file_sync_enabled %}
+            <option value="sync-tab-btn">Sync</option>
+          {% endif %}
           <option value="prompts-tab-btn">Your Prompts</option>
           {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
             {% if settings.allow_user_agents %}
@@ -634,6 +637,22 @@
           Documents
         </button>
       </li>
+      {% if file_sync_enabled %}
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="sync-tab-btn"
+          data-bs-toggle="tab"
+          data-bs-target="#sync-tab"
+          type="button"
+          role="tab"
+          aria-controls="sync-tab"
+          aria-selected="false"
+        >
+          Sync
+        </button>
+      </li>
+      {% endif %}
       <li class="nav-item" role="presentation">
         <button
           class="nav-link"
@@ -979,6 +998,24 @@
         </div> <!-- End Card -->
       </div>
       <!-- End DOCUMENTS TAB -->
+
+      {% if file_sync_enabled %}
+      <!-- ============= SYNC TAB ============= -->
+      <div
+        class="tab-pane fade"
+        id="sync-tab"
+        role="tabpanel"
+        aria-labelledby="sync-tab-btn"
+      >
+        <div class="card p-3 my-3">
+          <div
+            id="file-sync-root"
+            data-scope="personal"
+            data-api-base="/api/file-sync/personal"
+          ></div>
+        </div>
+      </div>
+      {% endif %}
 
             <!-- ============= PROMPTS TAB ============= -->
       <div
@@ -2299,6 +2336,9 @@
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-documents.js') }}?v={{ config['VERSION'] }}"></script>
   <script src="{{ url_for('static', filename='js/workspace/workspace-documents-sharing.js') }}?v={{ config['VERSION'] }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-prompts.js') }}?v={{ config['VERSION'] }}"></script>
+  {% if file_sync_enabled %}
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
+  {% endif %}
   <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}?v={{ config['VERSION'] }}"></script>
   <script src="{{ url_for('static', filename='js/workspace_sidebar_nav.js') }}?v={{ config['VERSION'] }}"></script>
   <script src="{{ url_for('static', filename='js/workspace_section_switcher.js') }}?v={{ config['VERSION'] }}"></script>

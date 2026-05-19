@@ -21,6 +21,8 @@ from functions_control_center import (
     parse_control_center_auto_refresh_datetime,
 )
 from functions_debug import debug_print
+from functions_file_sync import check_due_file_sync_sources_once
+from functions_tabular_generated_exports import check_due_tabular_generated_output_runs_once
 from functions_personal_workflows import (
     compute_next_run_at,
     get_due_personal_workflows,
@@ -477,6 +479,42 @@ def run_workflow_scheduler_loop():
         time.sleep(5)
 
 
+def run_file_sync_scheduler_loop():
+    """Run File Sync scheduling checks forever."""
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock('file_sync_scheduler_scan', lease_seconds=300)
+            if lock_document:
+                check_due_file_sync_sources_once()
+        except Exception as exc:
+            print(f"Error in File Sync scheduler check: {exc}")
+            log_event(f"[FileSync] Error in scheduler check: {exc}", level=logging.ERROR)
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(60)
+
+
+def run_tabular_generated_output_scheduler_loop():
+    """Resume queued or stale tabular generated-output runs."""
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock('tabular_generated_output_scheduler_scan', lease_seconds=120)
+            if lock_document:
+                check_due_tabular_generated_output_runs_once()
+        except Exception as exc:
+            print(f"Error in tabular generated-output scheduler check: {exc}")
+            log_event(f"[Tabular Generated Output] Error in scheduler check: {exc}", level=logging.ERROR)
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(30)
+
+
 def start_background_task_threads():
     """Start all background task loops for the current process."""
     task_specs = [
@@ -485,6 +523,8 @@ def start_background_task_threads():
         ('Retention policy background task started.', run_retention_policy_loop),
         ('Control Center auto-refresh background task started.', run_control_center_auto_refresh_loop),
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
+        ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
+        ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
     ]
 
     started_threads = []
