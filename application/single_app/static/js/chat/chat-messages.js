@@ -3874,7 +3874,7 @@ export function sendMessage() {
   if (!currentConversationId) {
     createNewConversation(() => {
       actuallySendMessage(combinedMessage);
-    }, { preserveSelections: true });
+    }, { preserveSelections: true, initialMessage: combinedMessage });
   } else {
     actuallySendMessage(combinedMessage);
   }

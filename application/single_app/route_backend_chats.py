@@ -76,7 +76,47 @@ from functions_document_actions import (
 )
 from functions_thoughts import ThoughtTracker
 from functions_workflow_runner import _execute_document_action_workflow
-from functions_simplechat_operations import upload_chat_image_bytes_for_user, upload_generated_analysis_artifact_for_current_user
+from functions_simplechat_operations import (
+    derive_conversation_title_from_message,
+    upload_chat_image_bytes_for_user,
+    upload_generated_analysis_artifact_for_current_user,
+)
+
+
+DEFAULT_CONVERSATION_TITLE = 'New Conversation'
+
+
+def _conversation_title_is_default(title):
+    return str(title or '').strip() in {'', DEFAULT_CONVERSATION_TITLE}
+
+
+def _set_initial_conversation_title(conversation_item, user_message):
+    if not isinstance(conversation_item, dict):
+        return False
+
+    if not _conversation_title_is_default(conversation_item.get('title')):
+        return False
+
+    derived_title = derive_conversation_title_from_message(user_message)
+    if _conversation_title_is_default(derived_title):
+        return False
+
+    conversation_item['title'] = derived_title
+    return True
+
+
+def _build_conversation_metadata_stream_payload(conversation_item):
+    return make_json_serializable({
+        'type': 'conversation_metadata',
+        'conversation_id': conversation_item.get('id'),
+        'conversation_title': conversation_item.get('title', DEFAULT_CONVERSATION_TITLE),
+        'title': conversation_item.get('title', DEFAULT_CONVERSATION_TITLE),
+        'last_updated': conversation_item.get('last_updated'),
+    })
+
+
+def _build_conversation_metadata_stream_event(conversation_item):
+    return f"data: {json.dumps(_build_conversation_metadata_stream_payload(conversation_item))}\n\n"
 
 
 def _strip_agent_citation_artifact_refs(agent_citations):
@@ -9802,6 +9842,13 @@ def register_route_backend_chats(app):
         except Exception as e:
             debug_print(f"Activity logging error: {e}")
 
+        title_updated = _set_initial_conversation_title(conversation_item, user_message)
+        if title_updated:
+            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            cosmos_conversations_container.upsert_item(conversation_item)
+            if callable(publish_background_event):
+                publish_background_event(_build_conversation_metadata_stream_event(conversation_item))
+
         assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
@@ -9981,8 +10028,7 @@ def register_route_backend_chats(app):
             except Exception as log_error:
                 debug_print(f'[ChatDocumentAction] Failed to log token usage: {log_error}')
 
-        if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
-            conversation_item['title'] = (user_message[:30] + '...') if len(user_message) > 30 else user_message
+        _set_initial_conversation_title(conversation_item, user_message)
 
         conversation_item['last_updated'] = datetime.utcnow().isoformat()
         conversation_item['chat_type'] = data.get('chat_type') or conversation_item.get('chat_type') or 'new'
@@ -10779,9 +10825,7 @@ def register_route_backend_chats(app):
                     debug_print(f"Activity logging error: {e}")
                     
                 # Set conversation title if it's still the default
-                if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
-                    new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
-                    conversation_item['title'] = new_title
+                _set_initial_conversation_title(conversation_item, user_message)
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
@@ -13747,12 +13791,12 @@ def register_route_backend_chats(app):
                     debug_print(f"Activity logging error: {e}")
                 
                 # Update conversation title
-                if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
-                    new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
-                    conversation_item['title'] = new_title
+                title_updated = _set_initial_conversation_title(conversation_item, user_message)
                 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item)
+                if title_updated:
+                    yield _build_conversation_metadata_stream_event(conversation_item)
 
                 assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
                     conversation_id=conversation_id,

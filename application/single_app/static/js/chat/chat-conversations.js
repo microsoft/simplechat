@@ -1882,7 +1882,7 @@ export async function createNewConversation(callback, options = {}) {
       return;
     }
 
-  const { preserveSelections = false } = options;
+  const { preserveSelections = false, initialMessage = "" } = options;
 
     // Disable new button? Show loading?
     if (newConversationBtn) newConversationBtn.disabled = true;
@@ -1896,12 +1896,19 @@ export async function createNewConversation(callback, options = {}) {
     
   try {
     pendingConversationCreation = (async () => {
+      const requestBody = {};
+      const normalizedInitialMessage = String(initialMessage || "").trim();
+      if (normalizedInitialMessage) {
+        requestBody.initial_message = normalizedInitialMessage;
+      }
+
       const response = await fetch("/api/create_conversation", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         credentials: "same-origin",
+        body: JSON.stringify(requestBody),
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));

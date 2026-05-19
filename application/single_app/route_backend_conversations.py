@@ -21,7 +21,11 @@ from functions_message_artifacts import (
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
 )
-from functions_simplechat_operations import create_personal_conversation_for_current_user, delete_blob_backed_chat_message_files
+from functions_simplechat_operations import (
+    create_personal_conversation_for_current_user,
+    delete_blob_backed_chat_message_files,
+    derive_conversation_title_from_message,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
@@ -354,7 +358,11 @@ def register_route_backend_conversations(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        conversation_item = create_personal_conversation_for_current_user()
+        data = request.get_json(silent=True) or {}
+        initial_title = derive_conversation_title_from_message(
+            data.get('initial_message') or data.get('message') or data.get('title') or ''
+        )
+        conversation_item = create_personal_conversation_for_current_user(title=initial_title)
 
         return jsonify({
             'conversation_id': conversation_item.get('id'),

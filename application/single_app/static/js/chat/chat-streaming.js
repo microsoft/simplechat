@@ -89,6 +89,54 @@ function reportClientStreamEvent(eventType, payload = {}) {
     });
 }
 
+function findConversationListItem(conversationId) {
+    const normalizedConversationId = String(conversationId || '');
+    return Array.from(document.querySelectorAll('.conversation-item')).find(item => (
+        item.getAttribute('data-conversation-id') === normalizedConversationId
+    )) || null;
+}
+
+export function applyStreamingConversationMetadata(data = {}) {
+    const conversationId = data.conversation_id || data.conversationId;
+    if (!conversationId) {
+        return;
+    }
+
+    if (!window.currentConversationId) {
+        window.currentConversationId = conversationId;
+    }
+
+    const metadataUpdates = {};
+    const conversationTitle = data.conversation_title ?? data.title;
+    if (conversationTitle !== undefined) {
+        metadataUpdates.title = String(conversationTitle || '').trim() || 'New Conversation';
+    }
+    if (Array.isArray(data.classification)) {
+        metadataUpdates.classification = data.classification;
+    }
+    if (Array.isArray(data.context)) {
+        metadataUpdates.context = data.context;
+    }
+    if (data.chat_type !== undefined) {
+        metadataUpdates.chat_type = data.chat_type || null;
+    }
+
+    if (Object.keys(metadataUpdates).length === 0) {
+        return;
+    }
+
+    const existingItem = findConversationListItem(conversationId);
+    if (!existingItem && window.chatConversations?.addConversationToList && metadataUpdates.title) {
+        window.chatConversations.addConversationToList(
+            conversationId,
+            metadataUpdates.title,
+            metadataUpdates.classification || []
+        );
+    }
+
+    applyConversationMetadataUpdate(conversationId, metadataUpdates);
+}
+
 async function getStreamingStatus(conversationId) {
     if (!conversationId) {
         return null;
@@ -251,6 +299,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 if (!hasStreamedContent && !streamCompleted) {
                     handleStreamingThought(data, tempAiMessageId);
                 }
+                return false;
+            }
+
+            if (data.type === 'conversation_metadata') {
+                applyStreamingConversationMetadata(data);
                 return false;
             }
 

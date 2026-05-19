@@ -24,6 +24,7 @@ category: Version History
 - [Deployer Version Tracking](v0.241.082/DEPLOYER_VERSION_TRACKING.md)
 - [Azure CLI Upgrade Script](v0.241.079/AZURECLI_UPGRADE_SCRIPT.md)
 - [Core Document Search And Summarization](v0.241.007/CORE_DOCUMENT_SEARCH_AND_SUMMARIZATION.md)
+- [Document Analysis Lossless Artifacts](v0.241.040/DOCUMENT_ANALYSIS_LOSSLESS_ARTIFACTS.md)
 - [Document Analysis](v0.241.069/DOCUMENT_ANALYSIS.md)
 - [Analyze Progress And Limits](v0.241.071/DOCUMENT_ANALYSIS_PROGRESS_AND_LIMITS.md)
 - [Document Actions And Comparison](v0.241.072/DOCUMENT_ACTIONS_AND_COMPARISON.md)

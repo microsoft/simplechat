@@ -1,8 +1,8 @@
 # functions_public_workspaces.py
 
 from config import *
+import functions_authentication
 import functions_settings
-from functions_authentication import *
 from functions_group import *
 from typing import Iterable
 
@@ -16,7 +16,7 @@ def create_public_workspace(name: str, description: str) -> dict:
     """
     Creates a new public workspace. The creator becomes the Owner by default.
     """
-    user_info = get_current_user_info()
+    user_info = functions_authentication.get_current_user_info()
     if not user_info:
         raise Exception("No user in session")
 

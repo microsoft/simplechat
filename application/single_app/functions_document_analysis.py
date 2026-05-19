@@ -448,6 +448,88 @@ def _prompt_requests_json_code_block(analysis_prompt):
     return 'code block' in prompt_text or '```json' in prompt_text
 
 
+def _prompt_requests_table_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    table_markers = (
+        'make a table',
+        'create a table',
+        'build a table',
+        'put it into a table',
+        'put this into a table',
+        'put these into a table',
+        'format as a table',
+        'format this as a table',
+        'format these as a table',
+        'table format',
+        'markdown table',
+        'csv',
+        'spreadsheet',
+        'one row per',
+        'each row',
+        'columns',
+    )
+    if any(marker in prompt_text for marker in table_markers):
+        return True
+
+    return bool(re.search(r'\btable\b', prompt_text))
+
+
+def _prompt_requests_exhaustive_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    exhaustive_markers = (
+        'list all',
+        'list out all',
+        'find all',
+        'identify all',
+        'extract all',
+        'include all',
+        'every ',
+        'each ',
+        'full list',
+        'complete list',
+        'comprehensive list',
+        'inventory',
+        'catalog',
+        'catalogue',
+        'one row per',
+        'one object per',
+        'one item per',
+        'all vendors',
+        'all entities',
+    )
+    return any(marker in prompt_text for marker in exhaustive_markers)
+
+
+def _build_analysis_intent(analysis_prompt):
+    per_source_output_requested = _prompt_requests_per_source_output(analysis_prompt)
+    json_array_output_requested = _prompt_requests_json_array_output(analysis_prompt)
+    json_code_block_requested = _prompt_requests_json_code_block(analysis_prompt)
+    table_output_requested = _prompt_requests_table_output(analysis_prompt)
+    exhaustive_output_requested = (
+        per_source_output_requested
+        or json_array_output_requested
+        or table_output_requested
+        or _prompt_requests_exhaustive_output(analysis_prompt)
+    )
+
+    return {
+        'exhaustive': exhaustive_output_requested,
+        'preserve_raw_outputs': True,
+        'per_source_output_requested': per_source_output_requested,
+        'json_array_output_requested': json_array_output_requested,
+        'json_code_block_requested': json_code_block_requested,
+        'table_output_requested': table_output_requested,
+        'csv_artifact_recommended': table_output_requested or exhaustive_output_requested,
+        'markdown_analysis_artifact_recommended': exhaustive_output_requested,
+    }
+
+
 def _clean_json_code_fence(response_content):
     cleaned = str(response_content or '').strip()
     if not cleaned:
@@ -770,10 +852,13 @@ def run_document_analysis(
     )
     document_runs = []
     reduction_items = []
+    document_analysis_items = []
+    raw_analysis_items = []
     failed_range_labels = []
-    preserve_source_outputs = _prompt_requests_per_source_output(normalized_analysis_prompt)
-    json_array_output_requested = _prompt_requests_json_array_output(normalized_analysis_prompt)
-    json_code_block_requested = _prompt_requests_json_code_block(normalized_analysis_prompt)
+    analysis_intent = _build_analysis_intent(normalized_analysis_prompt)
+    preserve_source_outputs = analysis_intent.get('per_source_output_requested')
+    json_array_output_requested = analysis_intent.get('json_array_output_requested')
+    json_code_block_requested = analysis_intent.get('json_code_block_requested')
 
     for document_index, document_id in enumerate(targets.get('document_ids', []), start=1):
         document_payload = get_document_chunks_payload(
@@ -836,6 +921,9 @@ def run_document_analysis(
     for document_run in document_runs:
         document_id = document_run.get('document_id')
         document_payload = document_run.get('document_payload') or {}
+        document_metadata = document_payload.get('document') if isinstance(document_payload.get('document'), dict) else {}
+        document_file_name = _resolve_document_file_name(document_metadata)
+        document_title = _resolve_document_title(document_metadata)
         document_name = document_run.get('document_name')
         document_summary = document_run.get('document_summary') or {}
         windows = document_run.get('windows') or []
@@ -1016,6 +1104,18 @@ def run_document_analysis(
                     'document_name': document_name,
                     'window_range': window_range,
                 })
+                raw_analysis_items.append({
+                    'level': 'window',
+                    'label': window_label,
+                    'text': analysis_text,
+                    'document_id': document_id,
+                    'document_name': document_name,
+                    'file_name': document_file_name,
+                    'title': document_title,
+                    'scope': document_payload.get('scope'),
+                    'scope_id': document_payload.get('scope_id'),
+                    'window_range': window_range,
+                })
                 if callable(activity_callback):
                     activity_callback({
                         'type': 'window_completed',
@@ -1069,13 +1169,19 @@ def run_document_analysis(
 
             document_result_text = str(document_result.get('text', '') or '').strip()
             if document_result_text:
-                reduction_items.append({
+                document_analysis_item = {
                     'label': document_name,
                     'text': document_result_text,
                     'document_id': document_id,
                     'document_name': document_name,
+                    'file_name': document_file_name,
+                    'title': document_title,
+                    'scope': document_payload.get('scope'),
+                    'scope_id': document_payload.get('scope_id'),
                     'source_labels': [item.get('label') for item in document_reduction_items],
-                })
+                }
+                reduction_items.append(document_analysis_item)
+                document_analysis_items.append(dict(document_analysis_item))
 
         document_summary['active_window_number'] = None
         document_summary['active_attempt_number'] = None
@@ -1291,6 +1397,9 @@ def run_document_analysis(
         'analysis_reply': final_analysis_reply,
         'coverage': coverage,
         'documents': coverage.get('documents', []),
+        'raw_analysis_items': raw_analysis_items,
+        'document_analysis_items': document_analysis_items,
+        'analysis_intent': analysis_intent,
         'document_ids': targets.get('document_ids', []),
         'doc_scope': targets.get('doc_scope'),
         'window_unit': targets.get('window_unit'),

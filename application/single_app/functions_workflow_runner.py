@@ -4,6 +4,8 @@ Workflow execution helpers for personal workflows.
 """
 
 import asyncio
+import csv
+import io
 import json
 import logging
 import os
@@ -76,6 +78,7 @@ from semantic_kernel_plugins.plugin_invocation_thoughts import register_plugin_i
 _workflow_runner_app = None
 DOCUMENT_ANALYSIS_ARTIFACT_REPLY_CHAR_THRESHOLD = 12000
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT = 3
+DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH = 220
 TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
@@ -180,6 +183,436 @@ def _build_document_analysis_artifact_summary(document_count, output_format):
     )
 
 
+def _prompt_requests_exhaustive_analysis_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    exhaustive_markers = (
+        'list all',
+        'list out all',
+        'find all',
+        'identify all',
+        'extract all',
+        'include all',
+        'every ',
+        'each ',
+        'full list',
+        'complete list',
+        'comprehensive list',
+        'inventory',
+        'catalog',
+        'catalogue',
+        'one row per',
+        'one object per',
+        'all vendors',
+        'all entities',
+    )
+    return any(marker in prompt_text for marker in exhaustive_markers)
+
+
+def _prompt_requests_table_analysis_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    table_markers = (
+        'make a table',
+        'create a table',
+        'build a table',
+        'put it into a table',
+        'put this into a table',
+        'put these into a table',
+        'format as a table',
+        'format this as a table',
+        'format these as a table',
+        'table format',
+        'markdown table',
+        'csv',
+        'spreadsheet',
+        'one row per',
+        'each row',
+        'columns',
+    )
+    if any(marker in prompt_text for marker in table_markers):
+        return True
+
+    return bool(re.search(r'\btable\b', prompt_text))
+
+
+def _get_document_analysis_artifact_intent(analysis_result, analysis_prompt):
+    analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
+    analysis_intent = analysis_result.get('analysis_intent') if isinstance(analysis_result.get('analysis_intent'), dict) else {}
+    table_output_requested = bool(
+        analysis_intent.get('table_output_requested')
+        or _prompt_requests_table_analysis_output(analysis_prompt)
+    )
+    exhaustive_output_requested = bool(
+        analysis_intent.get('exhaustive')
+        or table_output_requested
+        or _prompt_requests_exhaustive_analysis_output(analysis_prompt)
+    )
+
+    return {
+        'exhaustive': exhaustive_output_requested,
+        'table_output_requested': table_output_requested,
+        'csv_artifact_recommended': bool(
+            analysis_intent.get('csv_artifact_recommended')
+            or table_output_requested
+            or exhaustive_output_requested
+        ),
+        'markdown_analysis_artifact_recommended': bool(
+            analysis_intent.get('markdown_analysis_artifact_recommended')
+            or exhaustive_output_requested
+        ),
+    }
+
+
+def _split_markdown_table_cells(line):
+    stripped_line = str(line or '').strip()
+    if '|' not in stripped_line:
+        return []
+
+    if stripped_line.startswith('|'):
+        stripped_line = stripped_line[1:]
+    if stripped_line.endswith('|'):
+        stripped_line = stripped_line[:-1]
+
+    return [cell.strip() for cell in stripped_line.split('|')]
+
+
+def _is_markdown_table_separator(cells):
+    if not cells:
+        return False
+
+    for cell in cells:
+        normalized_cell = str(cell or '').replace(' ', '')
+        if not re.fullmatch(r':?-{3,}:?', normalized_cell):
+            return False
+    return True
+
+
+def _normalize_document_analysis_row_key(value, fallback_value):
+    normalized_value = re.sub(r'\s+', ' ', str(value or '').strip())
+    return normalized_value or fallback_value
+
+
+def _dedupe_document_analysis_row_keys(headers):
+    deduped_headers = []
+    seen_headers = {}
+    for index, header in enumerate(headers or [], start=1):
+        normalized_header = _normalize_document_analysis_row_key(header, f'column_{index}')
+        normalized_key = normalized_header.casefold()
+        seen_count = seen_headers.get(normalized_key, 0) + 1
+        seen_headers[normalized_key] = seen_count
+        if seen_count > 1:
+            normalized_header = f'{normalized_header}_{seen_count}'
+        deduped_headers.append(normalized_header)
+    return deduped_headers
+
+
+def _extract_markdown_table_rows(analysis_text):
+    rows = []
+    lines = str(analysis_text or '').splitlines()
+    line_index = 0
+
+    while line_index + 1 < len(lines):
+        header_cells = _split_markdown_table_cells(lines[line_index])
+        separator_cells = _split_markdown_table_cells(lines[line_index + 1])
+        if not header_cells or not _is_markdown_table_separator(separator_cells):
+            line_index += 1
+            continue
+
+        headers = _dedupe_document_analysis_row_keys(header_cells)
+        line_index += 2
+        while line_index < len(lines):
+            row_cells = _split_markdown_table_cells(lines[line_index])
+            if not row_cells:
+                break
+            if _is_markdown_table_separator(row_cells):
+                line_index += 1
+                continue
+
+            row = {}
+            for column_index, header in enumerate(headers):
+                row[header] = row_cells[column_index] if column_index < len(row_cells) else ''
+            rows.append(row)
+            line_index += 1
+
+    return rows
+
+
+def _build_document_analysis_source_context(item, default_level='analysis'):
+    item = item if isinstance(item, dict) else {}
+    window_range = item.get('window_range') if isinstance(item.get('window_range'), dict) else {}
+    return {
+        'source_level': item.get('level') or default_level,
+        'source_document': item.get('file_name') or item.get('document_name') or item.get('label'),
+        'source_title': item.get('title'),
+        'source_label': item.get('label'),
+        'source_document_id': item.get('document_id'),
+        'source_scope': item.get('scope'),
+        'source_scope_id': item.get('scope_id'),
+        'window_number': window_range.get('window_number'),
+        'start_page': window_range.get('start_page'),
+        'end_page': window_range.get('end_page'),
+        'start_chunk_sequence': window_range.get('start_chunk_sequence'),
+        'end_chunk_sequence': window_range.get('end_chunk_sequence'),
+    }
+
+
+def _serialize_document_analysis_csv_value(value):
+    if value is None:
+        return ''
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+    return str(value)
+
+
+def _add_document_analysis_source_context(row, source_context):
+    normalized_row = dict(row or {})
+    for context_key, context_value in (source_context or {}).items():
+        if context_value in (None, ''):
+            continue
+        normalized_row.setdefault(context_key, context_value)
+    return normalized_row
+
+
+def _extract_document_analysis_rows_from_text(analysis_text, source_context, include_fallback_note=True):
+    rows = []
+    parsed_json = _parse_json_artifact_payload(analysis_text)
+    if isinstance(parsed_json, dict):
+        rows.append(parsed_json)
+    elif isinstance(parsed_json, list) and all(isinstance(item, dict) for item in parsed_json):
+        rows.extend(parsed_json)
+
+    if not rows:
+        rows.extend(_extract_markdown_table_rows(analysis_text))
+
+    if not rows and include_fallback_note and str(analysis_text or '').strip():
+        rows.append({'analysis_note': str(analysis_text or '').strip()})
+
+    return [
+        _add_document_analysis_source_context(row, source_context)
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _build_document_analysis_structured_rows(analysis_result):
+    analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
+    rows = []
+    raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
+    document_analysis_items = analysis_result.get('document_analysis_items') if isinstance(analysis_result.get('document_analysis_items'), list) else []
+    source_items = raw_analysis_items or document_analysis_items
+
+    for item in source_items:
+        if not isinstance(item, dict):
+            continue
+        source_context = _build_document_analysis_source_context(item)
+        rows.extend(_extract_document_analysis_rows_from_text(item.get('text', ''), source_context))
+
+    if not rows:
+        final_context = {
+            'source_level': 'final_analysis',
+            'source_document': 'Final analysis',
+            'source_label': 'Final analysis',
+        }
+        rows.extend(_extract_document_analysis_rows_from_text(
+            analysis_result.get('analysis_reply') or analysis_result.get('reply') or '',
+            final_context,
+        ))
+
+    return rows
+
+
+def _build_document_analysis_rows_csv(rows):
+    rows = [row for row in (rows or []) if isinstance(row, dict)]
+    if not rows:
+        return ''
+
+    preferred_columns = [
+        'source_level',
+        'source_document',
+        'source_title',
+        'source_label',
+        'source_document_id',
+        'source_scope',
+        'source_scope_id',
+        'window_number',
+        'start_page',
+        'end_page',
+        'start_chunk_sequence',
+        'end_chunk_sequence',
+    ]
+    ordered_columns = []
+    seen_columns = set()
+
+    def add_column(column_name):
+        normalized_column = str(column_name or '').strip()
+        if not normalized_column or normalized_column in seen_columns:
+            return
+        seen_columns.add(normalized_column)
+        ordered_columns.append(normalized_column)
+
+    for column_name in preferred_columns:
+        if any(column_name in row for row in rows):
+            add_column(column_name)
+
+    for row in rows:
+        for column_name in row.keys():
+            add_column(column_name)
+
+    output_buffer = io.StringIO()
+    writer = csv.DictWriter(output_buffer, fieldnames=ordered_columns, lineterminator='\n')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({
+            column_name: _serialize_document_analysis_csv_value(row.get(column_name))
+            for column_name in ordered_columns
+        })
+    return output_buffer.getvalue()
+
+
+def _build_document_analysis_coverage_markdown(analysis_result):
+    coverage = analysis_result.get('coverage') if isinstance(analysis_result.get('coverage'), dict) else {}
+    if not coverage:
+        return ''
+
+    coverage_lines = [
+        '## Coverage',
+        f"- Documents analyzed: {coverage.get('document_count', 0)}",
+        f"- Total windows: {coverage.get('total_windows', 0)}",
+        f"- Processed windows: {coverage.get('processed_windows', 0)}",
+        f"- Failed windows: {coverage.get('failed_windows', 0)}",
+        f"- Total chunks: {coverage.get('total_chunks', 0)}",
+        f"- Processed chunks: {coverage.get('processed_chunks', 0)}",
+        f"- Failed chunks: {coverage.get('failed_chunks', 0)}",
+        f"- Retries used: {coverage.get('retries', 0)}",
+    ]
+    return '\n'.join(coverage_lines)
+
+
+def _build_document_analysis_markdown_artifact(analysis_result):
+    analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
+    analysis_reply = str(analysis_result.get('analysis_reply') or analysis_result.get('reply') or '').strip()
+    raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
+    document_analysis_items = analysis_result.get('document_analysis_items') if isinstance(analysis_result.get('document_analysis_items'), list) else []
+
+    lines = ['# Document Analysis', '']
+    if analysis_reply:
+        lines.extend(['## Final Analysis', '', analysis_reply, ''])
+
+    coverage_markdown = _build_document_analysis_coverage_markdown(analysis_result)
+    if coverage_markdown:
+        lines.extend([coverage_markdown, ''])
+
+    retained_items = raw_analysis_items or document_analysis_items
+    if retained_items:
+        section_title = 'Raw Window-Level Analysis Notes' if raw_analysis_items else 'Document-Level Analysis Notes'
+        lines.extend([f'## {section_title}', ''])
+        for index, item in enumerate(retained_items, start=1):
+            if not isinstance(item, dict):
+                continue
+            source_context = _build_document_analysis_source_context(item)
+            label = str(item.get('label') or source_context.get('source_document') or f'Analysis item {index}').strip()
+            lines.extend([f'### {index}. {label}', ''])
+
+            metadata_lines = []
+            for metadata_key in (
+                'source_document',
+                'source_title',
+                'source_document_id',
+                'source_level',
+                'window_number',
+                'start_page',
+                'end_page',
+                'start_chunk_sequence',
+                'end_chunk_sequence',
+            ):
+                metadata_value = source_context.get(metadata_key)
+                if metadata_value in (None, ''):
+                    continue
+                metadata_lines.append(f'- {metadata_key}: {metadata_value}')
+            if metadata_lines:
+                lines.extend(metadata_lines)
+                lines.append('')
+
+            item_text = str(item.get('text') or '').strip()
+            if item_text:
+                lines.extend([item_text, ''])
+
+    return '\n'.join(lines).strip()
+
+
+def _upload_document_analysis_generated_artifact(
+    normalized_conversation_id,
+    file_name,
+    file_content,
+    output_format,
+    summary,
+    preview_items=None,
+    preview_lines=None,
+):
+    try:
+        upload_result = upload_generated_analysis_artifact_for_current_user(
+            conversation_id=normalized_conversation_id,
+            file_name=file_name,
+            file_content=file_content,
+            capability='analyze',
+            output_format=output_format,
+            summary=summary,
+        )
+    except Exception as exc:
+        debug_print(
+            '[WorkflowDocumentAnalysis] Generated artifact upload skipped | '
+            f'conversation_id={normalized_conversation_id} | file={file_name} | error={exc}'
+        )
+        return None
+
+    artifact_payload = {
+        'capability': 'analyze',
+        'artifact_message_id': upload_result.get('message', {}).get('id'),
+        'conversation_id': normalized_conversation_id,
+        'storage_scope': 'chat',
+        'file_name': upload_result.get('message', {}).get('file_name') or file_name,
+        'output_format': output_format,
+        'summary': summary,
+    }
+    if preview_items:
+        artifact_payload['preview_items'] = preview_items
+    if preview_lines:
+        artifact_payload['preview_lines'] = preview_lines
+    return artifact_payload
+
+
+def _build_document_analysis_multi_artifact_reply(document_count, artifacts, row_count, raw_item_count, analysis_reply):
+    normalized_document_count = max(0, int(document_count or 0))
+    document_label = f'{normalized_document_count} source document' if normalized_document_count == 1 else f'{normalized_document_count} source documents'
+    artifact_formats = []
+    for artifact in artifacts or []:
+        output_format = str(artifact.get('output_format') or '').strip().upper()
+        if output_format and output_format not in artifact_formats:
+            artifact_formats.append(output_format)
+    artifact_label = ', '.join(artifact_formats) if artifact_formats else 'downloadable'
+
+    lines = [
+        f'I analyzed {document_label} and saved the full {artifact_label} artifacts attached to this chat.',
+        f'The structured output has {max(0, int(row_count or 0))} row(s), and {max(0, int(raw_item_count or 0))} raw analysis note(s) were retained for auditability.',
+    ]
+
+    preview_lines = _build_document_analysis_preview_lines(analysis_reply)
+    if preview_lines:
+        lines.extend(['', 'Preview:', *[f'- {line}' for line in preview_lines]])
+
+    return '\n'.join(lines)
+
+
 def _build_document_analysis_artifact_reply(document_count, output_format):
     normalized_document_count = max(0, int(document_count or 0))
     document_label = f'{normalized_document_count} source document' if normalized_document_count == 1 else f'{normalized_document_count} source documents'
@@ -200,6 +633,87 @@ def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysi
     if not analysis_reply:
         return {'artifacts': [], 'assistant_reply': None}
 
+    document_summaries = analysis_result.get('documents') if isinstance(analysis_result.get('documents'), list) else []
+    document_count = len(document_summaries)
+    artifact_intent = _get_document_analysis_artifact_intent(analysis_result, analysis_prompt)
+    raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
+    create_lossless_artifacts = bool(
+        artifact_intent.get('exhaustive')
+        or artifact_intent.get('table_output_requested')
+    )
+
+    if create_lossless_artifacts:
+        artifacts = []
+        structured_rows = _build_document_analysis_structured_rows(analysis_result)
+
+        if artifact_intent.get('csv_artifact_recommended') and structured_rows:
+            csv_output = _build_document_analysis_rows_csv(structured_rows)
+            csv_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'csv')
+            csv_summary = (
+                f'Saved {len(structured_rows)} extracted analysis row(s) for {document_count} '
+                'source document(s) as a downloadable CSV artifact.'
+            )
+            csv_artifact = _upload_document_analysis_generated_artifact(
+                normalized_conversation_id,
+                csv_file_name,
+                csv_output,
+                'csv',
+                csv_summary,
+                preview_items=structured_rows[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT],
+            )
+            if csv_artifact:
+                artifacts.append(csv_artifact)
+
+        markdown_output = _build_document_analysis_markdown_artifact(analysis_result)
+        if artifact_intent.get('markdown_analysis_artifact_recommended') and markdown_output:
+            markdown_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'md')
+            markdown_summary = (
+                f'Saved the final analysis plus retained raw analysis notes for {document_count} '
+                'source document(s) as a downloadable Markdown artifact.'
+            )
+            markdown_artifact = _upload_document_analysis_generated_artifact(
+                normalized_conversation_id,
+                markdown_file_name,
+                markdown_output,
+                'md',
+                markdown_summary,
+                preview_lines=_build_document_analysis_preview_lines(analysis_reply),
+            )
+            if markdown_artifact:
+                artifacts.append(markdown_artifact)
+
+        json_payload = _parse_json_artifact_payload(analysis_reply)
+        if json_payload is not None:
+            json_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'json')
+            json_summary = _build_document_analysis_artifact_summary(document_count, 'json')
+            json_preview_items = []
+            if isinstance(json_payload, list):
+                json_preview_items = json_payload[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT]
+            elif isinstance(json_payload, dict):
+                json_preview_items = [json_payload]
+            json_artifact = _upload_document_analysis_generated_artifact(
+                normalized_conversation_id,
+                json_file_name,
+                json.dumps(json_payload, indent=2, ensure_ascii=False),
+                'json',
+                json_summary,
+                preview_items=json_preview_items,
+            )
+            if json_artifact:
+                artifacts.append(json_artifact)
+
+        if artifacts:
+            return {
+                'artifacts': artifacts,
+                'assistant_reply': _build_document_analysis_multi_artifact_reply(
+                    document_count,
+                    artifacts,
+                    len(structured_rows),
+                    len(raw_analysis_items),
+                    analysis_reply,
+                ),
+            }
+
     json_payload = _parse_json_artifact_payload(analysis_reply)
     explicit_artifact_request = _prompt_explicitly_requests_artifact(analysis_prompt)
     should_generate_artifact = (
@@ -210,8 +724,6 @@ def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysi
     if not should_generate_artifact:
         return {'artifacts': [], 'assistant_reply': None}
 
-    document_summaries = analysis_result.get('documents') if isinstance(analysis_result.get('documents'), list) else []
-    document_count = len(document_summaries)
     output_format = 'json' if json_payload is not None else 'md'
     preview_items = []
     preview_lines = []
@@ -229,35 +741,17 @@ def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysi
     file_name = _build_document_analysis_artifact_file_name(analysis_result, output_format)
     summary = _build_document_analysis_artifact_summary(document_count, output_format)
 
-    try:
-        upload_result = upload_generated_analysis_artifact_for_current_user(
-            conversation_id=normalized_conversation_id,
-            file_name=file_name,
-            file_content=serialized_output,
-            capability='analyze',
-            output_format=output_format,
-            summary=summary,
-        )
-    except Exception as exc:
-        debug_print(
-            '[WorkflowDocumentAnalysis] Generated artifact upload skipped | '
-            f'conversation_id={normalized_conversation_id} | error={exc}'
-        )
+    artifact_payload = _upload_document_analysis_generated_artifact(
+        normalized_conversation_id,
+        file_name,
+        serialized_output,
+        output_format,
+        summary,
+        preview_items=preview_items,
+        preview_lines=preview_lines,
+    )
+    if not artifact_payload:
         return {'artifacts': [], 'assistant_reply': None}
-
-    artifact_payload = {
-        'capability': 'analyze',
-        'artifact_message_id': upload_result.get('message', {}).get('id'),
-        'conversation_id': normalized_conversation_id,
-        'storage_scope': 'chat',
-        'file_name': upload_result.get('message', {}).get('file_name') or file_name,
-        'output_format': output_format,
-        'summary': summary,
-    }
-    if preview_items:
-        artifact_payload['preview_items'] = preview_items
-    if preview_lines:
-        artifact_payload['preview_lines'] = preview_lines
 
     return {
         'artifacts': [artifact_payload],

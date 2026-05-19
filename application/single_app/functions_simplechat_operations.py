@@ -196,6 +196,13 @@ def resolve_simplechat_action_capabilities(
     return resolved_defaults
 
 
+def derive_conversation_title_from_message(content: str) -> str:
+    normalized_content = re.sub(r"\s+", " ", str(content or "").strip())
+    if not normalized_content:
+        return "New Conversation"
+    return f"{normalized_content[:30]}..." if len(normalized_content) > 30 else normalized_content
+
+
 def create_personal_conversation_for_current_user(
     title: str = "New Conversation",
     notify_creation: bool = False,
@@ -1569,10 +1576,7 @@ def _resolve_group_upload_target_for_current_user(
 
 
 def _derive_personal_conversation_title(content: str) -> str:
-    normalized_content = str(content or "").strip()
-    if not normalized_content:
-        return "New Conversation"
-    return f"{normalized_content[:30]}..." if len(normalized_content) > 30 else normalized_content
+    return derive_conversation_title_from_message(content)
 
 
 def _resolve_group_doc_for_current_user(
