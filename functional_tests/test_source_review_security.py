@@ -1,8 +1,8 @@
 # test_source_review_security.py
 """
 Functional test for Source Review security and evidence extraction.
-Version: 0.241.062
-Implemented in: 0.241.062
+Version: 0.241.063
+Implemented in: 0.241.063
 
 This test ensures that Source Review applies access controls, clamps admin limits,
 blocks unsafe URLs, and extracts bounded HTML evidence and structured archive rows
@@ -26,16 +26,19 @@ from functions_source_review import (  # noqa: E402
     is_source_review_enabled_for_user,
     validate_source_review_url,
     _click_first_visible_load_more_control,
+    _wait_for_rendered_page_hydration,
 )
 
 
 class FakeRenderedControl:
     """Minimal async Playwright-like control for rendered Load More tests."""
 
-    def __init__(self, text, visible=True):
+    def __init__(self, text, visible=True, page=None):
         self.text = text
         self.visible = visible
+        self.page = page
         self.clicked = False
+        self.hydrated_when_clicked = None
 
     async def is_visible(self):
         return self.visible
@@ -48,6 +51,7 @@ class FakeRenderedControl:
 
     async def click(self, timeout=2000):
         self.clicked = True
+        self.hydrated_when_clicked = getattr(self.page, "hydrated", None)
 
 
 class FakeRenderedLocator:
@@ -74,6 +78,56 @@ class FakeRenderedPage:
 
     def locator(self, selector):
         return FakeRenderedLocator(self.controls)
+
+
+class FakeHydratedBodyLocator:
+    def __init__(self, page):
+        self.page = page
+
+    async def inner_text(self, timeout=1000):
+        if self.page.hydrated:
+            return "Example Release May 18, 2026 Learn more"
+        return "Loading archive"
+
+
+class FakeHydratedLinksLocator:
+    def __init__(self, page):
+        self.page = page
+
+    async def count(self):
+        return 12 if self.page.hydrated else 0
+
+    async def evaluate_all(self, expression):
+        if self.page.hydrated:
+            return "https://www.contoso.example/news/2026/example"
+        return ""
+
+
+class FakeHydratingRenderedPage(FakeRenderedPage):
+    """Minimal rendered page that exposes dated links only after hydration."""
+
+    def __init__(self):
+        self.hydrated = False
+        self.waited_for_hydration = False
+        controls = [FakeRenderedControl("Load more", page=self)]
+        super().__init__(controls)
+
+    async def wait_for_load_state(self, state, timeout=0):
+        return None
+
+    async def wait_for_function(self, expression, arg=None, timeout=0):
+        self.waited_for_hydration = True
+        self.hydrated = True
+
+    async def wait_for_timeout(self, timeout):
+        return None
+
+    def locator(self, selector):
+        if selector == "body":
+            return FakeHydratedBodyLocator(self)
+        if selector == "a[href]":
+            return FakeHydratedLinksLocator(self)
+        return super().locator(selector)
 
 
 def test_source_review_access_controls():
@@ -232,6 +286,23 @@ def test_source_review_rendered_load_more_scans_past_large_navigation():
     assert controls[-1].clicked is True
 
 
+def test_source_review_waits_for_rendered_archive_hydration_before_clicking():
+    """Validate rendered archives hydrate dated rows before Load More clicks."""
+    print("Testing Source Review rendered archive hydration wait...")
+
+    page = FakeHydratingRenderedPage()
+
+    async def run_test():
+        await _wait_for_rendered_page_hydration(page, {"source_review_timeout_seconds": 30})
+        return await _click_first_visible_load_more_control(page)
+
+    clicked = asyncio.run(run_test())
+
+    assert page.waited_for_hydration is True
+    assert clicked is True
+    assert page.controls[0].hydrated_when_clicked is True
+
+
 def test_source_review_html_extraction_structures_archive_cards():
     """Validate generic archive/list cards expose dated title and URL rows."""
     print("Testing Source Review structured archive item extraction...")
@@ -294,6 +365,7 @@ if __name__ == "__main__":
         test_source_review_html_extraction_and_prompt_injection_markers,
         test_source_review_html_extraction_detects_load_more_controls,
         test_source_review_rendered_load_more_scans_past_large_navigation,
+        test_source_review_waits_for_rendered_archive_hydration_before_clicking,
         test_source_review_html_extraction_structures_archive_cards,
         test_source_review_seed_url_collection,
     ]

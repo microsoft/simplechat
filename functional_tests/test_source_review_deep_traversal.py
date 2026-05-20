@@ -1,7 +1,7 @@
 # test_source_review_deep_traversal.py
 """
 Functional test for Deep Source Review archive traversal and link planning.
-Version: 0.241.062
+Version: 0.241.063
 Implemented in: 0.241.062
 
 This test ensures Deep Source Review prioritizes source-archive child links over

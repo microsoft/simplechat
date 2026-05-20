@@ -2290,6 +2290,7 @@ async def _try_rendered_page_fetch(
                 wait_until="domcontentloaded",
                 timeout=source_settings["source_review_timeout_seconds"] * 1000,
             )
+            await _wait_for_rendered_page_hydration(page, source_settings)
             load_more_result = await _click_rendered_load_more_controls(page, user_message, source_settings)
             rendered_content = await page.content()
             await context.close()
@@ -2357,7 +2358,11 @@ async def _click_rendered_load_more_controls(page: Any, user_message: str, sourc
             await page.wait_for_load_state("networkidle", timeout=2000)
         except Exception:
             pass
-        await _wait_for_rendered_content_change(page, previous_signature)
+        await _wait_for_rendered_content_change(
+            page,
+            previous_signature,
+            timeout_ms=_rendered_interaction_wait_ms(source_settings),
+        )
         await page.wait_for_timeout(250)
 
         current_signature = await _rendered_page_content_signature(page)
@@ -2373,6 +2378,45 @@ async def _click_rendered_load_more_controls(page: Any, user_message: str, sourc
         result["load_more_stop_reason"] = "max_clicks_reached"
 
     return result
+
+
+async def _wait_for_rendered_page_hydration(page: Any, source_settings: Dict[str, Any]) -> None:
+    wait_ms = _rendered_hydration_wait_ms(source_settings)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=wait_ms)
+    except Exception:
+        pass
+    try:
+        await page.wait_for_function(
+            r"""
+            () => {
+                const loadMorePattern = /\b(load\s+more|show\s+more|view\s+more|more\s+(news|results|articles|releases|items|cards))\b/i;
+                const datePattern = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},\s+20\d{2}\b|\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/20\d{2}\b/;
+                const controls = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]'));
+                const hasVisibleLoadMore = controls.some((control) => {
+                    const rects = control.getClientRects ? control.getClientRects() : [];
+                    const visible = Boolean((control.offsetWidth || control.offsetHeight || rects.length) && getComputedStyle(control).visibility !== 'hidden');
+                    const label = [control.innerText || '', control.value || '', control.getAttribute('aria-label') || ''].join(' ');
+                    return visible && loadMorePattern.test(label);
+                });
+                const candidates = Array.from(document.querySelectorAll('main a[href], [role="main"] a[href], article a[href], li a[href], [class*="card"] a[href], [class*="item"] a[href], [class*="result"] a[href], [class*="list"] a[href]'));
+                const hasDatedLink = candidates.some((link) => {
+                    const container = link.closest('article, li, [class*="card"], [class*="item"], [class*="result"], [class*="list"]') || link.parentElement || link;
+                    const text = [container.innerText || '', link.getAttribute('aria-label') || '', link.textContent || ''].join(' ');
+                    return datePattern.test(text);
+                });
+                if (hasDatedLink) {
+                    return true;
+                }
+                const bodyText = document.body ? (document.body.innerText || '') : '';
+                return !hasVisibleLoadMore && (bodyText.length > 500 || candidates.length > 0);
+            }
+            """,
+            timeout=wait_ms,
+        )
+    except Exception:
+        pass
+    await _wait_for_rendered_content_stability(page, timeout_ms=min(2500, wait_ms), interval_ms=400)
 
 
 async def _click_first_visible_load_more_control(page: Any) -> bool:
@@ -2442,7 +2486,7 @@ async def _rendered_control_text(control: Any) -> str:
     return _clean_text(text_value)
 
 
-async def _wait_for_rendered_content_change(page: Any, previous_signature: Tuple[Any, ...]) -> None:
+async def _wait_for_rendered_content_change(page: Any, previous_signature: Tuple[Any, ...], timeout_ms: int = 5000) -> None:
     previous_length = int(previous_signature[0] or 0) if previous_signature else 0
     previous_link_count = int(previous_signature[1] or 0) if len(previous_signature) > 1 else 0
     previous_text_tail = str(previous_signature[2] or "") if len(previous_signature) > 2 else ""
@@ -2460,10 +2504,37 @@ async def _wait_for_rendered_content_change(page: Any, previous_signature: Tuple
             }
             """,
             [previous_length, previous_link_count, previous_text_tail, previous_href_tail],
-            timeout=3500,
+            timeout=max(1000, int(timeout_ms or 5000)),
         )
     except Exception:
         return
+
+
+async def _wait_for_rendered_content_stability(page: Any, timeout_ms: int, interval_ms: int) -> None:
+    deadline = time.monotonic() + (max(0, timeout_ms) / 1000)
+    try:
+        previous_signature = await _rendered_page_content_signature(page)
+    except Exception:
+        return
+    while time.monotonic() < deadline:
+        try:
+            await page.wait_for_timeout(max(50, int(interval_ms or 400)))
+            current_signature = await _rendered_page_content_signature(page)
+        except Exception:
+            return
+        if current_signature == previous_signature:
+            return
+        previous_signature = current_signature
+
+
+def _rendered_hydration_wait_ms(source_settings: Dict[str, Any]) -> int:
+    timeout_ms = int(source_settings.get("source_review_timeout_seconds") or SOURCE_REVIEW_DEFAULTS["source_review_timeout_seconds"]) * 1000
+    return min(8000, max(3000, timeout_ms // 3))
+
+
+def _rendered_interaction_wait_ms(source_settings: Dict[str, Any]) -> int:
+    timeout_ms = int(source_settings.get("source_review_timeout_seconds") or SOURCE_REVIEW_DEFAULTS["source_review_timeout_seconds"]) * 1000
+    return min(6000, max(3500, timeout_ms // 5))
 
 
 async def _rendered_page_content_signature(page: Any) -> Tuple[int, int, str, str]:
