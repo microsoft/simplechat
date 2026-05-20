@@ -1,7 +1,7 @@
 // static/js/workspace/workspace-tags.js
 // Handles tag management for workspace documents
 
-import { escapeHtml } from "./workspace-utils.js";
+import { escapeHtml, getDocumentSyncBadgeHtml } from "./workspace-utils.js";
 import { showTagManagementModal } from "./workspace-tag-management.js";
 
 // ============= State Variables =============
@@ -251,8 +251,8 @@ function switchView(view) {
         }
         if (viewInfo) {
             viewInfo.textContent = currentView === 'folders-cards'
-                ? 'Browse folders, then review matching documents as cards.'
-                : 'Browse folders by tag and classification.';
+                ? ''
+                : '';
         }
         if (selectionModeActive && typeof window.toggleSelectionMode === 'function') {
             window.toggleSelectionMode();
@@ -752,7 +752,7 @@ function buildFolderDocumentsTable(docs) {
         html += `
             <tr>
                 <td class="align-middle">${firstColHtml}</td>
-                <td class="align-middle" title="${escapeHtml(doc.file_name || '')}">${escapeHtml(doc.file_name || '')}</td>
+                <td class="align-middle" title="${escapeHtml(doc.file_name || '')}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || '')}</td>
                 <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || 'N/A')}</td>
                 <td class="align-middle">${chatButton}${actionsDropdown}</td>
             </tr>`;

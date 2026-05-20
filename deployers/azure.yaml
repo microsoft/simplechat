@@ -567,7 +567,18 @@ hooks:
         fi
 
         echo ""
-        echo "[3/4] Restarting web service..."
+        echo "[3/5] Enabling SimpleChat background tasks..."
+        if az webapp config appsettings set \
+            --name ${var_webService} \
+            --resource-group ${var_rgName} \
+            --settings SIMPLECHAT_RUN_BACKGROUND_TASKS=1 > /dev/null; then
+            echo "✓ SimpleChat background tasks enabled"
+        else
+            cleanup_on_error "Enable SimpleChat background tasks"
+        fi
+
+        echo ""
+        echo "[4/5] Restarting web service..."
         if az webapp start --name ${var_webService} --resource-group ${var_rgName}; then
             echo "✓ Web service restarted successfully"
         else
@@ -576,7 +587,7 @@ hooks:
         fi
 
         echo ""
-        echo "[4/4] Image build and restart complete"
+        echo "[5/5] Image build and restart complete"
         echo "  -> Published ${var_imageName}:${timestamp}"
         echo "  -> Published ${var_imageName}:latest"
 
@@ -725,7 +736,15 @@ hooks:
         Write-Host "✓ ACR image build completed successfully"
 
         Write-Host ""
-        Write-Host "[3/4] Restarting web service..."
+        Write-Host "[3/5] Enabling SimpleChat background tasks..."
+        az webapp config appsettings set --name $env:var_webService --resource-group $rgName --subscription $subscriptionId --settings SIMPLECHAT_RUN_BACKGROUND_TASKS=1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Cleanup-OnError -StepName 'Enable SimpleChat background tasks'
+        }
+        Write-Host "✓ SimpleChat background tasks enabled"
+
+        Write-Host ""
+        Write-Host "[4/5] Restarting web service..."
         az webapp start --name $env:var_webService --resource-group $rgName --subscription $subscriptionId | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw 'Failed to restart web service.'
@@ -733,7 +752,7 @@ hooks:
         Write-Host "✓ Web service restarted successfully"
 
         Write-Host ""
-        Write-Host "[4/4] Image build and restart complete"
+        Write-Host "[5/5] Image build and restart complete"
         Write-Host "  -> Published $($env:var_imageName):$timestamp"
         Write-Host "  -> Published $($env:var_imageName):latest"
 

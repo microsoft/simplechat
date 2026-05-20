@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.241.051
-Implemented in: 0.241.050
+Version: 0.241.057
+Implemented in: 0.241.057
 
 This test ensures that large tabular structured exports are wired through the
-durable background queue, status API, and chat progress UI without requiring
-live Azure services.
+durable background queue, status API, queued retry recovery, and chat progress
+UI without requiring live Azure services.
 """
 
 import ast
@@ -63,6 +63,8 @@ def test_export_runner_module():
         'process_tabular_generated_output_run',
         'resume_tabular_generated_output_run',
         'check_due_tabular_generated_output_runs_once',
+        '_is_due_queued_retry_run',
+        '_is_stale_queued_run',
     }
 
     missing_functions = required_functions - function_names
@@ -77,14 +79,20 @@ def test_export_runner_module():
     assert_contains(source_text, "'generated_artifact': generated_artifact", 'completed artifact status payload')
     assert_contains(source_text, '_mark_run_retryable', 'retryable transient failure requeue')
     assert_contains(source_text, 'transient_failure_count', 'bounded transient failure counter')
+    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5', 'non-starving scheduler scan limit')
     assert_contains(source_text, 'APIConnectionError', 'OpenAI connection error retry classification')
     assert_contains(source_text, 'c.status = @failed', 'retryable failed-run scheduler pickup')
+    assert_contains(source_text, 'or _is_due_queued_retry_run(run)', 'queued retry-due manual resume eligibility')
+    assert_contains(source_text, 'or _is_stale_queued_run(run, settings or {})', 'stale queued manual resume eligibility')
+    assert_contains(source_text, 'Automatic retry is due but no worker has picked it up', 'queued retry-due status detail')
+    assert_contains(source_text, "'retry_due': status_detail.get('retry_due')", 'retry-due public status payload')
     assert_contains(source_text, 'Manual resume queued', 'manual checkpoint resume message')
     assert_contains(source_text, 'manual_resume_count', 'manual resume counter')
     assert_contains(source_text, 'status_detail', 'safe status detail payload')
     assert_contains(source_text, 'checkpoint_summary', 'checkpoint summary payload')
     assert_contains(source_text, 'waiting_for_retry', 'scheduled retry status payload')
     assert_contains(source_text, 'retry_delay_seconds', 'retry delay status payload')
+    assert_contains(source_text, 'Background scheduler scan result', 'scheduler scan diagnostics')
 
 
 def test_chat_route_wires_background_exports():

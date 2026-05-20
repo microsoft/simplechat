@@ -1012,6 +1012,8 @@
             id="file-sync-root"
             data-scope="personal"
             data-api-base="/api/file-sync/personal"
+            data-tags-api="/api/documents/tags"
+            data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
           ></div>
         </div>
       </div>
@@ -1688,6 +1690,13 @@
           <div class="modal-body">
             <!-- Hidden doc-id field -->
             <input type="hidden" id="doc-id" name="doc_id" value="" />
+
+            <div id="doc-sync-status" class="alert alert-secondary py-2 mb-3" aria-live="polite">
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <strong>Synced:</strong>
+                <span class="badge bg-secondary">No</span>
+              </div>
+            </div>
 
             <!-- Document Classification -->
             {% if enable_document_classification in [True, 'True', 'true'] %}

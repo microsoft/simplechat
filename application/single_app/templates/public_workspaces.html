@@ -525,6 +525,13 @@
           <!-- Hidden doc-id field -->
           <input type="hidden" id="public-doc-id" name="doc_id" value="" />
 
+          <div id="public-doc-sync-status" class="alert alert-secondary py-2 mb-3" aria-live="polite">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <strong>Synced:</strong>
+              <span class="badge bg-secondary">No</span>
+            </div>
+          </div>
+
           <!-- Document Classification -->
           <div class="mb-3" id="public-doc-classification-container">
             <label for="public-doc-classification" class="form-label">Classification</label>

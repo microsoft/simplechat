@@ -665,13 +665,16 @@ function Ensure-OpenAiModelDeployment {
         [pscustomobject]$ModelDeployment
     )
 
-    $existingDeployment = az cognitiveservices account deployment show \
-        --name $AccountName \
-        --resource-group $ResourceGroupName \
-        --deployment-name $ModelDeployment.DeploymentName \
-        --subscription $SubscriptionId \
-        --query "name" \
-        --output tsv 2>$null
+    $showDeploymentArgs = @(
+        'cognitiveservices', 'account', 'deployment', 'show',
+        '--name', $AccountName,
+        '--resource-group', $ResourceGroupName,
+        '--deployment-name', $ModelDeployment.DeploymentName,
+        '--subscription', $SubscriptionId,
+        '--query', 'name',
+        '--output', 'tsv'
+    )
+    $existingDeployment = & az @showDeploymentArgs 2>$null
 
     if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingDeployment)) {
         Write-Host "Azure OpenAI $($ModelDeployment.Kind) deployment '$($ModelDeployment.DeploymentName)' already exists." -ForegroundColor Yellow
@@ -682,16 +685,19 @@ function Ensure-OpenAiModelDeployment {
 
     while ($true) {
         Write-Host "`n=====> Creating Azure OpenAI $($ModelDeployment.Kind) deployment '$($ModelDeployment.DeploymentName)' using deployment type '$currentSkuName'..."
-        az cognitiveservices account deployment create \
-            --name $AccountName \
-            --resource-group $ResourceGroupName \
-            --deployment-name $ModelDeployment.DeploymentName \
-            --model-name $ModelDeployment.ModelName \
-            --model-version $ModelDeployment.ModelVersion \
-            --model-format $ModelDeployment.ModelFormat \
-            --sku-name $currentSkuName \
-            --sku-capacity $ModelDeployment.SkuCapacity \
-            --subscription $SubscriptionId | Out-Null
+        $createDeploymentArgs = @(
+            'cognitiveservices', 'account', 'deployment', 'create',
+            '--name', $AccountName,
+            '--resource-group', $ResourceGroupName,
+            '--deployment-name', $ModelDeployment.DeploymentName,
+            '--model-name', $ModelDeployment.ModelName,
+            '--model-version', $ModelDeployment.ModelVersion,
+            '--model-format', $ModelDeployment.ModelFormat,
+            '--sku-name', $currentSkuName,
+            '--sku-capacity', $ModelDeployment.SkuCapacity,
+            '--subscription', $SubscriptionId
+        )
+        & az @createDeploymentArgs | Out-Null
 
         if ($LASTEXITCODE -eq 0) {
             Write-Host "Azure OpenAI $($ModelDeployment.Kind) deployment '$($ModelDeployment.DeploymentName)' created successfully." -ForegroundColor Green
@@ -1750,10 +1756,10 @@ if ($param_DeployAzureOpenAiModels) {
     } else {
         $openAiModelDeployments = Get-OpenAiModelDeploymentDefinitions
         foreach ($modelDeployment in $openAiModelDeployments) {
-            $deploymentCreated = Ensure-OpenAiModelDeployment \
-                -AccountName $openAiAccountName \
-                -ResourceGroupName $openAiResourceGroupName \
-                -SubscriptionId $openAiSubscriptionId \
+            $deploymentCreated = Ensure-OpenAiModelDeployment `
+                -AccountName $openAiAccountName `
+                -ResourceGroupName $openAiResourceGroupName `
+                -SubscriptionId $openAiSubscriptionId `
                 -ModelDeployment $modelDeployment
 
             if (-not $deploymentCreated) {
@@ -1886,6 +1892,7 @@ if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to update Azure App Service App
 else { Write-Host "Azure App Service App Settings configured." }
 
 $additionalAppSettings = @(
+    "SIMPLECHAT_RUN_BACKGROUND_TASKS=1",
     "VIDEO_INDEXER_ARM_API_VERSION=$param_VideoIndexerArmApiVersion"
 )
 

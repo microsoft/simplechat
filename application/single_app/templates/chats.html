@@ -92,6 +92,21 @@
             padding-right: 50px !important; /* Space for square button + padding */
         }
 
+        .chat-input-container.chat-input-drag-active #user-input {
+            border-color: var(--bs-primary);
+            box-shadow: 0 0 0 0.25rem rgba(var(--bs-primary-rgb), 0.16);
+            background-color: rgba(var(--bs-primary-rgb), 0.04);
+        }
+
+        .chat-input-container.chat-input-drag-active #normal-input-container::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border: 2px dashed rgba(var(--bs-primary-rgb), 0.7);
+            border-radius: var(--bs-border-radius);
+            pointer-events: none;
+        }
+
         /* Ensure the button icon is centered */
         #send-btn i {
             font-size: 14px;

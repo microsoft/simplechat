@@ -21,6 +21,7 @@ const fileInputEl = document.getElementById("file-input");
 const uploadBtn = document.getElementById("upload-btn");
 const cancelFileSelection = document.getElementById("cancel-file-selection");
 const userInputEl = document.getElementById("user-input");
+const chatDropZoneEl = document.querySelector(".chat-input-container");
 const httpUrlPattern = /https?:\/\/[^\s<>'"]+/gi;
 
 function getPromptUrls() {
@@ -138,6 +139,10 @@ function buildUploadFileList(filesLike, fallbackPrefix = "clipboard_upload") {
     .filter(Boolean);
 }
 
+function hasNamedFile(files) {
+  return Array.from(files || []).some((file) => String(file?.name || "").trim());
+}
+
 function uploadFilesInSequence(files) {
   return files.reduce((uploadChain, file) => {
     return uploadChain.then(() => uploadFileToConversation(file));
@@ -198,10 +203,78 @@ function getClipboardFiles(clipboardData) {
   });
 
   if (clipboardFiles.length > 0) {
+    if (clipboardHasPlainText(clipboardData) && !hasNamedFile(clipboardFiles)) {
+      return [];
+    }
+
     return clipboardFiles;
   }
 
-  return Array.from(clipboardData.files || []);
+  const fileList = Array.from(clipboardData.files || []);
+  if (clipboardHasPlainText(clipboardData) && !hasNamedFile(fileList)) {
+    return [];
+  }
+
+  return fileList;
+}
+
+function clipboardHasPlainText(clipboardData) {
+  if (!clipboardData || typeof clipboardData.getData !== "function") {
+    return false;
+  }
+
+  try {
+    return String(clipboardData.getData("text/plain") || clipboardData.getData("Text") || "").trim().length > 0;
+  } catch (error) {
+    console.debug("Unable to inspect clipboard text data", error);
+    return false;
+  }
+}
+
+function hasFileTransfer(dataTransfer) {
+  if (!dataTransfer) {
+    return false;
+  }
+
+  const transferTypes = Array.from(dataTransfer.types || []);
+  if (transferTypes.includes("Files")) {
+    return true;
+  }
+
+  return Array.from(dataTransfer.items || []).some((item) => item?.kind === "file")
+    || (dataTransfer.files && dataTransfer.files.length > 0);
+}
+
+function getDataTransferFiles(dataTransfer) {
+  if (!dataTransfer) {
+    return [];
+  }
+
+  const transferFiles = [];
+  Array.from(dataTransfer.items || []).forEach((item) => {
+    if (item?.kind !== "file" || typeof item.getAsFile !== "function") {
+      return;
+    }
+
+    const file = item.getAsFile();
+    if (file) {
+      transferFiles.push(file);
+    }
+  });
+
+  if (transferFiles.length > 0) {
+    return transferFiles;
+  }
+
+  return Array.from(dataTransfer.files || []);
+}
+
+function setChatDropActive(isActive) {
+  if (!chatDropZoneEl) {
+    return;
+  }
+
+  chatDropZoneEl.classList.toggle("chat-input-drag-active", isActive);
 }
 
 export function uploadFileToConversation(file) {
@@ -666,5 +739,41 @@ if (userInputEl) {
 
     event.preventDefault();
     beginChatFileUpload(clipboardFiles, { fallbackPrefix: "pasted_file" });
+  });
+}
+
+if (chatDropZoneEl) {
+  ["dragenter", "dragover"].forEach((eventName) => {
+    chatDropZoneEl.addEventListener(eventName, (event) => {
+      if (!hasFileTransfer(event.dataTransfer)) {
+        return;
+      }
+
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+      setChatDropActive(true);
+    });
+  });
+
+  chatDropZoneEl.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget && chatDropZoneEl.contains(event.relatedTarget)) {
+      return;
+    }
+
+    setChatDropActive(false);
+  });
+
+  chatDropZoneEl.addEventListener("drop", (event) => {
+    if (!hasFileTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    setChatDropActive(false);
+
+    const droppedFiles = getDataTransferFiles(event.dataTransfer);
+    beginChatFileUpload(droppedFiles, { fallbackPrefix: "dropped_file" });
   });
 }

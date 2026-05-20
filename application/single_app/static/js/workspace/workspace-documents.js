@@ -1,6 +1,6 @@
 // static/js/workspace/workspace-documents.js
 
-import { escapeHtml } from "./workspace-utils.js";
+import { escapeHtml, getDocumentSyncBadgeHtml, getDocumentSyncDetailsHtml, setDocumentSyncStatusElement } from "./workspace-utils.js";
 import { initializeTags, renderTagBadges, loadWorkspaceTags, currentView } from "./workspace-tags.js";
 import { getSelectedTagsArray, setSelectedTags, clearSelectedTags, updateDocumentTagsDisplay, loadWorkspaceTags as loadTagManagementTags } from './workspace-tag-management.js';
 
@@ -552,6 +552,7 @@ function createDocumentCard(doc) {
                 <div class="document-item-card__badges">
                     ${getDocumentClassificationBadge(doc)}
                     <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
+                    ${getDocumentSyncBadgeHtml(doc)}
                 </div>
                 <div class="document-item-card__tags">${renderTagBadges(doc.tags || [], 4)}</div>
                 ${progressHtml}
@@ -738,6 +739,7 @@ function promptDocumentDeleteMode(documentCount = 1) {
 
     return new Promise((resolve) => {
         let settled = false;
+        let selectedValue = null;
 
         const cleanup = () => {
             documentDeleteModalElement.removeEventListener("hidden.bs.modal", handleHidden);
@@ -745,24 +747,26 @@ function promptDocumentDeleteMode(documentCount = 1) {
             documentDeleteAllBtn.removeEventListener("click", handleAllVersions);
         };
 
-        const finalize = (value) => {
+        const finalize = () => {
             if (settled) {
                 return;
             }
             settled = true;
             cleanup();
-            resolve(value);
+            resolve(selectedValue);
         };
 
-        const handleHidden = () => finalize(null);
-        const handleCurrentOnly = () => {
+        const hideWithValue = (value) => {
+            if (selectedValue) {
+                return;
+            }
+            selectedValue = value;
             documentDeleteModal.hide();
-            finalize("current_only");
         };
-        const handleAllVersions = () => {
-            documentDeleteModal.hide();
-            finalize("all_versions");
-        };
+
+        const handleHidden = () => finalize();
+        const handleCurrentOnly = () => hideWithValue("current_only");
+        const handleAllVersions = () => hideWithValue("all_versions");
 
         documentDeleteModalElement.addEventListener("hidden.bs.modal", handleHidden);
         documentDeleteCurrentBtn.addEventListener("click", handleCurrentOnly);
@@ -807,6 +811,7 @@ function promptSyncedDocumentDeleteAction(deleteInfo) {
 
     return new Promise((resolve) => {
         let settled = false;
+        let selectedValue = null;
 
         const cleanup = () => {
             documentDeleteModalElement.removeEventListener("hidden.bs.modal", handleHidden);
@@ -816,24 +821,26 @@ function promptSyncedDocumentDeleteAction(deleteInfo) {
             documentDeleteAllBtn.textContent = allLabel;
         };
 
-        const finalize = (value) => {
+        const finalize = () => {
             if (settled) {
                 return;
             }
             settled = true;
             cleanup();
-            resolve(value);
+            resolve(selectedValue);
         };
 
-        const handleHidden = () => finalize(null);
-        const handleDeleteOnly = () => {
+        const hideWithValue = (value) => {
+            if (selectedValue) {
+                return;
+            }
+            selectedValue = value;
             documentDeleteModal.hide();
-            finalize("delete_only");
         };
-        const handleIgnoreRemote = () => {
-            documentDeleteModal.hide();
-            finalize("ignore_remote");
-        };
+
+        const handleHidden = () => finalize();
+        const handleDeleteOnly = () => hideWithValue("delete_only");
+        const handleIgnoreRemote = () => hideWithValue("ignore_remote");
 
         documentDeleteModalElement.addEventListener("hidden.bs.modal", handleHidden);
         documentDeleteCurrentBtn.addEventListener("click", handleDeleteOnly);
@@ -1543,7 +1550,7 @@ function renderDocumentRow(doc) {
     // Complete row HTML
     docRow.innerHTML = `
         ${firstColumnHtml}
-        <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
+        <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")}</td>
         <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
         <td class="align-middle document-actions-cell">
             ${approvalButton}
@@ -1586,6 +1593,7 @@ function renderDocumentRow(doc) {
             <td colspan="4">
                 <div class="bg-light p-3 border rounded small">
                     ${classificationDisplayHTML}
+                    ${getDocumentSyncDetailsHtml(doc)}
                     <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || "N/A")}</p>
                     <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(Array.isArray(doc.authors) ? doc.authors.join(", ") : doc.authors || "N/A")}</p>
                     <p class="mb-1"><strong>Pages:</strong> ${escapeHtml(doc.number_of_pages || "N/A")}</p>
@@ -1962,6 +1970,7 @@ window.onEditDocument = function(docId) {
             if (docKeywordsInput) docKeywordsInput.value = Array.isArray(doc.keywords) ? doc.keywords.join(", ") : (doc.keywords || "");
             if (docPubDateInput) docPubDateInput.value = doc.publication_date || "";
             if (docAuthorsInput) docAuthorsInput.value = Array.isArray(doc.authors) ? doc.authors.join(", ") : (doc.authors || "");
+            setDocumentSyncStatusElement(document.getElementById("doc-sync-status"), doc);
             
             // Set selected tags in the new tag management system
             const docTags = doc.tags || [];

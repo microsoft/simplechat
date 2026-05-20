@@ -721,8 +721,8 @@ def register_route_frontend_admin_settings(app):
                     'file_sync_max_concurrent_runs',
                     FILE_SYNC_DEFAULTS['file_sync_max_concurrent_runs']
                 ),
-                'file_sync_default_remote_delete_policy': form_data.get('file_sync_default_remote_delete_policy', 'ignore'),
-                'file_sync_debug_logging': form_data.get('file_sync_debug_logging') == 'on',
+                'file_sync_allow_recursive_sources': form_data.get('file_sync_allow_recursive_sources') == 'on',
+                'file_sync_default_remote_delete_policy': FILE_SYNC_DEFAULTS['file_sync_default_remote_delete_policy'],
             })
             file_sync_settings = get_file_sync_config(file_sync_submitted_settings)
 
@@ -1461,8 +1461,8 @@ def register_route_frontend_admin_settings(app):
                 'file_sync_max_files_per_run': file_sync_settings['file_sync_max_files_per_run'],
                 'file_sync_max_bytes_per_run': file_sync_settings['file_sync_max_bytes_per_run'],
                 'file_sync_max_concurrent_runs': file_sync_settings['file_sync_max_concurrent_runs'],
+                'file_sync_allow_recursive_sources': file_sync_settings['file_sync_allow_recursive_sources'],
                 'file_sync_default_remote_delete_policy': file_sync_settings['file_sync_default_remote_delete_policy'],
-                'file_sync_debug_logging': file_sync_settings['file_sync_debug_logging'],
                 'enable_file_processing_logs': enable_file_processing_logs,
                 'file_processing_logs_timer_enabled': file_processing_logs_timer_enabled,
                 'file_timer_value': file_timer_value,

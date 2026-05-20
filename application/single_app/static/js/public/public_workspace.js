@@ -172,6 +172,7 @@ function promptPublicDeleteMode(documentCount = 1) {
 
   return new Promise((resolve) => {
     let settled = false;
+    let selectedValue = null;
 
     const cleanup = () => {
       publicDocumentDeleteModalElement.removeEventListener('hidden.bs.modal', handleHidden);
@@ -179,24 +180,26 @@ function promptPublicDeleteMode(documentCount = 1) {
       publicDeleteAllBtn.removeEventListener('click', handleAllVersions);
     };
 
-    const finalize = (value) => {
+    const finalize = () => {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
-      resolve(value);
+      resolve(selectedValue);
     };
 
-    const handleHidden = () => finalize(null);
-    const handleCurrentOnly = () => {
+    const hideWithValue = (value) => {
+      if (selectedValue) {
+        return;
+      }
+      selectedValue = value;
       publicDocumentDeleteModal.hide();
-      finalize('current_only');
     };
-    const handleAllVersions = () => {
-      publicDocumentDeleteModal.hide();
-      finalize('all_versions');
-    };
+
+    const handleHidden = () => finalize();
+    const handleCurrentOnly = () => hideWithValue('current_only');
+    const handleAllVersions = () => hideWithValue('all_versions');
 
     publicDocumentDeleteModalElement.addEventListener('hidden.bs.modal', handleHidden);
     publicDeleteCurrentBtn.addEventListener('click', handleCurrentOnly);
@@ -241,6 +244,7 @@ function promptPublicSyncedDocumentDeleteAction(deleteInfo) {
 
   return new Promise((resolve) => {
     let settled = false;
+    let selectedValue = null;
 
     const cleanup = () => {
       publicDocumentDeleteModalElement.removeEventListener('hidden.bs.modal', handleHidden);
@@ -250,24 +254,26 @@ function promptPublicSyncedDocumentDeleteAction(deleteInfo) {
       publicDeleteAllBtn.textContent = allLabel;
     };
 
-    const finalize = (value) => {
+    const finalize = () => {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
-      resolve(value);
+      resolve(selectedValue);
     };
 
-    const handleHidden = () => finalize(null);
-    const handleDeleteOnly = () => {
+    const hideWithValue = (value) => {
+      if (selectedValue) {
+        return;
+      }
+      selectedValue = value;
       publicDocumentDeleteModal.hide();
-      finalize('delete_only');
     };
-    const handleIgnoreRemote = () => {
-      publicDocumentDeleteModal.hide();
-      finalize('ignore_remote');
-    };
+
+    const handleHidden = () => finalize();
+    const handleDeleteOnly = () => hideWithValue('delete_only');
+    const handleIgnoreRemote = () => hideWithValue('ignore_remote');
 
     publicDocumentDeleteModalElement.addEventListener('hidden.bs.modal', handleHidden);
     publicDeleteCurrentBtn.addEventListener('click', handleDeleteOnly);
@@ -980,6 +986,112 @@ function appendPublicTextElement(parent, tagName, className, text, title) {
   return element;
 }
 
+function isPublicSyncedDocument(doc) {
+  return !!(doc && doc.file_sync && typeof doc.file_sync === 'object');
+}
+
+function getPublicDocumentSyncSourceLabel(doc) {
+  if (!isPublicSyncedDocument(doc)) {
+    return '';
+  }
+
+  const syncMetadata = doc.file_sync;
+  return syncMetadata.source_name
+    || syncMetadata.relative_path
+    || syncMetadata.remote_path
+    || 'File Sync';
+}
+
+function getPublicDocumentSyncBadgeHtml(doc, compact = false) {
+  if (!isPublicSyncedDocument(doc)) {
+    return '';
+  }
+
+  const spacingClass = compact ? 'me-2 align-middle' : '';
+
+  return `<span class="badge bg-info text-dark ${spacingClass}" title="Synced file"><i class="bi bi-arrow-repeat me-1"></i>Synced</span>`;
+}
+
+function appendPublicDocumentSyncBadge(container, doc, compact = false) {
+  if (!isPublicSyncedDocument(doc)) {
+    return null;
+  }
+
+  const sourceLabel = getPublicDocumentSyncSourceLabel(doc);
+  const badge = document.createElement('span');
+  badge.className = compact ? 'badge bg-info text-dark me-2 align-middle' : 'badge bg-info text-dark';
+  badge.title = sourceLabel && sourceLabel !== 'File Sync' ? `Synced from ${sourceLabel}` : 'Synced file';
+
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-arrow-repeat me-1';
+  badge.appendChild(icon);
+  badge.appendChild(document.createTextNode('Synced'));
+  container.appendChild(badge);
+  return badge;
+}
+
+function getPublicDocumentSyncDetailsHtml(doc) {
+  const synced = isPublicSyncedDocument(doc);
+  const badgeClass = synced ? 'bg-info text-dark' : 'bg-secondary';
+  const badgeText = synced ? 'Yes' : 'No';
+  let details = `<p class="mb-1"><strong>Synced:</strong> <span class="badge ${badgeClass}">${badgeText}</span></p>`;
+
+  if (synced) {
+    const syncMetadata = doc.file_sync;
+    const sourceLabel = getPublicDocumentSyncSourceLabel(doc);
+    if (sourceLabel) {
+      details += `<p class="mb-1"><strong>Sync Source:</strong> ${escapeHtml(sourceLabel)}</p>`;
+    }
+    if (syncMetadata.remote_path) {
+      details += `<p class="mb-1"><strong>Remote Path:</strong> ${escapeHtml(syncMetadata.remote_path)}</p>`;
+    }
+  }
+
+  return details;
+}
+
+function setPublicDocumentSyncStatusElement(doc) {
+  const syncStatusElement = document.getElementById('public-doc-sync-status');
+  if (!syncStatusElement) {
+    return;
+  }
+
+  const synced = isPublicSyncedDocument(doc);
+  syncStatusElement.className = synced ? 'alert alert-info py-2 mb-3' : 'alert alert-secondary py-2 mb-3';
+  syncStatusElement.replaceChildren();
+
+  const statusLine = document.createElement('div');
+  statusLine.className = 'd-flex align-items-center gap-2 flex-wrap';
+
+  const label = document.createElement('strong');
+  label.textContent = 'Synced:';
+
+  const badge = document.createElement('span');
+  badge.className = synced ? 'badge bg-info text-dark' : 'badge bg-secondary';
+  badge.textContent = synced ? 'Yes' : 'No';
+
+  statusLine.append(label, badge);
+  syncStatusElement.appendChild(statusLine);
+
+  if (!synced) {
+    return;
+  }
+
+  const syncMetadata = doc.file_sync;
+  const sourceLabel = getPublicDocumentSyncSourceLabel(doc);
+  const detailLine = document.createElement('div');
+  detailLine.className = 'small text-muted mt-1';
+  const detailParts = [];
+  if (sourceLabel) {
+    detailParts.push(`Source: ${sourceLabel}`);
+  }
+  if (syncMetadata.remote_path) {
+    detailParts.push(`Remote path: ${syncMetadata.remote_path}`);
+  }
+  detailLine.textContent = detailParts.join(' | ');
+  syncStatusElement.appendChild(detailLine);
+}
+
 function createPublicDocumentCardActionButton(className, iconClass, label, onClick) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -1103,6 +1215,7 @@ function createPublicDocumentCard(doc) {
   citationBadge.className = `badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}`;
   citationBadge.textContent = doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations';
   badges.appendChild(citationBadge);
+  appendPublicDocumentSyncBadge(badges, doc);
 
   const tags = document.createElement('div');
   tags.className = 'document-item-card__tags';
@@ -1330,7 +1443,7 @@ function renderPublicDocumentRow(doc) {
   tr.classList.add('document-row');
   tr.innerHTML = `
     <td class="align-middle">${firstTdHtml}</td>
-    <td class="align-middle" title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
+    <td class="align-middle" title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)}</td>
     <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
     <td class="align-middle">${chatButton}${actionsDropdown}</td>`;
 
@@ -1366,6 +1479,7 @@ function renderPublicDocumentRow(doc) {
     <td colspan="4">
       <div class="bg-light p-3 border rounded small">
         <p class="mb-1"><strong>Classification:</strong> <span class="classification-badge text-dark" style="${getClassificationBadgeStyle(doc.document_classification || doc.classification)}">${escapeHtml(doc.document_classification || doc.classification || 'N/A')}</span></p>
+        ${getPublicDocumentSyncDetailsHtml(doc)}
         <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || '1')}</p>
         <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(doc.authors || 'N/A')}</p>
         <p class="mb-1"><strong>Pages/Chunks:</strong> ${escapeHtml(doc.number_of_pages || 'N/A')}</p>
@@ -2422,6 +2536,7 @@ window.onEditPublicDocument = function(docId) {
       if (docKeywordsInput) docKeywordsInput.value = Array.isArray(doc.keywords) ? doc.keywords.join(", ") : (doc.keywords || "");
       if (docPubDateInput) docPubDateInput.value = doc.publication_date || "";
       if (docAuthorsInput) docAuthorsInput.value = Array.isArray(doc.authors) ? doc.authors.join(", ") : (doc.authors || "");
+      setPublicDocumentSyncStatusElement(doc);
 
       // Handle classification dropdown
       if (classificationSelect) {
@@ -2669,8 +2784,8 @@ function switchPublicView(view) {
     }
     if (viewInfo) {
       viewInfo.textContent = publicCurrentView === 'folders-cards'
-        ? 'Browse folders, then review matching documents as cards.'
-        : 'Browse folders by tag and classification.';
+        ? ''
+        : '';
     }
     if (publicSelectionMode) {
       togglePublicSelectionMode();
@@ -2840,7 +2955,7 @@ function buildPublicFolderDocumentsTable(docs) {
 
     html += `<tr>
       <td>${firstColHtml}</td>
-      <td title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
+      <td title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)}</td>
       <td title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
       <td>${actionsHtml}</td>
     </tr>`;

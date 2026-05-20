@@ -97,6 +97,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
       healthCheckPath: '/external/healthcheck'
       appSettings: [
         { name: 'AZURE_ENVIRONMENT', value: azurePlatform }
+        { name: 'SIMPLECHAT_RUN_BACKGROUND_TASKS', value: '1' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
         { name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.properties.documentEndpoint }
         { name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: toLower(authenticationType) }

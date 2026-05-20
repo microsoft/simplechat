@@ -49,7 +49,7 @@ TABULAR_EXPORT_DEFAULT_INLINE_MAX_ROWS = 500
 TABULAR_EXPORT_DEFAULT_BATCH_RETRY_ATTEMPTS = 2
 TABULAR_EXPORT_DEFAULT_LEASE_SECONDS = 300
 TABULAR_EXPORT_DEFAULT_STALE_SECONDS = 420
-TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 1
+TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5
 TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES = 20
 TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS = 30
 TABULAR_EXPORT_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
@@ -499,6 +499,34 @@ def _is_waiting_for_retry(run):
     return retry_delay_seconds is not None and retry_delay_seconds > 0
 
 
+def _is_due_queued_retry_run(run):
+    status = str((run or {}).get('status') or '').strip().lower()
+    if status != TABULAR_EXPORT_STATUS_QUEUED or _safe_int((run or {}).get('transient_failure_count')) <= 0:
+        return False
+    if _is_waiting_for_retry(run):
+        return False
+
+    next_attempt_at = _parse_iso_datetime((run or {}).get('next_attempt_at'))
+    return next_attempt_at is None or next_attempt_at <= _now_utc()
+
+
+def _is_stale_queued_run(run, settings):
+    status = str((run or {}).get('status') or '').strip().lower()
+    if status != TABULAR_EXPORT_STATUS_QUEUED or _is_waiting_for_retry(run):
+        return False
+
+    stale_seconds = _settings_int(
+        settings,
+        'tabular_generated_output_stale_seconds',
+        TABULAR_EXPORT_DEFAULT_STALE_SECONDS,
+        minimum=60,
+    )
+    queued_at = _parse_iso_datetime(run.get('updated_at') or run.get('created_at'))
+    if not queued_at:
+        return True
+    return queued_at <= _now_utc() - timedelta(seconds=stale_seconds)
+
+
 def _is_retryable_failed_run(run):
     status = str((run or {}).get('status') or '').strip().lower()
     return status == TABULAR_EXPORT_STATUS_FAILED and _is_retryable_export_error_message((run or {}).get('last_error'))
@@ -512,7 +540,11 @@ def _can_resume_run(run, settings=None):
     if status in {TABULAR_EXPORT_STATUS_COMPLETED, TABULAR_EXPORT_STATUS_CANCELED}:
         return False
     if status == TABULAR_EXPORT_STATUS_QUEUED:
-        return _is_waiting_for_retry(run)
+        return (
+            _is_waiting_for_retry(run)
+            or _is_due_queued_retry_run(run)
+            or _is_stale_queued_run(run, settings or {})
+        )
     if status == TABULAR_EXPORT_STATUS_RUNNING:
         return _is_stale_running_run(run, settings or {})
     if status == TABULAR_EXPORT_STATUS_FAILED:
@@ -533,6 +565,8 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
     status = str((run or {}).get('status') or '').strip().lower()
     is_stale = status == TABULAR_EXPORT_STATUS_RUNNING and _is_stale_running_run(run, settings or {})
     waiting_for_retry = _is_waiting_for_retry(run)
+    retry_due = _is_due_queued_retry_run(run)
+    stale_queued = _is_stale_queued_run(run, settings or {})
     retry_delay_seconds = _seconds_until((run or {}).get('next_attempt_at')) if waiting_for_retry else None
 
     if status == TABULAR_EXPORT_STATUS_COMPLETED:
@@ -542,6 +576,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'status_detail': 'Export complete and ready to download.',
             'is_stale': False,
             'waiting_for_retry': False,
+            'retry_due': False,
             'retry_delay_seconds': None,
         }
     if status == TABULAR_EXPORT_STATUS_CANCELED:
@@ -551,6 +586,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'status_detail': 'Export was canceled.',
             'is_stale': False,
             'waiting_for_retry': False,
+            'retry_due': False,
             'retry_delay_seconds': None,
         }
     if is_stale:
@@ -560,6 +596,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'status_detail': 'Worker heartbeat is stale. Continue will resume from the last checkpoint.',
             'is_stale': True,
             'waiting_for_retry': False,
+            'retry_due': False,
             'retry_delay_seconds': None,
         }
     if status == TABULAR_EXPORT_STATUS_RUNNING:
@@ -569,6 +606,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'status_detail': 'Export is running and checkpointing completed batches.',
             'is_stale': False,
             'waiting_for_retry': False,
+            'retry_due': False,
             'retry_delay_seconds': None,
         }
     if waiting_for_retry:
@@ -578,7 +616,28 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'status_detail': 'Automatic retry is scheduled. Continue can resume now from the last checkpoint.',
             'is_stale': False,
             'waiting_for_retry': True,
+            'retry_due': False,
             'retry_delay_seconds': retry_delay_seconds,
+        }
+    if retry_due:
+        return {
+            'status_label': 'Needs Attention',
+            'status_tone': 'warning',
+            'status_detail': 'Automatic retry is due but no worker has picked it up. Continue will resume from the last checkpoint.',
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_due': True,
+            'retry_delay_seconds': None,
+        }
+    if stale_queued:
+        return {
+            'status_label': 'Needs Attention',
+            'status_tone': 'warning',
+            'status_detail': 'Export has been queued longer than expected. Continue will submit it again from the last checkpoint.',
+            'is_stale': True,
+            'waiting_for_retry': False,
+            'retry_due': False,
+            'retry_delay_seconds': None,
         }
     if status == TABULAR_EXPORT_STATUS_FAILED and retryable_failure:
         return {
@@ -587,6 +646,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'status_detail': 'Export stopped after a retryable interruption. Continue will resume from the last checkpoint.',
             'is_stale': False,
             'waiting_for_retry': False,
+            'retry_due': False,
             'retry_delay_seconds': None,
         }
     if status == TABULAR_EXPORT_STATUS_FAILED:
@@ -596,6 +656,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'status_detail': 'Export failed and cannot continue from checkpoints.',
             'is_stale': False,
             'waiting_for_retry': False,
+            'retry_due': False,
             'retry_delay_seconds': None,
         }
 
@@ -605,6 +666,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
         'status_detail': 'Export is queued and waiting for a background worker.',
         'is_stale': False,
         'waiting_for_retry': False,
+        'retry_due': False,
         'retry_delay_seconds': None,
     }
 
@@ -666,6 +728,7 @@ def _build_run_public_status(run, settings=None):
         'checkpoint_summary': checkpoint_summary,
         'is_stale': status_detail.get('is_stale'),
         'waiting_for_retry': status_detail.get('waiting_for_retry'),
+        'retry_due': status_detail.get('retry_due'),
         'retry_delay_seconds': status_detail.get('retry_delay_seconds'),
         'estimated_remaining_seconds': run.get('estimated_remaining_seconds'),
         'estimated_total_seconds': run.get('estimated_total_seconds'),
@@ -1437,18 +1500,35 @@ def check_due_tabular_generated_output_runs_once(limit=None):
     ))
 
     processed = []
+    skipped = []
     for run in candidates:
         status = str(run.get('status') or '').strip().lower()
         if status == TABULAR_EXPORT_STATUS_RUNNING and not _is_stale_running_run(run, settings):
+            skipped.append({
+                'run_id': run.get('id'),
+                'status': status,
+                'reason': 'running heartbeat is still active',
+            })
             continue
         processed_run = process_tabular_generated_output_run(run.get('id'), run.get('user_id'))
         if processed_run:
             processed.append(processed_run.get('id'))
+        else:
+            skipped.append({
+                'run_id': run.get('id'),
+                'status': status,
+                'reason': 'claim or processing did not start',
+            })
 
-    if processed:
+    if candidates:
         log_event(
-            '[Tabular Generated Output] Background scheduler processed export runs',
-            {'run_ids': processed, 'processed_count': len(processed)},
+            '[Tabular Generated Output] Background scheduler scan result',
+            {
+                'candidate_count': len(candidates),
+                'processed_run_ids': processed,
+                'processed_count': len(processed),
+                'skipped': skipped[:10],
+            },
             debug_only=True,
         )
     return processed

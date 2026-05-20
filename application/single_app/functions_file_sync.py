@@ -74,6 +74,7 @@ FILE_SYNC_DEFAULTS = {
     "file_sync_max_files_per_run": 1000,
     "file_sync_max_bytes_per_run": 5368709120,
     "file_sync_max_concurrent_runs": 2,
+    "file_sync_allow_recursive_sources": True,
     "file_sync_default_remote_delete_policy": "ignore",
     "file_sync_debug_logging": True,
 }
@@ -538,6 +539,7 @@ def _normalize_source_payload(
         "name": _normalize_text(payload.get("name", existing_source.get("name", "SMB File Sync Source")), 120),
         "source_type": source_type,
         "enabled": _as_bool(payload.get("enabled", existing_source.get("enabled", True))),
+        "recursive": _as_bool(payload.get("recursive", existing_source.get("recursive", True))) and config["file_sync_allow_recursive_sources"],
         "connection": {
             "unc_path": _normalize_unc_path(connection.get("unc_path", existing_connection.get("unc_path", ""))),
         },
@@ -600,6 +602,110 @@ def update_file_sync_source(scope_type: str, scope_id: str, source_id: str, payl
     _get_sources_container(scope_type).upsert_item(source)
     _log_file_sync_activity(source, updated_by, "source_updated", {"source_name": source["name"]})
     return source
+
+
+def _prepare_connection_test_auth(raw_credentials: Dict[str, Any], existing_auth: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    raw_credentials = raw_credentials or {}
+    existing_auth = existing_auth or {}
+    auth_type = _normalize_text(raw_credentials.get("auth_type", existing_auth.get("auth_type", "username_password")), 50)
+    if auth_type not in {"username_password", "anonymous"}:
+        raise ValueError("SMB file sync currently supports username_password or anonymous authentication")
+
+    prepared_auth = {
+        "auth_type": auth_type,
+        "username": _normalize_text(raw_credentials.get("username", existing_auth.get("username", "")), 255),
+        "domain": _normalize_text(raw_credentials.get("domain", existing_auth.get("domain", "")), 255),
+    }
+    if auth_type == "anonymous":
+        return prepared_auth
+
+    password = raw_credentials.get("password")
+    if password in [None, "", ui_trigger_word]:
+        if existing_auth.get("password_secret_name"):
+            prepared_auth["password_secret_name"] = existing_auth["password_secret_name"]
+        elif existing_auth.get("password"):
+            prepared_auth["password"] = existing_auth["password"]
+        else:
+            raise ValueError("SMB username/password sources require a password")
+    else:
+        prepared_auth["password"] = str(password)
+    return prepared_auth
+
+
+def _build_connection_test_source(
+    scope_type: str,
+    scope_id: str,
+    payload: Dict[str, Any],
+    tested_by: str,
+    source_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    existing_source = None
+    if source_id:
+        existing_source = get_authorized_sync_source(scope_type, source_id, tested_by, scope_id=scope_id)
+
+    existing_source = existing_source or {}
+    source_type = _normalize_text(payload.get("source_type", existing_source.get("source_type", FILE_SYNC_SOURCE_TYPE_SMB)), 50).lower()
+    if source_type != FILE_SYNC_SOURCE_TYPE_SMB:
+        raise ValueError("Only SMB file sync sources are supported")
+
+    connection = payload.get("connection") or {}
+    existing_connection = existing_source.get("connection") or {}
+    config = get_file_sync_config()
+    test_source_id = source_id or "connection-test"
+    return {
+        "id": test_source_id,
+        "source_id": test_source_id,
+        "scope_type": _validate_scope(scope_type),
+        _scope_field(scope_type): scope_id,
+        "source_type": source_type,
+        "name": _normalize_text(payload.get("name", existing_source.get("name", "SMB File Sync Source")), 120),
+        "recursive": _as_bool(payload.get("recursive", existing_source.get("recursive", True))) and config["file_sync_allow_recursive_sources"],
+        "connection": {
+            "unc_path": _normalize_unc_path(connection.get("unc_path", existing_connection.get("unc_path", ""))),
+        },
+        "auth": _prepare_connection_test_auth(
+            payload.get("credentials") or payload.get("auth") or {},
+            existing_source.get("auth") or {},
+        ),
+    }
+
+
+def test_file_sync_source_connection(
+    scope_type: str,
+    scope_id: str,
+    payload: Dict[str, Any],
+    tested_by: str,
+    source_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    source = _build_connection_test_source(scope_type, scope_id, payload or {}, tested_by, source_id=source_id)
+    try:
+        smbclient = _register_smb_session(source)
+        root_path = source.get("connection", {}).get("unc_path", "")
+        entries_checked = 0
+        files_seen = 0
+        folders_seen = 0
+        for entry in smbclient.scandir(root_path):
+            entries_checked += 1
+            if entry.is_dir():
+                folders_seen += 1
+            elif entry.is_file():
+                files_seen += 1
+            if entries_checked >= 25:
+                break
+        return {
+            "success": True,
+            "source_type": source["source_type"],
+            "recursive": source.get("recursive", True),
+            "entries_checked": entries_checked,
+            "files_seen": files_seen,
+            "folders_seen": folders_seen,
+        }
+    except RuntimeError as error:
+        if "smbprotocol" in str(error):
+            raise
+        raise ValueError("SMB connection test failed. Verify the UNC path and credentials.") from error
+    except Exception as error:
+        raise ValueError("SMB connection test failed. Verify the UNC path and credentials.") from error
 
 
 def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str) -> None:
@@ -952,6 +1058,7 @@ def _register_smb_session(source: Dict[str, Any]):
 def _list_smb_files(source: Dict[str, Any], config: Dict[str, Any]) -> List[Dict[str, Any]]:
     smbclient = _register_smb_session(source)
     root_path = source.get("connection", {}).get("unc_path", "")
+    recursive_enabled = bool(source.get("recursive", True) and config.get("file_sync_allow_recursive_sources", True))
     remote_files = []
 
     def walk_directory(directory_path: str) -> None:
@@ -960,7 +1067,8 @@ def _list_smb_files(source: Dict[str, Any], config: Dict[str, Any]) -> List[Dict
         for entry in smbclient.scandir(directory_path):
             entry_path = _join_smb_path(directory_path, entry.name)
             if entry.is_dir():
-                walk_directory(entry_path)
+                if recursive_enabled:
+                    walk_directory(entry_path)
                 continue
             if not entry.is_file():
                 continue
@@ -1340,6 +1448,14 @@ def build_synced_document_delete_guard(
     file_sync_metadata = (document_metadata or {}).get("file_sync")
     if not file_sync_metadata:
         return None
+    source_id = file_sync_metadata.get("source_id")
+    source = _read_file_sync_source_for_document_action(
+        scope_type,
+        source_id,
+        group_id or public_workspace_id or user_id,
+    )
+    if not source:
+        return None
     return {
         "error": "synced_document_delete_requires_action",
         "message": "This document was created by File Sync. Choose whether to ignore the remote file so it is not re-synced after deletion.",
@@ -1354,6 +1470,20 @@ def build_synced_document_delete_guard(
             {"action": "ignore_remote", "label": "Delete and ignore the remote file"},
         ],
     }
+
+
+def _read_file_sync_source_for_document_action(
+    scope_type: str,
+    source_id: Optional[str],
+    partition_key: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    if not source_id or not partition_key:
+        return None
+
+    try:
+        return _get_sources_container(scope_type).read_item(item=source_id, partition_key=partition_key)
+    except CosmosResourceNotFoundError:
+        return None
 
 
 def apply_synced_document_delete_action(
@@ -1379,10 +1509,13 @@ def apply_synced_document_delete_action(
     if not source_id or not remote_path:
         return
 
-    source = _get_sources_container(scope_type).read_item(
-        item=source_id,
-        partition_key=group_id or public_workspace_id or user_id,
+    source = _read_file_sync_source_for_document_action(
+        scope_type,
+        source_id,
+        group_id or public_workspace_id or user_id,
     )
+    if not source:
+        return
     set_file_sync_path_ignored(source, remote_path, True, user_id)
 
 

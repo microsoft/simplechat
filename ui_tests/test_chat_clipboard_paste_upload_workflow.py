@@ -1,12 +1,13 @@
 # test_chat_clipboard_paste_upload_workflow.py
 """
 UI test for chat clipboard paste upload support.
-Version: 0.241.110
-Implemented in: 0.241.110
+Version: 0.241.056
+Implemented in: 0.241.056
 
 This test ensures that pasting a clipboard image into the main chat input
 routes the file through the existing upload flow, auto-creates a conversation,
-and normalizes an empty clipboard filename before the upload request is sent.
+normalizes an empty clipboard filename, preserves later text paste events, and
+uploads dropped files through the same chat flow.
 """
 
 import json
@@ -184,6 +185,72 @@ def test_chat_paste_uploads_clipboard_image_with_normalized_filename(playwright)
         assert upload_capture[0]["fileType"] == "image/png"
         assert upload_capture[0]["fileName"].startswith("pasted_file_")
         assert upload_capture[0]["fileName"].endswith(".png")
+
+        text_paste_result = page.locator("#user-input").evaluate(
+            """
+            async (element) => {
+                const staleClipboardImage = new File(
+                    [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])],
+                    '',
+                    { type: 'image/png' }
+                );
+                const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+                Object.defineProperty(pasteEvent, 'clipboardData', {
+                    value: {
+                        getData: (type) => type === 'text/plain' || type === 'Text'
+                            ? 'normal text after image paste'
+                            : '',
+                        items: [
+                            {
+                                kind: 'string',
+                                type: 'text/plain',
+                            },
+                            {
+                                kind: 'file',
+                                type: 'image/png',
+                                getAsFile: () => staleClipboardImage,
+                            },
+                        ],
+                        files: [staleClipboardImage],
+                    },
+                });
+
+                element.dispatchEvent(pasteEvent);
+                await Promise.resolve();
+                await new Promise((resolve) => requestAnimationFrame(resolve));
+
+                return {
+                    defaultPrevented: pasteEvent.defaultPrevented,
+                    uploadCount: window.__uploadCapture.length,
+                };
+            }
+            """
+        )
+        assert text_paste_result["defaultPrevented"] is False
+        assert text_paste_result["uploadCount"] == 1
+
+        page.locator("#user-input").evaluate(
+            """
+            (element) => {
+                const droppedFile = new File(['dropped notes'], 'drop-notes.txt', { type: 'text/plain' });
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(droppedFile);
+                const dropEvent = new DragEvent('drop', {
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer,
+                });
+
+                element.dispatchEvent(dropEvent);
+            }
+            """
+        )
+
+        page.wait_for_function("() => Array.isArray(window.__uploadCapture) && window.__uploadCapture.length === 2")
+        upload_capture = page.evaluate("() => window.__uploadCapture")
+        assert upload_capture[1]["conversationId"] == created_conversation_id
+        assert upload_capture[1]["fileName"] == "drop-notes.txt"
+        assert upload_capture[1]["fileType"] == "text/plain"
 
         expect(page.locator("#current-conversation-title")).to_have_text("Clipboard Upload Conversation")
     finally:

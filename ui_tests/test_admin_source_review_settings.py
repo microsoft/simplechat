@@ -1,12 +1,12 @@
 # test_admin_source_review_settings.py
 """
 UI test for Deep Research admin settings.
-Version: 0.241.051
-Implemented in: 0.241.051
+Version: 0.241.055
+Implemented in: 0.241.055
 
 This test ensures the Search & Extract admin tab exposes Deep Research controls,
-including bounded review settings, query planning, ledger artifacts, and domain/user
-policy fields.
+including bounded review settings, query planning, ledger artifacts, editable domain
+rules, and searchable/bulk user policy controls.
 """
 
 import os
@@ -77,10 +77,25 @@ def test_admin_source_review_settings():
         expect(page.locator("#deep_research_enable_ledger_artifact")).to_have_count(1)
         expect(page.locator("#source_review_enable_llm_planning")).to_have_count(1)
 
-        page.locator("#source_review_allowed_domains").fill("contoso.com\n*.example.org")
-        page.locator("#source_review_blocked_users").fill("blocked.user@contoso.com")
-        expect(page.locator("#source_review_allowed_domains")).to_have_value("contoso.com\n*.example.org")
-        expect(page.locator("#source_review_blocked_users")).to_have_value("blocked.user@contoso.com")
+        allowed_domains_editor = page.locator('[data-deep-research-policy="source_review_allowed_domains"]')
+        allowed_domains_editor.locator('[data-policy-new-input]').fill("contoso.com")
+        allowed_domains_editor.locator('[data-policy-add-button]').click()
+        expect(page.locator("#source_review_allowed_domains")).to_have_value("contoso.com")
+
+        allowed_domain_row = allowed_domains_editor.locator('[data-policy-list] input').first
+        allowed_domain_row.fill("*.example.org")
+        allowed_domain_row.press("Enter")
+        expect(page.locator("#source_review_allowed_domains")).to_have_value("*.example.org")
+
+        allowed_domains_editor.locator('[aria-label="Delete policy entry"]').first.click()
+        expect(page.locator("#source_review_allowed_domains")).to_have_value("")
+
+        blocked_users_editor = page.locator('[data-deep-research-policy="source_review_blocked_users"]')
+        expect(blocked_users_editor.locator('[data-user-search-input]')).to_be_visible()
+        expect(blocked_users_editor.locator('[data-user-search-button]')).to_be_visible()
+        blocked_users_editor.locator('[data-user-bulk-input]').fill("blocked.user@contoso.com\n00000000-0000-0000-0000-000000000000")
+        blocked_users_editor.locator('[data-user-bulk-add-button]').click()
+        expect(page.locator("#source_review_blocked_users")).to_have_value("blocked.user@contoso.com\n00000000-0000-0000-0000-000000000000")
     finally:
         context.close()
         browser.close()

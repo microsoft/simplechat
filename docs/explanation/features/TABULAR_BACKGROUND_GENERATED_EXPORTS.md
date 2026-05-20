@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.241.050**
+Updated through version: **0.241.057**
 
 ## Overview
 
@@ -30,6 +30,7 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Cosmos stores compact run metadata, progress counts, retry state, and final artifact metadata.
 - The background scheduler claims queued runs with optimistic status updates and resumes from checkpointed output batches.
 - Users can manually continue resumable failed or stale runs from the existing checkpoints without restarting completed batches.
+- Queued retry runs whose retry time has already passed are surfaced as resumable so deployments without active scheduler loops still give users a recovery action.
 - Run status includes safe user-facing status detail, checkpoint summaries, retry timing, heartbeat state, and continuation availability.
 
 ### API Endpoints
@@ -56,7 +57,7 @@ If settings are absent, conservative defaults are used.
 
 Users continue requesting tabular structured output in chat or workflows. For smaller exports, the file is attached during the response. For larger exports, the assistant message shows a background progress card and the final download appears when processing completes. If a resumable run stops after a transient infrastructure failure, the card shows a Continue action that queues the same run to resume from completed checkpoints.
 
-The progress card displays current status, completed checkpoint counts, processed row counts, estimated remaining time, scheduled retry time, transient retry count, manual continuation count, last update time, and heartbeat time when available.
+The progress card displays current status, completed checkpoint counts, processed row counts, estimated remaining time, scheduled retry time, retry-due state, transient retry count, manual continuation count, last update time, and heartbeat time when available.
 
 ## Testing and Validation
 
@@ -75,8 +76,8 @@ The progress card displays current status, completed checkpoint counts, processe
 
 - Background runs still depend on configured background scheduler capacity and available Azure OpenAI throughput.
 - Completion appears through status polling or on the next chat reload; no push notification is added in this version.
-- Manual continuation only applies to retryable failures or stale running leases; hard validation failures remain terminal.
+- Manual continuation applies to retryable failures, stale running leases, queued retries whose retry time has passed, and stale queued runs; hard validation failures remain terminal.
 
 ## Related Version Updates
 
-- `application/single_app/config.py` was updated to version **0.241.050** for status-detail improvements.
+- `application/single_app/config.py` was updated to version **0.241.057** for queued retry recovery and scheduler scan diagnostics.

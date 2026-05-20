@@ -4345,13 +4345,39 @@
 
                         <div class="row g-3 mb-3">
                             <div class="col-md-6">
-                                <label for="file_sync_allowed_users" class="form-label">Allowed Users</label>
-                                <textarea class="form-control" id="file_sync_allowed_users" name="file_sync_allowed_users" rows="3" placeholder="user@contoso.com&#10;00000000-0000-0000-0000-000000000000">{{ settings.file_sync_allowed_users|join('\n') if settings.file_sync_allowed_users else '' }}</textarea>
+                                <div class="file-sync-user-access-list" data-file-sync-user-list data-target="file_sync_allowed_users">
+                                    <label for="file_sync_allowed_users" class="form-label">Allowed Users</label>
+                                    <textarea class="form-control d-none" id="file_sync_allowed_users" name="file_sync_allowed_users" rows="3" aria-hidden="true" tabindex="-1">{{ settings.file_sync_allowed_users|join('\n') if settings.file_sync_allowed_users else '' }}</textarea>
+                                    <div class="input-group mb-2">
+                                        <input type="search" class="form-control" data-file-sync-user-query placeholder="Search or enter email/GUID" aria-label="Search allowed users" />
+                                        <button class="btn btn-outline-secondary" type="button" data-file-sync-user-search>Search</button>
+                                        <button class="btn btn-outline-primary" type="button" data-file-sync-user-add>Add</button>
+                                    </div>
+                                    <div class="list-group small mb-2 d-none" data-file-sync-user-results></div>
+                                    <div class="input-group">
+                                        <textarea class="form-control" rows="2" data-file-sync-user-bulk placeholder="Paste multiple users, one per line"></textarea>
+                                        <button class="btn btn-outline-secondary" type="button" data-file-sync-user-bulk-add>Bulk Add</button>
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-2 mt-2" data-file-sync-user-chips></div>
+                                </div>
                                 <div class="form-text">Personal File Sync is available to all users when this list is empty, except blocked users.</div>
                             </div>
                             <div class="col-md-6">
-                                <label for="file_sync_blocked_users" class="form-label">Blocked Users</label>
-                                <textarea class="form-control" id="file_sync_blocked_users" name="file_sync_blocked_users" rows="3" placeholder="user@contoso.com&#10;00000000-0000-0000-0000-000000000000">{{ settings.file_sync_blocked_users|join('\n') if settings.file_sync_blocked_users else '' }}</textarea>
+                                <div class="file-sync-user-access-list" data-file-sync-user-list data-target="file_sync_blocked_users">
+                                    <label for="file_sync_blocked_users" class="form-label">Blocked Users</label>
+                                    <textarea class="form-control d-none" id="file_sync_blocked_users" name="file_sync_blocked_users" rows="3" aria-hidden="true" tabindex="-1">{{ settings.file_sync_blocked_users|join('\n') if settings.file_sync_blocked_users else '' }}</textarea>
+                                    <div class="input-group mb-2">
+                                        <input type="search" class="form-control" data-file-sync-user-query placeholder="Search or enter email/GUID" aria-label="Search blocked users" />
+                                        <button class="btn btn-outline-secondary" type="button" data-file-sync-user-search>Search</button>
+                                        <button class="btn btn-outline-primary" type="button" data-file-sync-user-add>Add</button>
+                                    </div>
+                                    <div class="list-group small mb-2 d-none" data-file-sync-user-results></div>
+                                    <div class="input-group">
+                                        <textarea class="form-control" rows="2" data-file-sync-user-bulk placeholder="Paste multiple users, one per line"></textarea>
+                                        <button class="btn btn-outline-secondary" type="button" data-file-sync-user-bulk-add>Bulk Add</button>
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-2 mt-2" data-file-sync-user-chips></div>
+                                </div>
                                 <div class="form-text">Use user email, GUID, or OID. Block entries override allow entries.</div>
                             </div>
                         </div>
@@ -4404,17 +4430,10 @@
                                 <label for="file_sync_max_concurrent_runs" class="form-label">Max Concurrent Runs</label>
                                 <input type="number" class="form-control" id="file_sync_max_concurrent_runs" name="file_sync_max_concurrent_runs" min="1" max="25" value="{{ settings.file_sync_max_concurrent_runs }}">
                             </div>
-                            <div class="col-md-4">
-                                <label for="file_sync_default_remote_delete_policy" class="form-label">Remote Delete Policy</label>
-                                <select class="form-select" id="file_sync_default_remote_delete_policy" name="file_sync_default_remote_delete_policy">
-                                    <option value="ignore" {% if settings.file_sync_default_remote_delete_policy == 'ignore' %}selected{% endif %}>Ignore missing remote files</option>
-                                    <option value="hard_delete" {% if settings.file_sync_default_remote_delete_policy == 'hard_delete' %}selected{% endif %}>Delete local synced documents</option>
-                                </select>
-                            </div>
                             <div class="col-md-4 d-flex align-items-end">
                                 <div class="form-check form-switch mb-2">
-                                    <input type="checkbox" class="form-check-input" id="file_sync_debug_logging" name="file_sync_debug_logging" {% if settings.file_sync_debug_logging %}checked{% endif %}>
-                                    <label class="form-check-label" for="file_sync_debug_logging">Debug Logging</label>
+                                    <input type="checkbox" class="form-check-input" id="file_sync_allow_recursive_sources" name="file_sync_allow_recursive_sources" {% if settings.file_sync_allow_recursive_sources %}checked{% endif %}>
+                                    <label class="form-check-label" for="file_sync_allow_recursive_sources">Allow Recursive Sources</label>
                                 </div>
                             </div>
                         </div>
@@ -5707,22 +5726,72 @@
 
                         <div class="row g-3 mt-1">
                             <div class="col-md-6">
-                                <label for="source_review_allowed_domains" class="form-label">Allowed Domains</label>
-                                <textarea class="form-control" id="source_review_allowed_domains" name="source_review_allowed_domains" rows="3" placeholder="example.com&#10;*.contoso.com">{{ settings.source_review_allowed_domains|join('\n') if settings.source_review_allowed_domains else '' }}</textarea>
+                                <div class="deep-research-policy-editor" data-deep-research-policy="source_review_allowed_domains" data-policy-kind="domain">
+                                    <label for="source_review_allowed_domains_new" class="form-label">Allowed Domains</label>
+                                    <textarea class="d-none" id="source_review_allowed_domains" name="source_review_allowed_domains" aria-hidden="true">{{ settings.source_review_allowed_domains|join('\n') if settings.source_review_allowed_domains else '' }}</textarea>
+                                    <div class="input-group input-group-sm">
+                                        <input type="text" class="form-control" id="source_review_allowed_domains_new" data-policy-new-input placeholder="example.com or *.contoso.com" />
+                                        <button type="button" class="btn btn-outline-primary" data-policy-add-button>
+                                            <i class="bi bi-plus-circle me-1"></i>Add
+                                        </button>
+                                    </div>
+                                    <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
+                                </div>
                                 <div class="form-text">Leave blank to allow any public domain that passes safety checks.</div>
                             </div>
                             <div class="col-md-6">
-                                <label for="source_review_blocked_domains" class="form-label">Blocked Domains</label>
-                                <textarea class="form-control" id="source_review_blocked_domains" name="source_review_blocked_domains" rows="3" placeholder="example.org&#10;*.contoso.net">{{ settings.source_review_blocked_domains|join('\n') if settings.source_review_blocked_domains else '' }}</textarea>
+                                <div class="deep-research-policy-editor" data-deep-research-policy="source_review_blocked_domains" data-policy-kind="domain">
+                                    <label for="source_review_blocked_domains_new" class="form-label">Blocked Domains</label>
+                                    <textarea class="d-none" id="source_review_blocked_domains" name="source_review_blocked_domains" aria-hidden="true">{{ settings.source_review_blocked_domains|join('\n') if settings.source_review_blocked_domains else '' }}</textarea>
+                                    <div class="input-group input-group-sm">
+                                        <input type="text" class="form-control" id="source_review_blocked_domains_new" data-policy-new-input placeholder="example.org or *.contoso.net" />
+                                        <button type="button" class="btn btn-outline-primary" data-policy-add-button>
+                                            <i class="bi bi-plus-circle me-1"></i>Add
+                                        </button>
+                                    </div>
+                                    <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
+                                </div>
                             </div>
                             <div class="col-md-6">
-                                <label for="source_review_allowed_users" class="form-label">Allowed Users</label>
-                                <textarea class="form-control" id="source_review_allowed_users" name="source_review_allowed_users" rows="3" placeholder="user@contoso.com&#10;00000000-0000-0000-0000-000000000000">{{ settings.source_review_allowed_users|join('\n') if settings.source_review_allowed_users else '' }}</textarea>
+                                <div class="deep-research-policy-editor" data-deep-research-policy="source_review_allowed_users" data-policy-kind="user">
+                                    <label for="source_review_allowed_users_search" class="form-label">Allowed Users</label>
+                                    <textarea class="d-none" id="source_review_allowed_users" name="source_review_allowed_users" aria-hidden="true">{{ settings.source_review_allowed_users|join('\n') if settings.source_review_allowed_users else '' }}</textarea>
+                                    <div class="input-group input-group-sm">
+                                        <input type="search" class="form-control" id="source_review_allowed_users_search" data-user-search-input placeholder="Search by name or email" />
+                                        <button type="button" class="btn btn-outline-primary" data-user-search-button>
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                    <div class="small text-muted mt-1" data-user-search-status></div>
+                                    <div class="list-group mt-2 d-none" data-user-search-results aria-live="polite"></div>
+                                    <label for="source_review_allowed_users_bulk" class="form-label small mt-3 mb-1">Bulk Add</label>
+                                    <div class="input-group input-group-sm">
+                                        <textarea class="form-control" id="source_review_allowed_users_bulk" data-user-bulk-input rows="2" placeholder="one email or user id per line"></textarea>
+                                        <button type="button" class="btn btn-outline-secondary" data-user-bulk-add-button>Add Bulk</button>
+                                    </div>
+                                    <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
+                                </div>
                                 <div class="form-text">Leave blank to allow all signed-in users unless blocked.</div>
                             </div>
                             <div class="col-md-6">
-                                <label for="source_review_blocked_users" class="form-label">Blocked Users</label>
-                                <textarea class="form-control" id="source_review_blocked_users" name="source_review_blocked_users" rows="3" placeholder="user@contoso.com&#10;00000000-0000-0000-0000-000000000000">{{ settings.source_review_blocked_users|join('\n') if settings.source_review_blocked_users else '' }}</textarea>
+                                <div class="deep-research-policy-editor" data-deep-research-policy="source_review_blocked_users" data-policy-kind="user">
+                                    <label for="source_review_blocked_users_search" class="form-label">Blocked Users</label>
+                                    <textarea class="d-none" id="source_review_blocked_users" name="source_review_blocked_users" aria-hidden="true">{{ settings.source_review_blocked_users|join('\n') if settings.source_review_blocked_users else '' }}</textarea>
+                                    <div class="input-group input-group-sm">
+                                        <input type="search" class="form-control" id="source_review_blocked_users_search" data-user-search-input placeholder="Search by name or email" />
+                                        <button type="button" class="btn btn-outline-primary" data-user-search-button>
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                    <div class="small text-muted mt-1" data-user-search-status></div>
+                                    <div class="list-group mt-2 d-none" data-user-search-results aria-live="polite"></div>
+                                    <label for="source_review_blocked_users_bulk" class="form-label small mt-3 mb-1">Bulk Add</label>
+                                    <div class="input-group input-group-sm">
+                                        <textarea class="form-control" id="source_review_blocked_users_bulk" data-user-bulk-input rows="2" placeholder="one email or user id per line"></textarea>
+                                        <button type="button" class="btn btn-outline-secondary" data-user-bulk-add-button>Add Bulk</button>
+                                    </div>
+                                    <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
+                                </div>
                             </div>
                         </div>
                     </div>

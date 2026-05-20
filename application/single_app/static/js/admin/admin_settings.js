@@ -83,6 +83,315 @@ function setupAdminFormAutofillMetadata() {
     });
 }
 
+function parsePolicyListValue(value) {
+    return String(value || '')
+        .split(/[\n,;]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+function normalizeDomainPolicyValue(value) {
+    let normalizedValue = String(value || '').trim().toLowerCase();
+    if (!normalizedValue) {
+        return '';
+    }
+
+    normalizedValue = normalizedValue.replace(/^https?:\/\//i, '');
+    normalizedValue = normalizedValue.split('/')[0].split('?')[0].split('#')[0].trim();
+    normalizedValue = normalizedValue.replace(/\s+/g, '');
+    return normalizedValue.replace(/\.+$/, '');
+}
+
+function normalizeUserPolicyValue(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function normalizePolicyValue(value, policyKind) {
+    return policyKind === 'domain'
+        ? normalizeDomainPolicyValue(value)
+        : normalizeUserPolicyValue(value);
+}
+
+function createIconButton(iconClass, label, buttonClass = 'btn-outline-secondary') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `btn btn-sm ${buttonClass}`;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+
+    const icon = document.createElement('i');
+    icon.className = iconClass;
+    icon.setAttribute('aria-hidden', 'true');
+    button.appendChild(icon);
+
+    return button;
+}
+
+function setupDeepResearchPolicyEditors() {
+    document.querySelectorAll('[data-deep-research-policy]').forEach(editor => {
+        const policyName = editor.dataset.deepResearchPolicy;
+        const policyKind = editor.dataset.policyKind || 'text';
+        const hiddenField = document.getElementById(policyName);
+        const listContainer = editor.querySelector('[data-policy-list]');
+        if (!policyName || !hiddenField || !listContainer) {
+            return;
+        }
+
+        let policyItems = parsePolicyListValue(hiddenField.value)
+            .map(item => normalizePolicyValue(item, policyKind))
+            .filter(Boolean)
+            .filter((item, index, items) => items.indexOf(item) === index);
+
+        const syncHiddenField = () => {
+            hiddenField.value = policyItems.join('\n');
+        };
+
+        const renderEmptyState = () => {
+            const emptyState = document.createElement('div');
+            emptyState.className = 'list-group-item text-muted small';
+            emptyState.textContent = policyKind === 'domain'
+                ? 'No domain rules configured.'
+                : 'No user rules configured.';
+            listContainer.appendChild(emptyState);
+        };
+
+        const renderPolicyItems = () => {
+            listContainer.replaceChildren();
+            syncHiddenField();
+
+            if (policyItems.length === 0) {
+                renderEmptyState();
+                return;
+            }
+
+            policyItems.forEach((item, index) => {
+                const row = document.createElement('div');
+                row.className = 'list-group-item d-flex align-items-center gap-2';
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'form-control form-control-sm';
+                input.value = item;
+                input.setAttribute('aria-label', `Edit ${policyKind} policy entry`);
+
+                const applyEdit = () => {
+                    const normalizedValue = normalizePolicyValue(input.value, policyKind);
+                    if (!normalizedValue) {
+                        policyItems.splice(index, 1);
+                        renderPolicyItems();
+                        markFormAsModified();
+                        return;
+                    }
+
+                    const duplicateIndex = policyItems.findIndex((existingItem, existingIndex) => (
+                        existingIndex !== index && existingItem.toLowerCase() === normalizedValue.toLowerCase()
+                    ));
+                    if (duplicateIndex >= 0) {
+                        input.value = policyItems[index];
+                        showToast('That policy entry already exists.', 'warning');
+                        return;
+                    }
+
+                    if (policyItems[index] !== normalizedValue) {
+                        policyItems[index] = normalizedValue;
+                        renderPolicyItems();
+                        markFormAsModified();
+                    } else {
+                        input.value = normalizedValue;
+                    }
+                };
+
+                input.addEventListener('change', applyEdit);
+                input.addEventListener('keydown', event => {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        applyEdit();
+                    }
+                });
+
+                const deleteButton = createIconButton('bi bi-trash', 'Delete policy entry', 'btn-outline-danger');
+                deleteButton.addEventListener('click', () => {
+                    policyItems.splice(index, 1);
+                    renderPolicyItems();
+                    markFormAsModified();
+                });
+
+                row.appendChild(input);
+                row.appendChild(deleteButton);
+                listContainer.appendChild(row);
+            });
+        };
+
+        const addPolicyItems = (rawItems, options = {}) => {
+            const { silent = false } = options;
+            const normalizedItems = rawItems
+                .map(item => normalizePolicyValue(item, policyKind))
+                .filter(Boolean);
+            const startingCount = policyItems.length;
+
+            normalizedItems.forEach(item => {
+                const alreadyExists = policyItems.some(existingItem => existingItem.toLowerCase() === item.toLowerCase());
+                if (!alreadyExists) {
+                    policyItems.push(item);
+                }
+            });
+
+            if (policyItems.length !== startingCount) {
+                renderPolicyItems();
+                markFormAsModified();
+            } else if (!silent && normalizedItems.length > 0) {
+                showToast('No new policy entries were added.', 'info');
+            }
+        };
+
+        const newInput = editor.querySelector('[data-policy-new-input]');
+        const addButton = editor.querySelector('[data-policy-add-button]');
+        if (newInput && addButton) {
+            const addFromInput = () => {
+                addPolicyItems([newInput.value]);
+                newInput.value = '';
+                newInput.focus();
+            };
+            addButton.addEventListener('click', addFromInput);
+            newInput.addEventListener('keydown', event => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addFromInput();
+                }
+            });
+        }
+
+        setupDeepResearchUserPolicySearch(editor, addPolicyItems);
+        setupDeepResearchUserPolicyBulkAdd(editor, addPolicyItems);
+        renderPolicyItems();
+    });
+}
+
+function setupDeepResearchUserPolicySearch(editor, addPolicyItems) {
+    const searchInput = editor.querySelector('[data-user-search-input]');
+    const searchButton = editor.querySelector('[data-user-search-button]');
+    const searchStatus = editor.querySelector('[data-user-search-status]');
+    const resultsContainer = editor.querySelector('[data-user-search-results]');
+    if (!searchInput || !searchButton || !resultsContainer) {
+        return;
+    }
+
+    const setStatus = (message, tone = 'muted') => {
+        if (!searchStatus) {
+            return;
+        }
+        searchStatus.textContent = message || '';
+        searchStatus.className = `small text-${tone} mt-1`;
+    };
+
+    const renderResults = users => {
+        resultsContainer.replaceChildren();
+        resultsContainer.classList.remove('d-none');
+
+        if (!Array.isArray(users) || users.length === 0) {
+            const emptyState = document.createElement('div');
+            emptyState.className = 'list-group-item text-muted small';
+            emptyState.textContent = 'No users found.';
+            resultsContainer.appendChild(emptyState);
+            return;
+        }
+
+        users.forEach(user => {
+            const row = document.createElement('div');
+            row.className = 'list-group-item d-flex align-items-center justify-content-between gap-2';
+
+            const textWrapper = document.createElement('div');
+            textWrapper.className = 'min-w-0';
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'fw-semibold text-truncate';
+            nameEl.textContent = user.displayName || '(no name)';
+
+            const emailEl = document.createElement('div');
+            emailEl.className = 'small text-muted text-truncate';
+            emailEl.textContent = user.email || user.id || '';
+
+            textWrapper.appendChild(nameEl);
+            textWrapper.appendChild(emailEl);
+
+            const addButton = document.createElement('button');
+            addButton.type = 'button';
+            addButton.className = 'btn btn-sm btn-outline-primary flex-shrink-0';
+            addButton.textContent = 'Add';
+            addButton.addEventListener('click', () => {
+                addPolicyItems([user.email || user.id || '']);
+            });
+
+            row.appendChild(textWrapper);
+            row.appendChild(addButton);
+            resultsContainer.appendChild(row);
+        });
+    };
+
+    const searchUsers = async () => {
+        const query = searchInput.value.trim();
+        if (!query) {
+            searchInput.classList.add('is-invalid');
+            setStatus('Enter a name or email to search.', 'warning');
+            return;
+        }
+
+        searchInput.classList.remove('is-invalid');
+        searchButton.disabled = true;
+        setStatus('Searching...', 'muted');
+
+        try {
+            const response = await fetch(`/api/userSearch?query=${encodeURIComponent(query)}`);
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || response.statusText || 'User search failed');
+            }
+            renderResults(payload);
+            const resultCount = Array.isArray(payload) ? payload.length : 0;
+            setStatus(
+                resultCount > 0 ? `Found ${resultCount} user(s).` : 'No users found.',
+                resultCount > 0 ? 'success' : 'muted'
+            );
+        } catch (error) {
+            resultsContainer.classList.add('d-none');
+            resultsContainer.replaceChildren();
+            setStatus(`Search failed: ${error.message}`, 'danger');
+            showToast(`User search failed: ${error.message}`, 'danger');
+        } finally {
+            searchButton.disabled = false;
+        }
+    };
+
+    searchButton.addEventListener('click', searchUsers);
+    searchInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            searchUsers();
+        }
+    });
+}
+
+function setupDeepResearchUserPolicyBulkAdd(editor, addPolicyItems) {
+    const bulkInput = editor.querySelector('[data-user-bulk-input]');
+    const bulkAddButton = editor.querySelector('[data-user-bulk-add-button]');
+    if (!bulkInput || !bulkAddButton) {
+        return;
+    }
+
+    bulkAddButton.addEventListener('click', () => {
+        const entries = parsePolicyListValue(bulkInput.value);
+        if (entries.length === 0) {
+            bulkInput.classList.add('is-invalid');
+            showToast('Enter at least one email or user id to add.', 'warning');
+            return;
+        }
+
+        bulkInput.classList.remove('is-invalid');
+        addPolicyItems(entries);
+        bulkInput.value = '';
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     setupAdminFormAutofillMetadata();
 
@@ -98,6 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupToggles(); // This function will be extended below
     setupLandingPageLogoScaleControl();
     setupDocumentActionCapabilityControls();
+    setupDeepResearchPolicyEditors();
     
     // Initialize tooltips
     initializeTooltips();
@@ -2269,9 +2579,171 @@ function setupToggles() {
             markFormAsModified();
         });
     }
+    setupFileSyncUserAccessLists();
     
     // --- Workspace Dependency Validation ---
     setupWorkspaceDependencyValidation();
+}
+
+function parseFileSyncAccessList(value) {
+    return String(value || '')
+        .split(/[\n,;]+/)
+        .map(item => item.trim())
+        .filter((item, index, allItems) => item && allItems.findIndex(candidate => candidate.toLowerCase() === item.toLowerCase()) === index);
+}
+
+function setupFileSyncUserAccessLists() {
+    document.querySelectorAll('[data-file-sync-user-list]').forEach(container => {
+        setupFileSyncUserAccessList(container);
+    });
+}
+
+function setupFileSyncUserAccessList(container) {
+    const targetId = container.dataset.target;
+    const hiddenTextarea = document.getElementById(targetId);
+    const queryInput = container.querySelector('[data-file-sync-user-query]');
+    const searchButton = container.querySelector('[data-file-sync-user-search]');
+    const addButton = container.querySelector('[data-file-sync-user-add]');
+    const bulkTextarea = container.querySelector('[data-file-sync-user-bulk]');
+    const bulkAddButton = container.querySelector('[data-file-sync-user-bulk-add]');
+    const resultsContainer = container.querySelector('[data-file-sync-user-results]');
+    const chipsContainer = container.querySelector('[data-file-sync-user-chips]');
+    if (!hiddenTextarea || !queryInput || !searchButton || !addButton || !bulkTextarea || !bulkAddButton || !resultsContainer || !chipsContainer) {
+        return;
+    }
+
+    let accessEntries = parseFileSyncAccessList(hiddenTextarea.value);
+
+    const syncHiddenTextarea = (markModified = true) => {
+        hiddenTextarea.value = accessEntries.join('\n');
+        renderChips();
+        if (markModified) {
+            markFormAsModified();
+        }
+    };
+
+    const addEntries = (rawValue) => {
+        const newEntries = parseFileSyncAccessList(rawValue);
+        if (newEntries.length === 0) {
+            return;
+        }
+        const existingKeys = new Set(accessEntries.map(item => item.toLowerCase()));
+        newEntries.forEach(entry => {
+            const entryKey = entry.toLowerCase();
+            if (!existingKeys.has(entryKey)) {
+                accessEntries.push(entry);
+                existingKeys.add(entryKey);
+            }
+        });
+        syncHiddenTextarea();
+    };
+
+    function renderChips() {
+        chipsContainer.replaceChildren();
+        if (accessEntries.length === 0) {
+            chipsContainer.appendChild(createFileSyncTextElement('span', 'text-muted small', 'No specific users selected.'));
+            return;
+        }
+        accessEntries.forEach(entry => {
+            const chip = document.createElement('span');
+            chip.className = 'badge text-bg-light border d-inline-flex align-items-center gap-2';
+            const chipText = createFileSyncTextElement('span', '', entry);
+            const removeButton = createFileSyncTextElement('button', 'btn btn-sm btn-outline-secondary py-0 px-1', 'Remove');
+            removeButton.type = 'button';
+            removeButton.addEventListener('click', () => {
+                accessEntries = accessEntries.filter(candidate => candidate.toLowerCase() !== entry.toLowerCase());
+                syncHiddenTextarea();
+            });
+            chip.appendChild(chipText);
+            chip.appendChild(removeButton);
+            chipsContainer.appendChild(chip);
+        });
+    }
+
+    const renderResultsMessage = (message, type = 'muted') => {
+        resultsContainer.replaceChildren();
+        const messageItem = createFileSyncTextElement('div', `list-group-item text-${type}`, message);
+        resultsContainer.appendChild(messageItem);
+        resultsContainer.classList.remove('d-none');
+    };
+
+    const renderResults = (users) => {
+        resultsContainer.replaceChildren();
+        if (!Array.isArray(users) || users.length === 0) {
+            renderResultsMessage('No directory users found. You can still add an email or GUID manually.');
+            return;
+        }
+        users.forEach(user => {
+            const userIdentifier = user.email || user.id || '';
+            if (!userIdentifier) {
+                return;
+            }
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'list-group-item list-group-item-action';
+            const name = createFileSyncTextElement('div', 'fw-semibold', user.displayName || user.email || user.id || 'Directory user');
+            const detail = createFileSyncTextElement('div', 'text-muted', user.email || user.id || '');
+            item.appendChild(name);
+            item.appendChild(detail);
+            item.addEventListener('click', () => {
+                addEntries(userIdentifier);
+                resultsContainer.classList.add('d-none');
+            });
+            resultsContainer.appendChild(item);
+        });
+        resultsContainer.classList.remove('d-none');
+    };
+
+    const searchDirectoryUsers = async () => {
+        const query = queryInput.value.trim();
+        if (query.length < 2) {
+            renderResultsMessage('Type at least two characters to search.', 'muted');
+            return;
+        }
+        searchButton.disabled = true;
+        renderResultsMessage('Searching directory...', 'muted');
+        try {
+            const response = await fetch(`/api/admin/file-sync/users/search?q=${encodeURIComponent(query)}`, {
+                credentials: 'same-origin',
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.error || `Search failed with ${response.status}`);
+            }
+            renderResults(payload.users || []);
+        } catch (error) {
+            renderResultsMessage(error.message, 'danger');
+        } finally {
+            searchButton.disabled = false;
+        }
+    };
+
+    searchButton.addEventListener('click', searchDirectoryUsers);
+    addButton.addEventListener('click', () => {
+        addEntries(queryInput.value);
+        queryInput.value = '';
+        resultsContainer.classList.add('d-none');
+    });
+    bulkAddButton.addEventListener('click', () => {
+        addEntries(bulkTextarea.value);
+        bulkTextarea.value = '';
+    });
+    queryInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            searchDirectoryUsers();
+        }
+    });
+    syncHiddenTextarea(false);
+}
+
+function createFileSyncTextElement(tagName, className, text) {
+    const element = document.createElement(tagName);
+    if (className) {
+        element.className = className;
+    }
+    element.textContent = text;
+    return element;
 }
 
 /**

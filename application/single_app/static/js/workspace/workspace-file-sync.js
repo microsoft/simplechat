@@ -7,9 +7,13 @@ if (root) {
         sources: [],
         editingSourceId: null,
         historySourceId: null,
+        availableTags: [],
+        tagsLoaded: false,
     };
 
     const apiBase = root.dataset.apiBase;
+    const tagApiUrl = root.dataset.tagsApi || '';
+    const recursiveAllowed = root.dataset.recursiveAllowed !== 'false';
 
     const createElement = (tagName, options = {}) => {
         const element = document.createElement(tagName);
@@ -70,6 +74,20 @@ if (root) {
         return payload;
     };
 
+    const loadAvailableTags = async () => {
+        if (!tagApiUrl || state.tagsLoaded) {
+            return;
+        }
+        try {
+            const payload = await fetchJson(tagApiUrl);
+            state.availableTags = Array.isArray(payload.tags) ? payload.tags : [];
+        } catch (error) {
+            state.availableTags = [];
+        } finally {
+            state.tagsLoaded = true;
+        }
+    };
+
     const buildLabeledInput = (id, labelText, type = 'text', value = '') => {
         const wrapper = createElement('div', { className: 'col-md-6' });
         const label = createElement('label', { className: 'form-label', text: labelText, attributes: { for: id } });
@@ -115,9 +133,139 @@ if (root) {
         return { wrapper, input };
     };
 
+    const buildIntervalControl = (id, labelText, value = 60) => {
+        const wrapper = createElement('div', { className: 'col-md-6' });
+        const label = createElement('label', { className: 'form-label', text: labelText, attributes: { for: id } });
+        const range = createElement('input', {
+            className: 'form-range',
+            attributes: {
+                id,
+                type: 'range',
+                min: '5',
+                max: '1440',
+                step: '5',
+                value: String(value),
+            },
+        });
+        const numberInput = createElement('input', {
+            className: 'form-control',
+            attributes: {
+                type: 'number',
+                min: '5',
+                max: '10080',
+                value: String(value),
+                'aria-label': labelText,
+            },
+        });
+        range.addEventListener('input', () => {
+            numberInput.value = range.value;
+        });
+        numberInput.addEventListener('input', () => {
+            const parsedValue = Number.parseInt(numberInput.value, 10);
+            if (!Number.isNaN(parsedValue)) {
+                range.value = String(Math.max(5, Math.min(1440, parsedValue)));
+            }
+        });
+        appendChildren(wrapper, [label, range, numberInput]);
+        return { wrapper, input: numberInput };
+    };
+
+    const normalizeTagName = (value) => String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 50);
+
+    const buildTagSelector = (id, labelText, selectedValues = []) => {
+        const wrapper = createElement('div', { className: 'col-md-6' });
+        const label = createElement('label', { className: 'form-label', text: labelText, attributes: { for: id } });
+        const selectedTags = new Set(parseList(Array.isArray(selectedValues) ? selectedValues.join(',') : selectedValues).map(normalizeTagName).filter(Boolean));
+        const chipContainer = createElement('div', { className: 'd-flex flex-wrap gap-2 mb-2' });
+        const inputGroup = createElement('div', { className: 'input-group' });
+        const input = createElement('input', {
+            className: 'form-control',
+            attributes: {
+                id,
+                type: 'text',
+                placeholder: 'Add tag',
+            },
+        });
+        const addButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Add', attributes: { type: 'button' } });
+
+        const renderChips = () => {
+            chipContainer.replaceChildren();
+            if (selectedTags.size === 0) {
+                chipContainer.appendChild(createElement('span', { className: 'text-muted small', text: 'No fixed tags selected.' }));
+                return;
+            }
+            selectedTags.forEach((tagName) => {
+                const chip = createElement('span', { className: 'badge text-bg-light border d-inline-flex align-items-center gap-1' });
+                const text = createElement('span', { text: tagName });
+                const removeButton = createElement('button', {
+                    className: 'btn-close btn-close-sm',
+                    attributes: {
+                        type: 'button',
+                        'aria-label': `Remove ${tagName}`,
+                    },
+                });
+                removeButton.addEventListener('click', () => {
+                    selectedTags.delete(tagName);
+                    renderChips();
+                });
+                appendChildren(chip, [text, removeButton]);
+                chipContainer.appendChild(chip);
+            });
+        };
+
+        const addTags = (rawValue) => {
+            parseList(rawValue).map(normalizeTagName).filter(Boolean).forEach((tagName) => selectedTags.add(tagName));
+            input.value = '';
+            renderChips();
+        };
+
+        addButton.addEventListener('click', () => addTags(input.value));
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                addTags(input.value);
+            }
+        });
+        appendChildren(inputGroup, [input, addButton]);
+        appendChildren(wrapper, [label, chipContainer, inputGroup]);
+
+        const availableTagNames = state.availableTags
+            .map((tag) => normalizeTagName(tag.name || tag))
+            .filter(Boolean)
+            .filter((tagName, index, allTags) => allTags.indexOf(tagName) === index)
+            .sort();
+        if (availableTagNames.length > 0) {
+            const select = createElement('select', { className: 'form-select mb-2', attributes: { 'aria-label': 'Choose existing tag' } });
+            select.appendChild(createElement('option', { text: 'Choose existing tag', attributes: { value: '' } }));
+            availableTagNames.forEach((tagName) => {
+                select.appendChild(createElement('option', { text: tagName, attributes: { value: tagName } }));
+            });
+            select.addEventListener('change', () => {
+                if (select.value) {
+                    selectedTags.add(select.value);
+                    select.value = '';
+                    renderChips();
+                }
+            });
+            wrapper.insertBefore(select, inputGroup);
+        }
+
+        renderChips();
+        return {
+            wrapper,
+            getValues: () => Array.from(selectedTags),
+        };
+    };
+
     const sourceToFormValues = (source = {}) => ({
         name: source.name || '',
         enabled: source.enabled !== false,
+        recursive: source.recursive !== false && recursiveAllowed,
         uncPath: source.connection?.unc_path || '',
         username: source.credentials?.username || '',
         domain: source.credentials?.domain || '',
@@ -127,7 +275,7 @@ if (root) {
         includePatterns: (source.filters?.include_patterns || []).join('\n'),
         excludePatterns: (source.filters?.exclude_patterns || []).join('\n'),
         allowedExtensions: (source.filters?.allowed_extensions || []).join(', '),
-        fixedTags: (source.filters?.fixed_tags || []).join(', '),
+        fixedTags: source.filters?.fixed_tags || [],
         folderTagMode: source.filters?.folder_tag_mode || 'parent',
         remoteDeletePolicy: source.remote_delete_policy || 'ignore',
     });
@@ -151,14 +299,19 @@ if (root) {
         const usernameField = buildLabeledInput('file-sync-username', 'Username', 'text', values.username);
         const domainField = buildLabeledInput('file-sync-domain', 'Domain', 'text', values.domain);
         const passwordField = buildLabeledInput('file-sync-password', source?.credentials?.password_stored ? 'Password (stored)' : 'Password', 'password', values.password);
-        const intervalField = buildLabeledInput('file-sync-interval', 'Schedule interval minutes', 'number', String(values.intervalMinutes));
-        intervalField.input.min = '5';
+        const intervalField = buildIntervalControl('file-sync-interval', 'Schedule interval minutes', values.intervalMinutes);
         const includeField = buildLabeledTextarea('file-sync-include-patterns', 'Include patterns', values.includePatterns);
         const excludeField = buildLabeledTextarea('file-sync-exclude-patterns', 'Exclude patterns', values.excludePatterns);
         const extensionsField = buildLabeledInput('file-sync-extensions', 'File type filters', 'text', values.allowedExtensions);
-        const tagsField = buildLabeledInput('file-sync-tags', 'Tags', 'text', values.fixedTags);
+        const tagsField = buildTagSelector('file-sync-tags', 'Fixed tags', values.fixedTags);
         const enabledField = buildCheckbox('file-sync-enabled', 'Enabled', values.enabled);
         const scheduleField = buildCheckbox('file-sync-schedule-enabled', 'Scheduled sync', values.scheduleEnabled);
+        const recursiveField = buildCheckbox(
+            'file-sync-recursive',
+            recursiveAllowed ? 'Include subfolders' : 'Include subfolders (disabled by admin)',
+            values.recursive,
+        );
+        recursiveField.input.disabled = !recursiveAllowed;
 
         const folderWrapper = createElement('div', { className: 'col-md-6' });
         const folderLabel = createElement('label', { className: 'form-label', text: 'Folder tags', attributes: { for: 'file-sync-folder-tags' } });
@@ -203,46 +356,69 @@ if (root) {
         ]);
 
         const switches = createElement('div', { className: 'd-flex flex-wrap gap-4 mt-3' });
-        appendChildren(switches, [enabledField.wrapper, scheduleField.wrapper]);
+        appendChildren(switches, [enabledField.wrapper, scheduleField.wrapper, recursiveField.wrapper]);
 
         const actions = createElement('div', { className: 'd-flex gap-2 justify-content-end mt-3' });
+        const testButton = createElement('button', { className: 'btn btn-outline-primary', text: 'Test Connection', attributes: { type: 'button' } });
         const cancelButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button' } });
         const saveButton = createElement('button', { className: 'btn btn-primary', text: source ? 'Save Source' : 'Add Source', attributes: { type: 'submit' } });
-        appendChildren(actions, [cancelButton, saveButton]);
+        appendChildren(actions, [testButton, cancelButton, saveButton]);
 
         cancelButton.addEventListener('click', () => {
             state.editingSourceId = null;
             formContainer.classList.add('d-none');
         });
 
+        const buildPayload = () => ({
+            name: nameField.input.value.trim(),
+            source_type: 'smb',
+            enabled: enabledField.input.checked,
+            recursive: recursiveAllowed && recursiveField.input.checked,
+            connection: {
+                unc_path: uncField.input.value.trim(),
+            },
+            credentials: {
+                auth_type: 'username_password',
+                username: usernameField.input.value.trim(),
+                domain: domainField.input.value.trim(),
+                password: passwordField.input.value,
+            },
+            filters: {
+                include_patterns: parseList(includeField.textarea.value),
+                exclude_patterns: parseList(excludeField.textarea.value),
+                allowed_extensions: parseList(extensionsField.input.value),
+                fixed_tags: tagsField.getValues(),
+                folder_tag_mode: folderSelect.value,
+            },
+            schedule: {
+                enabled: scheduleField.input.checked,
+                interval_minutes: Number.parseInt(intervalField.input.value, 10) || 60,
+            },
+            remote_delete_policy: deleteSelect.value,
+        });
+
+        testButton.addEventListener('click', async () => {
+            try {
+                testButton.disabled = true;
+                const testUrl = state.editingSourceId
+                    ? `${apiBase}/sources/${state.editingSourceId}/test-connection`
+                    : `${apiBase}/sources/test-connection`;
+                const payload = await fetchJson(testUrl, {
+                    method: 'POST',
+                    body: JSON.stringify(buildPayload()),
+                });
+                const connection = payload.connection || {};
+                showStatus(`Connection OK. Checked ${connection.entries_checked || 0} top-level item(s).`, 'success');
+            } catch (error) {
+                showStatus(error.message, 'danger');
+            } finally {
+                testButton.disabled = false;
+            }
+        });
+
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
-            const payload = {
-                name: nameField.input.value.trim(),
-                source_type: 'smb',
-                enabled: enabledField.input.checked,
-                connection: {
-                    unc_path: uncField.input.value.trim(),
-                },
-                credentials: {
-                    auth_type: 'username_password',
-                    username: usernameField.input.value.trim(),
-                    domain: domainField.input.value.trim(),
-                    password: passwordField.input.value,
-                },
-                filters: {
-                    include_patterns: parseList(includeField.textarea.value),
-                    exclude_patterns: parseList(excludeField.textarea.value),
-                    allowed_extensions: parseList(extensionsField.input.value),
-                    fixed_tags: parseList(tagsField.input.value),
-                    folder_tag_mode: folderSelect.value,
-                },
-                schedule: {
-                    enabled: scheduleField.input.checked,
-                    interval_minutes: Number.parseInt(intervalField.input.value, 10) || 60,
-                },
-                remote_delete_policy: deleteSelect.value,
-            };
+            const payload = buildPayload();
 
             try {
                 saveButton.disabled = true;
@@ -308,7 +484,8 @@ if (root) {
             const nameCell = createElement('td');
             const nameText = createElement('div', { className: 'fw-semibold', text: source.name || 'SMB Source' });
             const pathText = createElement('div', { className: 'small text-muted', text: source.connection?.unc_path || '' });
-            appendChildren(nameCell, [nameText, pathText]);
+            const recursionText = createElement('div', { className: 'small text-muted', text: source.recursive === false ? 'Top folder only' : 'Includes subfolders' });
+            appendChildren(nameCell, [nameText, pathText, recursionText]);
 
             const statusText = source.enabled ? 'Enabled' : 'Disabled';
             const statusCell = createElement('td', { text: statusText });
@@ -345,9 +522,10 @@ if (root) {
                 await loadHistory(source.id);
             });
 
-            editButton.addEventListener('click', () => {
+            editButton.addEventListener('click', async () => {
                 state.editingSourceId = source.id;
                 const formContainer = root.querySelector('[data-file-sync-form]');
+                await loadAvailableTags();
                 renderForm();
                 formContainer.classList.remove('d-none');
             });
@@ -459,8 +637,9 @@ if (root) {
         appendChildren(table, [head, body]);
         const history = createElement('div', { attributes: { 'data-file-sync-history': 'true' } });
 
-        addButton.addEventListener('click', () => {
+        addButton.addEventListener('click', async () => {
             state.editingSourceId = null;
+            await loadAvailableTags();
             renderForm();
             formContainer.classList.toggle('d-none');
         });
@@ -470,5 +649,6 @@ if (root) {
     };
 
     renderLayout();
+    loadAvailableTags();
     loadSources();
 }

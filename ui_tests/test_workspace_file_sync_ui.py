@@ -1,7 +1,7 @@
 # test_workspace_file_sync_ui.py
 """
 UI test for workspace File Sync tab.
-Version: 0.241.052
+Version: 0.241.056
 Implemented in: 0.241.042
 
 This test ensures the workspace Sync tab renders, loads source rows, opens the
@@ -10,10 +10,16 @@ SMB source form, and queues a manual sync without browser console errors.
 
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
+
+try:
+    from playwright.sync_api import expect, sync_playwright
+except ModuleNotFoundError:
+    expect = None
+    sync_playwright = None
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -28,10 +34,14 @@ def _require_ui_env():
 
 
 @pytest.mark.ui
-def test_workspace_file_sync_tab(playwright):
+def test_workspace_file_sync_tab():
     """Validate the personal workspace File Sync tab behavior."""
     _require_ui_env()
-    browser = playwright.chromium.launch()
+    if sync_playwright is None or expect is None:
+        pytest.skip("Install playwright to run this UI test.")
+
+    playwright_context = sync_playwright().start()
+    browser = playwright_context.chromium.launch()
     context = browser.new_context(storage_state=STORAGE_STATE, viewport={"width": 1440, "height": 900})
     page = context.new_page()
     console_errors = []
@@ -42,6 +52,7 @@ def test_workspace_file_sync_tab(playwright):
                 "id": "source-1",
                 "name": "Finance Share",
                 "enabled": True,
+                "recursive": True,
                 "connection": {"unc_path": "\\\\fileserver\\finance"},
                 "credentials": {"username": "svc-sync", "domain": "CONTOSO", "password_stored": True},
                 "filters": {"include_patterns": ["*.pdf"], "exclude_patterns": [], "allowed_extensions": ["pdf"], "fixed_tags": ["finance"], "folder_tag_mode": "parent"},
@@ -51,6 +62,25 @@ def test_workspace_file_sync_tab(playwright):
                 "last_run_counts": {"queued": 2, "unchanged": 4, "skipped": 1, "failed": 0},
             }
         ]
+    }
+    synced_document = {
+        "id": "doc-sync-1",
+        "file_name": "synced-plan.pdf",
+        "title": "Synced Plan",
+        "status": "Processing Complete",
+        "percentage_complete": 100,
+        "version": 3,
+        "authors": ["File Sync"],
+        "number_of_pages": 8,
+        "enhanced_citations": True,
+        "tags": ["finance"],
+        "file_sync": {
+            "source_id": "source-1",
+            "source_name": "Finance Share",
+            "remote_path": "\\\\fileserver\\finance\\synced-plan.pdf",
+            "relative_path": "synced-plan.pdf",
+            "synced_at": "2025-01-01T00:01:00+00:00",
+        },
     }
 
     def handle_file_sync(route):
@@ -70,11 +100,41 @@ def test_workspace_file_sync_tab(playwright):
             return
         route.fulfill(status=200, content_type="application/json", body=json.dumps({"source": source_state["sources"][0]}))
 
+    def handle_documents(route):
+        request = route.request
+        if "/api/documents/tags" in request.url:
+            route.fulfill(status=200, content_type="application/json", body=json.dumps({"tags": []}))
+            return
+        if request.method == "GET" and re.search(r"/api/documents/doc-sync-1(\?|$)", request.url):
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(synced_document))
+            return
+        if request.method == "GET":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"documents": [synced_document], "page": 1, "page_size": 10, "total_count": 1}),
+            )
+            return
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({}))
+
     page.route("**/api/file-sync/personal/**", handle_file_sync)
+    page.route("**/api/documents**", handle_documents)
     page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
 
     try:
         page.goto(f"{BASE_URL}/workspace", wait_until="networkidle")
+        if page.locator("#documents-tab-btn").count() > 0:
+            page.locator("#documents-tab-btn").click()
+        expect(page.get_by_text("synced-plan.pdf")).to_be_visible()
+        expect(page.locator("#documents-table .badge", has_text="Synced").first).to_be_visible()
+
+        page.wait_for_function("typeof window.onEditDocument === 'function'")
+        page.evaluate("window.onEditDocument('doc-sync-1')")
+        expect(page.locator("#doc-sync-status")).to_contain_text("Synced:")
+        expect(page.locator("#doc-sync-status")).to_contain_text("Yes")
+        expect(page.locator("#doc-sync-status")).to_contain_text("Finance Share")
+        page.locator("#docMetadataModal .btn-close").click()
+
         if page.locator("#sync-tab-btn").count() == 0:
             pytest.skip("File Sync is not enabled for this environment.")
 
@@ -89,6 +149,8 @@ def test_workspace_file_sync_tab(playwright):
 
         page.get_by_role("button", name="Add Source").click()
         expect(page.get_by_label("UNC path")).to_be_visible()
+        expect(page.locator("#file-sync-recursive")).to_be_visible()
+        expect(page.get_by_role("button", name="Test Connection")).to_be_visible()
 
         page.get_by_role("button", name="History").click()
         expect(page.get_by_role("heading", name="Sync History")).to_be_visible()
@@ -99,3 +161,4 @@ def test_workspace_file_sync_tab(playwright):
     finally:
         context.close()
         browser.close()
+        playwright_context.stop()

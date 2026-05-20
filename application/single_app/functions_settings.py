@@ -248,6 +248,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'file_sync_max_files_per_run': 1000,
         'file_sync_max_bytes_per_run': 5368709120,
         'file_sync_max_concurrent_runs': 2,
+        'file_sync_allow_recursive_sources': True,
         'file_sync_default_remote_delete_policy': 'ignore',
         'file_sync_debug_logging': True,
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+# test_file_sync_capability.py
 """
 Functional test for File Sync capability wiring.
-Version: 0.241.052
+Version: 0.241.056
 Implemented in: 0.241.042
 
 This test ensures File Sync storage, settings, routes, scheduler hooks, and
@@ -25,7 +26,7 @@ def read_text(relative_path):
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.052"' in config_text
+    assert 'VERSION = "0.241.056"' in config_text
 
     expected_containers = [
         "personal_file_sync_sources",
@@ -60,6 +61,7 @@ def test_file_sync_settings_and_routes():
         "file_sync_blocked_groups",
         "file_sync_allowed_public_workspaces",
         "file_sync_blocked_public_workspaces",
+        "file_sync_allow_recursive_sources",
     ]:
         assert key in settings_text
 
@@ -84,9 +86,11 @@ def test_file_sync_service_security_shapes():
         "create_file_sync_source",
         "update_file_sync_source",
         "queue_file_sync_source_run",
+        "test_file_sync_source_connection",
         "check_due_file_sync_sources_once",
         "build_synced_document_delete_guard",
         "apply_synced_document_delete_action",
+        "_read_file_sync_source_for_document_action",
     }
     assert expected_functions.issubset(function_names)
     assert "assert_group_role" in file_sync_text
@@ -121,6 +125,20 @@ def test_file_sync_delete_prompt_frontend_wiring():
         assert "synced_document_delete_requires_action" in frontend_text
         assert "file_sync_delete_action" in frontend_text
         assert "ignore_remote" in frontend_text
+        assert "let selectedValue = null" in frontend_text
+        assert "resolve(selectedValue)" in frontend_text
+        assert "hideWithValue" in frontend_text
+
+
+def test_file_sync_stale_source_delete_wiring():
+    """Validate synced-document delete handling tolerates deleted sync sources."""
+    file_sync_text = read_text("application/single_app/functions_file_sync.py")
+
+    assert "def _read_file_sync_source_for_document_action" in file_sync_text
+    assert "except CosmosResourceNotFoundError" in file_sync_text
+    assert "source = _read_file_sync_source_for_document_action" in file_sync_text
+    assert "if not source:\n        return None" in file_sync_text
+    assert "if not source:\n        return\n    set_file_sync_path_ignored" in file_sync_text
 
 
 def test_file_sync_activity_log_display_wiring():
@@ -142,6 +160,7 @@ def test_file_sync_admin_and_sidebar_discovery():
     """Validate admins and workspace managers can discover File Sync controls."""
     admin_template = read_text("application/single_app/templates/admin_settings.html")
     admin_route = read_text("application/single_app/route_frontend_admin_settings.py")
+    backend_route = read_text("application/single_app/route_backend_file_sync.py")
     admin_js = read_text("application/single_app/static/js/admin/admin_settings.js")
     sidebar_template = read_text("application/single_app/templates/_sidebar_nav.html")
 
@@ -161,11 +180,18 @@ def test_file_sync_admin_and_sidebar_discovery():
         "file_sync_max_files_per_run",
         "file_sync_max_gb_per_run",
         "file_sync_max_concurrent_runs",
-        "file_sync_default_remote_delete_policy",
-        "file_sync_debug_logging",
+        "file_sync_allow_recursive_sources",
     ]:
         assert f'name="{field_name}"' in admin_template
         assert field_name in admin_route
+
+    assert 'name="file_sync_default_remote_delete_policy"' not in admin_template
+    assert 'name="file_sync_debug_logging"' not in admin_template
+    assert "data-file-sync-user-list" in admin_template
+    assert "data-file-sync-user-query" in admin_template
+    assert "data-file-sync-user-bulk" in admin_template
+    assert "/api/admin/file-sync/users/search" in backend_route
+    assert "search_directory_users" in backend_route
 
     assert 'id="file-sync-section"' in admin_template
     assert 'id="file_sync_settings"' in admin_template
@@ -173,9 +199,80 @@ def test_file_sync_admin_and_sidebar_discovery():
     assert "get_file_sync_config" in admin_route
     assert "parse_file_sync_list" in admin_route
     assert "fileSyncSettings.classList.toggle('d-none'" in admin_js
+    assert "setupFileSyncUserAccessLists" in admin_js
     assert 'data-section="file-sync-section"' in sidebar_template
     assert 'data-tab="sync-tab"' in sidebar_template
     assert "file_sync_enabled" in sidebar_template
+
+
+def test_file_sync_recursive_and_connection_test_wiring():
+    """Validate recursive source controls, tag UI, and SMB connection testing."""
+    settings_text = read_text("application/single_app/functions_settings.py")
+    file_sync_text = read_text("application/single_app/functions_file_sync.py")
+    route_text = read_text("application/single_app/route_backend_file_sync.py")
+    file_sync_js = read_text("application/single_app/static/js/workspace/workspace-file-sync.js")
+    workspace_template = read_text("application/single_app/templates/workspace.html")
+    group_template = read_text("application/single_app/templates/group_workspaces.html")
+    public_template = read_text("application/single_app/templates/manage_public_workspace.html")
+
+    assert "'file_sync_allow_recursive_sources': True" in settings_text
+    assert '"file_sync_allow_recursive_sources": True' in file_sync_text
+    assert '"recursive": _as_bool' in file_sync_text
+    assert "recursive_enabled = bool" in file_sync_text
+    assert "if recursive_enabled:\n                    walk_directory(entry_path)" in file_sync_text
+    assert "relative_path = remote_file.get" in file_sync_text
+    assert "folder_parts = [part for part in relative_path.split" in file_sync_text
+
+    assert "def test_file_sync_source_connection" in file_sync_text
+    assert "_prepare_connection_test_auth" in file_sync_text
+    assert "/sources/test-connection" in route_text
+    assert "/sources/<source_id>/test-connection" in route_text
+
+    for template_text in [workspace_template, group_template, public_template]:
+        assert "data-recursive-allowed" in template_text
+        assert "data-tags-api" in template_text
+
+    assert "file-sync-recursive" in file_sync_js
+    assert "Include subfolders" in file_sync_js
+    assert "Test Connection" in file_sync_js
+    assert "buildTagSelector" in file_sync_js
+    assert "Choose existing tag" in file_sync_js
+    assert "Schedule interval minutes" in file_sync_js
+
+
+def test_file_sync_document_indicator_wiring():
+    """Validate synced documents render a system indicator without using tags."""
+    workspace_utils = read_text("application/single_app/static/js/workspace/workspace-utils.js")
+    workspace_documents = read_text("application/single_app/static/js/workspace/workspace-documents.js")
+    workspace_tags = read_text("application/single_app/static/js/workspace/workspace-tags.js")
+    group_template = read_text("application/single_app/templates/group_workspaces.html")
+    public_template = read_text("application/single_app/templates/public_workspaces.html")
+    public_js = read_text("application/single_app/static/js/public/public_workspace.js")
+    workspace_template = read_text("application/single_app/templates/workspace.html")
+
+    assert "doc.file_sync" in workspace_utils
+    assert "getDocumentSyncBadgeHtml" in workspace_utils
+    assert "getDocumentSyncDetailsHtml" in workspace_utils
+    assert "setDocumentSyncStatusElement" in workspace_utils
+
+    for frontend_text in [workspace_documents, group_template, public_js]:
+        assert "file_sync" in frontend_text
+
+    for frontend_text in [workspace_documents, group_template, public_js]:
+        assert "Synced" in frontend_text
+        assert "bg-info text-dark" in frontend_text
+
+    assert "getDocumentSyncBadgeHtml(doc, true)" in workspace_documents
+    assert "getDocumentSyncBadgeHtml(doc, true)" in workspace_tags
+    assert "getGroupDocumentSyncBadgeHtml(doc, true)" in group_template
+    assert "getPublicDocumentSyncBadgeHtml(doc, true)" in public_js
+
+    assert 'id="doc-sync-status"' in workspace_template
+    assert 'id="group-doc-sync-status"' in group_template
+    assert 'id="public-doc-sync-status"' in public_template
+
+    assert "doc.tags" not in workspace_utils
+    assert "folder_tag_mode" not in workspace_utils
 
 
 def run_tests():
@@ -186,8 +283,11 @@ def run_tests():
         test_file_sync_service_security_shapes,
         test_file_sync_delete_guards,
         test_file_sync_delete_prompt_frontend_wiring,
+        test_file_sync_stale_source_delete_wiring,
         test_file_sync_activity_log_display_wiring,
         test_file_sync_admin_and_sidebar_discovery,
+        test_file_sync_recursive_and_connection_test_wiring,
+        test_file_sync_document_indicator_wiring,
     ]
     failures = []
     for test in tests:

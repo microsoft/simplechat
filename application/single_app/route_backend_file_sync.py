@@ -2,7 +2,7 @@
 
 from flask import jsonify, request
 
-from functions_authentication import enabled_required, get_current_user_id, get_current_user_info, login_required, user_required
+from functions_authentication import admin_required, enabled_required, get_current_user_id, get_current_user_info, login_required, user_required
 from functions_file_sync import (
     FILE_SYNC_MANAGER_ROLES,
     FILE_SYNC_SCOPE_GROUP,
@@ -21,10 +21,12 @@ from functions_file_sync import (
     sanitize_file_sync_run,
     sanitize_file_sync_source,
     set_file_sync_path_ignored,
+    test_file_sync_source_connection,
     update_file_sync_source,
 )
 from functions_group import require_active_group
 from functions_settings import get_settings
+from functions_simplechat_operations import search_directory_users
 from swagger_wrapper import get_auth_security, swagger_route
 
 
@@ -109,6 +111,24 @@ def register_route_backend_file_sync(app):
         item = set_file_sync_path_ignored(source, payload.get("remote_path"), payload.get("ignored", True), user_id)
         return jsonify({"item": item}), 200
 
+    def _test_connection(scope_type, scope_id, user_id, source_id=None):
+        result = test_file_sync_source_connection(scope_type, scope_id, _payload(), user_id, source_id=source_id)
+        return jsonify({"connection": result}), 200
+
+    @app.route('/api/admin/file-sync/users/search', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_admin_file_sync_user_search():
+        try:
+            query = str(request.args.get("q") or request.args.get("query") or "").strip()
+            if len(query) < 2:
+                return jsonify({"users": []}), 200
+            users = search_directory_users(query, limit=10)
+            return jsonify({"users": users}), 200
+        except Exception as error:
+            return _map_exception(error)
+
     @app.route('/api/file-sync/personal/sources', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -133,6 +153,18 @@ def register_route_backend_file_sync(app):
         except Exception as error:
             return _map_exception(error)
 
+    @app.route('/api/file-sync/personal/sources/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_personal_source_test_connection_new():
+        try:
+            user_id = _require_personal_context()
+            return _test_connection(FILE_SYNC_SCOPE_PERSONAL, user_id, user_id)
+        except Exception as error:
+            return _map_exception(error)
+
     @app.route('/api/file-sync/personal/sources/<source_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -142,6 +174,18 @@ def register_route_backend_file_sync(app):
         try:
             user_id = _require_personal_context()
             return _update_source(FILE_SYNC_SCOPE_PERSONAL, user_id, source_id, user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/file-sync/personal/sources/<source_id>/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_personal_source_test_connection_existing(source_id):
+        try:
+            user_id = _require_personal_context()
+            return _test_connection(FILE_SYNC_SCOPE_PERSONAL, user_id, user_id, source_id=source_id)
         except Exception as error:
             return _map_exception(error)
 
@@ -217,6 +261,18 @@ def register_route_backend_file_sync(app):
         except Exception as error:
             return _map_exception(error)
 
+    @app.route('/api/file-sync/group/sources/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_group_source_test_connection_new():
+        try:
+            user_id, group_id = _require_group_context()
+            return _test_connection(FILE_SYNC_SCOPE_GROUP, group_id, user_id)
+        except Exception as error:
+            return _map_exception(error)
+
     @app.route('/api/file-sync/group/sources/<source_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -226,6 +282,18 @@ def register_route_backend_file_sync(app):
         try:
             user_id, group_id = _require_group_context()
             return _update_source(FILE_SYNC_SCOPE_GROUP, group_id, source_id, user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/file-sync/group/sources/<source_id>/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_group_source_test_connection_existing(source_id):
+        try:
+            user_id, group_id = _require_group_context()
+            return _test_connection(FILE_SYNC_SCOPE_GROUP, group_id, user_id, source_id=source_id)
         except Exception as error:
             return _map_exception(error)
 
@@ -301,6 +369,18 @@ def register_route_backend_file_sync(app):
         except Exception as error:
             return _map_exception(error)
 
+    @app.route('/api/file-sync/public/<public_workspace_id>/sources/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_public_source_test_connection_new(public_workspace_id):
+        try:
+            user_id, workspace_id = _require_public_context(public_workspace_id)
+            return _test_connection(FILE_SYNC_SCOPE_PUBLIC, workspace_id, user_id)
+        except Exception as error:
+            return _map_exception(error)
+
     @app.route('/api/file-sync/public/<public_workspace_id>/sources/<source_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -310,6 +390,18 @@ def register_route_backend_file_sync(app):
         try:
             user_id, workspace_id = _require_public_context(public_workspace_id)
             return _update_source(FILE_SYNC_SCOPE_PUBLIC, workspace_id, source_id, user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/file-sync/public/<public_workspace_id>/sources/<source_id>/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_public_source_test_connection_existing(public_workspace_id, source_id):
+        try:
+            user_id, workspace_id = _require_public_context(public_workspace_id)
+            return _test_connection(FILE_SYNC_SCOPE_PUBLIC, workspace_id, user_id, source_id=source_id)
         except Exception as error:
             return _map_exception(error)
 
