@@ -708,10 +708,71 @@ def test_file_sync_source_connection(
         raise ValueError("SMB connection test failed. Verify the UNC path and credentials.") from error
 
 
-def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str) -> None:
+def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str, delete_associated_files: bool = False) -> Dict[str, Any]:
     source = get_authorized_sync_source(scope_type, source_id, deleted_by, scope_id=scope_id)
+    delete_result = {
+        "associated_files_requested": bool(delete_associated_files),
+        "documents_deleted": 0,
+        "documents_skipped": 0,
+        "documents_failed": 0,
+    }
+    if delete_associated_files:
+        delete_result = _delete_associated_synced_documents(source)
     _get_sources_container(scope_type).delete_item(item=source_id, partition_key=scope_id)
-    _log_file_sync_activity(source, deleted_by, "source_deleted", {"source_name": source.get("name")})
+    _log_file_sync_activity(
+        source,
+        deleted_by,
+        "source_deleted",
+        {
+            "source_name": source.get("name"),
+            "delete_associated_files": bool(delete_associated_files),
+            **delete_result,
+        },
+    )
+    return delete_result
+
+
+def _delete_associated_synced_documents(source: Dict[str, Any]) -> Dict[str, Any]:
+    delete_result = {
+        "associated_files_requested": True,
+        "documents_deleted": 0,
+        "documents_skipped": 0,
+        "documents_failed": 0,
+    }
+    document_ids = []
+    seen_document_ids = set()
+    for item in _load_existing_items(source).values():
+        document_id = str(item.get("document_id") or "").strip()
+        if not document_id or document_id in seen_document_ids:
+            continue
+        seen_document_ids.add(document_id)
+        document_ids.append(document_id)
+
+    failed_document_ids = []
+    for document_id in document_ids:
+        try:
+            _delete_synced_document(source, document_id)
+            delete_result["documents_deleted"] += 1
+        except CosmosResourceNotFoundError:
+            delete_result["documents_skipped"] += 1
+        except Exception as error:
+            if "Document not found" in str(error):
+                delete_result["documents_skipped"] += 1
+                continue
+            failed_document_ids.append(document_id)
+            delete_result["documents_failed"] += 1
+            log_event(
+                f"[FileSync] Failed to delete synced document during source deletion: {error}",
+                level=logging.WARNING,
+            )
+
+    if failed_document_ids:
+        raise ValueError(
+            "Could not delete all associated synced files. "
+            f"Deleted {delete_result['documents_deleted']}, failed {delete_result['documents_failed']}. "
+            "The File Sync source was not deleted."
+        )
+    return delete_result
 
 
 def _item_id_for_path(source_id: str, remote_path: str) -> str:

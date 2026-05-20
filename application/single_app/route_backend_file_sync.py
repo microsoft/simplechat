@@ -92,8 +92,15 @@ def register_route_backend_file_sync(app):
         return jsonify({"source": sanitize_file_sync_source(source)}), 200
 
     def _delete_source(scope_type, scope_id, source_id, user_id):
-        delete_file_sync_source(scope_type, scope_id, source_id, user_id)
-        return jsonify({"message": "File Sync source deleted"}), 200
+        payload = _payload()
+        delete_result = delete_file_sync_source(
+            scope_type,
+            scope_id,
+            source_id,
+            user_id,
+            delete_associated_files=bool(payload.get("delete_associated_files")),
+        )
+        return jsonify({"message": "File Sync source deleted", "delete_result": delete_result}), 200
 
     def _sync_now(scope_type, scope_id, source_id, user_id):
         source = get_authorized_sync_source(scope_type, source_id, user_id, scope_id=scope_id)

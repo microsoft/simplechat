@@ -467,6 +467,89 @@ if (root) {
         `failed ${counts.failed || 0}`,
     ].join(', ');
 
+    const showDeleteSourceModal = (source) => new Promise((resolve) => {
+        const modalId = `file-sync-delete-source-${source.id || 'source'}`;
+        const modalElement = createElement('div', {
+            className: 'modal fade',
+            attributes: {
+                id: modalId,
+                tabindex: '-1',
+                'aria-labelledby': `${modalId}-title`,
+                'aria-hidden': 'true',
+            },
+        });
+        const dialog = createElement('div', { className: 'modal-dialog modal-dialog-centered' });
+        const content = createElement('div', { className: 'modal-content' });
+        const header = createElement('div', { className: 'modal-header' });
+        const title = createElement('h5', {
+            className: 'modal-title',
+            text: 'Delete File Sync Source',
+            attributes: { id: `${modalId}-title` },
+        });
+        const closeButton = createElement('button', {
+            className: 'btn-close',
+            attributes: {
+                type: 'button',
+                'aria-label': 'Close',
+            },
+        });
+        const body = createElement('div', { className: 'modal-body' });
+        const sourceName = createElement('p', { className: 'fw-semibold mb-1', text: source.name || 'SMB Source' });
+        const sourcePath = createElement('p', { className: 'text-muted small mb-3', text: source.connection?.unc_path || '' });
+        const promptText = createElement('p', { className: 'mb-2', text: 'Choose what should happen to documents already synced from this source.' });
+        const keepText = createElement('p', { className: 'small mb-1', text: 'Delete sync source keeps the documents in SimpleChat.' });
+        const deleteText = createElement('p', { className: 'small text-danger mb-0', text: 'Delete all files removes the synced documents and then deletes the source.' });
+        const footer = createElement('div', { className: 'modal-footer' });
+        const cancelButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button' } });
+        const sourceOnlyButton = createElement('button', { className: 'btn btn-outline-danger', text: 'Delete Sync Source', attributes: { type: 'button' } });
+        const deleteAllButton = createElement('button', { className: 'btn btn-danger', text: 'Delete All Files', attributes: { type: 'button' } });
+        let selectedAction = null;
+        let modalInstance = null;
+        let resolved = false;
+
+        const finish = (action) => {
+            selectedAction = action;
+            if (modalInstance) {
+                modalInstance.hide();
+                return;
+            }
+            if (!resolved) {
+                resolved = true;
+                modalElement.remove();
+                resolve(selectedAction);
+            }
+        };
+
+        modalElement.addEventListener('hidden.bs.modal', () => {
+            if (!resolved) {
+                resolved = true;
+                modalElement.remove();
+                resolve(selectedAction);
+            }
+        }, { once: true });
+
+        closeButton.addEventListener('click', () => finish(null));
+        cancelButton.addEventListener('click', () => finish(null));
+        sourceOnlyButton.addEventListener('click', () => finish('source_only'));
+        deleteAllButton.addEventListener('click', () => finish('delete_all_files'));
+
+        appendChildren(header, [title, closeButton]);
+        appendChildren(body, [sourceName, sourcePath, promptText, keepText, deleteText]);
+        appendChildren(footer, [cancelButton, sourceOnlyButton, deleteAllButton]);
+        appendChildren(content, [header, body, footer]);
+        dialog.appendChild(content);
+        modalElement.appendChild(dialog);
+        document.body.appendChild(modalElement);
+
+        if (window.bootstrap?.Modal) {
+            modalInstance = new window.bootstrap.Modal(modalElement, { backdrop: 'static' });
+            modalInstance.show();
+            return;
+        }
+        modalElement.classList.add('show');
+        modalElement.removeAttribute('aria-hidden');
+    });
+
     const renderSources = () => {
         const tableBody = root.querySelector('[data-file-sync-source-rows]');
         tableBody.replaceChildren();
@@ -531,17 +614,32 @@ if (root) {
             });
 
             deleteButton.addEventListener('click', async () => {
-                if (deleteButton.dataset.confirm !== 'true') {
-                    deleteButton.dataset.confirm = 'true';
-                    deleteButton.textContent = 'Confirm';
+                const deleteChoice = await showDeleteSourceModal(source);
+                if (!deleteChoice) {
                     return;
                 }
                 try {
-                    await fetchJson(`${apiBase}/sources/${source.id}`, { method: 'DELETE' });
-                    showStatus('Source deleted.', 'success');
+                    deleteButton.disabled = true;
+                    const payload = {
+                        delete_associated_files: deleteChoice === 'delete_all_files',
+                    };
+                    const result = await fetchJson(`${apiBase}/sources/${source.id}`, {
+                        method: 'DELETE',
+                        body: JSON.stringify(payload),
+                    });
+                    const deleteResult = result.delete_result || {};
+                    const deletedDocuments = deleteResult.documents_deleted || 0;
+                    showStatus(
+                        payload.delete_associated_files
+                            ? `Source deleted with ${deletedDocuments} associated file(s).`
+                            : 'Source deleted. Associated files were kept.',
+                        'success',
+                    );
                     await loadSources();
                 } catch (error) {
                     showStatus(error.message, 'danger');
+                } finally {
+                    deleteButton.disabled = false;
                 }
             });
 

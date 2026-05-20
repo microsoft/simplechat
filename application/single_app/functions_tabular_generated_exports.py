@@ -51,6 +51,8 @@ TABULAR_EXPORT_DEFAULT_LEASE_SECONDS = 300
 TABULAR_EXPORT_DEFAULT_STALE_SECONDS = 420
 TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5
 TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES = 20
+TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 2
+TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 5
 TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS = 30
 TABULAR_EXPORT_SCHEDULER_STATUSES = (
     TABULAR_EXPORT_STATUS_QUEUED,
@@ -332,10 +334,14 @@ def _truncate_response_preview(response_content, max_chars=400):
     return f"{normalized[:max_chars]}..."
 
 
+def _dump_generated_output_json(value):
+    return json.dumps(value, default=str, ensure_ascii=False, separators=(',', ':'))
+
+
 def _build_batch_prompt(user_question, batch_rows, batch_index, total_batches, source_file_name, selected_sheet=''):
     source_file_name = str(source_file_name or 'unknown file').strip() or 'unknown file'
     selected_sheet = str(selected_sheet or '').strip()
-    batch_rows_json = json.dumps(batch_rows, indent=2, default=str, ensure_ascii=False)
+    batch_rows_json = _dump_generated_output_json(batch_rows)
     selected_sheet_line = f"Worksheet: {selected_sheet}\n" if selected_sheet else ''
 
     return (
@@ -453,6 +459,77 @@ async def _generate_batch_entries(
         f'Background structured export batch {batch_number}/{total_batches} returned '
         f'{len(parsed_entries) if parsed_entries is not None else 0} object(s) for {len(batch_rows)} input row(s).'
     )
+
+
+async def _generate_batch_entries_for_window(
+    semaphore,
+    chat_service,
+    user_question,
+    batch_request,
+    total_batches,
+    source_file_name,
+    selected_sheet,
+    retry_attempts,
+    run_id,
+):
+    async with semaphore:
+        batch_started_at = time.monotonic()
+        batch_entries, mismatch_count = await _generate_batch_entries(
+            chat_service,
+            user_question,
+            batch_request['rows'],
+            batch_request['batch_number'] - 1,
+            total_batches,
+            source_file_name,
+            selected_sheet,
+            retry_attempts,
+            run_id,
+        )
+        return {
+            'batch_number': batch_request['batch_number'],
+            'batch_entries': batch_entries,
+            'batch_row_count': len(batch_entries),
+            'elapsed_seconds': time.monotonic() - batch_started_at,
+            'mismatch_count': mismatch_count,
+        }
+
+
+async def _generate_batch_window_entries(
+    chat_service,
+    user_question,
+    batch_requests,
+    total_batches,
+    source_file_name,
+    selected_sheet,
+    retry_attempts,
+    run_id,
+    batch_concurrency,
+):
+    semaphore = asyncio.Semaphore(max(1, batch_concurrency))
+    tasks = [
+        _generate_batch_entries_for_window(
+            semaphore,
+            chat_service,
+            user_question,
+            batch_request,
+            total_batches,
+            source_file_name,
+            selected_sheet,
+            retry_attempts,
+            run_id,
+        )
+        for batch_request in batch_requests
+    ]
+    gathered_results = await asyncio.gather(*tasks, return_exceptions=True)
+    successful_results = []
+    first_error = None
+    for gathered_result in gathered_results:
+        if isinstance(gathered_result, Exception):
+            if first_error is None:
+                first_error = gathered_result
+            continue
+        successful_results.append(gathered_result)
+    return successful_results, first_error
 
 
 def should_queue_tabular_generated_output_background(row_count, batch_count, settings=None):
@@ -1287,6 +1364,119 @@ def _complete_run(run):
     return run
 
 
+def _load_input_batch_rows(run, input_batches, user_id, run_id, batch_number, batch_count):
+    if isinstance(input_batches, list):
+        try:
+            batch_rows = input_batches[batch_number - 1]
+        except IndexError as exc:
+            raise ValueError(f'Input batch {batch_number}/{batch_count} is missing') from exc
+    else:
+        input_blob_path = _input_blob_path(
+            user_id,
+            run.get('conversation_id'),
+            run_id,
+            batch_number,
+        )
+        batch_rows = _download_json_blob(input_blob_path)
+    if not isinstance(batch_rows, list):
+        raise ValueError(f'Input batch {batch_number}/{batch_count} was not a JSON array')
+    return batch_rows
+
+
+def _build_batch_window(run, input_batches, user_id, run_id, window_start, window_end, batch_count):
+    batch_results = {}
+    batch_requests = []
+    for batch_number in range(window_start, window_end + 1):
+        batch_started_at = time.monotonic()
+        output_blob_path = _output_blob_path(
+            user_id,
+            run.get('conversation_id'),
+            run_id,
+            batch_number,
+        )
+
+        if _blob_exists(output_blob_path):
+            batch_entries = _download_json_blob(output_blob_path)
+            batch_results[batch_number] = {
+                'batch_number': batch_number,
+                'batch_row_count': len(batch_entries) if isinstance(batch_entries, list) else 0,
+                'elapsed_seconds': time.monotonic() - batch_started_at,
+                'mismatch_count': 0,
+                'from_checkpoint': True,
+            }
+            continue
+
+        batch_rows = _load_input_batch_rows(run, input_batches, user_id, run_id, batch_number, batch_count)
+        log_event(
+            '[Tabular Generated Output] Building background structured export batch',
+            {
+                'run_id': run_id,
+                'source_file_name': run.get('source_file_name'),
+                'output_format': run.get('output_format'),
+                'batch_number': batch_number,
+                'batch_count': batch_count,
+                'row_count': len(batch_rows),
+            },
+            debug_only=True,
+        )
+        batch_requests.append({
+            'batch_number': batch_number,
+            'rows': batch_rows,
+        })
+    return batch_results, batch_requests
+
+
+def _checkpoint_generated_batch_results(run, generated_results):
+    batch_results = {}
+    for generated_result in generated_results:
+        batch_number = generated_result['batch_number']
+        output_blob_path = _output_blob_path(
+            run.get('user_id'),
+            run.get('conversation_id'),
+            run.get('id'),
+            batch_number,
+        )
+        _upload_json_blob(
+            output_blob_path,
+            generated_result['batch_entries'],
+            metadata={
+                'run_id': run.get('id'),
+                'conversation_id': run.get('conversation_id'),
+                'batch_number': batch_number,
+                'generated_output': 'true',
+            },
+        )
+        batch_results[batch_number] = {
+            'batch_number': batch_number,
+            'batch_row_count': generated_result['batch_row_count'],
+            'elapsed_seconds': generated_result['elapsed_seconds'],
+            'mismatch_count': generated_result['mismatch_count'],
+            'from_checkpoint': False,
+        }
+    return batch_results
+
+
+def _advance_run_progress_for_window(run, batch_results, completed_batches, processed_rows, window_start, window_end):
+    for batch_number in range(window_start, window_end + 1):
+        batch_result = batch_results.get(batch_number)
+        if not batch_result:
+            break
+        completed_batches = batch_number
+        processed_rows += _safe_int(batch_result.get('batch_row_count'))
+        mismatch_count = _safe_int(batch_result.get('mismatch_count'))
+        if mismatch_count:
+            run['retry_count'] = _safe_int(run.get('retry_count')) + max(mismatch_count - 1, 0)
+        run = _update_run_progress(
+            run,
+            completed_batches,
+            processed_rows,
+            batch_result.get('batch_row_count'),
+            batch_result.get('elapsed_seconds'),
+            mismatch_count=mismatch_count,
+        )
+    return run, completed_batches, processed_rows
+
+
 def process_tabular_generated_output_run(run_id, user_id):
     """Process or resume a checkpointed tabular generated-output run."""
     normalized_run_id = str(run_id or '').strip()
@@ -1306,6 +1496,13 @@ def process_tabular_generated_output_run(run_id, user_id):
             TABULAR_EXPORT_DEFAULT_BATCH_RETRY_ATTEMPTS,
             minimum=1,
             maximum=5,
+        )
+        batch_concurrency = _settings_int(
+            settings,
+            'tabular_generated_output_batch_concurrency',
+            TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY,
+            minimum=1,
+            maximum=TABULAR_EXPORT_MAX_BATCH_CONCURRENCY,
         )
         chat_service = _build_chat_service(run.get('gpt_model'), settings)
         completed_batches = _safe_int(run.get('completed_batches'))
@@ -1330,89 +1527,69 @@ def process_tabular_generated_output_run(run_id, user_id):
                 'row_count': run.get('row_count'),
                 'batch_count': batch_count,
                 'resume_completed_batches': completed_batches,
+                'batch_concurrency': batch_concurrency,
             },
             level=logging.INFO,
         )
 
-        for batch_number in range(completed_batches + 1, batch_count + 1):
-            mismatch_count = 0
-            batch_started_at = time.monotonic()
-            input_blob_path = _input_blob_path(
+        while completed_batches < batch_count:
+            window_start = completed_batches + 1
+            window_end = min(batch_count, window_start + batch_concurrency - 1)
+            batch_results, batch_requests = _build_batch_window(
+                run,
+                input_batches,
                 normalized_user_id,
-                run.get('conversation_id'),
                 normalized_run_id,
-                batch_number,
-            )
-            output_blob_path = _output_blob_path(
-                normalized_user_id,
-                run.get('conversation_id'),
-                normalized_run_id,
-                batch_number,
+                window_start,
+                window_end,
+                batch_count,
             )
 
-            if _blob_exists(output_blob_path):
-                batch_entries = _download_json_blob(output_blob_path)
-                batch_row_count = len(batch_entries) if isinstance(batch_entries, list) else 0
-            else:
-                if isinstance(input_batches, list):
-                    try:
-                        batch_rows = input_batches[batch_number - 1]
-                    except IndexError as exc:
-                        raise ValueError(f'Input batch {batch_number}/{batch_count} is missing') from exc
-                else:
-                    batch_rows = _download_json_blob(input_blob_path)
-                if not isinstance(batch_rows, list):
-                    raise ValueError(f'Input batch {batch_number}/{batch_count} was not a JSON array')
+            generation_error = None
+            if batch_requests:
                 log_event(
-                    '[Tabular Generated Output] Building background structured export batch',
+                    '[Tabular Generated Output] Building background structured export batch window',
                     {
                         'run_id': normalized_run_id,
                         'source_file_name': run.get('source_file_name'),
                         'output_format': run.get('output_format'),
-                        'batch_number': batch_number,
+                        'window_start': window_start,
+                        'window_end': window_end,
                         'batch_count': batch_count,
-                        'row_count': len(batch_rows),
+                        'batch_concurrency': batch_concurrency,
+                        'generation_request_count': len(batch_requests),
                     },
                     debug_only=True,
                 )
-                batch_entries, mismatch_count = asyncio.run(
-                    _generate_batch_entries(
+                generated_results, generation_error = asyncio.run(
+                    _generate_batch_window_entries(
                         chat_service,
                         run.get('user_question'),
-                        batch_rows,
-                        batch_number - 1,
+                        batch_requests,
                         batch_count,
                         run.get('source_file_name'),
                         run.get('selected_sheet'),
                         retry_attempts,
                         normalized_run_id,
+                        batch_concurrency,
                     )
                 )
-                _upload_json_blob(
-                    output_blob_path,
-                    batch_entries,
-                    metadata={
-                        'run_id': normalized_run_id,
-                        'conversation_id': run.get('conversation_id'),
-                        'batch_number': batch_number,
-                        'generated_output': 'true',
-                    },
-                )
-                batch_row_count = len(batch_entries)
-                if mismatch_count:
-                    run['retry_count'] = _safe_int(run.get('retry_count')) + max(mismatch_count - 1, 0)
+                batch_results.update(_checkpoint_generated_batch_results(run, generated_results))
 
-            completed_batches = batch_number
-            processed_rows += batch_row_count
-            run = _update_run_progress(
+            previous_completed_batches = completed_batches
+            run, completed_batches, processed_rows = _advance_run_progress_for_window(
                 run,
+                batch_results,
                 completed_batches,
                 processed_rows,
-                batch_row_count,
-                time.monotonic() - batch_started_at,
-                mismatch_count=mismatch_count,
+                window_start,
+                window_end,
             )
             last_logged_at = _log_progress_if_due(run, last_logged_at)
+            if generation_error:
+                raise generation_error
+            if completed_batches == previous_completed_batches:
+                raise RuntimeError(f'No progress was made for batch window {window_start}-{window_end}')
 
         return _complete_run(run)
     except Exception as exc:

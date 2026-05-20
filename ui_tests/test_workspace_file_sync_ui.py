@@ -1,7 +1,7 @@
 # test_workspace_file_sync_ui.py
 """
 UI test for workspace File Sync tab.
-Version: 0.241.056
+Version: 0.241.061
 Implemented in: 0.241.042
 
 This test ensures the workspace Sync tab renders, loads source rows, opens the
@@ -146,6 +146,12 @@ def test_workspace_file_sync_tab():
         expect(page.get_by_role("heading", name="Sync Sources")).to_be_visible()
         expect(page.get_by_text("Finance Share")).to_be_visible()
         expect(page.get_by_text("queued 2, unchanged 4, skipped 1, failed 0")).to_be_visible()
+
+        page.get_by_role("button", name="Delete").click()
+        expect(page.get_by_role("heading", name="Delete File Sync Source")).to_be_visible()
+        expect(page.get_by_role("button", name="Delete Sync Source")).to_be_visible()
+        expect(page.get_by_role("button", name="Delete All Files")).to_be_visible()
+        page.get_by_role("button", name="Cancel").click()
 
         page.get_by_role("button", name="Add Source").click()
         expect(page.get_by_label("UNC path")).to_be_visible()

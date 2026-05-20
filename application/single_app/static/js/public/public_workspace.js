@@ -1009,7 +1009,7 @@ function getPublicDocumentSyncBadgeHtml(doc, compact = false) {
 
   const spacingClass = compact ? 'me-2 align-middle' : '';
 
-  return `<span class="badge bg-info text-dark ${spacingClass}" title="Synced file"><i class="bi bi-arrow-repeat me-1"></i>Synced</span>`;
+  return `<span class="badge bg-info text-dark ${spacingClass}" title="Synced file"><i class="bi bi-arrow-repeat me-1"></i></span>`;
 }
 
 function appendPublicDocumentSyncBadge(container, doc, compact = false) {

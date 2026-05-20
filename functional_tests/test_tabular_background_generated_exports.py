@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.241.058
-Implemented in: 0.241.058
+Version: 0.241.060
+Implemented in: 0.241.060
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -101,6 +101,20 @@ def test_export_runner_module():
     assert_contains(source_text, 'Background scheduler scan result', 'scheduler scan diagnostics')
 
 
+def test_background_runner_bounded_batch_concurrency():
+    """Validate Phase 4 bounded model-batch concurrency in the background runner."""
+    source_text = read_text(EXPORT_MODULE)
+    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 2', 'default batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 5', 'maximum batch concurrency')
+    assert_contains(source_text, 'tabular_generated_output_batch_concurrency', 'settings override for batch concurrency')
+    assert_contains(source_text, '_generate_batch_window_entries', 'async batch window generation helper')
+    assert_contains(source_text, 'asyncio.Semaphore', 'bounded async batch semaphore')
+    assert_contains(source_text, 'asyncio.gather(*tasks, return_exceptions=True)', 'bounded window gather with exception capture')
+    assert_contains(source_text, '_checkpoint_generated_batch_results', 'checkpoint successful concurrent batches')
+    assert_contains(source_text, '_advance_run_progress_for_window', 'contiguous progress advancement after batch window')
+    assert_contains(source_text, 'Building background structured export batch window', 'batch window diagnostics')
+
+
 def test_chat_route_wires_background_exports():
     """Validate chat route queueing, metadata normalization, and status endpoint wiring."""
     module_tree = parse_python(CHAT_ROUTE)
@@ -121,6 +135,22 @@ def test_chat_route_wires_background_exports():
     assert_contains(source_text, 'resume_tabular_generated_output_run', 'manual resume route helper')
     assert_contains(source_text, '@swagger_route(security=get_auth_security())', 'secured status route decorator')
     assert_contains(source_text, "output_metadata.get('background_export')", 'background assistant handoff message')
+
+
+def test_generated_export_batch_packing_phase_three():
+    """Validate compact row packing markers for large generated exports."""
+    chat_source = read_text(CHAT_ROUTE)
+    export_source = read_text(EXPORT_MODULE)
+    assert_contains(chat_source, 'TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS = 50', 'larger generated-export row budget')
+    assert_contains(chat_source, 'TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS = 60000', 'larger generated-export char budget')
+    assert_contains(chat_source, 'tabular_generated_output_max_batch_rows', 'settings override for generated-export row budget')
+    assert_contains(chat_source, 'tabular_generated_output_max_batch_chars', 'settings override for generated-export char budget')
+    assert_contains(chat_source, 'TABULAR_GENERATED_OUTPUT_INTERNAL_ROW_FIELDS', 'internal helper field pruning')
+    assert_contains(chat_source, '_compact_tabular_generated_output_referenced_documents', 'row-linked evidence compaction')
+    assert_contains(chat_source, "separators=(',', ':')", 'compact prompt JSON serialization')
+    assert_contains(chat_source, "'batch_char_budget': batch_budget['max_chars']", 'batch budget diagnostics')
+    assert_contains(export_source, '_dump_generated_output_json', 'background compact prompt serialization')
+    assert_contains(export_source, "separators=(',', ':')", 'background compact JSON serialization')
 
 
 def test_background_scheduler_and_config_registered():
@@ -162,7 +192,9 @@ def main():
     """Run all checks and report a compact summary."""
     tests = [
         test_export_runner_module,
+        test_background_runner_bounded_batch_concurrency,
         test_chat_route_wires_background_exports,
+        test_generated_export_batch_packing_phase_three,
         test_background_scheduler_and_config_registered,
         test_chat_ui_renders_and_polls_background_exports,
     ]

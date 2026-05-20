@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.241.057**
+Updated through version: **0.241.060**
 
 ## Overview
 
@@ -42,6 +42,9 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 
 - `tabular_generated_output_inline_max_rows`
 - `tabular_generated_output_inline_max_batches`
+- `tabular_generated_output_max_batch_rows`
+- `tabular_generated_output_max_batch_chars`
+- `tabular_generated_output_batch_concurrency`
 
 If settings are absent, conservative defaults are used.
 
@@ -68,6 +71,8 @@ The progress card displays current status, completed checkpoint counts, processe
 ## Performance Considerations
 
 - The request only stages durable input and queues work for oversized exports.
+- Phase 3 batch packing compacts generated-export prompt payloads, removes internal tabular helper fields from staged model input, avoids duplicating row-linked document excerpts as synthetic attachment text, and packs rows by configurable row and character budgets.
+- Phase 4 bounded concurrency lets the background worker generate a small configurable window of model batches in parallel while checkpointing successful batches and advancing public progress only in contiguous batch order.
 - Background processing writes each completed batch before moving on, allowing the run to resume after worker restarts.
 - The run status API returns compact metadata only, not source rows or generated batch content.
 - User-facing status details are derived from run metadata instead of displaying raw backend errors in the progress card.
@@ -81,3 +86,5 @@ The progress card displays current status, completed checkpoint counts, processe
 ## Related Version Updates
 
 - `application/single_app/config.py` was updated to version **0.241.057** for queued retry recovery and scheduler scan diagnostics.
+- `application/single_app/config.py` was updated to version **0.241.059** for Phase 3 compact batch packing.
+- `application/single_app/config.py` was updated to version **0.241.060** for Phase 4 bounded batch concurrency.

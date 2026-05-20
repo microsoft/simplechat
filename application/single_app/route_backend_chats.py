@@ -178,12 +178,29 @@ ALLOWED_STREAM_CLIENT_EVENTS = {
     'stream_recovery_unavailable',
 }
 TABULAR_GENERATED_OUTPUT_PREVIEW_ROWS = 3
-TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS = 25
-TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS = 18000
+TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS = 50
+TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS = 60000
+TABULAR_STRUCTURED_EXPORT_MIN_BATCH_ROWS = 1
+TABULAR_STRUCTURED_EXPORT_MIN_BATCH_CHARS = 6000
+TABULAR_STRUCTURED_EXPORT_HARD_MAX_BATCH_ROWS = 100
+TABULAR_STRUCTURED_EXPORT_HARD_MAX_BATCH_CHARS = 120000
 TABULAR_STRUCTURED_EXPORT_MAX_RETRY_ATTEMPTS = 2
 TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW = 3
 TABULAR_RELATED_DOCUMENT_MAX_SUMMARY_ROWS = 8
 TABULAR_RELATED_DOCUMENT_MAX_EXCERPT_CHARS = 500
+TABULAR_GENERATED_OUTPUT_INTERNAL_ROW_FIELDS = {
+    '_matched_columns',
+    '_matched_values',
+    '_related_document_reference_values',
+}
+TABULAR_GENERATED_OUTPUT_REFERENCED_DOCUMENT_FIELDS = (
+    'file_name',
+    'title',
+    'matched_column',
+    'matched_reference',
+    'page_number',
+    'excerpt',
+)
 
 
 def _get_user_message_image_context(conversation_id, user_message_id):
@@ -452,6 +469,15 @@ def _safe_int(value, default=0):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _bounded_int(value, default, minimum=None, maximum=None):
+    parsed_value = _safe_int(value, default=default)
+    if minimum is not None:
+        parsed_value = max(parsed_value, minimum)
+    if maximum is not None:
+        parsed_value = min(parsed_value, maximum)
+    return parsed_value
 
 
 def _utcnow_iso():
@@ -2769,33 +2795,57 @@ def _build_tabular_generated_output_attachment_text(row):
     if not isinstance(row, dict):
         return ''
 
-    existing_attachment_text = _select_tabular_generated_output_scalar_value(
+    return _select_tabular_generated_output_scalar_value(
         row,
         candidate_labels=('attachment_text', 'attachment text', 'letter_text', 'letter text'),
     )
-    if existing_attachment_text:
-        return existing_attachment_text
 
-    excerpt_blocks = []
-    referenced_documents = row.get('referenced_documents')
-    if not isinstance(referenced_documents, list):
-        return ''
 
-    for referenced_document in referenced_documents:
+def _compact_tabular_generated_output_referenced_documents(referenced_documents):
+    compact_documents = []
+    for referenced_document in referenced_documents or []:
         if not isinstance(referenced_document, dict):
             continue
 
-        excerpt = str(referenced_document.get('excerpt') or '').strip()
-        if not excerpt:
+        compact_document = {}
+        for field_name in TABULAR_GENERATED_OUTPUT_REFERENCED_DOCUMENT_FIELDS:
+            field_value = referenced_document.get(field_name)
+            if field_value in (None, '', [], {}):
+                continue
+            if field_name == 'excerpt':
+                field_value = _truncate_tabular_related_document_excerpt(field_value)
+            compact_document[field_name] = field_value
+
+        if not compact_document.get('file_name') and not compact_document.get('excerpt'):
             continue
 
-        file_name = str(referenced_document.get('file_name') or '').strip()
-        if file_name:
-            excerpt_blocks.append(f'Attachment: {file_name}\n{excerpt}')
-        else:
-            excerpt_blocks.append(excerpt)
+        compact_documents.append(compact_document)
+        if len(compact_documents) >= TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW:
+            break
 
-    return '\n\n'.join(excerpt_blocks)
+    return compact_documents
+
+
+def _dump_tabular_generated_output_json(value):
+    return json.dumps(value, default=str, ensure_ascii=False, separators=(',', ':'))
+
+
+def _get_tabular_generated_output_batch_budget(settings=None):
+    settings = settings or {}
+    return {
+        'max_rows': _bounded_int(
+            settings.get('tabular_generated_output_max_batch_rows'),
+            default=TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS,
+            minimum=TABULAR_STRUCTURED_EXPORT_MIN_BATCH_ROWS,
+            maximum=TABULAR_STRUCTURED_EXPORT_HARD_MAX_BATCH_ROWS,
+        ),
+        'max_chars': _bounded_int(
+            settings.get('tabular_generated_output_max_batch_chars'),
+            default=TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS,
+            minimum=TABULAR_STRUCTURED_EXPORT_MIN_BATCH_CHARS,
+            maximum=TABULAR_STRUCTURED_EXPORT_HARD_MAX_BATCH_CHARS,
+        ),
+    }
 
 
 def _build_tabular_generated_output_input_row(row, source_file_name=None):
@@ -2803,6 +2853,13 @@ def _build_tabular_generated_output_input_row(row, source_file_name=None):
         return row
 
     normalized_row = dict(row)
+    referenced_documents = row.get('referenced_documents')
+    if isinstance(referenced_documents, list):
+        compact_referenced_documents = _compact_tabular_generated_output_referenced_documents(referenced_documents)
+        if compact_referenced_documents:
+            normalized_row['referenced_documents'] = compact_referenced_documents
+        else:
+            normalized_row.pop('referenced_documents', None)
 
     comment_id = _select_tabular_generated_output_scalar_value(
         normalized_row,
@@ -2851,6 +2908,9 @@ def _build_tabular_generated_output_input_row(row, source_file_name=None):
     if attachment_names or attachment_text:
         normalized_row['attachment_present'] = True
 
+    for internal_field in TABULAR_GENERATED_OUTPUT_INTERNAL_ROW_FIELDS:
+        normalized_row.pop(internal_field, None)
+
     return normalized_row
 
 
@@ -2861,16 +2921,19 @@ def _build_tabular_generated_output_file_name(source_file_name, output_format):
     return f"{normalized_base_name}_generated_{timestamp_suffix}.{normalized_extension}"
 
 
-def _build_tabular_generated_output_row_batches(rows):
+def _build_tabular_generated_output_row_batches(rows, settings=None):
+    budget = _get_tabular_generated_output_batch_budget(settings)
+    max_batch_rows = budget['max_rows']
+    max_batch_chars = budget['max_chars']
     batches = []
     current_batch = []
     current_batch_chars = 0
 
     for row in rows or []:
-        row_text = json.dumps(row, default=str, ensure_ascii=False)
+        row_text = _dump_tabular_generated_output_json(row)
         if current_batch and (
-            len(current_batch) >= TABULAR_STRUCTURED_EXPORT_MAX_BATCH_ROWS
-            or current_batch_chars + len(row_text) > TABULAR_STRUCTURED_EXPORT_MAX_BATCH_CHARS
+            len(current_batch) >= max_batch_rows
+            or current_batch_chars + len(row_text) > max_batch_chars
         ):
             batches.append(current_batch)
             current_batch = []
@@ -2975,7 +3038,7 @@ def _build_tabular_generated_output_source_candidate(invocations):
 def _build_tabular_generated_output_batch_prompt(user_question, batch_rows, batch_index, total_batches, source_candidate):
     source_file_name = str(source_candidate.get('filename') or 'unknown file').strip() or 'unknown file'
     selected_sheet = str(source_candidate.get('selected_sheet') or '').strip()
-    batch_rows_json = json.dumps(batch_rows, indent=2, default=str, ensure_ascii=False)
+    batch_rows_json = _dump_tabular_generated_output_json(batch_rows)
     selected_sheet_line = f"Worksheet: {selected_sheet}\n" if selected_sheet else ''
 
     return (
@@ -3102,7 +3165,8 @@ async def _generate_tabular_structured_output_entries(
 
     normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
     output_format_label = normalized_output_format.upper()
-    row_batches = _build_tabular_generated_output_row_batches(rows)
+    batch_budget = _get_tabular_generated_output_batch_budget(settings)
+    row_batches = _build_tabular_generated_output_row_batches(rows, settings=settings)
     total_batches = len(row_batches)
     log_event(
         '[Tabular Generated Output] Preparing structured export batches',
@@ -3111,6 +3175,8 @@ async def _generate_tabular_structured_output_entries(
             'output_format': normalized_output_format,
             'row_count': len(rows),
             'batch_count': total_batches,
+            'batch_row_budget': batch_budget['max_rows'],
+            'batch_char_budget': batch_budget['max_chars'],
         },
         debug_only=True,
     )

@@ -2,7 +2,7 @@
 # test_file_sync_capability.py
 """
 Functional test for File Sync capability wiring.
-Version: 0.241.056
+Version: 0.241.061
 Implemented in: 0.241.042
 
 This test ensures File Sync storage, settings, routes, scheduler hooks, and
@@ -26,7 +26,7 @@ def read_text(relative_path):
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.056"' in config_text
+    assert 'VERSION = "0.241.061"' in config_text
 
     expected_containers = [
         "personal_file_sync_sources",
@@ -85,6 +85,7 @@ def test_file_sync_service_security_shapes():
         "sanitize_file_sync_source",
         "create_file_sync_source",
         "update_file_sync_source",
+        "_delete_associated_synced_documents",
         "queue_file_sync_source_run",
         "test_file_sync_source_connection",
         "check_due_file_sync_sources_once",
@@ -240,6 +241,28 @@ def test_file_sync_recursive_and_connection_test_wiring():
     assert "Schedule interval minutes" in file_sync_js
 
 
+def test_file_sync_source_delete_options_wiring():
+    """Validate File Sync source deletion offers keep-files and delete-files options."""
+    file_sync_text = read_text("application/single_app/functions_file_sync.py")
+    route_text = read_text("application/single_app/route_backend_file_sync.py")
+    file_sync_js = read_text("application/single_app/static/js/workspace/workspace-file-sync.js")
+
+    assert "def _delete_associated_synced_documents" in file_sync_text
+    assert "delete_associated_files" in file_sync_text
+    assert "_delete_synced_document(source, document_id)" in file_sync_text
+    assert "documents_deleted" in file_sync_text
+    assert "documents_failed" in file_sync_text
+
+    assert "delete_associated_files=bool(payload.get(\"delete_associated_files\"))" in route_text
+    assert '"delete_result": delete_result' in route_text
+
+    assert "showDeleteSourceModal" in file_sync_js
+    assert "Delete Sync Source" in file_sync_js
+    assert "Delete All Files" in file_sync_js
+    assert "deleteChoice === 'delete_all_files'" in file_sync_js
+    assert "deleteButton.dataset.confirm" not in file_sync_js
+
+
 def test_file_sync_document_indicator_wiring():
     """Validate synced documents render a system indicator without using tags."""
     workspace_utils = read_text("application/single_app/static/js/workspace/workspace-utils.js")
@@ -287,6 +310,7 @@ def run_tests():
         test_file_sync_activity_log_display_wiring,
         test_file_sync_admin_and_sidebar_discovery,
         test_file_sync_recursive_and_connection_test_wiring,
+        test_file_sync_source_delete_options_wiring,
         test_file_sync_document_indicator_wiring,
     ]
     failures = []
