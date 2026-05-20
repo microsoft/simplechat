@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.241.060**
+Updated through version: **0.241.064**
 
 ## Overview
 
@@ -60,11 +60,14 @@ If settings are absent, conservative defaults are used.
 
 Users continue requesting tabular structured output in chat or workflows. For smaller exports, the file is attached during the response. For larger exports, the assistant message shows a background progress card and the final download appears when processing completes. If a resumable run stops after a transient infrastructure failure, the card shows a Continue action that queues the same run to resume from completed checkpoints.
 
+When a workflow/document analysis request also creates a full generated tabular export, the generated export is presented as the primary deliverable. The analysis layer may still attach a supporting CSV preview, but redundant analysis JSON and Markdown artifacts are suppressed so they do not compete with the full generated export card.
+
 The progress card displays current status, completed checkpoint counts, processed row counts, estimated remaining time, scheduled retry time, retry-due state, transient retry count, manual continuation count, last update time, and heartbeat time when available.
 
 ## Testing and Validation
 
 - Functional regression: `functional_tests/test_tabular_background_generated_exports.py`
+- Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
 - UI regression: `ui_tests/test_chat_background_generated_export_status.py`
 - Compile validation covers the modified Python modules.
 
@@ -88,3 +91,4 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.241.057** for queued retry recovery and scheduler scan diagnostics.
 - `application/single_app/config.py` was updated to version **0.241.059** for Phase 3 compact batch packing.
 - `application/single_app/config.py` was updated to version **0.241.060** for Phase 4 bounded batch concurrency.
+- `application/single_app/config.py` was updated to version **0.241.064** for generated export artifact presentation cleanup.

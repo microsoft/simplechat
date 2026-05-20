@@ -4,6 +4,7 @@ Source Review support for bounded, policy-controlled web evidence gathering.
 """
 
 import asyncio
+import html
 import ipaddress
 import json
 import logging
@@ -1092,6 +1093,17 @@ async def _fetch_source_page(
                     reason=reason,
                 )
 
+                if content_type in ("text/html", ""):
+                    page_result = await _augment_html_page_with_dynamic_grid_items(
+                        session=session,
+                        page_result=page_result,
+                        html_content=html_text,
+                        page_url=current_url,
+                        user_message=user_message,
+                        source_settings=source_settings,
+                        robots_cache=robots_cache,
+                    )
+
                 if _should_try_js_rendering(page_result, source_settings):
                     rendered_page_result = await _try_rendered_page_fetch(current_url, user_message, source_settings, depth, parent_url, reason)
                     if rendered_page_result.get("status") == "reviewed":
@@ -1358,6 +1370,269 @@ def _extract_text_or_json_evidence(
         "link_count": len(links),
         "prompt_injection_markers": _detect_prompt_injection_markers(page_text),
     }
+
+
+async def _augment_html_page_with_dynamic_grid_items(
+    *,
+    session: aiohttp.ClientSession,
+    page_result: Dict[str, Any],
+    html_content: str,
+    page_url: str,
+    user_message: str,
+    source_settings: Dict[str, Any],
+    robots_cache: Dict[str, Optional[bool]],
+) -> Dict[str, Any]:
+    dynamic_grid_actions = _extract_dynamic_grid_actions_from_html(html_content, page_url)
+    if not dynamic_grid_actions:
+        return page_result
+
+    max_items = SOURCE_REVIEW_HARD_LIMITS["max_structured_items_per_page"]
+    max_dynamic_pages = max(1, min(
+        SOURCE_REVIEW_HARD_LIMITS["max_js_load_more_clicks"] + 1,
+        int(source_settings.get("source_review_js_load_more_clicks") or 0) + 1,
+    ))
+    dynamic_grid_items = []
+    pages_fetched = 0
+    errors = []
+
+    for action in dynamic_grid_actions:
+        page_number = 1
+        max_pages_for_action = max_dynamic_pages
+        while page_number <= max_pages_for_action and len(dynamic_grid_items) < max_items:
+            endpoint_url = _build_dynamic_grid_endpoint_url(action, page_number)
+            if not endpoint_url:
+                break
+
+            is_allowed, validation_reason, safe_endpoint_url = validate_source_review_url(
+                endpoint_url,
+                source_settings,
+            )
+            if not is_allowed:
+                errors.append(f"{validation_reason}:{endpoint_url[:160]}")
+                break
+
+            if source_settings.get("source_review_respect_robots_txt"):
+                robots_allowed = await _robots_allows(
+                    session,
+                    safe_endpoint_url or endpoint_url,
+                    source_settings,
+                    robots_cache,
+                )
+                if robots_allowed is False:
+                    errors.append(f"robots_txt_disallowed:{endpoint_url[:160]}")
+                    break
+
+            try:
+                async with session.get(
+                    safe_endpoint_url or endpoint_url,
+                    headers={"Accept": "application/json,text/plain,*/*"},
+                    allow_redirects=False,
+                ) as response:
+                    if response.status != 200:
+                        errors.append(f"http_{response.status}:{endpoint_url[:160]}")
+                        break
+
+                    payload = await response.json(content_type=None)
+            except Exception as dynamic_grid_error:
+                errors.append(str(dynamic_grid_error)[:200])
+                break
+
+            pages_fetched += 1
+            dynamic_grid_items.extend(_extract_dynamic_grid_items_from_payload(
+                payload,
+                page_url,
+                user_message,
+            ))
+
+            meta = payload.get("meta") if isinstance(payload, dict) else {}
+            try:
+                payload_max_pages = int((meta or {}).get("max-pages") or (meta or {}).get("maxPages") or 0)
+            except (TypeError, ValueError):
+                payload_max_pages = 0
+            if payload_max_pages:
+                max_pages_for_action = min(max_pages_for_action, payload_max_pages)
+
+            payload_items = payload.get("items") if isinstance(payload, dict) else []
+            if not payload_items or page_number >= max_pages_for_action:
+                break
+            page_number += 1
+
+    page_result["dynamic_grid_actions_detected"] = len(dynamic_grid_actions)
+    page_result["dynamic_grid_pages_fetched"] = pages_fetched
+    page_result["dynamic_grid_item_count"] = len(dynamic_grid_items)
+    if errors:
+        page_result["dynamic_grid_errors"] = errors[:3]
+    if not dynamic_grid_items:
+        return page_result
+
+    return _merge_dynamic_grid_items_into_page_result(
+        page_result,
+        dynamic_grid_items,
+        page_url,
+        user_message,
+    )
+
+
+def _extract_dynamic_grid_actions_from_html(html_content: str, base_url: str) -> List[Dict[str, Any]]:
+    soup = BeautifulSoup(html_content or "", "html.parser")
+    actions = []
+    seen_actions = set()
+    for grid in soup.find_all(attrs={"data-dg-action": True}):
+        raw_action = html.unescape(str(grid.get("data-dg-action") or "").strip())
+        if not raw_action:
+            continue
+        try:
+            action_payload = json.loads(raw_action)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(action_payload, dict):
+            continue
+
+        service_path = str(action_payload.get("path") or "").strip()
+        parent_path = str(action_payload.get("parent") or "").strip()
+        component_path = str(action_payload.get("comp") or "").strip()
+        if not service_path or not parent_path or not component_path:
+            continue
+
+        service_url = urljoin(base_url, service_path)
+        action_key = (service_url, parent_path, component_path)
+        if action_key in seen_actions:
+            continue
+        seen_actions.add(action_key)
+        actions.append({
+            "service_url": service_url,
+            "parent": parent_path,
+            "comp": component_path,
+        })
+    return actions
+
+
+def _build_dynamic_grid_endpoint_url(action: Dict[str, Any], page_number: int) -> str:
+    if not isinstance(action, dict):
+        return ""
+    service_url = str(action.get("service_url") or "").strip()
+    parent_path = str(action.get("parent") or "").strip()
+    component_path = str(action.get("comp") or "").strip()
+    if not service_url or not parent_path or not component_path:
+        return ""
+    if not service_url.endswith("/"):
+        service_url = f"{service_url}/"
+    safe_page_number = max(1, int(page_number or 1))
+    return f"{service_url}parent={parent_path}&comp={component_path}&page=p{safe_page_number}.json"
+
+
+def _extract_dynamic_grid_items_from_payload(
+    payload: Any,
+    base_url: str,
+    user_message: str,
+) -> List[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    raw_items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    structured_items = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        raw_url = item.get("link") or item.get("url") or item.get("href") or item.get("ctaUrl")
+        normalized_url, _reason = normalize_review_url(raw_url, base_url=base_url)
+        if not normalized_url or _looks_like_ignored_link(normalized_url):
+            continue
+
+        title = _clean_text(
+            item.get("title")
+            or item.get("headline")
+            or item.get("heading")
+            or item.get("name")
+            or normalized_url
+        )
+        published_date = _normalize_date(
+            item.get("date")
+            or item.get("publishedDate")
+            or item.get("published_date")
+            or _find_date_candidate(title)
+            or _find_date_candidate(normalized_url)
+        )
+        description = _clean_text(item.get("description") or item.get("summary") or item.get("body") or "")
+        nearby_text = _clean_text(" ".join([
+            title,
+            str(item.get("date") or ""),
+            description,
+            str(item.get("linkText") or ""),
+        ]))[:700]
+        link_for_scoring = {
+            "url": normalized_url,
+            "anchor_text": title,
+            "nearby_text": nearby_text,
+            "published_date": published_date,
+            "same_domain": _same_domain(base_url, normalized_url),
+        }
+        structured_items.append({
+            "url": normalized_url,
+            "title": title[:300] or normalized_url,
+            "published_date": published_date,
+            "nearby_text": nearby_text,
+            "same_domain": _same_domain(base_url, normalized_url),
+            "score": _score_child_link(link_for_scoring, base_url, user_message),
+            "source_type": "dynamic_grid",
+        })
+    return structured_items
+
+
+def _merge_dynamic_grid_items_into_page_result(
+    page_result: Dict[str, Any],
+    dynamic_grid_items: List[Dict[str, Any]],
+    page_url: str,
+    user_message: str,
+) -> Dict[str, Any]:
+    max_items = SOURCE_REVIEW_HARD_LIMITS["max_structured_items_per_page"]
+    combined_items = []
+    seen_urls = set()
+    for item in list(dynamic_grid_items or []) + list(page_result.get("structured_items") or []):
+        if not isinstance(item, dict):
+            continue
+        item_url = item.get("url")
+        if not item_url or item_url in seen_urls:
+            continue
+        seen_urls.add(item_url)
+        combined_items.append(item)
+
+    if _message_prefers_latest(user_message) or _message_requests_source_archive(user_message):
+        combined_items.sort(key=lambda item: (_date_sort_value(item.get("published_date")), int(item.get("score") or 0)), reverse=True)
+    else:
+        combined_items.sort(key=lambda item: (int(item.get("score") or 0), _date_sort_value(item.get("published_date"))), reverse=True)
+
+    dynamic_links = [
+        {
+            "url": item.get("url"),
+            "anchor_text": item.get("title") or item.get("url"),
+            "nearby_text": item.get("nearby_text") or item.get("title") or "",
+            "published_date": item.get("published_date"),
+            "same_domain": item.get("same_domain"),
+        }
+        for item in dynamic_grid_items or []
+        if isinstance(item, dict) and item.get("url")
+    ]
+    merged_links = _prioritize_extracted_links(
+        _dedupe_links(list(page_result.get("links") or []) + dynamic_links),
+        page_url,
+        user_message,
+    )
+    page_result["links"] = merged_links[:SOURCE_REVIEW_HARD_LIMITS["max_links_per_page"]]
+    page_result["link_count"] = len(merged_links)
+    page_result["structured_items"] = combined_items[:max_items]
+    page_result["structured_item_count"] = len(combined_items)
+
+    dynamic_excerpt_items = [
+        f"{item.get('published_date') or ''} {item.get('title') or ''} {item.get('url') or ''}".strip()
+        for item in combined_items[:10]
+        if isinstance(item, dict)
+    ]
+    if dynamic_excerpt_items:
+        dynamic_excerpt = "Dynamic archive items: " + " | ".join(dynamic_excerpt_items)
+        existing_excerpts = list(page_result.get("excerpts") or [])
+        if dynamic_excerpt not in existing_excerpts:
+            page_result["excerpts"] = [dynamic_excerpt[:SOURCE_REVIEW_HARD_LIMITS["max_excerpt_chars"]]] + existing_excerpts
+    return page_result
 
 
 def _remove_non_evidence_nodes(soup: BeautifulSoup) -> None:
@@ -2697,6 +2972,8 @@ def _first_heading_text(soup: BeautifulSoup) -> str:
 
 
 def _time_element_date(soup: BeautifulSoup) -> str:
+    if not soup or not hasattr(soup, "find"):
+        return ""
     time_tag = soup.find("time")
     if not time_tag:
         return ""

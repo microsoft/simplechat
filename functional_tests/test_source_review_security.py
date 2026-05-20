@@ -1,12 +1,14 @@
 # test_source_review_security.py
 """
 Functional test for Source Review security and evidence extraction.
-Version: 0.241.063
+Version: 0.241.065
 Implemented in: 0.241.063
+Updated in: 0.241.065
 
 This test ensures that Source Review applies access controls, clamps admin limits,
-blocks unsafe URLs, and extracts bounded HTML evidence and structured archive rows
-without trusting page text as instructions.
+blocks unsafe URLs, extracts bounded HTML evidence and structured archive rows,
+hydrates dynamic-grid archive JSON, and ignores missing date containers without
+trusting page text as instructions.
 """
 
 import asyncio
@@ -25,7 +27,9 @@ from functions_source_review import (  # noqa: E402
     get_source_review_config,
     is_source_review_enabled_for_user,
     validate_source_review_url,
+    _augment_html_page_with_dynamic_grid_items,
     _click_first_visible_load_more_control,
+    _time_element_date,
     _wait_for_rendered_page_hydration,
 )
 
@@ -128,6 +132,35 @@ class FakeHydratingRenderedPage(FakeRenderedPage):
         if selector == "a[href]":
             return FakeHydratedLinksLocator(self)
         return super().locator(selector)
+
+
+class FakeDynamicGridResponse:
+    """Minimal async response for dynamic-grid JSON endpoint tests."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        return False
+
+    async def json(self, content_type=None):
+        return self.payload
+
+
+class FakeDynamicGridSession:
+    """Minimal async session that records dynamic-grid endpoint requests."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.requested_urls = []
+
+    def get(self, url, headers=None, allow_redirects=False):
+        self.requested_urls.append(url)
+        return FakeDynamicGridResponse(self.payload)
 
 
 def test_source_review_access_controls():
@@ -342,6 +375,81 @@ def test_source_review_html_extraction_structures_archive_cards():
     assert structured_items[1]["title"] == "Contoso Declares Quarterly Dividend"
 
 
+def test_source_review_dynamic_grid_archive_json_is_structured():
+    """Validate client-rendered archive JSON is folded into Source Review evidence."""
+    print("Testing Source Review dynamic-grid archive JSON extraction...")
+
+    html_content = """
+    <html>
+        <body>
+            <main>
+                <div class="cmp-dynamic-grid" data-dg-action="{&quot;path&quot;:&quot;/services/json/v1/dynamic-grid.service/&quot;,&quot;parent&quot;:&quot;example/global/US/en/news&quot;,&quot;comp&quot;:&quot;root/content-parsys/dynamic_grid&quot;,&quot;page&quot;:&quot;p1&quot;}">
+                    <div class="load-more-card"><button>Load more</button></div>
+                </div>
+            </main>
+        </body>
+    </html>
+    """
+    page_result = extract_source_review_evidence_from_html(
+        html_content=html_content,
+        url="https://example.com/news",
+        user_message="Find Contoso press releases from the past three years.",
+    )
+    payload = {
+        "items": [
+            {
+                "title": "Contoso Declares Common Stock Dividend",
+                "date": "May 18, 2026",
+                "link": "/news/2026/common-stock-dividend",
+                "linkText": "Learn more",
+            },
+            {
+                "title": "Contoso Announces Annual Meeting Results",
+                "date": "April 15, 2026",
+                "link": "/news/2026/annual-meeting-results",
+                "linkText": "Learn more",
+            },
+        ],
+        "meta": {"max-pages": 1, "page-size": 2, "total-items": 2},
+    }
+    session = FakeDynamicGridSession(payload)
+
+    augmented = asyncio.run(_augment_html_page_with_dynamic_grid_items(
+        session=session,
+        page_result=page_result,
+        html_content=html_content,
+        page_url="https://example.com/news",
+        user_message="Find Contoso press releases from the past three years.",
+        source_settings=get_source_review_config({
+            "enable_source_review": True,
+            "source_review_respect_robots_txt": False,
+        }),
+        robots_cache={},
+    ))
+
+    assert augmented["dynamic_grid_actions_detected"] == 1
+    assert augmented["dynamic_grid_pages_fetched"] == 1
+    assert augmented["dynamic_grid_item_count"] == 2
+    assert session.requested_urls == [
+        "https://example.com/services/json/v1/dynamic-grid.service/parent=example/global/US/en/news&comp=root/content-parsys/dynamic_grid&page=p1.json"
+    ]
+    assert augmented["structured_item_count"] == 2
+    assert augmented["structured_items"][0]["title"] == "Contoso Declares Common Stock Dividend"
+    assert augmented["structured_items"][0]["published_date"] == "2026-05-18"
+    assert augmented["structured_items"][0]["url"] == "https://example.com/news/2026/common-stock-dividend"
+    assert any(
+        link["url"] == "https://example.com/news/2026/annual-meeting-results"
+        for link in augmented["links"]
+    )
+
+
+def test_source_review_time_element_date_allows_missing_containers():
+    """Validate malformed archive candidates cannot fail an entire page review."""
+    print("Testing Source Review missing date container handling...")
+
+    assert _time_element_date(None) == ""
+
+
 def test_source_review_seed_url_collection():
     """Validate direct URLs are prioritized before web-search citation URLs."""
     print("Testing Source Review seed URL collection...")
@@ -367,6 +475,8 @@ if __name__ == "__main__":
         test_source_review_rendered_load_more_scans_past_large_navigation,
         test_source_review_waits_for_rendered_archive_hydration_before_clicking,
         test_source_review_html_extraction_structures_archive_cards,
+        test_source_review_dynamic_grid_archive_json_is_structured,
+        test_source_review_time_element_date_allows_missing_containers,
         test_source_review_seed_url_collection,
     ]
     results = []

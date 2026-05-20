@@ -2,12 +2,14 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.241.040
+Version: 0.241.065
 Implemented in: 0.241.040
+Updated in: 0.241.065
 
 This test ensures exhaustive/table-style document analysis preserves raw window
 outputs and can build both structured CSV rows and Markdown raw-note artifacts
-instead of relying only on the reduced final answer.
+instead of relying only on the reduced final answer. It also ensures primary
+tabular generated exports suppress redundant analysis JSON/Markdown cards.
 """
 
 import ast
@@ -271,9 +273,103 @@ def test_lossless_artifact_helpers_build_csv_and_markdown():
     print('Lossless artifact helper output verified.')
 
 
+def test_primary_tabular_output_demotes_secondary_artifacts():
+    print('Testing primary generated tabular output artifact presentation...')
+    uploaded_artifacts = []
+
+    def fake_upload_generated_artifact(**kwargs):
+        uploaded_artifacts.append(kwargs)
+        return {
+            'message': {
+                'id': f'artifact-{len(uploaded_artifacts)}',
+                'file_name': kwargs.get('file_name'),
+            }
+        }
+
+    namespace = load_module_functions(
+        WORKFLOW_RUNNER_PATH,
+        extra_globals={
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT': 3,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT': 5,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT': 5,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH': 220,
+            'debug_print': lambda *args, **kwargs: None,
+            'has_request_context': lambda: True,
+            'upload_generated_analysis_artifact_for_current_user': fake_upload_generated_artifact,
+        },
+    )
+
+    analysis_result = {
+        'analysis_reply': json.dumps([
+            {'comment_id': 'CFTC-001', 'requested_output': 'First generated object'},
+            {'comment_id': 'CFTC-002', 'requested_output': 'Second generated object'},
+        ]),
+        'analysis_intent': {
+            'exhaustive': True,
+            'table_output_requested': True,
+            'csv_artifact_recommended': True,
+            'markdown_analysis_artifact_recommended': True,
+        },
+        'documents': [
+            {
+                'file_name': 'cftc-comment-submissions-workbook-analysis.json',
+                'title': 'cftc-comment-submissions-workbook-analysis.json',
+            }
+        ],
+        'raw_analysis_items': [
+            {
+                'file_name': 'cftc-comment-submissions-workbook-analysis.json',
+                'text': (
+                    '| comment_id | requested_output |\n'
+                    '|---|---|\n'
+                    '| CFTC-001 | First generated object |\n'
+                    '| CFTC-002 | Second generated object |'
+                ),
+            }
+        ],
+    }
+    primary_generated_outputs = [
+        {
+            'capability': 'tabular',
+            'background_export': True,
+            'export_run_id': 'run-123',
+            'output_format': 'json',
+            'row_count': 3539,
+            'batch_count': 501,
+        }
+    ]
+
+    artifact_payload = namespace['_maybe_create_document_analysis_generated_artifacts'](
+        analysis_result,
+        'Create a generated JSON export with one object per comment.',
+        conversation_id='conversation-1',
+        primary_generated_outputs=primary_generated_outputs,
+    )
+
+    artifacts = artifact_payload.get('artifacts') or []
+    artifact_formats = [artifact.get('output_format') for artifact in artifacts]
+    assert_equal(artifact_formats, ['csv'], 'only supporting CSV artifact remains')
+    assert_equal(len(uploaded_artifacts), 1, 'uploaded artifact count')
+    assert_equal(
+        uploaded_artifacts[0]['file_name'],
+        'cftc-comment-submissions-workbook-analysis.csv',
+        'supporting CSV artifact filename',
+    )
+
+    assistant_reply = artifact_payload.get('assistant_reply') or ''
+    assert_contains(assistant_reply, 'full generated JSON export is queued in the background', 'primary export reply')
+    assert_contains(assistant_reply, 'supporting CSV analysis preview', 'supporting CSV reply')
+    if 'Preview:' in assistant_reply:
+        raise AssertionError('assistant reply should rely on artifact card previews instead of inlining a duplicate preview')
+    if 'Markdown' in assistant_reply or 'raw analysis note(s) were retained' in assistant_reply:
+        raise AssertionError('assistant reply should not promote secondary Markdown/raw-note artifacts when a primary export exists')
+
+    print('Primary generated tabular output artifact presentation verified.')
+
+
 def test_version_alignment():
     print('Testing version alignment...')
-    assert_equal(read_config_version(), '0.241.040', 'config version')
+    assert_equal(read_config_version(), '0.241.065', 'config version')
     print('Version alignment verified.')
 
 
@@ -281,6 +377,7 @@ def run_tests():
     tests = [
         test_analysis_preserves_raw_outputs,
         test_lossless_artifact_helpers_build_csv_and_markdown,
+        test_primary_tabular_output_demotes_secondary_artifacts,
         test_version_alignment,
     ]
     results = []

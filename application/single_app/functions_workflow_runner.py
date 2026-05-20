@@ -151,11 +151,13 @@ def _build_document_analysis_artifact_file_name(analysis_result, output_format):
             or ''
         )
 
-    base_name = _normalize_generated_artifact_file_stem(primary_label, fallback_value='analysis')
+    primary_stem = os.path.splitext(str(primary_label or '').strip())[0]
+    base_name = _normalize_generated_artifact_file_stem(primary_stem, fallback_value='analysis')
     if len(document_summaries) > 1:
         base_name = f'{base_name}-and-{len(document_summaries) - 1}-more'
 
-    return f'{base_name}-analysis.{output_format}'
+    analysis_suffix = '' if base_name.endswith('-analysis') else '-analysis'
+    return f'{base_name}{analysis_suffix}.{output_format}'
 
 
 def _build_document_analysis_preview_lines(analysis_text):
@@ -181,6 +183,116 @@ def _build_document_analysis_artifact_summary(document_count, output_format):
         f'Saved the full analysis for {source_label} in this chat as a downloadable '
         f'{str(output_format or "json").upper()} artifact.'
     )
+
+
+def _coerce_document_analysis_count(value, default=0):
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_primary_tabular_generated_outputs(primary_generated_outputs):
+    normalized_outputs = []
+    for output in primary_generated_outputs or []:
+        if not isinstance(output, dict):
+            continue
+
+        capability = str(output.get('capability') or '').strip().lower()
+        has_tabular_identity = bool(
+            capability == 'tabular'
+            or output.get('background_export')
+            or output.get('export_run_id')
+            or output.get('run_id')
+        )
+        if not has_tabular_identity:
+            continue
+
+        output_format = str(output.get('output_format') or '').strip().lower()
+        file_name = str(output.get('file_name') or '').strip().lower()
+        if not output_format and file_name:
+            output_format = os.path.splitext(file_name)[1].lstrip('.').lower()
+        if not output_format:
+            continue
+
+        normalized_outputs.append(output)
+    return normalized_outputs
+
+
+def _prompt_explicitly_requests_markdown_artifact(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    markdown_markers = (
+        'markdown',
+        'md file',
+        '.md',
+    )
+    return any(marker in prompt_text for marker in markdown_markers)
+
+
+def _build_document_analysis_primary_output_reply(
+    document_count,
+    artifacts,
+    row_count,
+    raw_item_count,
+    primary_generated_outputs,
+):
+    normalized_document_count = _coerce_document_analysis_count(document_count)
+    document_label = f'{normalized_document_count} source document' if normalized_document_count == 1 else f'{normalized_document_count} source documents'
+    primary_output = primary_generated_outputs[0] if primary_generated_outputs else {}
+    output_format = str(primary_output.get('output_format') or 'json').strip().upper() or 'JSON'
+    primary_row_count = _coerce_document_analysis_count(primary_output.get('row_count'))
+    batch_count = _coerce_document_analysis_count(primary_output.get('batch_count'))
+    file_name = str(primary_output.get('file_name') or '').strip()
+
+    if primary_output.get('background_export'):
+        if batch_count:
+            primary_line = (
+                f'I analyzed {document_label}. The full generated {output_format} export is queued in the background '
+                f'for {primary_row_count} row(s) across {batch_count} batch(es). Progress is checkpointed, and the '
+                'downloadable file will appear in this chat when the run completes.'
+            )
+        else:
+            primary_line = (
+                f'I analyzed {document_label}. The full generated {output_format} export is queued in the background '
+                f'for {primary_row_count} row(s). Progress is checkpointed, and the downloadable file will appear in '
+                'this chat when the run completes.'
+            )
+    elif file_name:
+        primary_line = (
+            f'I analyzed {document_label}. The full generated {output_format} export contains {primary_row_count} '
+            f'row(s) and is attached as "{file_name}".'
+        )
+    else:
+        primary_line = (
+            f'I analyzed {document_label}. The full generated {output_format} export contains {primary_row_count} '
+            'row(s) and is attached to this chat.'
+        )
+
+    lines = [primary_line]
+
+    supporting_formats = []
+    for artifact in artifacts or []:
+        artifact_format = str(artifact.get('output_format') or '').strip().upper()
+        if artifact_format and artifact_format not in supporting_formats:
+            supporting_formats.append(artifact_format)
+
+    if supporting_formats:
+        supporting_label = ', '.join(supporting_formats)
+        structured_row_count = _coerce_document_analysis_count(row_count)
+        lines.append(
+            f'I also attached a supporting {supporting_label} analysis preview with {structured_row_count} structured row(s) for quick review; '
+            'the generated export is the exhaustive deliverable.'
+        )
+    elif raw_item_count:
+        retained_note_count = _coerce_document_analysis_count(raw_item_count)
+        lines.append(
+            f'{retained_note_count} raw analysis note(s) were used during synthesis; the generated export is the primary deliverable.'
+        )
+
+    return '\n'.join(lines)
 
 
 def _prompt_requests_exhaustive_analysis_output(analysis_prompt):
@@ -623,7 +735,12 @@ def _build_document_analysis_artifact_reply(document_count, output_format):
     )
 
 
-def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysis_prompt, conversation_id=''):
+def _maybe_create_document_analysis_generated_artifacts(
+    analysis_result,
+    analysis_prompt,
+    conversation_id='',
+    primary_generated_outputs=None,
+):
     normalized_conversation_id = str(conversation_id or '').strip()
     if not normalized_conversation_id or not has_request_context():
         return {'artifacts': [], 'assistant_reply': None}
@@ -636,10 +753,12 @@ def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysi
     document_summaries = analysis_result.get('documents') if isinstance(analysis_result.get('documents'), list) else []
     document_count = len(document_summaries)
     artifact_intent = _get_document_analysis_artifact_intent(analysis_result, analysis_prompt)
+    primary_tabular_outputs = _get_primary_tabular_generated_outputs(primary_generated_outputs)
     raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
     create_lossless_artifacts = bool(
         artifact_intent.get('exhaustive')
         or artifact_intent.get('table_output_requested')
+        or primary_tabular_outputs
     )
 
     if create_lossless_artifacts:
@@ -665,7 +784,15 @@ def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysi
                 artifacts.append(csv_artifact)
 
         markdown_output = _build_document_analysis_markdown_artifact(analysis_result)
-        if artifact_intent.get('markdown_analysis_artifact_recommended') and markdown_output:
+        should_create_markdown_artifact = bool(
+            artifact_intent.get('markdown_analysis_artifact_recommended')
+            and markdown_output
+            and (
+                not primary_tabular_outputs
+                or _prompt_explicitly_requests_markdown_artifact(analysis_prompt)
+            )
+        )
+        if should_create_markdown_artifact:
             markdown_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'md')
             markdown_summary = (
                 f'Saved the final analysis plus retained raw analysis notes for {document_count} '
@@ -683,7 +810,7 @@ def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysi
                 artifacts.append(markdown_artifact)
 
         json_payload = _parse_json_artifact_payload(analysis_reply)
-        if json_payload is not None:
+        if json_payload is not None and not primary_tabular_outputs:
             json_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'json')
             json_summary = _build_document_analysis_artifact_summary(document_count, 'json')
             json_preview_items = []
@@ -702,17 +829,38 @@ def _maybe_create_document_analysis_generated_artifacts(analysis_result, analysi
             if json_artifact:
                 artifacts.append(json_artifact)
 
-        if artifacts:
-            return {
-                'artifacts': artifacts,
-                'assistant_reply': _build_document_analysis_multi_artifact_reply(
+        if artifacts or primary_tabular_outputs:
+            assistant_reply = _build_document_analysis_multi_artifact_reply(
+                document_count,
+                artifacts,
+                len(structured_rows),
+                len(raw_analysis_items),
+                analysis_reply,
+            )
+            if primary_tabular_outputs:
+                assistant_reply = _build_document_analysis_primary_output_reply(
                     document_count,
                     artifacts,
                     len(structured_rows),
                     len(raw_analysis_items),
-                    analysis_reply,
-                ),
+                    primary_tabular_outputs,
+                )
+            return {
+                'artifacts': artifacts,
+                'assistant_reply': assistant_reply,
             }
+
+    if primary_tabular_outputs:
+        return {
+            'artifacts': [],
+            'assistant_reply': _build_document_analysis_primary_output_reply(
+                document_count,
+                [],
+                0,
+                len(raw_analysis_items),
+                primary_tabular_outputs,
+            ),
+        }
 
     json_payload = _parse_json_artifact_payload(analysis_reply)
     explicit_artifact_request = _prompt_explicitly_requests_artifact(analysis_prompt)
@@ -3343,6 +3491,7 @@ def _execute_document_analysis_workflow(
                     analysis_result,
                     workflow.get('task_prompt', ''),
                     conversation_id=conversation_id,
+                    primary_generated_outputs=list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
                 if not agent_citations:
@@ -3434,6 +3583,7 @@ def _execute_document_analysis_workflow(
         analysis_result,
         workflow.get('task_prompt', ''),
         conversation_id=conversation_id,
+        primary_generated_outputs=list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
     )
     token_usage = _finalize_token_usage(token_usage_aggregate)
     debug_print(
