@@ -1,12 +1,13 @@
 # test_source_review_deep_traversal.py
 """
 Functional test for Deep Source Review archive traversal and link planning.
-Version: 0.241.046
-Implemented in: 0.241.045
+Version: 0.241.062
+Implemented in: 0.241.062
 
 This test ensures Deep Source Review prioritizes source-archive child links over
-generic navigation pages without relying on company-specific heuristics, and
-that model-assisted planning can only rank already-extracted candidate URLs.
+generic navigation pages without relying on company-specific heuristics, can use
+structured archive/list rows as candidates, and that model-assisted planning can
+only rank already-extracted candidate URLs.
 """
 
 import sys
@@ -286,6 +287,37 @@ def test_deep_source_review_rejects_generic_archive_navigation_links():
     assert child_candidates == []
 
 
+def test_deep_source_review_uses_structured_archive_items_as_candidates():
+    """Validate structured dated rows feed traversal even when raw link text is generic."""
+    print("Testing Source Review structured archive traversal candidates...")
+
+    page_result = {
+        "url": "https://www.example.com/news",
+        "links": [],
+        "structured_items": [
+            {
+                "url": "https://www.example.com/news/2026/product-launch",
+                "title": "Example Announces Product Launch",
+                "nearby_text": "Example Announces Product Launch May 18, 2026 Learn more",
+                "published_date": "2026-05-18",
+                "same_domain": True,
+            },
+        ],
+    }
+
+    child_candidates = _select_child_links(
+        page_result=page_result,
+        user_message="Find the press releases from the past three years.",
+        current_depth=0,
+        existing_urls=set(),
+        limit=10,
+    )
+
+    assert len(child_candidates) == 1
+    assert child_candidates[0]["url"] == "https://www.example.com/news/2026/product-launch"
+    assert child_candidates[0]["anchor_text"] == "Example Announces Product Launch"
+
+
 def test_deep_source_review_allows_bounded_second_hop_with_seed_budget():
     """Validate Source Review can reserve budget for child pages and follow one extra hop."""
     print("Testing Source Review bounded second-hop traversal config...")
@@ -321,6 +353,7 @@ if __name__ == "__main__":
         test_llm_planner_can_reorder_only_existing_candidates,
         test_deep_source_review_prioritizes_relevant_links_before_truncation,
         test_deep_source_review_rejects_generic_archive_navigation_links,
+        test_deep_source_review_uses_structured_archive_items_as_candidates,
         test_deep_source_review_allows_bounded_second_hop_with_seed_budget,
     ]
     results = []

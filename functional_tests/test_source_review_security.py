@@ -1,13 +1,15 @@
 # test_source_review_security.py
 """
 Functional test for Source Review security and evidence extraction.
-Version: 0.241.046
-Implemented in: 0.241.041
+Version: 0.241.062
+Implemented in: 0.241.062
 
 This test ensures that Source Review applies access controls, clamps admin limits,
-blocks unsafe URLs, and extracts bounded HTML evidence without trusting page text as instructions.
+blocks unsafe URLs, and extracts bounded HTML evidence and structured archive rows
+without trusting page text as instructions.
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -23,7 +25,55 @@ from functions_source_review import (  # noqa: E402
     get_source_review_config,
     is_source_review_enabled_for_user,
     validate_source_review_url,
+    _click_first_visible_load_more_control,
 )
+
+
+class FakeRenderedControl:
+    """Minimal async Playwright-like control for rendered Load More tests."""
+
+    def __init__(self, text, visible=True):
+        self.text = text
+        self.visible = visible
+        self.clicked = False
+
+    async def is_visible(self):
+        return self.visible
+
+    async def inner_text(self, timeout=500):
+        return self.text
+
+    async def get_attribute(self, attribute_name, timeout=500):
+        return ""
+
+    async def click(self, timeout=2000):
+        self.clicked = True
+
+
+class FakeRenderedLocator:
+    """Minimal async Playwright-like locator for rendered Load More tests."""
+
+    def __init__(self, controls):
+        self.controls = controls
+
+    async def count(self):
+        return len(self.controls)
+
+    def nth(self, index):
+        return self.controls[index]
+
+
+class FakeRenderedPage:
+    """Minimal async Playwright-like page for rendered Load More tests."""
+
+    def __init__(self, controls):
+        self.controls = controls
+
+    def get_by_role(self, role, name=None):
+        raise RuntimeError("Role lookup unavailable in fake page")
+
+    def locator(self, selector):
+        return FakeRenderedLocator(self.controls)
 
 
 def test_source_review_access_controls():
@@ -148,24 +198,77 @@ def test_source_review_html_extraction_and_prompt_injection_markers():
 
 
 def test_source_review_html_extraction_detects_load_more_controls():
-        """Validate static extraction marks pages that need rendered Load More support."""
-        print("Testing Source Review Load More control detection...")
+    """Validate static extraction marks pages that need rendered Load More support."""
+    print("Testing Source Review Load More control detection...")
 
-        html_content = """
-        <html>
-            <body>
-                <article><a href="/news/press-release/2026/example">Example release</a></article>
-                <button type="button">Load More</button>
-            </body>
-        </html>
-        """
-        evidence = extract_source_review_evidence_from_html(
-                html_content=html_content,
-                url="https://www.contoso.example/news/press-release",
-                user_message="Find press releases from the past three years.",
-        )
+    html_content = """
+    <html>
+        <body>
+            <article><a href="/news/press-release/2026/example">Example release</a></article>
+            <button type="button">Load More</button>
+        </body>
+    </html>
+    """
+    evidence = extract_source_review_evidence_from_html(
+        html_content=html_content,
+        url="https://www.contoso.example/news/press-release",
+        user_message="Find press releases from the past three years.",
+    )
 
-        assert evidence["load_more_controls_detected"] is True
+    assert evidence["load_more_controls_detected"] is True
+
+
+def test_source_review_rendered_load_more_scans_past_large_navigation():
+    """Validate rendered Load More discovery is not limited to early controls."""
+    print("Testing Source Review rendered Load More scan depth...")
+
+    controls = [FakeRenderedControl(f"Navigation control {index}") for index in range(150)]
+    controls.append(FakeRenderedControl("Load more"))
+    page = FakeRenderedPage(controls)
+
+    clicked = asyncio.run(_click_first_visible_load_more_control(page))
+
+    assert clicked is True
+    assert controls[-1].clicked is True
+
+
+def test_source_review_html_extraction_structures_archive_cards():
+    """Validate generic archive/list cards expose dated title and URL rows."""
+    print("Testing Source Review structured archive item extraction...")
+
+    html_content = """
+    <html>
+        <body>
+            <main>
+                <ul class="results-list">
+                    <li class="result-card">
+                        <h2 class="title">Contoso Announces New Analyst Portal, AI Tools</h2>
+                        <p class="date">May 18, 2026</p>
+                        <a href="/news/2026/analyst-portal" aria-label="Contoso Announces New Analyst Portal, AI Tools, Learn more">Learn more</a>
+                    </li>
+                    <li class="result-card">
+                        <h2 class="title">Contoso Declares Quarterly Dividend</h2>
+                        <p class="date">April 15, 2026</p>
+                        <a href="/news/2026/dividend">Learn more</a>
+                    </li>
+                </ul>
+            </main>
+        </body>
+    </html>
+    """
+
+    evidence = extract_source_review_evidence_from_html(
+        html_content=html_content,
+        url="https://www.contoso.example/news",
+        user_message="Find Contoso press releases from the past three years.",
+    )
+
+    structured_items = evidence["structured_items"]
+    assert evidence["structured_item_count"] == 2
+    assert structured_items[0]["title"] == "Contoso Announces New Analyst Portal, AI Tools"
+    assert structured_items[0]["published_date"] == "2026-05-18"
+    assert structured_items[0]["url"] == "https://www.contoso.example/news/2026/analyst-portal"
+    assert structured_items[1]["title"] == "Contoso Declares Quarterly Dividend"
 
 
 def test_source_review_seed_url_collection():
@@ -190,6 +293,8 @@ if __name__ == "__main__":
         test_source_review_blocks_unsafe_urls,
         test_source_review_html_extraction_and_prompt_injection_markers,
         test_source_review_html_extraction_detects_load_more_controls,
+        test_source_review_rendered_load_more_scans_past_large_navigation,
+        test_source_review_html_extraction_structures_archive_cards,
         test_source_review_seed_url_collection,
     ]
     results = []
