@@ -52,6 +52,11 @@ TABULAR_EXPORT_DEFAULT_STALE_SECONDS = 420
 TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5
 TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES = 20
 TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS = 30
+TABULAR_EXPORT_SCHEDULER_STATUSES = (
+    TABULAR_EXPORT_STATUS_QUEUED,
+    TABULAR_EXPORT_STATUS_RUNNING,
+    TABULAR_EXPORT_STATUS_FAILED,
+)
 TABULAR_EXPORT_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 TABULAR_EXPORT_RETRYABLE_EXCEPTION_NAMES = {
     'APIConnectionError',
@@ -510,6 +515,15 @@ def _is_due_queued_retry_run(run):
     return next_attempt_at is None or next_attempt_at <= _now_utc()
 
 
+def _is_due_queued_run(run):
+    status = str((run or {}).get('status') or '').strip().lower()
+    if status != TABULAR_EXPORT_STATUS_QUEUED or _is_waiting_for_retry(run):
+        return False
+
+    next_attempt_at = _parse_iso_datetime((run or {}).get('next_attempt_at'))
+    return next_attempt_at is None or next_attempt_at <= _now_utc()
+
+
 def _is_stale_queued_run(run, settings):
     status = str((run or {}).get('status') or '').strip().lower()
     if status != TABULAR_EXPORT_STATUS_QUEUED or _is_waiting_for_retry(run):
@@ -530,6 +544,65 @@ def _is_stale_queued_run(run, settings):
 def _is_retryable_failed_run(run):
     status = str((run or {}).get('status') or '').strip().lower()
     return status == TABULAR_EXPORT_STATUS_FAILED and _is_retryable_export_error_message((run or {}).get('last_error'))
+
+
+def _scheduler_candidate_reason(run, settings):
+    status = str((run or {}).get('status') or '').strip().lower()
+    if status == TABULAR_EXPORT_STATUS_QUEUED:
+        if _is_due_queued_run(run):
+            return 'queued run is due'
+        if _is_stale_queued_run(run, settings or {}):
+            return 'queued run is stale'
+        return None
+    if status == TABULAR_EXPORT_STATUS_RUNNING:
+        if _is_stale_running_run(run, settings or {}):
+            return 'running heartbeat is stale'
+        return None
+    if status == TABULAR_EXPORT_STATUS_FAILED:
+        if _is_retryable_failed_run(run):
+            return 'failed run has retryable error'
+        return None
+    return None
+
+
+def _scheduler_candidate_sort_key(run):
+    return (
+        _parse_iso_datetime((run or {}).get('updated_at'))
+        or _parse_iso_datetime((run or {}).get('created_at'))
+        or _parse_iso_datetime((run or {}).get('last_heartbeat_at'))
+        or datetime.min.replace(tzinfo=timezone.utc)
+    )
+
+
+def _query_scheduler_candidates_by_status(status, scan_limit):
+    per_status_limit = _safe_int(scan_limit, default=TABULAR_EXPORT_DEFAULT_SCAN_LIMIT, minimum=1, maximum=10)
+    query = (
+        f"SELECT TOP {per_status_limit} "
+        "c.id, c.user_id, c.status, c.created_at, c.updated_at, c.last_heartbeat_at, "
+        "c.next_attempt_at, c.last_error, c.transient_failure_count "
+        "FROM c WHERE c.type = @type AND c.status = @status"
+    )
+    try:
+        return list(cosmos_tabular_export_runs_container.query_items(
+            query=query,
+            parameters=[
+                {'name': '@type', 'value': TABULAR_EXPORT_RUN_TYPE},
+                {'name': '@status', 'value': status},
+            ],
+            enable_cross_partition_query=True,
+        ))
+    except Exception as exc:
+        log_event(
+            '[Tabular Generated Output] Scheduler candidate query failed',
+            {
+                'status': status,
+                'scan_limit': per_status_limit,
+                'error': str(exc)[:1000],
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise
 
 
 def _can_resume_run(run, settings=None):
@@ -948,11 +1021,13 @@ def _try_claim_run(user_id, run_id, settings):
     run.update({
         'status': TABULAR_EXPORT_STATUS_RUNNING,
         'started_at': run.get('started_at') or now.isoformat(),
+        'attempt_started_at': now.isoformat(),
         'updated_at': now.isoformat(),
         'completed_at': None,
         'last_heartbeat_at': now.isoformat(),
         'lease_holder_id': _lease_holder_id(),
         'lease_expires_at': (now + timedelta(seconds=lease_seconds)).isoformat(),
+        'next_attempt_at': None,
         'last_message': 'Background structured export is running',
     })
     try:
@@ -1061,11 +1136,31 @@ def _update_run_progress(run, completed_batches, processed_rows, batch_rows, bat
         except ValueError:
             elapsed_seconds = 0.0
 
+    active_processing_seconds = max(_safe_float(run.get('active_processing_seconds')), 0.0)
+    active_processing_seconds += max(_safe_float(batch_elapsed_seconds), 0.0)
+    recent_batches = list(run.get('recent_batches') or [])[-9:]
+    recent_batches.append({
+        'batch_number': completed_batches,
+        'row_count': _safe_int(batch_rows),
+        'elapsed_seconds': round(_safe_float(batch_elapsed_seconds), 3),
+        'completed_at': now.isoformat(),
+    })
+
     batch_count = _safe_int(run.get('batch_count'))
     estimated_total_seconds = None
     estimated_remaining_seconds = None
     if completed_batches > 0 and batch_count > 0:
-        seconds_per_batch = elapsed_seconds / completed_batches
+        recent_elapsed_values = [
+            _safe_float(batch.get('elapsed_seconds'))
+            for batch in recent_batches
+            if _safe_float(batch.get('elapsed_seconds')) > 0
+        ]
+        if recent_elapsed_values:
+            seconds_per_batch = sum(recent_elapsed_values) / len(recent_elapsed_values)
+        elif active_processing_seconds > 0:
+            seconds_per_batch = active_processing_seconds / completed_batches
+        else:
+            seconds_per_batch = elapsed_seconds / completed_batches
         estimated_total_seconds = round(seconds_per_batch * batch_count, 1)
         estimated_remaining_seconds = round(seconds_per_batch * max(batch_count - completed_batches, 0), 1)
 
@@ -1074,17 +1169,11 @@ def _update_run_progress(run, completed_batches, processed_rows, batch_rows, bat
         'processed_rows': processed_rows,
         'updated_at': now.isoformat(),
         'last_heartbeat_at': now.isoformat(),
+        'active_processing_seconds': round(active_processing_seconds, 3),
         'estimated_total_seconds': estimated_total_seconds,
         'estimated_remaining_seconds': estimated_remaining_seconds,
         'mismatch_count': _safe_int(run.get('mismatch_count')) + _safe_int(mismatch_count),
         'last_message': f"Processed structured export batch {completed_batches} of {batch_count}",
-    })
-    recent_batches = list(run.get('recent_batches') or [])[-9:]
-    recent_batches.append({
-        'batch_number': completed_batches,
-        'row_count': _safe_int(batch_rows),
-        'elapsed_seconds': round(_safe_float(batch_elapsed_seconds), 3),
-        'completed_at': now.isoformat(),
     })
     run['recent_batches'] = recent_batches
 
@@ -1429,6 +1518,7 @@ def queue_tabular_generated_output_run(
         'mismatch_count': 0,
         'retry_count': 0,
         'recent_batches': [],
+        'active_processing_seconds': 0,
         'last_message': 'Queued background structured export',
         'last_error': None,
         'final_artifact': None,
@@ -1471,45 +1561,39 @@ def check_due_tabular_generated_output_runs_once(limit=None):
         minimum=1,
         maximum=10,
     )
-    query = (
-        f"SELECT TOP {scan_limit} * FROM c "
-        "WHERE c.type = @type AND ("
-        "c.status = @queued OR c.status = @running OR "
-        "(c.status = @failed AND IS_DEFINED(c.last_error) AND ("
-        "CONTAINS(c.last_error, @api_connection_error) OR "
-        "CONTAINS(c.last_error, @connection_error) OR "
-        "CONTAINS(c.last_error, @timeout_error) OR "
-        "CONTAINS(c.last_error, @rate_limit_error))) "
-        "AND (NOT IS_DEFINED(c.next_attempt_at) OR IS_NULL(c.next_attempt_at) OR c.next_attempt_at <= @now) "
-        "ORDER BY c.updated_at ASC"
-    )
-    candidates = list(cosmos_tabular_export_runs_container.query_items(
-        query=query,
-        parameters=[
-            {'name': '@type', 'value': TABULAR_EXPORT_RUN_TYPE},
-            {'name': '@queued', 'value': TABULAR_EXPORT_STATUS_QUEUED},
-            {'name': '@running', 'value': TABULAR_EXPORT_STATUS_RUNNING},
-            {'name': '@failed', 'value': TABULAR_EXPORT_STATUS_FAILED},
-            {'name': '@api_connection_error', 'value': 'APIConnectionError'},
-            {'name': '@connection_error', 'value': 'Connection error'},
-            {'name': '@timeout_error', 'value': 'timeout'},
-            {'name': '@rate_limit_error', 'value': 'RateLimit'},
-            {'name': '@now', 'value': _now_iso()},
-        ],
-        enable_cross_partition_query=True,
-    ))
 
-    processed = []
+    scanned_candidates = []
+    status_counts = {}
+    for status in TABULAR_EXPORT_SCHEDULER_STATUSES:
+        status_candidates = _query_scheduler_candidates_by_status(status, scan_limit)
+        status_counts[status] = len(status_candidates)
+        scanned_candidates.extend(status_candidates)
+
+    seen_keys = set()
+    candidates = []
     skipped = []
-    for run in candidates:
+    for run in sorted(scanned_candidates, key=_scheduler_candidate_sort_key):
+        candidate_key = (run.get('user_id'), run.get('id'))
+        if candidate_key in seen_keys:
+            continue
+        seen_keys.add(candidate_key)
         status = str(run.get('status') or '').strip().lower()
-        if status == TABULAR_EXPORT_STATUS_RUNNING and not _is_stale_running_run(run, settings):
+        candidate_reason = _scheduler_candidate_reason(run, settings)
+        if not candidate_reason:
             skipped.append({
                 'run_id': run.get('id'),
                 'status': status,
-                'reason': 'running heartbeat is still active',
+                'reason': 'candidate is not due',
             })
             continue
+        candidates.append({'run': run, 'reason': candidate_reason})
+        if len(candidates) >= scan_limit:
+            break
+
+    processed = []
+    for candidate in candidates:
+        run = candidate.get('run') or {}
+        status = str(run.get('status') or '').strip().lower()
         processed_run = process_tabular_generated_output_run(run.get('id'), run.get('user_id'))
         if processed_run:
             processed.append(processed_run.get('id'))
@@ -1517,14 +1601,16 @@ def check_due_tabular_generated_output_runs_once(limit=None):
             skipped.append({
                 'run_id': run.get('id'),
                 'status': status,
-                'reason': 'claim or processing did not start',
+                'reason': f"{candidate.get('reason')}; claim or processing did not start",
             })
 
-    if candidates:
+    if scanned_candidates or candidates:
         log_event(
             '[Tabular Generated Output] Background scheduler scan result',
             {
+                'scanned_count': len(scanned_candidates),
                 'candidate_count': len(candidates),
+                'status_counts': status_counts,
                 'processed_run_ids': processed,
                 'processed_count': len(processed),
                 'skipped': skipped[:10],

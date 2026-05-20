@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.241.057
-Implemented in: 0.241.057
+Version: 0.241.058
+Implemented in: 0.241.058
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -21,6 +21,7 @@ CHAT_ROUTE = APP_ROOT / 'route_backend_chats.py'
 CHAT_MESSAGES_JS = APP_ROOT / 'static' / 'js' / 'chat' / 'chat-messages.js'
 BACKGROUND_TASKS = APP_ROOT / 'background_tasks.py'
 CONFIG = APP_ROOT / 'config.py'
+GUNICORN_CONFIG = APP_ROOT / 'gunicorn.conf.py'
 
 
 def read_text(path):
@@ -81,7 +82,12 @@ def test_export_runner_module():
     assert_contains(source_text, 'transient_failure_count', 'bounded transient failure counter')
     assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5', 'non-starving scheduler scan limit')
     assert_contains(source_text, 'APIConnectionError', 'OpenAI connection error retry classification')
-    assert_contains(source_text, 'c.status = @failed', 'retryable failed-run scheduler pickup')
+    assert_contains(source_text, 'TABULAR_EXPORT_STATUS_FAILED', 'retryable failed-run scheduler pickup')
+    assert_contains(source_text, 'TABULAR_EXPORT_SCHEDULER_STATUSES', 'status-specific scheduler scans')
+    assert_contains(source_text, '_query_scheduler_candidates_by_status', 'simple scheduler status query helper')
+    assert_contains(source_text, '_scheduler_candidate_reason', 'Python-side scheduler due filtering')
+    assert_contains(source_text, 'FROM c WHERE c.type = @type AND c.status = @status', 'Cosmos-safe scheduler query shape')
+    assert_contains(source_text, 'active_processing_seconds', 'active-time ETA accounting')
     assert_contains(source_text, 'or _is_due_queued_retry_run(run)', 'queued retry-due manual resume eligibility')
     assert_contains(source_text, 'or _is_stale_queued_run(run, settings or {})', 'stale queued manual resume eligibility')
     assert_contains(source_text, 'Automatic retry is due but no worker has picked it up', 'queued retry-due status detail')
@@ -123,6 +129,11 @@ def test_background_scheduler_and_config_registered():
     assert_contains(background_source, 'check_due_tabular_generated_output_runs_once', 'background export scheduler import')
     assert_contains(background_source, 'run_tabular_generated_output_scheduler_loop', 'background export scheduler loop')
     assert_contains(background_source, "'tabular_generated_output_scheduler_scan'", 'distributed scheduler lock')
+
+    gunicorn_source = read_text(GUNICORN_CONFIG)
+    assert_contains(gunicorn_source, 'SIMPLECHAT_RUN_BACKGROUND_TASKS', 'background-task-aware gunicorn defaults')
+    assert_contains(gunicorn_source, "max_requests = _env_int('GUNICORN_MAX_REQUESTS', 0 if background_tasks_enabled else 500)", 'disabled request-count recycling for background exports')
+    assert_contains(gunicorn_source, "graceful_timeout = _env_int('GUNICORN_GRACEFUL_TIMEOUT', 300 if background_tasks_enabled else 60)", 'longer graceful timeout for background exports')
 
     config_source = read_text(CONFIG)
     assert_contains(config_source, 'cosmos_tabular_export_runs_container_name', 'export runs container name')
