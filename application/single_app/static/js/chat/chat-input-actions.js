@@ -21,6 +21,35 @@ const fileInputEl = document.getElementById("file-input");
 const uploadBtn = document.getElementById("upload-btn");
 const cancelFileSelection = document.getElementById("cancel-file-selection");
 const userInputEl = document.getElementById("user-input");
+const httpUrlPattern = /https?:\/\/[^\s<>'"]+/gi;
+
+function getPromptUrls() {
+  if (!userInputEl) {
+    return [];
+  }
+
+  const matches = String(userInputEl.value || "").match(httpUrlPattern) || [];
+  return [...new Set(matches.map((url) => url.replace(/[.,);\]}>]+$/, "")))]
+    .filter(Boolean);
+}
+
+function updateDeepResearchAvailability() {
+  if (!sourceReviewBtn) {
+    return;
+  }
+
+  const webSearchActive = webSearchBtn ? webSearchBtn.classList.contains("active") : false;
+  const promptUrls = getPromptUrls();
+  const shouldShow = webSearchActive || promptUrls.length > 0;
+
+  sourceReviewBtn.classList.toggle("d-none", !shouldShow);
+  sourceReviewBtn.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  sourceReviewBtn.disabled = !shouldShow || sourceReviewBtn.dataset.disabledByImageGeneration === "true";
+
+  if (!shouldShow) {
+    sourceReviewBtn.classList.remove("active");
+  }
+}
 
 const clipboardMimeExtensionMap = {
   "image/png": "png",
@@ -495,6 +524,7 @@ if (imageGenBtn) {
         webBtn.classList.remove("active");
       }
       if (sourcesBtn) {
+        sourcesBtn.dataset.disabledByImageGeneration = "true";
         sourcesBtn.disabled = true;
         sourcesBtn.classList.remove("active");
       }
@@ -508,7 +538,10 @@ if (imageGenBtn) {
     } else {
       if (docBtn) docBtn.disabled = false;
       if (webBtn) webBtn.disabled = false;
-      if (sourcesBtn) sourcesBtn.disabled = false;
+      if (sourcesBtn) {
+        sourcesBtn.dataset.disabledByImageGeneration = "false";
+        updateDeepResearchAvailability();
+      }
       if (fileBtn) fileBtn.disabled = false;
       if (modelSelectContainer) {
         modelSelectContainer.style.display = "block";
@@ -550,13 +583,23 @@ if (webSearchBtn) {
     this.classList.toggle("active");
     const isActive = this.classList.contains("active");
     updateWebSearchNotice(isActive);
+    updateDeepResearchAvailability();
   });
 }
 
 if (sourceReviewBtn) {
   sourceReviewBtn.addEventListener("click", function () {
+    if (this.classList.contains("d-none") || this.disabled) {
+      return;
+    }
     this.classList.toggle("active");
+    const maxUserUrls = Number.parseInt(window.appSettings?.deep_research_max_user_urls_per_turn || "10", 10);
+    const promptUrlCount = getPromptUrls().length;
+    if (this.classList.contains("active") && promptUrlCount > maxUserUrls) {
+      showToast(`Deep Research will review the first ${maxUserUrls} URL(s) from this message.`, "info");
+    }
   });
+  updateDeepResearchAvailability();
 }
 
 if (chooseFileBtn) {
@@ -612,7 +655,10 @@ if (uploadBtn) {
 }
 
 if (userInputEl) {
+  userInputEl.addEventListener("input", updateDeepResearchAvailability);
+
   userInputEl.addEventListener("paste", (event) => {
+    setTimeout(updateDeepResearchAvailability, 0);
     const clipboardFiles = getClipboardFiles(event.clipboardData);
     if (clipboardFiles.length === 0) {
       return;

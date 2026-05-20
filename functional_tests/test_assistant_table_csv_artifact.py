@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for assistant-rendered table CSV artifacts.
-Version: 0.241.144
-Implemented in: 0.241.144
+Version: 0.241.051
+Implemented in: 0.241.050
 
 This test ensures that explicit table-format requests with assistant-rendered
-tables are converted into downloadable CSV artifact metadata for the chat UI.
+tables and natural CSV/table conversion requests are converted into
+downloadable CSV artifact metadata for the chat UI.
 """
 
 import csv
@@ -20,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / 'application' / 'single_app'
 CONFIG_FILE = APP_DIR / 'config.py'
 CHAT_ROUTE_FILE = APP_DIR / 'route_backend_chats.py'
-EXPECTED_VERSION = '0.241.144'
+EXPECTED_VERSION = '0.241.051'
 
 sys.path.append(str(APP_DIR))
 
@@ -136,6 +137,34 @@ def test_natural_table_request_phrase_is_recognized():
     )
 
 
+def test_natural_csv_and_create_table_phrases_are_recognized():
+    print('Testing natural CSV and create-table request phrasing...')
+
+    assistant_content = """| Day | Type |
+| --- | --- |
+| Monday | Weekday |
+| Saturday | Weekend |
+"""
+
+    request_phrases = [
+        'turn that into a csv',
+        'turn this into csv',
+        'convert that to csv',
+        'export as csv',
+        'create a table of the days of the week',
+    ]
+
+    for request_phrase in request_phrases:
+        assert_true(
+            assistant_table_export_requested(request_phrase),
+            f"Expected '{request_phrase}' to trigger assistant table export detection.",
+        )
+        assert_true(
+            build_assistant_table_csv_export(request_phrase, assistant_content) is not None,
+            f"Expected '{request_phrase}' to produce an assistant table CSV export.",
+        )
+
+
 def test_chat_route_wires_assistant_table_artifacts():
     print('Testing chat route assistant-table artifact plumbing...')
 
@@ -144,8 +173,8 @@ def test_chat_route_wires_assistant_table_artifacts():
 
     assert_true(current_version == EXPECTED_VERSION, f'Expected config.py version {EXPECTED_VERSION}.')
     assert_true(
-        'from functions_assistant_table_exports import build_assistant_table_csv_export' in chat_route_content,
-        'Expected route_backend_chats.py to import the assistant table export builder.',
+        'TABLE_EXPORT_REQUEST_MARKERS' in chat_route_content,
+        'Expected route_backend_chats.py to reuse assistant table export request markers.',
     )
     assert_true(
         'def maybe_create_assistant_table_generated_output(' in chat_route_content,
@@ -160,12 +189,12 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected normal and streaming assistant messages to include assistant table CSV artifacts.',
     )
     assert_true(
-        "'turn this into a table'" in chat_route_content,
-        'Expected table-conversion prompts to be recognized by tabular output intent detection.',
+        'csv_markers = TABLE_EXPORT_REQUEST_MARKERS' in chat_route_content,
+        'Expected tabular output intent detection to use shared CSV/table request markers.',
     )
     assert_true(
-        "'put that into a table'" in chat_route_content,
-        "Expected natural table phrasing like 'put that into a table' to be recognized by tabular output intent detection.",
+        "requested_format == 'csv'" in chat_route_content,
+        'Expected CSV request markers to create tabular generated outputs when available.',
     )
 
 
@@ -175,6 +204,7 @@ def run_tests() -> bool:
         test_tab_separated_table_response_builds_rows,
         test_non_table_requests_do_not_create_exports,
         test_natural_table_request_phrase_is_recognized,
+        test_natural_csv_and_create_table_phrases_are_recognized,
         test_chat_route_wires_assistant_table_artifacts,
     ]
 

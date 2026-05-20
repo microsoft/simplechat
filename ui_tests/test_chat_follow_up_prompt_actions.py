@@ -1,11 +1,12 @@
 # test_chat_follow_up_prompt_actions.py
 """
 UI test for chat follow-up prompt actions.
-Version: 0.241.047
-Implemented in: 0.241.047
+Version: 0.241.051
+Implemented in: 0.241.050
 
 This test ensures assistant suggested next steps can appear as buttons and stage
-a prompt in the chat input with a send countdown affordance.
+a prompt in the chat input with a send countdown affordance, while capping the
+button set and removing duplicate suggestion text from the message body.
 """
 
 import os
@@ -19,8 +20,8 @@ CHAT_STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
 
 
 @pytest.mark.ui
-def test_chat_follow_up_prompt_actions_render_for_assistant_questions():
-    """Validate follow-up prompt actions on a configured chat page."""
+def test_chat_follow_up_prompt_actions_render_without_duplicate_source_text():
+    """Validate capped follow-up prompt actions on a configured chat page."""
     if not BASE_URL:
         pytest.skip("Set SIMPLECHAT_UI_BASE_URL to run this UI test.")
     if CHAT_STORAGE_STATE and not Path(CHAT_STORAGE_STATE).exists():
@@ -56,8 +57,11 @@ def test_chat_follow_up_prompt_actions_render_for_assistant_questions():
                 const chatMessages = await import('/static/js/chat/chat-messages.js');
                 const markdown = `Bottom line
 
-Do you want me to make this stricter and give you only pure-play fintech partners?
-Or would you like a one-table version with partner, date, business unit, and rationale?`;
+Suggested follow-ups:
+- A shorter 5-slide executive deck
+- A more polished board-style version
+- A copy-paste outline with speaker notes
+- A VBA script that creates the slides`;
 
                 document.querySelectorAll('.assistant-follow-up-actions').forEach(element => element.remove());
                 const existingMessage = document.querySelector('[data-message-id="test-follow-up-question-message"]');
@@ -86,16 +90,21 @@ Or would you like a one-table version with partner, date, business unit, and rat
         )
 
         action_locator = page.locator('[data-message-id="test-follow-up-question-message"] .assistant-follow-up-action')
-        expect(action_locator).to_have_count(2)
-        expect(action_locator.nth(0)).to_contain_text("Make this stricter")
-        expect(action_locator.nth(1)).to_contain_text("One-table version")
-        assert suggestions[0]["prompt"].lower().startswith("make this stricter")
-        assert "give me only pure-play" in suggestions[0]["prompt"].lower()
+        expect(action_locator).to_have_count(3)
+        expect(action_locator.nth(0)).to_contain_text("A shorter 5-slide executive deck")
+        expect(action_locator.nth(1)).to_contain_text("A more polished board-style version")
+        expect(action_locator.nth(2)).to_contain_text("A copy-paste outline with speaker notes")
+        assert len(suggestions) == 3
+        assert "vba script" not in " ".join(suggestion["label"].lower() for suggestion in suggestions)
+
+        rendered_message_text = page.locator('[data-message-id="test-follow-up-question-message"] .message-text').inner_text()
+        assert "Bottom line" in rendered_message_text
+        assert "Suggested follow-ups" not in rendered_message_text
+        assert "A shorter 5-slide executive deck" not in rendered_message_text
 
         action_locator.nth(0).click()
         staged_prompt = page.locator('#user-input').input_value()
-        assert "make this stricter" in staged_prompt.lower()
-        assert "give me only pure-play" in staged_prompt.lower()
+        assert "shorter 5-slide executive deck" in staged_prompt.lower()
     finally:
         context.close()
         browser.close()

@@ -36,12 +36,25 @@ from flask import Response, copy_current_request_context, g, has_request_context
 from functions_authentication import *
 from functions_search import *
 from functions_settings import *
-from functions_source_review import compact_source_review_result_for_metadata, normalize_review_url, perform_source_review, should_auto_enable_source_review
+from functions_source_review import (
+    build_deep_research_ledger,
+    build_deep_research_ledger_markdown,
+    build_deep_research_query_plan,
+    compact_deep_research_result_for_metadata,
+    compact_source_review_result_for_metadata,
+    get_deep_research_config,
+    normalize_review_url,
+    perform_source_review,
+    should_auto_enable_source_review,
+)
 from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
-from functions_assistant_table_exports import build_assistant_table_csv_export
+from functions_assistant_table_exports import (
+    TABLE_EXPORT_REQUEST_MARKERS,
+    build_assistant_table_csv_export,
+)
 from functions_chart_operations import (
     INLINE_CHART_BLOCK_LANGUAGE,
     build_proactive_chart_guidance_message,
@@ -86,6 +99,7 @@ from functions_tabular_generated_exports import (
     build_background_tabular_generated_output_metadata,
     get_tabular_generated_output_run_status,
     queue_tabular_generated_output_run,
+    resume_tabular_generated_output_run,
     should_queue_tabular_generated_output_background,
 )
 
@@ -291,6 +305,65 @@ def _build_generated_analysis_metadata(
         'generated_analysis_artifacts': normalized_artifacts,
         'generated_tabular_outputs': normalized_tabular_outputs,
     }
+
+
+def _maybe_create_deep_research_ledger_artifact(settings, conversation_id, ledger):
+    """Save a Deep Research ledger as a generated chat artifact when enabled."""
+    if not conversation_id or not isinstance(ledger, dict):
+        return None
+
+    deep_research_config = get_deep_research_config(settings)
+    if not deep_research_config.get('deep_research_enable_ledger_artifact'):
+        return None
+
+    created_at = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    file_name = f"deep_research_ledger_{created_at}.md"
+    try:
+        upload_result = upload_generated_analysis_artifact_for_current_user(
+            conversation_id=conversation_id,
+            file_name=file_name,
+            file_content=build_deep_research_ledger_markdown(ledger),
+            capability='deep_research',
+            output_format='md',
+            summary='Deep Research ledger with search queries, reviewed sources, skipped URLs, and coverage details.',
+        )
+    except Exception as exc:
+        log_event(
+            '[DeepResearch] Failed to save Deep Research ledger artifact',
+            {
+                'conversation_id': conversation_id,
+                'file_name': file_name,
+                'error': str(exc),
+            },
+            debug_only=True,
+        )
+        return None
+
+    uploaded_message = upload_result.get('message') or {}
+    artifact_message_id = uploaded_message.get('id')
+    if not artifact_message_id:
+        return None
+
+    uploaded_file_name = uploaded_message.get('file_name') or file_name
+    artifact = {
+        'capability': 'deep_research',
+        'artifact_message_id': artifact_message_id,
+        'conversation_id': conversation_id,
+        'storage_scope': 'chat',
+        'file_name': uploaded_file_name,
+        'output_format': 'md',
+        'summary': 'Deep Research ledger with search queries, reviewed sources, skipped URLs, and coverage details.',
+    }
+    log_event(
+        '[DeepResearch] Saved Deep Research ledger artifact',
+        {
+            'conversation_id': conversation_id,
+            'artifact_message_id': artifact_message_id,
+            'file_name': uploaded_file_name,
+        },
+        debug_only=True,
+    )
+    return artifact
 
 
 def _has_generated_tabular_csv_output(generated_outputs):
@@ -2385,43 +2458,7 @@ def get_tabular_generated_output_format(user_question):
         'return json',
         'valid json',
     )
-    csv_markers = (
-        'csv file',
-        'download csv',
-        'save csv',
-        'make a csv',
-        'create a csv',
-        'turn that into a table',
-        'turn these into a table',
-        'turn this into a table',
-        'turn it into a table',
-        'convert that to a table',
-        'convert these to a table',
-        'convert this to a table',
-        'convert it to a table',
-        'format that as a table',
-        'format these as a table',
-        'format this as a table',
-        'format it as a table',
-        'put that into a table',
-        'put these into a table',
-        'put that in a table',
-        'put these in a table',
-        'put this into a table',
-        'put it into a table',
-        'put this in a table',
-        'put it in a table',
-        'make that a table',
-        'make these a table',
-        'make this a table',
-        'make it a table',
-        'make a table',
-        'table for me',
-        'in table format',
-        'download table',
-        'spreadsheet',
-        'table file',
-    )
+    csv_markers = TABLE_EXPORT_REQUEST_MARKERS
 
     if any(marker in normalized_question for marker in json_markers):
         return 'json'
@@ -2450,6 +2487,9 @@ def question_requests_tabular_generated_output(user_question):
         'each object',
         'each row',
     )
+    if requested_format == 'csv' and any(marker in normalized_question for marker in TABLE_EXPORT_REQUEST_MARKERS):
+        return True
+
     return any(marker in normalized_question for marker in exhaustive_markers)
 
 
@@ -10297,6 +10337,7 @@ def register_route_backend_chats(app):
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
             source_review_enabled = data.get('source_review_enabled')
+            deep_research_enabled = data.get('deep_research_enabled')
             selected_document_id = data.get('selected_document_id')
             selected_document_ids = data.get('selected_document_ids', [])
             # Backwards compat: if no multi-select but single ID is set, wrap in list
@@ -10408,6 +10449,9 @@ def register_route_backend_chats(app):
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
             web_search_citations_list = []
             source_review_result = {}
+            deep_research_result = {}
+            deep_research_query_plan = {}
+            deep_research_web_search_runs = []
             generated_tabular_outputs_list = []
             generated_analysis_artifacts_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
@@ -10433,17 +10477,20 @@ def register_route_backend_chats(app):
                 web_search_enabled = web_search_enabled.lower() == 'true'
             if isinstance(source_review_enabled, str):
                 source_review_enabled = source_review_enabled.lower() == 'true'
+            if isinstance(deep_research_enabled, str):
+                deep_research_enabled = deep_research_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
             current_user_info = get_current_user_info() or {}
             current_user_email = current_user_info.get('email')
-            source_review_enabled = bool(source_review_enabled) or should_auto_enable_source_review(
+            source_review_enabled = bool(source_review_enabled) or bool(deep_research_enabled) or should_auto_enable_source_review(
                 settings,
                 user_id,
                 user_message,
                 bool(web_search_enabled),
                 user_email=current_user_email,
             )
+            deep_research_enabled = bool(source_review_enabled)
 
             original_hybrid_search_enabled = bool(hybrid_search_enabled)
             history_grounded_search_used = False
@@ -10689,7 +10736,8 @@ def register_route_backend_chats(app):
                 user_metadata['button_states'] = {
                     'image_generation': image_gen_enabled,
                     'document_search': hybrid_search_enabled,
-                    'web_search': bool(web_search_enabled)
+                    'web_search': bool(web_search_enabled),
+                    'deep_research': bool(deep_research_enabled)
                 }
                 
                 # Document search scope and selections
@@ -11941,8 +11989,10 @@ def register_route_backend_chats(app):
                     )
 
             if web_search_enabled:
-                thought_tracker.add_thought('web_search', f"Searching the web for '{web_search_query_text[:50]}'")
-                perform_web_search(
+                search_thought_label = 'deep_research' if deep_research_enabled else 'web_search'
+                search_thought_text = "Planning Deep Research web searches" if deep_research_enabled else f"Searching the web for '{web_search_query_text[:50]}'"
+                thought_tracker.add_thought(search_thought_label, search_thought_text)
+                research_search_result = perform_research_web_searches(
                     settings=settings,
                     conversation_id=conversation_id,
                     user_id=user_id,
@@ -11956,12 +12006,26 @@ def register_route_backend_chats(app):
                     system_messages_for_augmentation=system_messages_for_augmentation,
                     agent_citations_list=agent_citations_list,
                     web_search_citations_list=web_search_citations_list,
+                    deep_research_enabled=deep_research_enabled,
+                    deep_research_planner_client=gpt_client,
+                    deep_research_planner_model=gpt_model,
                 )
+                deep_research_query_plan = research_search_result.get('query_plan', {})
+                deep_research_web_search_runs = research_search_result.get('web_search_runs', [])
                 if web_search_citations_list:
-                    thought_tracker.add_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
+                    if deep_research_enabled:
+                        planned_count = len(deep_research_query_plan.get('queries') or []) or 1
+                        query_label = 'queries' if planned_count != 1 else 'query'
+                        thought_tracker.add_thought(
+                            'deep_research',
+                            f"Ran {planned_count} Deep Research web search {query_label}",
+                            detail=f"discovered_urls={len(web_search_citations_list)}"
+                        )
+                    else:
+                        thought_tracker.add_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
 
             if source_review_enabled:
-                thought_tracker.add_thought('source_review', "Reviewing source pages for supporting evidence")
+                thought_tracker.add_thought('deep_research', "Reviewing source pages for supporting evidence")
                 source_review_result = perform_source_review(
                     settings=settings,
                     user_id=user_id,
@@ -11992,7 +12056,7 @@ def register_route_backend_chats(app):
                     elif coverage.get('llm_planning_attempted'):
                         planner_status = 'attempted'
                     thought_tracker.add_thought(
-                        'source_review',
+                        'deep_research',
                         f"Reviewed {coverage.get('pages_reviewed', 0)} source pages",
                         detail=(
                             f"seed={coverage.get('seed_pages_reviewed', 0)}, "
@@ -12004,10 +12068,28 @@ def register_route_backend_chats(app):
                     )
                 else:
                     thought_tracker.add_thought(
-                        'source_review',
-                        "Source Review did not add page evidence",
+                        'deep_research',
+                        "Deep Research did not add page evidence",
                         detail=source_review_result.get('skipped_reason') if isinstance(source_review_result, dict) else None
                     )
+
+                deep_research_ledger = build_deep_research_ledger(
+                    settings=settings,
+                    user_message=user_message,
+                    query_plan=deep_research_query_plan,
+                    web_search_runs=deep_research_web_search_runs,
+                    web_search_citations=web_search_citations_list,
+                    source_review_result=source_review_result,
+                )
+                deep_research_artifact = _maybe_create_deep_research_ledger_artifact(
+                    settings,
+                    conversation_id,
+                    deep_research_ledger,
+                )
+                if deep_research_artifact:
+                    deep_research_ledger['ledger_artifact'] = deep_research_artifact
+                    generated_analysis_artifacts_list.append(deep_research_artifact)
+                deep_research_result = compact_deep_research_result_for_metadata(deep_research_ledger)
 
         # region 5 - FINAL conversation history preparation
             # ---------------------------------------------------------------------
@@ -13107,6 +13189,7 @@ def register_route_backend_chats(app):
                     'reasoning_effort': reasoning_effort,
                     'history_context': history_debug_info,
                     'source_review': compact_source_review_result_for_metadata(source_review_result),
+                    'deep_research': deep_research_result,
                     **generated_analysis_metadata,
                     'thread_info': {
                         'thread_id': user_thread_id,  # Same thread as user message
@@ -13239,6 +13322,7 @@ def register_route_backend_chats(app):
                 'hybrid_citations': hybrid_citations_list,
                 'web_search_citations': web_search_citations_list,
                 'source_review': compact_source_review_result_for_metadata(source_review_result),
+                'deep_research': deep_research_result,
                 'agent_citations': prepared_agent_citations,
                 'metadata': assistant_doc.get('metadata', {}),
                 'reload_messages': reload_messages_required,
@@ -13454,6 +13538,7 @@ def register_route_backend_chats(app):
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
                 source_review_enabled = data.get('source_review_enabled')
+                deep_research_enabled = data.get('deep_research_enabled')
                 selected_document_id = data.get('selected_document_id')
                 selected_document_ids = data.get('selected_document_ids', [])
                 # Backwards compat: if no multi-select but single ID is set, wrap in list
@@ -13592,6 +13677,9 @@ def register_route_backend_chats(app):
                 agent_citations_list = []
                 web_search_citations_list = []
                 source_review_result = {}
+                deep_research_result = {}
+                deep_research_query_plan = {}
+                deep_research_web_search_runs = []
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
@@ -13615,13 +13703,16 @@ def register_route_backend_chats(app):
                     web_search_enabled = web_search_enabled.lower() == 'true'
                 if isinstance(source_review_enabled, str):
                     source_review_enabled = source_review_enabled.lower() == 'true'
-                source_review_enabled = bool(source_review_enabled) or should_auto_enable_source_review(
+                if isinstance(deep_research_enabled, str):
+                    deep_research_enabled = deep_research_enabled.lower() == 'true'
+                source_review_enabled = bool(source_review_enabled) or bool(deep_research_enabled) or should_auto_enable_source_review(
                     settings,
                     user_id,
                     user_message,
                     bool(web_search_enabled),
                     user_email=current_user_email,
                 )
+                deep_research_enabled = bool(source_review_enabled)
                 original_hybrid_search_enabled = bool(hybrid_search_enabled)
                 history_grounded_search_used = False
                 history_only_answerability = None
@@ -13794,7 +13885,8 @@ def register_route_backend_chats(app):
                 user_metadata['button_states'] = {
                     'image_generation': False,
                     'document_search': hybrid_search_enabled,
-                    'web_search': bool(web_search_enabled)
+                    'web_search': bool(web_search_enabled),
+                    'deep_research': bool(deep_research_enabled)
                 }
                 
                 # Document search scope and selections
@@ -14680,8 +14772,11 @@ def register_route_backend_chats(app):
                     debug_print(
                         f"[Streaming] Starting web search augmentation for conversation_id={conversation_id}"
                     )
-                    yield emit_thought('web_search', f"Searching the web for '{web_search_query_text[:50]}'")
-                    perform_web_search(
+                    if deep_research_enabled:
+                        yield emit_thought('deep_research', "Planning Deep Research web searches")
+                    else:
+                        yield emit_thought('web_search', f"Searching the web for '{web_search_query_text[:50]}'")
+                    research_search_result = perform_research_web_searches(
                         settings=settings,
                         conversation_id=conversation_id,
                         user_id=user_id,
@@ -14695,18 +14790,32 @@ def register_route_backend_chats(app):
                         system_messages_for_augmentation=system_messages_for_augmentation,
                         agent_citations_list=agent_citations_list,
                         web_search_citations_list=web_search_citations_list,
+                        deep_research_enabled=deep_research_enabled,
+                        deep_research_planner_client=gpt_client,
+                        deep_research_planner_model=gpt_model,
                     )
+                    deep_research_query_plan = research_search_result.get('query_plan', {})
+                    deep_research_web_search_runs = research_search_result.get('web_search_runs', [])
                     if web_search_citations_list:
                         debug_print(
                             f"[Streaming] Web search completed | citations={len(web_search_citations_list)}"
                         )
-                        yield emit_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
+                        if deep_research_enabled:
+                            planned_count = len(deep_research_query_plan.get('queries') or []) or 1
+                            query_label = 'queries' if planned_count != 1 else 'query'
+                            yield emit_thought(
+                                'deep_research',
+                                f"Ran {planned_count} Deep Research web search {query_label}",
+                                detail=f"discovered_urls={len(web_search_citations_list)}"
+                            )
+                        else:
+                            yield emit_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
 
                 if source_review_enabled:
                     debug_print(
                         f"[Streaming] Starting Source Review for conversation_id={conversation_id}"
                     )
-                    yield emit_thought('source_review', "Reviewing source pages for supporting evidence")
+                    yield emit_thought('deep_research', "Reviewing source pages for supporting evidence")
                     source_review_result = perform_source_review(
                         settings=settings,
                         user_id=user_id,
@@ -14737,7 +14846,7 @@ def register_route_backend_chats(app):
                         elif coverage.get('llm_planning_attempted'):
                             planner_status = 'attempted'
                         yield emit_thought(
-                            'source_review',
+                            'deep_research',
                             f"Reviewed {coverage.get('pages_reviewed', 0)} source pages",
                             detail=(
                                 f"seed={coverage.get('seed_pages_reviewed', 0)}, "
@@ -14749,10 +14858,28 @@ def register_route_backend_chats(app):
                         )
                     else:
                         yield emit_thought(
-                            'source_review',
-                            "Source Review did not add page evidence",
+                            'deep_research',
+                            "Deep Research did not add page evidence",
                             detail=source_review_result.get('skipped_reason') if isinstance(source_review_result, dict) else None
                         )
+
+                    deep_research_ledger = build_deep_research_ledger(
+                        settings=settings,
+                        user_message=user_message,
+                        query_plan=deep_research_query_plan,
+                        web_search_runs=deep_research_web_search_runs,
+                        web_search_citations=web_search_citations_list,
+                        source_review_result=source_review_result,
+                    )
+                    deep_research_artifact = _maybe_create_deep_research_ledger_artifact(
+                        settings,
+                        conversation_id,
+                        deep_research_ledger,
+                    )
+                    if deep_research_artifact:
+                        deep_research_ledger['ledger_artifact'] = deep_research_artifact
+                        generated_analysis_artifacts_list.append(deep_research_artifact)
+                    deep_research_result = compact_deep_research_result_for_metadata(deep_research_ledger)
 
                 # Update message chat type
                 message_chat_type = None
@@ -15529,6 +15656,7 @@ def register_route_backend_chats(app):
                             'reasoning_effort': reasoning_effort,
                             'history_context': history_debug_info,
                             'source_review': compact_source_review_result_for_metadata(source_review_result),
+                            'deep_research': deep_research_result,
                             **generated_analysis_metadata,
                             'thread_info': {
                                 'thread_id': user_thread_id,
@@ -15657,6 +15785,7 @@ def register_route_backend_chats(app):
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
                         'source_review': compact_source_review_result_for_metadata(source_review_result),
+                        'deep_research': deep_research_result,
                         'agent_citations': prepared_agent_citations,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
@@ -15713,6 +15842,7 @@ def register_route_backend_chats(app):
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
+                                'deep_research': deep_research_result,
                                 **generated_analysis_metadata,
                                 'thread_info': {
                                     'thread_id': user_thread_id,
@@ -15767,6 +15897,23 @@ def register_route_backend_chats(app):
         if not run_status:
             return jsonify({'error': 'Tabular generated-output run not found'}), 404
         return jsonify({'success': True, 'run': run_status})
+
+    @app.route('/api/tabular/generated-output/runs/<run_id>/resume', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def tabular_generated_output_run_resume_api(run_id):
+        """Requeue a resumable generated-output run for the current user."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        resume_result = resume_tabular_generated_output_run(user_id, run_id)
+        if not resume_result:
+            return jsonify({'error': 'Tabular generated-output run not found'}), 404
+        if not resume_result.get('success'):
+            return jsonify(resume_result), 409
+        return jsonify(resume_result)
 
     @app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -17182,6 +17329,86 @@ def build_web_search_query_text(user_message):
     """Return the only chat content allowed to leave the app for external web search."""
     return str(user_message or "").strip()
 
+
+def perform_research_web_searches(
+    *,
+    settings,
+    conversation_id,
+    user_id,
+    user_message,
+    user_message_id,
+    chat_type,
+    document_scope,
+    active_group_id,
+    active_public_workspace_id,
+    web_search_query_text,
+    system_messages_for_augmentation,
+    agent_citations_list,
+    web_search_citations_list,
+    deep_research_enabled=False,
+    deep_research_planner_client=None,
+    deep_research_planner_model=None,
+):
+    """Run one or more current-message-only web searches for normal or Deep Research mode."""
+    web_search_runs = []
+    query_plan = {}
+
+    if deep_research_enabled:
+        query_plan = build_deep_research_query_plan(
+            settings=settings,
+            user_message=user_message,
+            base_query=web_search_query_text,
+            planner_client=deep_research_planner_client,
+            planner_model=deep_research_planner_model,
+        )
+        planned_queries = query_plan.get('queries') or []
+    else:
+        planned_queries = [{
+            'query': web_search_query_text,
+            'reason': 'Original current-message web search',
+            'source': 'base',
+        }]
+
+    if not planned_queries:
+        planned_queries = [{
+            'query': web_search_query_text,
+            'reason': 'Original current-message web search',
+            'source': 'base',
+        }]
+
+    total_queries = len(planned_queries)
+    for query_index, query_item in enumerate(planned_queries, start=1):
+        if not isinstance(query_item, dict):
+            continue
+        query_text = str(query_item.get('query') or '').strip()
+        if not query_text:
+            continue
+        search_label = None
+        if deep_research_enabled:
+            search_label = f"Deep Research query {query_index}/{total_queries}"
+        perform_web_search(
+            settings=settings,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            user_message=user_message,
+            user_message_id=user_message_id,
+            chat_type=chat_type,
+            document_scope=document_scope,
+            active_group_id=active_group_id,
+            active_public_workspace_id=active_public_workspace_id,
+            web_search_query_text=query_text,
+            system_messages_for_augmentation=system_messages_for_augmentation,
+            agent_citations_list=agent_citations_list,
+            web_search_citations_list=web_search_citations_list,
+            web_search_runs_list=web_search_runs,
+            search_context_label=search_label,
+        )
+
+    return {
+        'query_plan': query_plan,
+        'web_search_runs': web_search_runs,
+    }
+
 def perform_web_search(
     *,
     settings,
@@ -17197,6 +17424,8 @@ def perform_web_search(
     system_messages_for_augmentation,
     agent_citations_list,
     web_search_citations_list,
+    web_search_runs_list=None,
+    search_context_label=None,
 ):
     debug_print("[WebSearch] ========== ENTERING perform_web_search ==========")
     debug_print(f"[WebSearch] Parameters received:")
@@ -17213,11 +17442,34 @@ def perform_web_search(
         f"{web_search_query_text[:100] if web_search_query_text else None}..."
     )
     
+    initial_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else 0
+    run_started_at = datetime.utcnow().isoformat()
+
+    def record_web_search_run(success, status, error=None, result_message_length=0, raw_citation_count=0):
+        if not isinstance(web_search_runs_list, list):
+            return
+        final_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else initial_seed_url_count
+        web_search_runs_list.append({
+            'query': str(web_search_query_text or user_message or '').strip()[:300],
+            'label': str(search_context_label or '').strip()[:100],
+            'status': status,
+            'success': bool(success),
+            'started_at': run_started_at,
+            'completed_at': datetime.utcnow().isoformat(),
+            'seed_url_count_before': initial_seed_url_count,
+            'seed_url_count_after': final_seed_url_count,
+            'new_seed_url_count': max(0, final_seed_url_count - initial_seed_url_count),
+            'result_message_length': int(result_message_length or 0),
+            'raw_citation_count': int(raw_citation_count or 0),
+            'error': str(error or '')[:500],
+        })
+
     enable_web_search = settings.get("enable_web_search")
     debug_print(f"[WebSearch] enable_web_search setting: {enable_web_search}")
     
     if not enable_web_search:
         debug_print("[WebSearch] Web search is DISABLED in settings, returning early")
+        record_web_search_run(True, 'disabled')
         return True  # Not an error, just disabled
     
     web_search_agent = settings.get("web_search_agent") or {}
@@ -17255,6 +17507,7 @@ def perform_web_search(
             "role": "system",
             "content": "Web search was requested but is not properly configured. Please inform the user that web search is currently unavailable and you cannot provide real-time information. Do not attempt to answer questions requiring current information from your training data.",
         })
+        record_web_search_run(False, 'agent_not_configured', error='agent_id_not_configured')
         return False  # Configuration error
 
     debug_print(f"[WebSearch] Agent ID is configured: {agent_id}")
@@ -17272,6 +17525,7 @@ def perform_web_search(
             },
             level=logging.WARNING,
         )
+        record_web_search_run(True, 'empty_query')
         return True  # Not an error, just empty query
 
     debug_print(f"[WebSearch] Building message history with query: {query_text[:100]}...")
@@ -17312,6 +17566,7 @@ def perform_web_search(
             "role": "system",
             "content": f"Web search failed with error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
+        record_web_search_run(False, 'foundry_invocation_error', error=str(exc))
         return False  # Search failed
     except Exception as exc:
         log_event(
@@ -17329,6 +17584,7 @@ def perform_web_search(
             "role": "system",
             "content": f"Web search failed with an unexpected error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
+        record_web_search_run(False, 'unexpected_error', error=str(exc))
         return False  # Search failed
 
     debug_print("[WebSearch] ========== FOUNDRY AGENT RESULT ==========")
@@ -17362,9 +17618,12 @@ def perform_web_search(
 
     if result.message:
         debug_print("[WebSearch] Adding result message to system_messages_for_augmentation")
+        result_heading = "Web search results"
+        if search_context_label:
+            result_heading = f"Web search results ({search_context_label})"
         system_messages_for_augmentation.append({
             "role": "system",
-            "content": f"Web search results:\n{result.message}",
+            "content": f"{result_heading}:\n{result.message}",
         })
         debug_print(f"[WebSearch] Added system message to augmentation list. Total augmentation messages: {len(system_messages_for_augmentation)}")
 
@@ -17471,6 +17730,12 @@ def perform_web_search(
             "citation_count": len(citations),
         },
         level=logging.INFO,
+    )
+    record_web_search_run(
+        True,
+        'completed',
+        result_message_length=len(result.message or ''),
+        raw_citation_count=len(citations),
     )
     
     return True  # Search succeeded

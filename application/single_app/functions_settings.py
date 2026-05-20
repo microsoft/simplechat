@@ -401,7 +401,7 @@ def get_settings(use_cosmos=False, include_source=False):
             }
         },
 
-        # Source Review (bounded source-page inspection for web evidence)
+        # Deep Research (bounded source-page inspection for web evidence)
         'enable_source_review': False,
         'enable_deep_source_review': False,
         'source_review_default_mode': 'manual',
@@ -411,6 +411,10 @@ def get_settings(use_cosmos=False, include_source=False):
         'source_review_timeout_seconds': 20,
         'source_review_max_redirects': 3,
         'source_review_max_bytes_per_page': 2000000,
+        'deep_research_max_user_urls_per_turn': 10,
+        'deep_research_max_search_queries_per_turn': 3,
+        'deep_research_enable_query_planning': True,
+        'deep_research_enable_ledger_artifact': True,
         'source_review_enable_llm_planning': True,
         'source_review_allow_js_rendering': False,
         'source_review_js_load_more_clicks': 6,

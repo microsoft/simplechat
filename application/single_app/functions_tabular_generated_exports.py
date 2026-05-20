@@ -471,7 +471,146 @@ def should_queue_tabular_generated_output_background(row_count, batch_count, set
     return _safe_int(row_count) > inline_max_rows or _safe_int(batch_count) > inline_max_batches
 
 
-def _build_run_public_status(run):
+def _parse_iso_datetime(value):
+    normalized_value = str(value or '').strip()
+    if not normalized_value:
+        return None
+    try:
+        parsed_value = datetime.fromisoformat(normalized_value.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed_value.tzinfo is None:
+        parsed_value = parsed_value.replace(tzinfo=timezone.utc)
+    return parsed_value
+
+
+def _seconds_until(value):
+    parsed_value = _parse_iso_datetime(value)
+    if not parsed_value:
+        return None
+    return max(round((parsed_value - _now_utc()).total_seconds()), 0)
+
+
+def _is_waiting_for_retry(run):
+    status = str((run or {}).get('status') or '').strip().lower()
+    if status != TABULAR_EXPORT_STATUS_QUEUED or _safe_int((run or {}).get('transient_failure_count')) <= 0:
+        return False
+    retry_delay_seconds = _seconds_until((run or {}).get('next_attempt_at'))
+    return retry_delay_seconds is not None and retry_delay_seconds > 0
+
+
+def _is_retryable_failed_run(run):
+    status = str((run or {}).get('status') or '').strip().lower()
+    return status == TABULAR_EXPORT_STATUS_FAILED and _is_retryable_export_error_message((run or {}).get('last_error'))
+
+
+def _can_resume_run(run, settings=None):
+    if not isinstance(run, dict):
+        return False
+
+    status = str(run.get('status') or '').strip().lower()
+    if status in {TABULAR_EXPORT_STATUS_COMPLETED, TABULAR_EXPORT_STATUS_CANCELED}:
+        return False
+    if status == TABULAR_EXPORT_STATUS_QUEUED:
+        return _is_waiting_for_retry(run)
+    if status == TABULAR_EXPORT_STATUS_RUNNING:
+        return _is_stale_running_run(run, settings or {})
+    if status == TABULAR_EXPORT_STATUS_FAILED:
+        return _is_retryable_failed_run(run)
+    return False
+
+
+def _build_checkpoint_summary(completed_batches, batch_count, processed_rows, row_count):
+    checkpoint_parts = []
+    if batch_count:
+        checkpoint_parts.append(f'{completed_batches:,} of {batch_count:,} batches checkpointed')
+    if row_count:
+        checkpoint_parts.append(f'{processed_rows:,} of {row_count:,} rows processed')
+    return '; '.join(checkpoint_parts)
+
+
+def _build_run_status_detail(run, settings, retryable_failure, can_resume):
+    status = str((run or {}).get('status') or '').strip().lower()
+    is_stale = status == TABULAR_EXPORT_STATUS_RUNNING and _is_stale_running_run(run, settings or {})
+    waiting_for_retry = _is_waiting_for_retry(run)
+    retry_delay_seconds = _seconds_until((run or {}).get('next_attempt_at')) if waiting_for_retry else None
+
+    if status == TABULAR_EXPORT_STATUS_COMPLETED:
+        return {
+            'status_label': 'Complete',
+            'status_tone': 'success',
+            'status_detail': 'Export complete and ready to download.',
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_delay_seconds': None,
+        }
+    if status == TABULAR_EXPORT_STATUS_CANCELED:
+        return {
+            'status_label': 'Canceled',
+            'status_tone': 'secondary',
+            'status_detail': 'Export was canceled.',
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_delay_seconds': None,
+        }
+    if is_stale:
+        return {
+            'status_label': 'Needs Attention',
+            'status_tone': 'warning',
+            'status_detail': 'Worker heartbeat is stale. Continue will resume from the last checkpoint.',
+            'is_stale': True,
+            'waiting_for_retry': False,
+            'retry_delay_seconds': None,
+        }
+    if status == TABULAR_EXPORT_STATUS_RUNNING:
+        return {
+            'status_label': 'Running',
+            'status_tone': 'info',
+            'status_detail': 'Export is running and checkpointing completed batches.',
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_delay_seconds': None,
+        }
+    if waiting_for_retry:
+        return {
+            'status_label': 'Retry Scheduled',
+            'status_tone': 'warning',
+            'status_detail': 'Automatic retry is scheduled. Continue can resume now from the last checkpoint.',
+            'is_stale': False,
+            'waiting_for_retry': True,
+            'retry_delay_seconds': retry_delay_seconds,
+        }
+    if status == TABULAR_EXPORT_STATUS_FAILED and retryable_failure:
+        return {
+            'status_label': 'Needs Attention',
+            'status_tone': 'warning' if can_resume else 'danger',
+            'status_detail': 'Export stopped after a retryable interruption. Continue will resume from the last checkpoint.',
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_delay_seconds': None,
+        }
+    if status == TABULAR_EXPORT_STATUS_FAILED:
+        return {
+            'status_label': 'Failed',
+            'status_tone': 'danger',
+            'status_detail': 'Export failed and cannot continue from checkpoints.',
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_delay_seconds': None,
+        }
+
+    return {
+        'status_label': 'Queued',
+        'status_tone': 'info',
+        'status_detail': 'Export is queued and waiting for a background worker.',
+        'is_stale': False,
+        'waiting_for_retry': False,
+        'retry_delay_seconds': None,
+    }
+
+
+
+def _build_run_public_status(run, settings=None):
     if not isinstance(run, dict):
         return None
 
@@ -484,6 +623,10 @@ def _build_run_public_status(run):
         progress_percent = round((completed_batches / batch_count) * 100, 2)
 
     final_artifact = run.get('final_artifact') or {}
+    retryable_failure = _is_retryable_failed_run(run)
+    can_resume = _can_resume_run(run, settings)
+    status_detail = _build_run_status_detail(run, settings, retryable_failure, can_resume)
+    checkpoint_summary = _build_checkpoint_summary(completed_batches, batch_count, processed_rows, row_count)
     generated_artifact = None
     if final_artifact.get('artifact_message_id'):
         generated_artifact = {
@@ -517,10 +660,22 @@ def _build_run_public_status(run):
         'last_heartbeat_at': run.get('last_heartbeat_at'),
         'last_message': run.get('last_message'),
         'last_error': run.get('last_error'),
+        'status_label': status_detail.get('status_label'),
+        'status_tone': status_detail.get('status_tone'),
+        'status_detail': status_detail.get('status_detail'),
+        'checkpoint_summary': checkpoint_summary,
+        'is_stale': status_detail.get('is_stale'),
+        'waiting_for_retry': status_detail.get('waiting_for_retry'),
+        'retry_delay_seconds': status_detail.get('retry_delay_seconds'),
         'estimated_remaining_seconds': run.get('estimated_remaining_seconds'),
         'estimated_total_seconds': run.get('estimated_total_seconds'),
         'mismatch_count': _safe_int(run.get('mismatch_count')),
         'retry_count': _safe_int(run.get('retry_count')),
+        'transient_failure_count': _safe_int(run.get('transient_failure_count')),
+        'manual_resume_count': _safe_int(run.get('manual_resume_count')),
+        'next_attempt_at': run.get('next_attempt_at'),
+        'can_resume': can_resume,
+        'retryable_failure': retryable_failure,
         'artifact_message_id': final_artifact.get('artifact_message_id'),
         'file_name': final_artifact.get('file_name') or run.get('generated_file_name'),
         'generated_artifact': generated_artifact,
@@ -553,6 +708,7 @@ def get_tabular_generated_output_run_status(user_id, run_id):
     if not normalized_user_id or not normalized_run_id:
         return None
 
+    settings = get_settings()
     try:
         run = cosmos_tabular_export_runs_container.read_item(
             item=normalized_run_id,
@@ -560,7 +716,96 @@ def get_tabular_generated_output_run_status(user_id, run_id):
         )
     except CosmosResourceNotFoundError:
         return None
-    return _build_run_public_status(run)
+    return _build_run_public_status(run, settings=settings)
+
+
+def resume_tabular_generated_output_run(user_id, run_id):
+    """Manually requeue a resumable generated-output run from its saved checkpoints."""
+    normalized_user_id = str(user_id or '').strip()
+    normalized_run_id = str(run_id or '').strip()
+    if not normalized_user_id or not normalized_run_id:
+        return None
+
+    settings = get_settings()
+    try:
+        run = _read_run(normalized_user_id, normalized_run_id)
+    except CosmosResourceNotFoundError:
+        return None
+
+    status = str(run.get('status') or '').strip().lower()
+    if status == TABULAR_EXPORT_STATUS_COMPLETED:
+        return {
+            'success': True,
+            'resumed': False,
+            'submitted': False,
+            'message': 'Background export is already complete.',
+            'run': _build_run_public_status(run, settings=settings),
+        }
+    if status == TABULAR_EXPORT_STATUS_CANCELED:
+        return {
+            'success': False,
+            'resumed': False,
+            'submitted': False,
+            'message': 'Canceled background exports cannot be continued.',
+            'run': _build_run_public_status(run, settings=settings),
+        }
+    if status == TABULAR_EXPORT_STATUS_RUNNING and not _is_stale_running_run(run, settings):
+        return {
+            'success': True,
+            'resumed': False,
+            'submitted': False,
+            'message': 'Background export is already running.',
+            'run': _build_run_public_status(run, settings=settings),
+        }
+    if status == TABULAR_EXPORT_STATUS_FAILED and not _is_retryable_failed_run(run):
+        return {
+            'success': False,
+            'resumed': False,
+            'submitted': False,
+            'message': 'Background export cannot be continued because the last failure was not retryable.',
+            'run': _build_run_public_status(run, settings=settings),
+        }
+
+    now = _now_iso()
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_QUEUED,
+        'updated_at': now,
+        'completed_at': None,
+        'last_heartbeat_at': now,
+        'lease_holder_id': None,
+        'lease_expires_at': None,
+        'next_attempt_at': now,
+        'last_message': 'Manual resume queued; export will continue from completed checkpoints',
+        'transient_failure_count': 0,
+        'manual_resume_count': _safe_int(run.get('manual_resume_count')) + 1,
+        'last_manual_resume_at': now,
+    })
+    run = _upsert_run(run)
+    submitted = submit_tabular_generated_output_run(normalized_run_id, normalized_user_id)
+    run['submitted_to_executor'] = submitted
+    run = _upsert_run(run)
+    log_event(
+        '[Tabular Generated Output] Background export manually resumed',
+        {
+            'run_id': normalized_run_id,
+            'conversation_id': run.get('conversation_id'),
+            'user_id': normalized_user_id,
+            'completed_batches': run.get('completed_batches'),
+            'batch_count': run.get('batch_count'),
+            'processed_rows': run.get('processed_rows'),
+            'row_count': run.get('row_count'),
+            'submitted_to_executor': submitted,
+            'manual_resume_count': run.get('manual_resume_count'),
+        },
+        level=logging.INFO,
+    )
+    return {
+        'success': True,
+        'resumed': True,
+        'submitted': submitted,
+        'message': 'Background export was queued to continue from completed checkpoints.',
+        'run': _build_run_public_status(run, settings=settings),
+    }
 
 
 def _read_run(user_id, run_id):

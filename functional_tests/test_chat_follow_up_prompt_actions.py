@@ -1,11 +1,12 @@
 # test_chat_follow_up_prompt_actions.py
 """
 Functional test for chat follow-up prompt actions.
-Version: 0.241.047
-Implemented in: 0.241.047
+Version: 0.241.051
+Implemented in: 0.241.050
 
 This test ensures assistant next-step suggestions are rendered as prompt actions
-that stage text in the chat input with a cancelable send countdown.
+that stage text in the chat input with a cancelable send countdown, without
+duplicating the source suggestion text in the rendered assistant message.
 """
 
 import re
@@ -27,9 +28,15 @@ def test_chat_follow_up_prompt_actions_are_available():
     assert "function extractFollowUpSuggestionCandidates" in source
     assert "function extractQuestionFollowUpCandidates" in source
     assert "function normalizeFollowUpQuestionCandidate" in source
+    assert "const MAX_SUGGESTED_FOLLOW_UP_ACTIONS = 3" in source
+    assert "function buildFollowUpRenderModel" in source
+    assert "function stripSuggestedFollowUpSourceText" in source
+    assert "function findTrailingFollowUpTriggerLineIndex" in source
     assert "function renderSuggestedFollowUpButtons" in source
     assert "function stageFollowUpPrompt" in source
     assert "function startFollowUpAutoSendCountdown" in source
+    assert "followUpSuggestions: followUpRenderModel.suggestions" in source
+    assert "visibleMarkdown: stripSuggestedFollowUpSourceText(rawText)" in source
     assert "button.textContent = suggestion.label" in source
     assert "button.addEventListener('click'" in source
     assert "sendBtn.addEventListener('click', followUpAutoSendCancel, true)" in source
@@ -57,11 +64,22 @@ def test_chat_follow_up_prompt_buttons_render_after_message_text():
 
     source = CHAT_MESSAGES_JS.read_text(encoding="utf-8")
     render_call_pattern = re.compile(
-        r"chatbox\.appendChild\(messageDiv\);\s*// Append AI message\s*\n\s*renderSuggestedFollowUpButtons\(messageDiv, renderedAiContent\.previewMarkdown\);",
+        r"chatbox\.appendChild\(messageDiv\);\s*// Append AI message\s*\n\s*renderSuggestedFollowUpButtons\(messageDiv, renderedAiContent\.followUpSuggestions\);",
         re.MULTILINE,
     )
 
     assert render_call_pattern.search(source)
+
+
+def test_chat_inline_export_prompt_variants_are_recognized():
+    """Validate natural presentation/deck wording is included in export intent detection."""
+    print("Testing chat inline export prompt variants...")
+
+    source = CHAT_MESSAGES_JS.read_text(encoding="utf-8")
+
+    assert "create|make|generate|draft|write|prepare|compose|build|send|export|provide|turn|convert" in source
+    assert "slide deck|presentation deck|executive deck|board deck|deck|slides?" in source
+    assert "hasPresentationIntent && !hasPowerPointIntent" in source
 
 
 if __name__ == "__main__":
@@ -69,6 +87,7 @@ if __name__ == "__main__":
         test_chat_follow_up_prompt_actions_are_available,
         test_chat_follow_up_question_prompts_are_recognized,
         test_chat_follow_up_prompt_buttons_render_after_message_text,
+        test_chat_inline_export_prompt_variants_are_recognized,
     ]
     results = []
     for test in tests:

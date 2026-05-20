@@ -1,8 +1,8 @@
 # test_chat_inline_export_action_buttons.py
 """
 UI test for assistant inline export action buttons.
-Version: 0.241.033
-Implemented in: 0.241.033
+Version: 0.241.051
+Implemented in: 0.241.050
 
 This test ensures assistant replies show inline export buttons when the latest
 user prompt explicitly asks for a supported export format such as a
@@ -77,7 +77,7 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
     try:
         page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
         page.wait_for_selector("#chatbox")
-        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
+        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.extractSuggestedFollowUpPrompts === 'function'")
 
         page.evaluate(
             """
@@ -257,6 +257,44 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
                     },
                     true
                 );
+
+                messagesModule.appendMessage(
+                    'You',
+                    'Please provide a shorter 5-slide executive deck.',
+                    null,
+                    'user-deck-request',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'user-deck-request',
+                        role: 'user',
+                        content: 'Please provide a shorter 5-slide executive deck.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'Here is the deck-ready answer.',
+                    null,
+                    'assistant-deck-response',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-deck-response',
+                        role: 'assistant',
+                        content: 'Here is the deck-ready answer.',
+                    },
+                    true
+                );
             }
             """
         )
@@ -295,6 +333,12 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
         expect(markdown_actions.locator('button')).to_have_count(1)
         expect(markdown_actions.locator('button', has_text='Create Markdown Document')).to_be_visible()
 
+        deck_message = page.locator('[data-message-id="assistant-deck-response"]')
+        deck_actions = deck_message.locator('.inline-assistant-export-actions')
+        expect(deck_actions).to_be_visible()
+        expect(deck_actions.locator('button')).to_have_count(1)
+        expect(deck_actions.locator('button', has_text='Create PowerPoint Presentation')).to_be_visible()
+
         no_export_message = page.locator('[data-message-id="assistant-no-export-response"]')
         expect(no_export_message.locator('.inline-assistant-export-actions')).to_have_count(0)
     finally:
@@ -323,7 +367,7 @@ def test_streaming_assistant_reply_hides_export_actions_until_complete(playwrigh
     try:
         page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
         page.wait_for_selector("#chatbox")
-        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
+        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.extractSuggestedFollowUpPrompts === 'function'")
 
         page.evaluate(
             """

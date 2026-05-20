@@ -34,6 +34,10 @@ SOURCE_REVIEW_DEFAULTS = {
     "source_review_timeout_seconds": 20,
     "source_review_max_redirects": 3,
     "source_review_max_bytes_per_page": 2000000,
+    "deep_research_max_user_urls_per_turn": 10,
+    "deep_research_max_search_queries_per_turn": 3,
+    "deep_research_enable_query_planning": True,
+    "deep_research_enable_ledger_artifact": True,
     "source_review_enable_llm_planning": True,
     "source_review_allow_js_rendering": False,
     "source_review_js_load_more_clicks": 6,
@@ -60,6 +64,10 @@ SOURCE_REVIEW_HARD_LIMITS = {
     "max_llm_planner_excerpt_chars": 900,
     "max_llm_planner_response_tokens": 700,
     "max_js_load_more_clicks": 12,
+    "max_user_urls_per_turn": 100,
+    "max_search_queries_per_turn": 8,
+    "max_deep_research_query_chars": 220,
+    "max_deep_research_ledger_urls": 120,
 }
 
 SAFE_CONTENT_TYPES = (
@@ -252,6 +260,16 @@ def get_source_review_config(settings: Optional[Dict[str, Any]]) -> Dict[str, An
         0,
         SOURCE_REVIEW_HARD_LIMITS["max_js_load_more_clicks"],
     )
+    source_settings["deep_research_max_user_urls_per_turn"] = clamped_int(
+        "deep_research_max_user_urls_per_turn",
+        1,
+        SOURCE_REVIEW_HARD_LIMITS["max_user_urls_per_turn"],
+    )
+    source_settings["deep_research_max_search_queries_per_turn"] = clamped_int(
+        "deep_research_max_search_queries_per_turn",
+        1,
+        SOURCE_REVIEW_HARD_LIMITS["max_search_queries_per_turn"],
+    )
     source_settings["source_review_default_mode"] = str(
         source_settings.get("source_review_default_mode") or "manual"
     ).strip().lower()
@@ -270,6 +288,8 @@ def get_source_review_config(settings: Optional[Dict[str, Any]]) -> Dict[str, An
         "enable_source_review",
         "enable_deep_source_review",
         "source_review_enable_llm_planning",
+        "deep_research_enable_query_planning",
+        "deep_research_enable_ledger_artifact",
         "source_review_allow_js_rendering",
         "source_review_respect_robots_txt",
         "source_review_audit_logging",
@@ -277,6 +297,11 @@ def get_source_review_config(settings: Optional[Dict[str, Any]]) -> Dict[str, An
         source_settings[bool_key] = _coerce_bool(source_settings.get(bool_key))
 
     return source_settings
+
+
+def get_deep_research_config(settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return Deep Research settings clamped by the same safety ceilings as Source Review."""
+    return get_source_review_config(settings)
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -352,12 +377,18 @@ def extract_urls_from_text(text: str) -> List[str]:
     return urls
 
 
-def collect_source_review_seed_urls(user_message: str, web_search_citations: Optional[List[Dict[str, Any]]]) -> List[str]:
+def collect_source_review_seed_urls(
+    user_message: str,
+    web_search_citations: Optional[List[Dict[str, Any]]],
+    source_settings: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     """Collect source URLs from direct user URLs first, then web-search citations."""
     seed_urls = []
     seen_urls = set()
+    normalized_settings = get_source_review_config(source_settings or {}) if source_settings else get_source_review_config({})
+    direct_url_limit = normalized_settings.get("deep_research_max_user_urls_per_turn", 10)
 
-    for candidate_url in extract_urls_from_text(user_message):
+    for candidate_url in extract_urls_from_text(user_message)[:direct_url_limit]:
         if candidate_url not in seen_urls:
             seed_urls.append(candidate_url)
             seen_urls.add(candidate_url)
@@ -482,6 +513,277 @@ def compact_source_review_result_for_metadata(source_review_result: Optional[Dic
     }
 
 
+def build_deep_research_query_plan(
+    *,
+    settings: Dict[str, Any],
+    user_message: str,
+    base_query: Optional[str] = None,
+    planner_client: Optional[Any] = None,
+    planner_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Plan bounded web-search query variants from only the current user message."""
+    source_settings = get_deep_research_config(settings)
+    max_queries = source_settings["deep_research_max_search_queries_per_turn"]
+    normalized_base_query = _normalize_deep_research_query(base_query or user_message)
+    plan = {
+        "enabled": True,
+        "attempted": False,
+        "used_model_planner": False,
+        "max_queries": max_queries,
+        "queries": [],
+        "omitted_query_count": 0,
+        "reason": "",
+        "error": "",
+    }
+
+    if not normalized_base_query:
+        plan["enabled"] = False
+        plan["reason"] = "empty_query"
+        return plan
+
+    accepted_queries = []
+    seen_queries = set()
+
+    def append_query(candidate_query: Any, reason: str, source: str) -> bool:
+        normalized_query = _normalize_deep_research_query(candidate_query)
+        if not normalized_query:
+            return False
+        dedupe_key = normalized_query.lower()
+        if dedupe_key in seen_queries:
+            return False
+        seen_queries.add(dedupe_key)
+        accepted_queries.append({
+            "query": normalized_query,
+            "reason": str(reason or "").strip()[:300],
+            "source": source,
+        })
+        return True
+
+    append_query(normalized_base_query, "Original current-message web search", "base")
+
+    if max_queries > 1 and _should_use_deep_research_query_planner(source_settings, planner_client, planner_model):
+        plan["attempted"] = True
+        try:
+            planner_payload = _invoke_deep_research_query_planner(
+                planner_client=planner_client,
+                planner_model=str(planner_model or ""),
+                user_message=user_message,
+                max_queries=max_queries,
+            )
+            planned_queries = _extract_deep_research_planned_queries(planner_payload)
+            for planned_query in planned_queries:
+                if len(accepted_queries) >= max_queries:
+                    break
+                append_query(
+                    planned_query.get("query"),
+                    planned_query.get("reason") or "Model-planned Deep Research query",
+                    "model_planner",
+                )
+            plan["used_model_planner"] = any(query.get("source") == "model_planner" for query in accepted_queries)
+            plan["reason"] = str(planner_payload.get("reason") or "").strip()[:500]
+        except Exception as planner_error:
+            plan["error"] = str(planner_error)[:500]
+            log_event(
+                "[DeepResearch] Query planner failed; falling back to deterministic query variants.",
+                extra={"error": str(planner_error)[:500]},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+    for deterministic_query in _build_deterministic_deep_research_queries(user_message):
+        if len(accepted_queries) >= max_queries:
+            break
+        append_query(
+            deterministic_query.get("query"),
+            deterministic_query.get("reason") or "Deterministic Deep Research query",
+            "deterministic",
+        )
+
+    plan["queries"] = accepted_queries[:max_queries]
+    plan["omitted_query_count"] = max(0, len(accepted_queries) - max_queries)
+    return plan
+
+
+def build_deep_research_ledger(
+    *,
+    settings: Dict[str, Any],
+    user_message: str,
+    query_plan: Optional[Dict[str, Any]],
+    web_search_runs: Optional[List[Dict[str, Any]]],
+    web_search_citations: Optional[List[Dict[str, Any]]],
+    source_review_result: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build a compact research ledger for metadata and optional artifact upload."""
+    source_settings = get_deep_research_config(settings)
+    direct_urls = extract_urls_from_text(user_message)
+    direct_url_limit = source_settings["deep_research_max_user_urls_per_turn"]
+    source_result = source_review_result if isinstance(source_review_result, dict) else {}
+    pages = source_result.get("pages", []) if isinstance(source_result.get("pages"), list) else []
+    skipped = source_result.get("skipped", []) if isinstance(source_result.get("skipped"), list) else []
+    max_ledger_urls = SOURCE_REVIEW_HARD_LIMITS["max_deep_research_ledger_urls"]
+
+    discovered_citations = []
+    seen_discovered_urls = set()
+    for citation in web_search_citations or []:
+        if not isinstance(citation, dict):
+            continue
+        normalized_url, _reason = normalize_review_url(citation.get("url") or citation.get("href") or citation.get("link"))
+        if not normalized_url or normalized_url in seen_discovered_urls:
+            continue
+        seen_discovered_urls.add(normalized_url)
+        discovered_citations.append({
+            "url": normalized_url,
+            "title": str(citation.get("title") or normalized_url).strip()[:300],
+            "source": str(citation.get("source") or "web_search").strip()[:80],
+        })
+        if len(discovered_citations) >= max_ledger_urls:
+            break
+
+    reviewed_pages = []
+    for page in pages[:max_ledger_urls]:
+        if not isinstance(page, dict):
+            continue
+        reviewed_pages.append({
+            "url": page.get("url"),
+            "title": page.get("title"),
+            "published_date": page.get("published_date"),
+            "depth": page.get("depth"),
+            "source_type": page.get("source_type"),
+            "load_more_clicks_succeeded": page.get("load_more_clicks_succeeded"),
+        })
+
+    skipped_pages = []
+    for item in skipped[:max_ledger_urls]:
+        if not isinstance(item, dict):
+            continue
+        skipped_pages.append({
+            "url": item.get("url"),
+            "reason": item.get("reason") or item.get("status") or item.get("error"),
+            "depth": item.get("depth"),
+        })
+
+    return {
+        "enabled": bool(source_result.get("enabled") or query_plan or web_search_runs),
+        "mode": "deep_research",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "request": str(user_message or "")[:500],
+        "direct_urls": {
+            "count": len(direct_urls),
+            "limit": direct_url_limit,
+            "included": direct_urls[:direct_url_limit],
+            "omitted_count": max(0, len(direct_urls) - direct_url_limit),
+        },
+        "search_plan": query_plan or {},
+        "web_search_runs": list(web_search_runs or []),
+        "discovered_citations": discovered_citations,
+        "source_review": compact_source_review_result_for_metadata(source_result),
+        "reviewed_pages": reviewed_pages,
+        "skipped_pages": skipped_pages,
+        "coverage": source_result.get("coverage", {}) if isinstance(source_result.get("coverage"), dict) else {},
+    }
+
+
+def build_deep_research_ledger_markdown(ledger: Dict[str, Any]) -> str:
+    """Render the Deep Research ledger as plain Markdown for a chat artifact."""
+    if not isinstance(ledger, dict):
+        ledger = {}
+
+    lines = [
+        "# Deep Research Ledger",
+        "",
+        f"Created: {_ledger_text(ledger.get('created_at'))}",
+        f"Mode: {_ledger_text(ledger.get('mode') or 'deep_research')}",
+        "",
+        "## Request",
+        _ledger_text(ledger.get("request")),
+        "",
+        "## Direct URL Budget",
+    ]
+    direct_urls = ledger.get("direct_urls", {}) if isinstance(ledger.get("direct_urls"), dict) else {}
+    lines.extend([
+        f"Count: {int(direct_urls.get('count') or 0)}",
+        f"Limit: {int(direct_urls.get('limit') or 0)}",
+        f"Omitted: {int(direct_urls.get('omitted_count') or 0)}",
+        "",
+    ])
+    for url in direct_urls.get("included", []) or []:
+        lines.append(f"- {_ledger_text(url)}")
+
+    search_plan = ledger.get("search_plan", {}) if isinstance(ledger.get("search_plan"), dict) else {}
+    lines.extend(["", "## Search Queries"])
+    for index, query_item in enumerate(search_plan.get("queries", []) or [], start=1):
+        if not isinstance(query_item, dict):
+            continue
+        lines.append(f"{index}. {_ledger_text(query_item.get('query'))}")
+        reason = _ledger_text(query_item.get("reason"))
+        source = _ledger_text(query_item.get("source"))
+        if reason or source:
+            lines.append(f"   Source: {source or 'unknown'}; Reason: {reason or 'not provided'}")
+
+    lines.extend(["", "## Web Search Runs"])
+    for run in ledger.get("web_search_runs", []) or []:
+        if not isinstance(run, dict):
+            continue
+        status = "success" if run.get("success") else "partial_or_failed"
+        lines.append(f"- Query: {_ledger_text(run.get('query'))}")
+        lines.append(f"  Status: {status}; Discovered URLs: {int(run.get('new_seed_url_count') or 0)}")
+        if run.get("error"):
+            lines.append(f"  Error: {_ledger_text(run.get('error'))}")
+
+    coverage = ledger.get("coverage", {}) if isinstance(ledger.get("coverage"), dict) else {}
+    lines.extend([
+        "",
+        "## Source Review Coverage",
+        f"Reviewed pages: {int(coverage.get('pages_reviewed') or 0)}",
+        f"Skipped pages: {int(coverage.get('pages_skipped') or 0)}",
+        f"Seed pages: {int(coverage.get('seed_pages_reviewed') or 0)}",
+        f"Child pages: {int(coverage.get('child_pages_reviewed') or 0)}",
+        f"Load More clicks: {int(coverage.get('load_more_clicks_succeeded') or 0)}",
+        "",
+        "## Reviewed Pages",
+    ])
+    for page in ledger.get("reviewed_pages", []) or []:
+        if not isinstance(page, dict):
+            continue
+        title = _ledger_text(page.get("title") or page.get("url"))
+        lines.append(f"- {title}")
+        lines.append(f"  URL: {_ledger_text(page.get('url'))}")
+        if page.get("published_date"):
+            lines.append(f"  Published: {_ledger_text(page.get('published_date'))}")
+
+    lines.extend(["", "## Skipped Pages"])
+    skipped_pages = ledger.get("skipped_pages", []) or []
+    if skipped_pages:
+        for item in skipped_pages:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {_ledger_text(item.get('url'))}")
+            lines.append(f"  Reason: {_ledger_text(item.get('reason'))}")
+    else:
+        lines.append("No skipped pages were recorded.")
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def compact_deep_research_result_for_metadata(ledger: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return Deep Research ledger details suitable for assistant metadata."""
+    if not isinstance(ledger, dict):
+        return {}
+    return {
+        "enabled": ledger.get("enabled", False),
+        "mode": ledger.get("mode", "deep_research"),
+        "created_at": ledger.get("created_at"),
+        "direct_urls": ledger.get("direct_urls", {}),
+        "search_plan": ledger.get("search_plan", {}),
+        "web_search_runs": ledger.get("web_search_runs", []),
+        "discovered_citation_count": len(ledger.get("discovered_citations", []) or []),
+        "reviewed_page_count": len(ledger.get("reviewed_pages", []) or []),
+        "skipped_page_count": len(ledger.get("skipped_pages", []) or []),
+        "coverage": ledger.get("coverage", {}),
+        "ledger_artifact": ledger.get("ledger_artifact"),
+    }
+
+
 def perform_source_review(
     *,
     settings: Dict[str, Any],
@@ -535,7 +837,9 @@ async def perform_source_review_async(
         result["skipped_reason"] = "source_review_not_enabled_for_user"
         return result
 
-    seed_urls = collect_source_review_seed_urls(user_message, web_search_citations)
+    direct_user_urls = extract_urls_from_text(user_message)
+    direct_user_url_limit = source_settings["deep_research_max_user_urls_per_turn"]
+    seed_urls = collect_source_review_seed_urls(user_message, web_search_citations, source_settings)
     if not seed_urls:
         result["skipped_reason"] = "no_source_urls_available"
         return result
@@ -630,6 +934,9 @@ async def perform_source_review_async(
         "child_pages_skipped": child_pages_skipped,
         "max_depth_reviewed": max_depth_reviewed,
         "seed_url_count": len(seed_urls),
+        "direct_user_url_count": len(direct_user_urls),
+        "direct_user_url_limit": direct_user_url_limit,
+        "direct_user_urls_omitted": max(0, len(direct_user_urls) - direct_user_url_limit),
         "max_pages_per_turn": max_pages,
         "max_seed_pages_per_turn": max_seed_pages,
         "deep_source_review_enabled": bool(source_settings.get("enable_deep_source_review")),
@@ -1260,6 +1567,137 @@ def _prioritize_extracted_links(
         ranked_links.append((score, date_value, -original_index, link))
     ranked_links.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
     return [item[3] for item in ranked_links]
+
+
+def _normalize_deep_research_query(value: Any) -> str:
+    query = _clean_text(value)
+    if not query:
+        return ""
+    query = query.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    query = _clean_text(query)
+    max_chars = SOURCE_REVIEW_HARD_LIMITS["max_deep_research_query_chars"]
+    if len(query) > max_chars:
+        query = query[:max_chars].rsplit(" ", 1)[0] or query[:max_chars]
+    return query.strip()
+
+
+def _should_use_deep_research_query_planner(
+    source_settings: Dict[str, Any],
+    planner_client: Optional[Any],
+    planner_model: Optional[str],
+) -> bool:
+    return bool(
+        source_settings.get("deep_research_enable_query_planning")
+        and planner_client
+        and str(planner_model or "").strip()
+    )
+
+
+def _invoke_deep_research_query_planner(
+    *,
+    planner_client: Any,
+    planner_model: str,
+    user_message: str,
+    max_queries: int,
+) -> Dict[str, Any]:
+    planner_prompt = (
+        "You plan bounded Deep Research web searches. Use only the current user request provided in JSON. "
+        "Do not use or infer conversation history. Do not invent facts. Return JSON only with this schema: "
+        "{\"queries\":[{\"query\":\"short web search query\",\"reason\":\"why this helps\"}],\"reason\":\"short overall reason\"}. "
+        "Create diverse queries that prefer official sources, dated/source pages, RSS/sitemap/archive pages, and exact entity names. "
+        "Use site: filters only when the user explicitly names an organization, domain, or URL. "
+        "Keep each query concise and avoid sensitive or internal-looking text."
+    )
+    planner_payload = {
+        "user_request": str(user_message or "")[:1000],
+        "max_total_queries": max_queries,
+        "include_original_request_as_first_query": True,
+    }
+    response_text = _invoke_source_review_planner_model(
+        planner_client=planner_client,
+        planner_model=planner_model,
+        messages=[
+            {"role": "system", "content": planner_prompt},
+            {"role": "user", "content": json.dumps(planner_payload, ensure_ascii=False)},
+        ],
+    )
+    return _parse_json_object_from_text(response_text) or {}
+
+
+def _extract_deep_research_planned_queries(response_payload: Dict[str, Any]) -> List[Dict[str, str]]:
+    raw_queries = []
+    if isinstance(response_payload, dict):
+        raw_queries = response_payload.get("queries") or response_payload.get("search_queries") or []
+    if isinstance(raw_queries, str):
+        raw_queries = [raw_queries]
+
+    planned_queries = []
+    for item in raw_queries:
+        if isinstance(item, dict):
+            query = item.get("query") or item.get("search_query") or item.get("q")
+            reason = item.get("reason") or item.get("rationale") or ""
+        else:
+            query = item
+            reason = ""
+        normalized_query = _normalize_deep_research_query(query)
+        if not normalized_query:
+            continue
+        planned_queries.append({"query": normalized_query, "reason": str(reason or "")[:300]})
+    return planned_queries
+
+
+def _build_deterministic_deep_research_queries(user_message: str) -> List[Dict[str, str]]:
+    base_text = _normalize_deep_research_query(user_message)
+    if not base_text:
+        return []
+
+    text_without_urls = _clean_text(re.sub(r"https?://[^\s<>'\"]+", " ", str(user_message or "")))
+    fallback_subject = _normalize_deep_research_query(text_without_urls or base_text)
+    lower_text = base_text.lower()
+    queries = []
+
+    def add_query(query: str, reason: str) -> None:
+        normalized_query = _normalize_deep_research_query(query)
+        if not normalized_query:
+            return
+        if any(existing["query"].lower() == normalized_query.lower() for existing in queries):
+            return
+        queries.append({"query": normalized_query, "reason": reason})
+
+    for url in extract_urls_from_text(user_message):
+        hostname = urlparse(url).hostname or ""
+        if hostname:
+            add_query(
+                f"site:{hostname} {fallback_subject}",
+                "Search within a user-provided source domain.",
+            )
+
+    if any(token in lower_text for token in ("press release", "press releases", "news release", "announcement")):
+        add_query(
+            f"{fallback_subject} official press release",
+            "Prefer official release and newsroom pages.",
+        )
+        add_query(
+            f"{fallback_subject} newsroom archive",
+            "Find source archives, pagination, RSS, or dated release indexes.",
+        )
+
+    if any(token in lower_text for token in ("latest", "current", "recent", "newest", "today", "this week", "this month")):
+        add_query(
+            f"{fallback_subject} official latest news",
+            "Bias discovery toward current official source pages.",
+        )
+
+    add_query(
+        f"{fallback_subject} official source",
+        "Prefer official primary sources over syndicated summaries.",
+    )
+    return queries
+
+
+def _ledger_text(value: Any) -> str:
+    text = _clean_text(value)
+    return text.replace("<", "").replace(">", "")[:1000]
 
 
 def _plan_child_candidates_with_llm(
@@ -2098,6 +2536,10 @@ def _safe_config_summary(source_settings: Dict[str, Any]) -> Dict[str, Any]:
         "source_review_timeout_seconds": source_settings.get("source_review_timeout_seconds"),
         "source_review_max_redirects": source_settings.get("source_review_max_redirects"),
         "source_review_max_bytes_per_page": source_settings.get("source_review_max_bytes_per_page"),
+        "deep_research_max_user_urls_per_turn": source_settings.get("deep_research_max_user_urls_per_turn"),
+        "deep_research_max_search_queries_per_turn": source_settings.get("deep_research_max_search_queries_per_turn"),
+        "deep_research_enable_query_planning": source_settings.get("deep_research_enable_query_planning"),
+        "deep_research_enable_ledger_artifact": source_settings.get("deep_research_enable_ledger_artifact"),
         "source_review_enable_llm_planning": source_settings.get("source_review_enable_llm_planning"),
         "source_review_allow_js_rendering": source_settings.get("source_review_allow_js_rendering"),
         "source_review_js_load_more_clicks": source_settings.get("source_review_js_load_more_clicks"),

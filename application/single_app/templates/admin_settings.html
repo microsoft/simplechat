@@ -1080,11 +1080,6 @@
                                             <input type="number" class="form-control" id="document_action_analyze_chat_max_documents" name="document_action_analyze_chat_max_documents" min="2" max="300" value="{{ analyze_capability.chat_max_documents }}" />
                                         </div>
                                     </div>
-                                        <div class="col-md-4">
-                                            <label for="source_review_max_seed_pages_per_turn" class="form-label">Max Seed Pages per Turn</label>
-                                            <input type="number" min="1" max="10" class="form-control" id="source_review_max_seed_pages_per_turn" name="source_review_max_seed_pages_per_turn" value="{{ settings.source_review_max_seed_pages_per_turn or 3 }}">
-                                            <div class="form-text">Limits initial search-result pages so Deep Source Review keeps budget for child source pages.</div>
-                                        </div>
                                     <div class="d-flex justify-content-between small text-muted">
                                         <span>2</span>
                                         <span>300</span>
@@ -5403,10 +5398,10 @@
 
                 <div class="card p-3 mb-3" id="source-review-section">
                     <div class="d-flex align-items-center justify-content-between mb-2">
-                        <h5 class="mb-0"><i class="bi bi-link-45deg me-2"></i>Source Review</h5>
+                        <h5 class="mb-0"><i class="bi bi-binoculars me-2"></i>Deep Research</h5>
                         <span class="badge text-bg-secondary">Optional</span>
                     </div>
-                    <p class="text-muted mb-2">Review specific source pages and, when enabled, follow a bounded set of relevant links from source indexes.</p>
+                    <p class="text-muted mb-2">Plan bounded web searches, inspect source pages, and keep an internal research ledger for evidence coverage.</p>
                     <div class="form-check form-switch mb-3">
                         <input
                             type="checkbox"
@@ -5415,7 +5410,7 @@
                             name="enable_source_review"
                             {% if settings.enable_source_review %}checked{% endif %}
                         >
-                        <label class="form-check-label ms-2" for="enable_source_review">Enable Source Review for chat</label>
+                        <label class="form-check-label ms-2" for="enable_source_review">Enable Deep Research for chat</label>
                     </div>
 
                     <div id="source_review_settings" class="{% if not settings.enable_source_review %}d-none{% endif %}">
@@ -5439,6 +5434,21 @@
                                 <div class="form-text">Hard limit: 10 pages.</div>
                             </div>
                             <div class="col-md-4">
+                                <label for="source_review_max_seed_pages_per_turn" class="form-label">Max Seed Pages per Turn</label>
+                                <input type="number" min="1" max="10" class="form-control" id="source_review_max_seed_pages_per_turn" name="source_review_max_seed_pages_per_turn" value="{{ settings.source_review_max_seed_pages_per_turn or 3 }}">
+                                <div class="form-text">Limits initial search-result and direct URL pages so budget remains for child pages.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="deep_research_max_user_urls_per_turn" class="form-label">Max User URLs per Turn</label>
+                                <input type="number" min="1" max="100" class="form-control" id="deep_research_max_user_urls_per_turn" name="deep_research_max_user_urls_per_turn" value="{{ settings.deep_research_max_user_urls_per_turn or 10 }}">
+                                <div class="form-text">Direct URLs beyond this cap are recorded as omitted in the ledger.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="deep_research_max_search_queries_per_turn" class="form-label">Max Search Queries per Turn</label>
+                                <input type="number" min="1" max="8" class="form-control" id="deep_research_max_search_queries_per_turn" name="deep_research_max_search_queries_per_turn" value="{{ settings.deep_research_max_search_queries_per_turn or 3 }}">
+                                <div class="form-text">Includes the original current-message query.</div>
+                            </div>
+                            <div class="col-md-4">
                                 <label for="source_review_timeout_seconds" class="form-label">Timeout per Turn</label>
                                 <input type="number" min="3" max="30" class="form-control" id="source_review_timeout_seconds" name="source_review_timeout_seconds" value="{{ settings.source_review_timeout_seconds or 20 }}">
                                 <div class="form-text">Hard limit: 30 seconds.</div>
@@ -5454,9 +5464,9 @@
                                 <div class="form-text">Hard limit: 5 MB.</div>
                             </div>
                             <div class="col-md-4">
-                                <label for="source_review_max_depth" class="form-label">Deep Review Depth</label>
-                                <input type="number" min="0" max="1" class="form-control" id="source_review_max_depth" name="source_review_max_depth" value="{{ settings.source_review_max_depth if settings.source_review_max_depth is not none else 1 }}">
-                                <div class="form-text">Depth 1 follows selected links from seed pages.</div>
+                                <label for="source_review_max_depth" class="form-label">Source Traversal Depth</label>
+                                <input type="number" min="0" max="2" class="form-control" id="source_review_max_depth" name="source_review_max_depth" value="{{ settings.source_review_max_depth if settings.source_review_max_depth is not none else 2 }}">
+                                <div class="form-text">Depth 2 follows selected links from seed and child pages.</div>
                             </div>
                         </div>
 
@@ -5470,9 +5480,35 @@
                                         name="enable_deep_source_review"
                                         {% if settings.enable_deep_source_review %}checked{% endif %}
                                     >
-                                    <label class="form-check-label ms-2" for="enable_deep_source_review">Enable Deep Source Review</label>
+                                    <label class="form-check-label ms-2" for="enable_deep_source_review">Inspect linked source pages</label>
                                 </div>
-                                <div id="source_review_deep_settings" class="form-text {% if not settings.enable_deep_source_review %}d-none{% endif %}">Deep review follows only scored, policy-approved links within the page and depth budgets.</div>
+                                <div id="source_review_deep_settings" class="form-text {% if not settings.enable_deep_source_review %}d-none{% endif %}">Deep Research follows only scored, policy-approved links within the page and depth budgets.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="deep_research_enable_query_planning"
+                                        name="deep_research_enable_query_planning"
+                                        {% if settings.deep_research_enable_query_planning %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label ms-2" for="deep_research_enable_query_planning">Plan multiple web search queries</label>
+                                </div>
+                                <div class="form-text">The selected chat model can propose bounded current-message-only query variants before page review.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="deep_research_enable_ledger_artifact"
+                                        name="deep_research_enable_ledger_artifact"
+                                        {% if settings.deep_research_enable_ledger_artifact %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label ms-2" for="deep_research_enable_ledger_artifact">Save research ledger artifacts</label>
+                                </div>
+                                <div class="form-text">Creates a Markdown chat artifact with search queries, reviewed sources, skipped URLs, and coverage.</div>
                             </div>
                             <div class="col-md-6">
                                 <div class="form-check form-switch mb-2">
@@ -5483,9 +5519,9 @@
                                         name="source_review_enable_llm_planning"
                                         {% if settings.source_review_enable_llm_planning %}checked{% endif %}
                                     >
-                                    <label class="form-check-label ms-2" for="source_review_enable_llm_planning">Use model-assisted link planning</label>
+                                    <label class="form-check-label ms-2" for="source_review_enable_llm_planning">Use model-assisted source link planning</label>
                                 </div>
-                                <div class="form-text">When Deep Source Review has candidate links, the selected chat model can rank those candidates before the server fetches them.</div>
+                                <div class="form-text">When source pages expose candidate links, the selected chat model can rank those candidates before the server fetches them.</div>
                             </div>
                             <div class="col-md-6">
                                 <div class="form-check form-switch mb-2">
@@ -5499,6 +5535,11 @@
                                     <label class="form-check-label ms-2" for="source_review_allow_js_rendering">Allow JavaScript rendering fallback</label>
                                 </div>
                                 <div class="form-text">Requires Playwright browser runtime support on the app host.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="source_review_js_load_more_clicks" class="form-label">Rendered Load More Clicks</label>
+                                <input type="number" min="0" max="12" class="form-control" id="source_review_js_load_more_clicks" name="source_review_js_load_more_clicks" value="{{ settings.source_review_js_load_more_clicks if settings.source_review_js_load_more_clicks is not none else 6 }}">
+                                <div class="form-text">When JavaScript rendering is enabled, Deep Research can click visible Load More controls until this cap is reached.</div>
                             </div>
                             <div class="col-md-6">
                                 <div class="form-check form-switch mb-2">
@@ -5521,7 +5562,7 @@
                                         name="source_review_audit_logging"
                                         {% if settings.source_review_audit_logging %}checked{% endif %}
                                     >
-                                    <label class="form-check-label ms-2" for="source_review_audit_logging">Log Source Review activity</label>
+                                    <label class="form-check-label ms-2" for="source_review_audit_logging">Log Deep Research activity</label>
                                 </div>
                             </div>
                         </div>
@@ -5594,11 +5635,6 @@
                     <div>
                         
                         <div id="non_apim_ai_search_settings" {% if settings.enable_ai_search_apim %}style="display: none;"{% endif %}>
-                            <div class="col-md-6">
-                                <label for="source_review_js_load_more_clicks" class="form-label">Rendered Load More Clicks</label>
-                                <input type="number" min="0" max="12" class="form-control" id="source_review_js_load_more_clicks" name="source_review_js_load_more_clicks" value="{{ settings.source_review_js_load_more_clicks if settings.source_review_js_load_more_clicks is not none else 6 }}">
-                                <div class="form-text">When JavaScript rendering is enabled, Source Review can click visible Load More controls until the date range is visible, no new content appears, or this cap is reached.</div>
-                            </div>
                             <div class="mb-3">
                                 <label for="azure_ai_search_endpoint" class="form-label">Search Endpoint</label>
                                 <input

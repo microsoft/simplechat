@@ -194,14 +194,25 @@ const INLINE_ASSISTANT_EXPORT_ACTIONS_BY_NAME = Object.freeze(
 );
 
 const INLINE_ASSISTANT_EXPORT_ACTION_ORDER = ['powerpoint', 'word', 'markdown', 'email'];
-const INLINE_ASSISTANT_EXPORT_VERB_PATTERN = /\b(create|make|generate|draft|write|prepare|compose|build|send|export)\b/i;
+const INLINE_ASSISTANT_EXPORT_VERB_PATTERN = /\b(create|make|generate|draft|write|prepare|compose|build|send|export|provide|turn|convert)\b/i;
 const INLINE_ASSISTANT_EXPORT_PATTERNS = Object.freeze({
-  powerpoint: /\b(powerpoint|pptx|slide deck|slides?)\b/i,
+  powerpoint: /\b(powerpoint|pptx|slide deck|presentation deck|executive deck|board deck|deck|slides?)\b/i,
   presentation: /\bpresentation\b/i,
   word: /\b(word document|word doc|docx|microsoft word|word file)\b|\b(?:in|as)\s+word\b/i,
   markdown: /\b(markdown|markdown document|\.md|md file)\b/i,
   email: /\b(e-?mail|email)\b/i,
 });
+const MAX_SUGGESTED_FOLLOW_UP_ACTIONS = 3;
+const FOLLOW_UP_TRIGGER_PATTERNS = Object.freeze([
+  /if\s+you\s+want[,\s]/i,
+  /do\s+you\s+want\s+me\s+to/i,
+  /i\s+can\s+(?:also\s+)?(?:do|create|give|build|prepare|provide)/i,
+  /next\s+step/i,
+  /would\s+you\s+like\b/i,
+  /which\s+format\s+do\s+you\s+want/i,
+  /suggested\s+(?:follow[-\s]?ups|prompts|next\s+steps|actions)/i,
+  /follow[-\s]?up\s+(?:options|questions|prompts)/i,
+]);
 
 function getSelectedDocumentIds() {
   const docSel = document.getElementById('document-select');
@@ -2085,7 +2096,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   }
 
   export function renderAiMessageContent(messageContent) {
-    let cleaned = stripInlineAzureMapsBlocks(messageContent).trim().replace(/\n{3,}/g, "\n\n");
+    const followUpRenderModel = buildFollowUpRenderModel(messageContent);
+    let cleaned = stripInlineAzureMapsBlocks(followUpRenderModel.visibleMarkdown).trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
@@ -2101,6 +2113,23 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       htmlContent: addTargetBlankToExternalLinks(htmlWithCharts),
       copyMarkdown: restoreInlineChartTokens(withInlineCitations, chartExtraction.blocks),
       previewMarkdown: chartExtraction.markdown,
+      followUpSuggestions: followUpRenderModel.suggestions,
+    };
+  }
+
+  function buildFollowUpRenderModel(markdownText) {
+    const rawText = String(markdownText || '');
+    const suggestions = extractSuggestedFollowUpPrompts(rawText);
+    if (!suggestions.length) {
+      return {
+        visibleMarkdown: rawText,
+        suggestions,
+      };
+    }
+
+    return {
+      visibleMarkdown: stripSuggestedFollowUpSourceText(rawText),
+      suggestions,
     };
   }
 
@@ -2140,27 +2169,54 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       });
     });
 
-    return suggestions.slice(0, 3);
+    return suggestions.slice(0, MAX_SUGGESTED_FOLLOW_UP_ACTIONS);
   }
 
   function findFollowUpTriggerIndex(text) {
-    const triggers = [
-      /if\s+you\s+want[,\s]/i,
-      /do\s+you\s+want\s+me\s+to/i,
-      /i\s+can\s+(?:also\s+)?(?:do|create|give|build|prepare|provide)/i,
-      /next\s+step/i,
-      /would\s+you\s+like\b/i,
-      /which\s+format\s+do\s+you\s+want/i,
-      /suggested\s+(?:follow[-\s]?ups|prompts|next\s+steps|actions)/i,
-      /follow[-\s]?up\s+(?:options|questions|prompts)/i,
-    ];
-    const indexes = triggers
+    const indexes = FOLLOW_UP_TRIGGER_PATTERNS
       .map(pattern => {
         const match = pattern.exec(text);
         return match ? match.index : -1;
       })
       .filter(index => index >= 0);
     return indexes.length ? Math.min(...indexes) : -1;
+  }
+
+  function stripSuggestedFollowUpSourceText(markdownText) {
+    const normalizedText = String(markdownText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalizedText.split('\n');
+    const triggerLineIndex = findTrailingFollowUpTriggerLineIndex(lines);
+    if (triggerLineIndex < 0) {
+      return markdownText;
+    }
+
+    const visibleLines = lines.slice(0, triggerLineIndex);
+    while (visibleLines.length && !String(visibleLines[visibleLines.length - 1] || '').trim()) {
+      visibleLines.pop();
+    }
+
+    return visibleLines.join('\n').trimEnd();
+  }
+
+  function findTrailingFollowUpTriggerLineIndex(lines) {
+    let inCodeBlock = false;
+    const trailingStartIndex = Math.max(0, lines.length - 18);
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = String(lines[index] || '');
+      if (line.trim().startsWith('```')) {
+        inCodeBlock = !inCodeBlock;
+        continue;
+      }
+      if (inCodeBlock || index < trailingStartIndex) {
+        continue;
+      }
+      if (FOLLOW_UP_TRIGGER_PATTERNS.some(pattern => pattern.test(line))) {
+        return index;
+      }
+    }
+
+    return -1;
   }
 
   function extractFollowUpSuggestionCandidates(text) {
@@ -2275,8 +2331,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return `Please ${trimmedSuggestion.charAt(0).toLowerCase()}${trimmedSuggestion.slice(1)}.`;
   }
 
-  function renderSuggestedFollowUpButtons(messageDiv, markdownText) {
-    const suggestions = extractSuggestedFollowUpPrompts(markdownText);
+  function renderSuggestedFollowUpButtons(messageDiv, suggestedPrompts) {
+    const suggestions = Array.isArray(suggestedPrompts)
+      ? suggestedPrompts.slice(0, MAX_SUGGESTED_FOLLOW_UP_ACTIONS)
+      : extractSuggestedFollowUpPrompts(suggestedPrompts);
     if (!suggestions.length) {
       return;
     }
@@ -2619,7 +2677,12 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return 0;
   }
 
-  function formatGeneratedOutputStatusLabel(status) {
+  function formatGeneratedOutputStatusLabel(status, outputMetadata = null) {
+    const explicitLabel = String(outputMetadata?.status_label || '').trim();
+    if (explicitLabel) {
+      return explicitLabel;
+    }
+
     const normalizedStatus = String(status || '').trim().toLowerCase();
     if (normalizedStatus === 'completed') {
       return 'Complete';
@@ -2635,6 +2698,80 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     return 'Queued';
+  }
+
+  function getGeneratedOutputStatusBadgeClass(outputMetadata) {
+    const statusTone = String(outputMetadata?.status_tone || '').trim().toLowerCase();
+    if (statusTone === 'success') {
+      return 'badge text-bg-success';
+    }
+    if (statusTone === 'warning') {
+      return 'badge text-bg-warning';
+    }
+    if (statusTone === 'danger') {
+      return 'badge text-bg-danger';
+    }
+    if (statusTone === 'secondary') {
+      return 'badge text-bg-secondary';
+    }
+    return 'badge text-bg-info';
+  }
+
+  function formatGeneratedOutputTimestamp(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+      return '';
+    }
+    const parsedDate = new Date(normalizedValue);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return normalizedValue;
+    }
+    return parsedDate.toLocaleString();
+  }
+
+  function formatGeneratedOutputDuration(seconds) {
+    const normalizedSeconds = Number.parseInt(seconds, 10);
+    if (!Number.isFinite(normalizedSeconds) || normalizedSeconds < 0) {
+      return '';
+    }
+    if (normalizedSeconds < 60) {
+      return '<1 min';
+    }
+
+    const totalMinutes = Math.max(1, Math.round(normalizedSeconds / 60));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (!hours) {
+      return `${totalMinutes} min`;
+    }
+    if (!minutes) {
+      return `${hours} hr`;
+    }
+    return `${hours} hr ${minutes} min`;
+  }
+
+  function getBackgroundGeneratedOutputContinueLabel(outputMetadata) {
+    if (outputMetadata?.waiting_for_retry) {
+      return 'Continue Now';
+    }
+    return 'Continue';
+  }
+
+  function canContinueBackgroundGeneratedOutput(outputMetadata) {
+    return Boolean(outputMetadata?.background_export && outputMetadata?.can_resume);
+  }
+
+  function updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata) {
+    if (!(continueButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const canContinue = canContinueBackgroundGeneratedOutput(outputMetadata);
+    continueButton.classList.toggle('d-none', !canContinue);
+    continueButton.disabled = !canContinue;
+    if (continueButton.dataset.busy !== 'true') {
+      continueButton.textContent = getBackgroundGeneratedOutputContinueLabel(outputMetadata);
+    }
   }
 
   function formatGeneratedTabularPreviewValue(value, maxLength = 120) {
@@ -3030,22 +3167,21 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   }
 
   function updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata) {
-    const statusLabel = formatGeneratedOutputStatusLabel(outputMetadata?.status);
+    const statusLabel = formatGeneratedOutputStatusLabel(outputMetadata?.status, outputMetadata);
     const completedBatches = Number.parseInt(outputMetadata?.completed_batches, 10);
     const batchCount = Number.parseInt(outputMetadata?.batch_count, 10);
     const processedRows = Number.parseInt(outputMetadata?.processed_rows, 10);
     const rowCount = Number.parseInt(outputMetadata?.row_count, 10);
+    const transientFailureCount = Number.parseInt(outputMetadata?.transient_failure_count, 10);
+    const manualResumeCount = Number.parseInt(outputMetadata?.manual_resume_count, 10);
+    const retryDelaySeconds = Number.parseInt(outputMetadata?.retry_delay_seconds, 10);
+    const estimatedRemainingSeconds = Number.parseInt(outputMetadata?.estimated_remaining_seconds, 10);
     const progressPercent = calculateGeneratedOutputProgress(outputMetadata);
     const progressPercentLabel = `${Math.round(progressPercent)}%`;
 
     if (statusElements.statusBadge) {
       statusElements.statusBadge.textContent = statusLabel;
-      statusElements.statusBadge.className = 'badge text-bg-info';
-      if (String(outputMetadata?.status || '').toLowerCase() === 'completed') {
-        statusElements.statusBadge.className = 'badge text-bg-success';
-      } else if (String(outputMetadata?.status || '').toLowerCase() === 'failed') {
-        statusElements.statusBadge.className = 'badge text-bg-danger';
-      }
+      statusElements.statusBadge.className = getGeneratedOutputStatusBadgeClass(outputMetadata);
     }
 
     if (statusElements.progressBar) {
@@ -3055,11 +3191,42 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     const detailParts = [];
-    if (Number.isFinite(completedBatches) && Number.isFinite(batchCount) && batchCount > 0) {
-      detailParts.push(`${completedBatches.toLocaleString()} of ${batchCount.toLocaleString()} batches`);
+    const statusDetail = String(outputMetadata?.status_detail || outputMetadata?.last_message || '').trim();
+    if (statusDetail) {
+      detailParts.push(statusDetail);
     }
-    if (Number.isFinite(processedRows) && Number.isFinite(rowCount) && rowCount > 0) {
-      detailParts.push(`${processedRows.toLocaleString()} of ${rowCount.toLocaleString()} rows`);
+
+    const checkpointSummary = String(outputMetadata?.checkpoint_summary || '').trim();
+    if (checkpointSummary) {
+      detailParts.push(checkpointSummary);
+    } else if (Number.isFinite(completedBatches) && Number.isFinite(batchCount) && batchCount > 0) {
+      const checkpointParts = [`${completedBatches.toLocaleString()} of ${batchCount.toLocaleString()} batches`];
+      if (Number.isFinite(processedRows) && Number.isFinite(rowCount) && rowCount > 0) {
+        checkpointParts.push(`${processedRows.toLocaleString()} of ${rowCount.toLocaleString()} rows`);
+      }
+      detailParts.push(checkpointParts.join(', '));
+    }
+
+    if (outputMetadata?.waiting_for_retry) {
+      const nextAttempt = formatGeneratedOutputTimestamp(outputMetadata?.next_attempt_at);
+      const retryDelay = formatGeneratedOutputDuration(retryDelaySeconds);
+      if (nextAttempt && retryDelay) {
+        detailParts.push(`Next retry: ${nextAttempt} (${retryDelay})`);
+      } else if (nextAttempt) {
+        detailParts.push(`Next retry: ${nextAttempt}`);
+      }
+    } else if (Number.isFinite(estimatedRemainingSeconds) && estimatedRemainingSeconds > 0) {
+      const remainingDuration = formatGeneratedOutputDuration(estimatedRemainingSeconds);
+      if (remainingDuration) {
+        detailParts.push(`Estimated remaining: ${remainingDuration}`);
+      }
+    }
+
+    if (Number.isFinite(transientFailureCount) && transientFailureCount > 0) {
+      detailParts.push(`Transient retries: ${transientFailureCount.toLocaleString()}`);
+    }
+    if (Number.isFinite(manualResumeCount) && manualResumeCount > 0) {
+      detailParts.push(`Manual continues: ${manualResumeCount.toLocaleString()}`);
     }
 
     if (statusElements.detailText) {
@@ -3070,7 +3237,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     if (statusElements.updatedText) {
       const updatedAt = String(outputMetadata?.updated_at || outputMetadata?.created_at || '').trim();
-      statusElements.updatedText.textContent = updatedAt ? `Last update: ${updatedAt}` : '';
+      const heartbeatAt = String(outputMetadata?.last_heartbeat_at || '').trim();
+      const updatedParts = [];
+      const formattedUpdatedAt = formatGeneratedOutputTimestamp(updatedAt);
+      const formattedHeartbeatAt = formatGeneratedOutputTimestamp(heartbeatAt);
+      if (formattedUpdatedAt) {
+        updatedParts.push(`Last update: ${formattedUpdatedAt}`);
+      }
+      if (formattedHeartbeatAt && formattedHeartbeatAt !== formattedUpdatedAt) {
+        updatedParts.push(`Heartbeat: ${formattedHeartbeatAt}`);
+      }
+      statusElements.updatedText.textContent = updatedParts.join(' | ');
     }
   }
 
@@ -3163,6 +3340,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
 
       updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
+      updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
     } catch (error) {
       if (statusElements.detailText) {
         statusElements.detailText.textContent = error.message || 'Could not refresh export progress.';
@@ -3170,13 +3348,91 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
+  async function continueBackgroundGeneratedOutputRun(outputMetadata, card, statusElements = {}, continueButton = null) {
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+    if (!runId || !(card instanceof HTMLElement) || !document.body.contains(card)) {
+      return;
+    }
+
+    const originalButtonText = continueButton?.textContent || 'Continue';
+    if (continueButton) {
+      continueButton.dataset.busy = 'true';
+      continueButton.disabled = true;
+      continueButton.textContent = 'Continuing...';
+    }
+
+    try {
+      const response = await fetch(`/api/tabular/generated-output/runs/${encodeURIComponent(runId)}/resume`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        delete continueButton.dataset.busy;
+        throw new Error(responseData?.message || responseData?.error || `Server responded with status ${response.status}`);
+      }
+
+      const runStatus = responseData?.run || {};
+      const generatedArtifact = runStatus?.generated_artifact || null;
+      Object.assign(outputMetadata, runStatus, {
+        export_run_id: runStatus.run_id || runId,
+        run_id: runStatus.run_id || runId,
+        background_export: String(runStatus.status || '').toLowerCase() !== 'completed' || !generatedArtifact,
+      });
+
+      if (String(runStatus.status || '').toLowerCase() === 'completed' && generatedArtifact) {
+        Object.assign(outputMetadata, generatedArtifact, {
+          background_export: false,
+          status: 'completed',
+          export_run_id: runStatus.run_id || runId,
+          run_id: runStatus.run_id || runId,
+        });
+        const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+        card.replaceWith(refreshedCard);
+        showToast(responseData?.message || 'Background export is already complete.', 'success');
+        return;
+      }
+
+      updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
+      updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
+      scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, statusElements);
+      showToast(responseData?.message || 'Background export was queued to continue.', 'success');
+    } catch (error) {
+      if (statusElements.detailText) {
+        statusElements.detailText.textContent = error.message || 'Could not continue background export.';
+      }
+      showToast(error.message || 'Could not continue background export.', 'danger');
+    } finally {
+      if (continueButton) {
+        continueButton.textContent = originalButtonText;
+        updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
+      }
+    }
+  }
+
+  function shouldPollBackgroundGeneratedOutput(outputMetadata) {
+    if (!outputMetadata?.background_export) {
+      return false;
+    }
+
+    const status = String(outputMetadata?.status || '').trim().toLowerCase();
+    if (status === 'completed' || status === 'canceled') {
+      return false;
+    }
+    if (status === 'failed' && !outputMetadata?.retryable_failure) {
+      return false;
+    }
+    return true;
+  }
+
   function scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, statusElements = {}) {
     if (!(card instanceof HTMLElement) || card.dataset.backgroundExportPolling === 'true') {
       return;
     }
 
-    const status = String(outputMetadata?.status || '').trim().toLowerCase();
-    if (!outputMetadata?.background_export || status === 'completed' || status === 'failed' || status === 'canceled') {
+    if (!shouldPollBackgroundGeneratedOutput(outputMetadata)) {
       return;
     }
 
@@ -3184,13 +3440,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const pollOnce = async () => {
       card.dataset.backgroundExportPolling = 'false';
       await refreshBackgroundGeneratedOutputStatus(outputMetadata, card, statusElements);
-      const currentStatus = String(outputMetadata?.status || '').trim().toLowerCase();
       if (
         document.body.contains(card)
-        && outputMetadata?.background_export
-        && currentStatus !== 'completed'
-        && currentStatus !== 'failed'
-        && currentStatus !== 'canceled'
+        && shouldPollBackgroundGeneratedOutput(outputMetadata)
       ) {
         setTimeout(() => scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, statusElements), 10000);
       }
@@ -3296,6 +3548,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     actions.className = 'd-flex flex-wrap gap-2 mt-3';
 
     if (outputMetadata?.background_export) {
+      const continueButton = document.createElement('button');
+      continueButton.type = 'button';
+      continueButton.className = 'btn btn-sm btn-outline-primary generated-tabular-continue-btn d-none';
+      continueButton.textContent = 'Continue';
+      continueButton.addEventListener('click', async () => {
+        await continueBackgroundGeneratedOutputRun(outputMetadata, card, backgroundStatusElements || {}, continueButton);
+      });
+      if (backgroundStatusElements) {
+        backgroundStatusElements.continueButton = continueButton;
+      }
+      updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
+      actions.appendChild(continueButton);
+
       const refreshStatusButton = document.createElement('button');
       refreshStatusButton.type = 'button';
       refreshStatusButton.className = 'btn btn-sm btn-outline-secondary generated-tabular-refresh-status-btn';
@@ -3750,7 +4015,7 @@ export function appendMessage(
       messageDiv.dataset.messageComplete = 'false';
     }
     chatbox.appendChild(messageDiv); // Append AI message
-    renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.previewMarkdown);
+    renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     
     // Auto-play TTS if enabled (only for new messages, not when loading history)
@@ -4805,8 +5070,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const finalGroupId = finalGroupIds[0] || group_id || null;
   const webSearchToggle = document.getElementById('search-web-btn');
   const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains('active') : false;
-  const sourceReviewToggle = document.getElementById('source-review-btn');
-  const sourceReviewEnabled = sourceReviewToggle ? sourceReviewToggle.classList.contains('active') : false;
+  const deepResearchToggle = document.getElementById('source-review-btn');
+  const deepResearchEnabled = deepResearchToggle ? deepResearchToggle.classList.contains('active') : false;
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
   const selectedTags = getSelectedTags();
   const documentActionType = hybridSearchEnabled ? getDocumentActionType() : DOCUMENT_ACTION_NONE;
@@ -4838,7 +5103,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
     web_search_enabled: webSearchEnabled,
-    source_review_enabled: sourceReviewEnabled,
+    source_review_enabled: deepResearchEnabled,
+    deep_research_enabled: deepResearchEnabled,
     selected_document_id: selectedDocumentId,
     selected_document_ids: selectedDocumentIds,
     classifications: null,
@@ -4897,8 +5163,8 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'image_generation'
     : hasAgentTarget
     ? 'agent'
-    : messageData.source_review_enabled
-    ? 'source_review'
+    : messageData.deep_research_enabled || messageData.source_review_enabled
+    ? 'deep_research'
     : messageData.web_search_enabled
     ? 'web_search'
     : messageData.hybrid_search

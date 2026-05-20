@@ -5,7 +5,7 @@ from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
-from functions_source_review import is_source_review_enabled_for_user
+from functions_source_review import get_deep_research_config, is_source_review_enabled_for_user
 from functions_documents import *
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
 from functions_group_agents import get_group_agents
@@ -277,6 +277,9 @@ def register_route_frontend_chats(app):
         public_settings['enable_deep_source_review'] = bool(
             source_review_enabled_for_user and settings.get('enable_deep_source_review', False)
         )
+        deep_research_config = get_deep_research_config(settings)
+        public_settings['deep_research_max_user_urls_per_turn'] = deep_research_config.get('deep_research_max_user_urls_per_turn')
+        public_settings['deep_research_max_search_queries_per_turn'] = deep_research_config.get('deep_research_max_search_queries_per_turn')
         enable_user_feedback = public_settings.get("enable_user_feedback", False)
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
         enable_document_classification = public_settings.get("enable_document_classification", False)

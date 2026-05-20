@@ -2,6 +2,8 @@
 
 Implemented in version: **0.241.046**
 
+Updated through version: **0.241.050**
+
 ## Overview
 
 Large tabular generated outputs can now continue outside the chat request when the export is too large to complete safely inline. This keeps chat and workflow requests responsive while a background worker processes structured JSON or CSV output in checkpointed batches.
@@ -27,10 +29,13 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Each completed model batch is checkpointed as an output blob.
 - Cosmos stores compact run metadata, progress counts, retry state, and final artifact metadata.
 - The background scheduler claims queued runs with optimistic status updates and resumes from checkpointed output batches.
+- Users can manually continue resumable failed or stale runs from the existing checkpoints without restarting completed batches.
+- Run status includes safe user-facing status detail, checkpoint summaries, retry timing, heartbeat state, and continuation availability.
 
 ### API Endpoints
 
 - `GET /api/tabular/generated-output/runs/<run_id>` returns the current user's public-safe run status.
+- `POST /api/tabular/generated-output/runs/<run_id>/resume` requeues a resumable run for the current user.
 
 ### Configuration Options
 
@@ -49,7 +54,9 @@ If settings are absent, conservative defaults are used.
 
 ## Usage Instructions
 
-Users continue requesting tabular structured output in chat or workflows. For smaller exports, the file is attached during the response. For larger exports, the assistant message shows a background progress card and the final download appears when processing completes.
+Users continue requesting tabular structured output in chat or workflows. For smaller exports, the file is attached during the response. For larger exports, the assistant message shows a background progress card and the final download appears when processing completes. If a resumable run stops after a transient infrastructure failure, the card shows a Continue action that queues the same run to resume from completed checkpoints.
+
+The progress card displays current status, completed checkpoint counts, processed row counts, estimated remaining time, scheduled retry time, transient retry count, manual continuation count, last update time, and heartbeat time when available.
 
 ## Testing and Validation
 
@@ -62,12 +69,14 @@ Users continue requesting tabular structured output in chat or workflows. For sm
 - The request only stages durable input and queues work for oversized exports.
 - Background processing writes each completed batch before moving on, allowing the run to resume after worker restarts.
 - The run status API returns compact metadata only, not source rows or generated batch content.
+- User-facing status details are derived from run metadata instead of displaying raw backend errors in the progress card.
 
 ## Known Limitations
 
 - Background runs still depend on configured background scheduler capacity and available Azure OpenAI throughput.
 - Completion appears through status polling or on the next chat reload; no push notification is added in this version.
+- Manual continuation only applies to retryable failures or stale running leases; hard validation failures remain terminal.
 
 ## Related Version Updates
 
-- `application/single_app/config.py` was updated to version **0.241.046**.
+- `application/single_app/config.py` was updated to version **0.241.050** for status-detail improvements.

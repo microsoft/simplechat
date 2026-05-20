@@ -1,11 +1,11 @@
 # test_admin_source_review_settings.py
 """
-UI test for Source Review admin settings.
-Version: 0.241.046
-Implemented in: 0.241.041
+UI test for Deep Research admin settings.
+Version: 0.241.051
+Implemented in: 0.241.051
 
-This test ensures the Search & Extract admin tab exposes Source Review controls,
-including bounded review settings, deep review, model planning, and domain/user
+This test ensures the Search & Extract admin tab exposes Deep Research controls,
+including bounded review settings, query planning, ledger artifacts, and domain/user
 policy fields.
 """
 
@@ -21,7 +21,7 @@ ADMIN_STORAGE_STATE = os.getenv("SIMPLECHAT_UI_ADMIN_STORAGE_STATE", "")
 
 @pytest.mark.ui
 def test_admin_source_review_settings():
-    """Validate admins can see and toggle Source Review settings."""
+    """Validate admins can see and toggle Deep Research settings."""
     if not BASE_URL:
         pytest.skip("Set SIMPLECHAT_UI_BASE_URL to run this UI test.")
     if not ADMIN_STORAGE_STATE or not Path(ADMIN_STORAGE_STATE).exists():
@@ -52,6 +52,7 @@ def test_admin_source_review_settings():
 
         source_review_section = page.locator("#source-review-section")
         expect(source_review_section).to_be_visible()
+        expect(source_review_section).to_contain_text("Deep Research")
 
         source_review_toggle = page.locator("#enable_source_review")
         if not source_review_toggle.is_checked():
@@ -61,6 +62,8 @@ def test_admin_source_review_settings():
         expect(page.locator("#source_review_default_mode")).to_be_visible()
         expect(page.locator("#source_review_max_pages_per_turn")).to_have_attribute("max", "10")
         expect(page.locator("#source_review_max_seed_pages_per_turn")).to_have_attribute("max", "10")
+        expect(page.locator("#deep_research_max_user_urls_per_turn")).to_have_attribute("max", "100")
+        expect(page.locator("#deep_research_max_search_queries_per_turn")).to_have_attribute("max", "8")
         expect(page.locator("#source_review_max_depth")).to_have_attribute("max", "2")
         expect(page.locator("#source_review_timeout_seconds")).to_have_attribute("max", "30")
         expect(page.locator("#source_review_max_bytes_per_page_mb")).to_have_attribute("max", "5")
@@ -70,6 +73,8 @@ def test_admin_source_review_settings():
         if not deep_review_toggle.is_checked():
             deep_review_toggle.check(force=True)
         expect(page.locator("#source_review_deep_settings")).to_be_visible()
+        expect(page.locator("#deep_research_enable_query_planning")).to_have_count(1)
+        expect(page.locator("#deep_research_enable_ledger_artifact")).to_have_count(1)
         expect(page.locator("#source_review_enable_llm_planning")).to_have_count(1)
 
         page.locator("#source_review_allowed_domains").fill("contoso.com\n*.example.org")

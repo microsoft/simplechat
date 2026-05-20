@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.241.048
-Implemented in: 0.241.048
+Version: 0.241.051
+Implemented in: 0.241.050
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, and chat progress UI without requiring
@@ -61,6 +61,7 @@ def test_export_runner_module():
         'get_tabular_generated_output_run_status',
         'build_background_tabular_generated_output_metadata',
         'process_tabular_generated_output_run',
+        'resume_tabular_generated_output_run',
         'check_due_tabular_generated_output_runs_once',
     }
 
@@ -78,6 +79,12 @@ def test_export_runner_module():
     assert_contains(source_text, 'transient_failure_count', 'bounded transient failure counter')
     assert_contains(source_text, 'APIConnectionError', 'OpenAI connection error retry classification')
     assert_contains(source_text, 'c.status = @failed', 'retryable failed-run scheduler pickup')
+    assert_contains(source_text, 'Manual resume queued', 'manual checkpoint resume message')
+    assert_contains(source_text, 'manual_resume_count', 'manual resume counter')
+    assert_contains(source_text, 'status_detail', 'safe status detail payload')
+    assert_contains(source_text, 'checkpoint_summary', 'checkpoint summary payload')
+    assert_contains(source_text, 'waiting_for_retry', 'scheduled retry status payload')
+    assert_contains(source_text, 'retry_delay_seconds', 'retry delay status payload')
 
 
 def test_chat_route_wires_background_exports():
@@ -96,6 +103,8 @@ def test_chat_route_wires_background_exports():
     assert_contains(source_text, 'queue_tabular_generated_output_run(', 'background queue creation')
     assert_contains(source_text, 'build_background_tabular_generated_output_metadata', 'background metadata handoff')
     assert_contains(source_text, "'/api/tabular/generated-output/runs/<run_id>'", 'run status API route')
+    assert_contains(source_text, "'/api/tabular/generated-output/runs/<run_id>/resume'", 'run resume API route')
+    assert_contains(source_text, 'resume_tabular_generated_output_run', 'manual resume route helper')
     assert_contains(source_text, '@swagger_route(security=get_auth_security())', 'secured status route decorator')
     assert_contains(source_text, "output_metadata.get('background_export')", 'background assistant handoff message')
 
@@ -119,6 +128,13 @@ def test_chat_ui_renders_and_polls_background_exports():
     assert_contains(source_text, 'background_export', 'background export normalization')
     assert_contains(source_text, 'createBackgroundGeneratedOutputStatusBlock', 'background progress card')
     assert_contains(source_text, 'refreshBackgroundGeneratedOutputStatus', 'status refresh function')
+    assert_contains(source_text, 'continueBackgroundGeneratedOutputRun', 'manual continue function')
+    assert_contains(source_text, 'generated-tabular-continue-btn', 'manual continue button')
+    assert_contains(source_text, '/resume', 'manual resume endpoint call')
+    assert_contains(source_text, 'formatGeneratedOutputTimestamp', 'localized status timestamps')
+    assert_contains(source_text, 'formatGeneratedOutputDuration', 'readable retry and ETA durations')
+    assert_contains(source_text, 'shouldPollBackgroundGeneratedOutput', 'retry-aware polling guard')
+    assert_contains(source_text, 'status_detail', 'safe status detail rendering')
     assert_contains(source_text, '/api/tabular/generated-output/runs/', 'status polling endpoint')
     assert_contains(source_text, 'textContent', 'safe text rendering boundary')
 

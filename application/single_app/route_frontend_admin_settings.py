@@ -634,6 +634,20 @@ def register_route_frontend_admin_settings(app):
                     3
                 ),
                 'source_review_max_bytes_per_page': source_review_max_bytes_mb * 1000000,
+                'deep_research_max_user_urls_per_turn': parse_admin_int(
+                    form_data.get('deep_research_max_user_urls_per_turn'),
+                    settings.get('deep_research_max_user_urls_per_turn', 10),
+                    'deep_research_max_user_urls_per_turn',
+                    10
+                ),
+                'deep_research_max_search_queries_per_turn': parse_admin_int(
+                    form_data.get('deep_research_max_search_queries_per_turn'),
+                    settings.get('deep_research_max_search_queries_per_turn', 3),
+                    'deep_research_max_search_queries_per_turn',
+                    3
+                ),
+                'deep_research_enable_query_planning': form_data.get('deep_research_enable_query_planning') == 'on',
+                'deep_research_enable_ledger_artifact': form_data.get('deep_research_enable_ledger_artifact') == 'on',
                 'source_review_enable_llm_planning': form_data.get('source_review_enable_llm_planning') == 'on',
                 'source_review_allow_js_rendering': form_data.get('source_review_allow_js_rendering') == 'on',
                 'source_review_js_load_more_clicks': parse_admin_int(
@@ -1493,6 +1507,10 @@ def register_route_frontend_admin_settings(app):
                 'source_review_timeout_seconds': source_review_settings['source_review_timeout_seconds'],
                 'source_review_max_redirects': source_review_settings['source_review_max_redirects'],
                 'source_review_max_bytes_per_page': source_review_settings['source_review_max_bytes_per_page'],
+                'deep_research_max_user_urls_per_turn': source_review_settings['deep_research_max_user_urls_per_turn'],
+                'deep_research_max_search_queries_per_turn': source_review_settings['deep_research_max_search_queries_per_turn'],
+                'deep_research_enable_query_planning': source_review_settings['deep_research_enable_query_planning'],
+                'deep_research_enable_ledger_artifact': source_review_settings['deep_research_enable_ledger_artifact'],
                 'source_review_enable_llm_planning': source_review_settings['source_review_enable_llm_planning'],
                 'source_review_allow_js_rendering': source_review_settings['source_review_allow_js_rendering'],
                 'source_review_js_load_more_clicks': source_review_settings['source_review_js_load_more_clicks'],
