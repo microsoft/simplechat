@@ -144,6 +144,13 @@
                 </a>
               </li>
               {% endif %}
+              {% if file_sync_enabled %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="sync-tab">
+                  <i class="bi bi-arrow-repeat me-2" style="font-size: 0.8em;"></i><span class="nav-text">Sync</span>
+                </a>
+              </li>
+              {% endif %}
             </ul>
             {% else %}
             <!-- Regular Personal workspace link when not on workspace page -->
@@ -188,6 +195,13 @@
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-endpoints-tab">
                     <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Endpoints</span>
+                  </a>
+                </li>
+              {% endif %}
+              {% if file_sync_enabled %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="sync-tab">
+                    <i class="bi bi-arrow-repeat me-2" style="font-size: 0.8em;"></i><span class="nav-text">Sync</span>
                   </a>
                 </li>
               {% endif %}
@@ -567,6 +581,11 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="file-sharing-section">
                   <i class="bi bi-share me-2" style="font-size: 0.8em;"></i><span class="nav-text">File Sharing</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="file-sync-section">
+                  <i class="bi bi-arrow-repeat me-2" style="font-size: 0.8em;"></i><span class="nav-text">File Sync</span>
                 </a>
               </li>
               <li class="nav-item">

@@ -1,7 +1,7 @@
 # test_workspace_file_sync_ui.py
 """
 UI test for workspace File Sync tab.
-Version: 0.241.042
+Version: 0.241.052
 Implemented in: 0.241.042
 
 This test ensures the workspace Sync tab renders, loads source rows, opens the
@@ -77,6 +77,10 @@ def test_workspace_file_sync_tab(playwright):
         page.goto(f"{BASE_URL}/workspace", wait_until="networkidle")
         if page.locator("#sync-tab-btn").count() == 0:
             pytest.skip("File Sync is not enabled for this environment.")
+
+        if page.locator('[data-target="personal-workspace-submenu"]').count() > 0:
+            page.locator('[data-target="personal-workspace-submenu"]').click()
+            expect(page.locator('#personal-workspace-submenu [data-tab="sync-tab"]')).to_be_visible()
 
         page.locator("#sync-tab-btn").click()
         expect(page.get_by_role("heading", name="Sync Sources")).to_be_visible()

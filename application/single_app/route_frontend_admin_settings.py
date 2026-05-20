@@ -5,6 +5,7 @@ from functions_documents import *
 from functions_authentication import *
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config, parse_file_sync_list
 from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, parse_source_review_list
 from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
@@ -193,6 +194,15 @@ def register_route_frontend_admin_settings(app):
         for source_review_key, source_review_default in SOURCE_REVIEW_DEFAULTS.items():
             if source_review_key not in settings:
                 settings[source_review_key] = list(source_review_default) if isinstance(source_review_default, list) else source_review_default
+
+        file_sync_config = get_file_sync_config(settings)
+        for file_sync_key in FILE_SYNC_DEFAULTS:
+            if file_sync_key != 'enable_file_sync':
+                settings[file_sync_key] = file_sync_config[file_sync_key]
+        settings['requested_enable_file_sync'] = file_sync_config['requested_enable_file_sync']
+        settings['file_sync_redis_ready'] = file_sync_config['redis_ready']
+        settings['file_sync_effective_enabled'] = file_sync_config['enable_file_sync']
+        settings['file_sync_max_gb_per_run'] = max(1, int(file_sync_config['file_sync_max_bytes_per_run'] / 1073741824))
         
         # --- Add default for swagger documentation ---
         if 'enable_swagger' not in settings:
@@ -663,6 +673,61 @@ def register_route_frontend_admin_settings(app):
                 'source_review_blocked_users': parse_source_review_list(form_data.get('source_review_blocked_users')),
                 'source_review_audit_logging': form_data.get('source_review_audit_logging') == 'on',
             })
+
+            requested_enable_file_sync = form_data.get('enable_file_sync') == 'on'
+            file_sync_submitted_settings = dict(settings)
+            file_sync_submitted_settings.update({
+                'enable_redis_cache': form_data.get('enable_redis_cache') == 'on',
+                'redis_url': form_data.get('redis_url', '').strip(),
+                'redis_key': form_data.get('redis_key', '').strip(),
+                'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'enable_file_sync': requested_enable_file_sync,
+                'enable_file_sync_personal': form_data.get('enable_file_sync_personal') == 'on',
+                'enable_file_sync_group': form_data.get('enable_file_sync_group') == 'on',
+                'enable_file_sync_public': form_data.get('enable_file_sync_public') == 'on',
+                'file_sync_allowed_users': parse_file_sync_list(form_data.get('file_sync_allowed_users')),
+                'file_sync_blocked_users': parse_file_sync_list(form_data.get('file_sync_blocked_users')),
+                'file_sync_allowed_groups': parse_file_sync_list(form_data.get('file_sync_allowed_groups')),
+                'file_sync_blocked_groups': parse_file_sync_list(form_data.get('file_sync_blocked_groups')),
+                'file_sync_allowed_public_workspaces': parse_file_sync_list(form_data.get('file_sync_allowed_public_workspaces')),
+                'file_sync_blocked_public_workspaces': parse_file_sync_list(form_data.get('file_sync_blocked_public_workspaces')),
+                'file_sync_max_sources_per_scope': parse_admin_int(
+                    form_data.get('file_sync_max_sources_per_scope'),
+                    settings.get('file_sync_max_sources_per_scope', FILE_SYNC_DEFAULTS['file_sync_max_sources_per_scope']),
+                    'file_sync_max_sources_per_scope',
+                    FILE_SYNC_DEFAULTS['file_sync_max_sources_per_scope']
+                ),
+                'file_sync_min_schedule_interval_minutes': parse_admin_int(
+                    form_data.get('file_sync_min_schedule_interval_minutes'),
+                    settings.get('file_sync_min_schedule_interval_minutes', FILE_SYNC_DEFAULTS['file_sync_min_schedule_interval_minutes']),
+                    'file_sync_min_schedule_interval_minutes',
+                    FILE_SYNC_DEFAULTS['file_sync_min_schedule_interval_minutes']
+                ),
+                'file_sync_max_files_per_run': parse_admin_int(
+                    form_data.get('file_sync_max_files_per_run'),
+                    settings.get('file_sync_max_files_per_run', FILE_SYNC_DEFAULTS['file_sync_max_files_per_run']),
+                    'file_sync_max_files_per_run',
+                    FILE_SYNC_DEFAULTS['file_sync_max_files_per_run']
+                ),
+                'file_sync_max_bytes_per_run': parse_admin_int(
+                    form_data.get('file_sync_max_gb_per_run'),
+                    max(1, int(settings.get('file_sync_max_bytes_per_run', FILE_SYNC_DEFAULTS['file_sync_max_bytes_per_run']) / 1073741824)),
+                    'file_sync_max_gb_per_run',
+                    5
+                ) * 1073741824,
+                'file_sync_max_concurrent_runs': parse_admin_int(
+                    form_data.get('file_sync_max_concurrent_runs'),
+                    settings.get('file_sync_max_concurrent_runs', FILE_SYNC_DEFAULTS['file_sync_max_concurrent_runs']),
+                    'file_sync_max_concurrent_runs',
+                    FILE_SYNC_DEFAULTS['file_sync_max_concurrent_runs']
+                ),
+                'file_sync_default_remote_delete_policy': form_data.get('file_sync_default_remote_delete_policy', 'ignore'),
+                'file_sync_debug_logging': form_data.get('file_sync_debug_logging') == 'on',
+            })
+            file_sync_settings = get_file_sync_config(file_sync_submitted_settings)
+
+            if requested_enable_file_sync and not file_sync_settings['redis_ready']:
+                flash('File Sync was saved as requested, but it will remain inactive until Redis Cache is enabled and configured.', 'warning')
 
             # --- Handle Document Classification Toggle ---
             enable_document_classification = form_data.get('enable_document_classification') == 'on'
@@ -1381,6 +1446,23 @@ def register_route_frontend_admin_settings(app):
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enforce_workspace_scope_lock': form_data.get('enforce_workspace_scope_lock') == 'on',
+                'enable_file_sync': requested_enable_file_sync,
+                'enable_file_sync_personal': file_sync_settings['enable_file_sync_personal'],
+                'enable_file_sync_group': file_sync_settings['enable_file_sync_group'],
+                'enable_file_sync_public': file_sync_settings['enable_file_sync_public'],
+                'file_sync_allowed_users': file_sync_settings['file_sync_allowed_users'],
+                'file_sync_blocked_users': file_sync_settings['file_sync_blocked_users'],
+                'file_sync_allowed_groups': file_sync_settings['file_sync_allowed_groups'],
+                'file_sync_blocked_groups': file_sync_settings['file_sync_blocked_groups'],
+                'file_sync_allowed_public_workspaces': file_sync_settings['file_sync_allowed_public_workspaces'],
+                'file_sync_blocked_public_workspaces': file_sync_settings['file_sync_blocked_public_workspaces'],
+                'file_sync_max_sources_per_scope': file_sync_settings['file_sync_max_sources_per_scope'],
+                'file_sync_min_schedule_interval_minutes': file_sync_settings['file_sync_min_schedule_interval_minutes'],
+                'file_sync_max_files_per_run': file_sync_settings['file_sync_max_files_per_run'],
+                'file_sync_max_bytes_per_run': file_sync_settings['file_sync_max_bytes_per_run'],
+                'file_sync_max_concurrent_runs': file_sync_settings['file_sync_max_concurrent_runs'],
+                'file_sync_default_remote_delete_policy': file_sync_settings['file_sync_default_remote_delete_policy'],
+                'file_sync_debug_logging': file_sync_settings['file_sync_debug_logging'],
                 'enable_file_processing_logs': enable_file_processing_logs,
                 'file_processing_logs_timer_enabled': file_processing_logs_timer_enabled,
                 'file_timer_value': file_timer_value,

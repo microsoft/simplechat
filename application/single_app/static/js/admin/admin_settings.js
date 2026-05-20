@@ -2256,6 +2256,19 @@ function setupToggles() {
             markFormAsModified();
         });
     }
+
+    const enableFileSyncToggle = document.getElementById('enable_file_sync');
+    const fileSyncSettings = document.getElementById('file_sync_settings');
+    if (enableFileSyncToggle && fileSyncSettings) {
+        const updateFileSyncSettingsVisibility = () => {
+            fileSyncSettings.classList.toggle('d-none', !enableFileSyncToggle.checked);
+        };
+        updateFileSyncSettingsVisibility();
+        enableFileSyncToggle.addEventListener('change', function() {
+            updateFileSyncSettingsVisibility();
+            markFormAsModified();
+        });
+    }
     
     // --- Workspace Dependency Validation ---
     setupWorkspaceDependencyValidation();

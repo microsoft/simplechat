@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for File Sync capability wiring.
-Version: 0.241.042
+Version: 0.241.052
 Implemented in: 0.241.042
 
 This test ensures File Sync storage, settings, routes, scheduler hooks, and
@@ -25,7 +25,7 @@ def read_text(relative_path):
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.042"' in config_text
+    assert 'VERSION = "0.241.052"' in config_text
 
     expected_containers = [
         "personal_file_sync_sources",
@@ -138,6 +138,46 @@ def test_file_sync_activity_log_display_wiring():
     assert "activity_type == 'file_sync'" in control_center_backend
 
 
+def test_file_sync_admin_and_sidebar_discovery():
+    """Validate admins and workspace managers can discover File Sync controls."""
+    admin_template = read_text("application/single_app/templates/admin_settings.html")
+    admin_route = read_text("application/single_app/route_frontend_admin_settings.py")
+    admin_js = read_text("application/single_app/static/js/admin/admin_settings.js")
+    sidebar_template = read_text("application/single_app/templates/_sidebar_nav.html")
+
+    for field_name in [
+        "enable_file_sync",
+        "enable_file_sync_personal",
+        "enable_file_sync_group",
+        "enable_file_sync_public",
+        "file_sync_allowed_users",
+        "file_sync_blocked_users",
+        "file_sync_allowed_groups",
+        "file_sync_blocked_groups",
+        "file_sync_allowed_public_workspaces",
+        "file_sync_blocked_public_workspaces",
+        "file_sync_max_sources_per_scope",
+        "file_sync_min_schedule_interval_minutes",
+        "file_sync_max_files_per_run",
+        "file_sync_max_gb_per_run",
+        "file_sync_max_concurrent_runs",
+        "file_sync_default_remote_delete_policy",
+        "file_sync_debug_logging",
+    ]:
+        assert f'name="{field_name}"' in admin_template
+        assert field_name in admin_route
+
+    assert 'id="file-sync-section"' in admin_template
+    assert 'id="file_sync_settings"' in admin_template
+    assert "Redis Cache must be enabled" in admin_template
+    assert "get_file_sync_config" in admin_route
+    assert "parse_file_sync_list" in admin_route
+    assert "fileSyncSettings.classList.toggle('d-none'" in admin_js
+    assert 'data-section="file-sync-section"' in sidebar_template
+    assert 'data-tab="sync-tab"' in sidebar_template
+    assert "file_sync_enabled" in sidebar_template
+
+
 def run_tests():
     """Run all tests in this file."""
     tests = [
@@ -147,6 +187,7 @@ def run_tests():
         test_file_sync_delete_guards,
         test_file_sync_delete_prompt_frontend_wiring,
         test_file_sync_activity_log_display_wiring,
+        test_file_sync_admin_and_sidebar_discovery,
     ]
     failures = []
     for test in tests:

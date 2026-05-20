@@ -4287,6 +4287,144 @@
                     </div>
                 </div>
 
+                <div class="card mb-3 p-3" id="file-sync-section">
+                    <h5>
+                        <i class="bi bi-arrow-repeat me-2"></i>File Sync
+                    </h5>
+                    <p class="text-muted">
+                        Configure SMB file synchronization for personal, group, and public workspaces.
+                    </p>
+
+                    <div class="alert alert-warning" role="alert">
+                        File Sync can scan large remote shares and create many document versions. Start with narrow filters, conservative schedules, and low per-run limits before enabling broad workspace access.
+                    </div>
+
+                    {% if not settings.file_sync_redis_ready %}
+                    <div class="alert alert-danger" role="alert">
+                        Redis Cache must be enabled and configured before File Sync can run. Saved File Sync settings remain inactive until Redis is ready.
+                    </div>
+                    {% elif settings.requested_enable_file_sync and not settings.file_sync_effective_enabled %}
+                    <div class="alert alert-warning" role="alert">
+                        File Sync is saved as requested but is not currently active. Check Redis configuration and scope controls.
+                    </div>
+                    {% endif %}
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_file_sync"
+                            name="enable_file_sync"
+                            {% if settings.requested_enable_file_sync %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_sync">
+                            Enable File Sync
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable SMB source management and sync runs for allowed workspaces. Redis Cache is required before sync is active."></i>
+                    </div>
+
+                    <div id="file_sync_settings" class="{% if not settings.requested_enable_file_sync %}d-none{% endif %}">
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-4">
+                                <div class="form-check form-switch">
+                                    <input type="checkbox" class="form-check-input" id="enable_file_sync_personal" name="enable_file_sync_personal" {% if settings.enable_file_sync_personal %}checked{% endif %}>
+                                    <label class="form-check-label" for="enable_file_sync_personal">Personal Workspaces</label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check form-switch">
+                                    <input type="checkbox" class="form-check-input" id="enable_file_sync_group" name="enable_file_sync_group" {% if settings.enable_file_sync_group %}checked{% endif %}>
+                                    <label class="form-check-label" for="enable_file_sync_group">Group Workspaces</label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check form-switch">
+                                    <input type="checkbox" class="form-check-input" id="enable_file_sync_public" name="enable_file_sync_public" {% if settings.enable_file_sync_public %}checked{% endif %}>
+                                    <label class="form-check-label" for="enable_file_sync_public">Public Workspaces</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="file_sync_allowed_users" class="form-label">Allowed Users</label>
+                                <textarea class="form-control" id="file_sync_allowed_users" name="file_sync_allowed_users" rows="3" placeholder="user@contoso.com&#10;00000000-0000-0000-0000-000000000000">{{ settings.file_sync_allowed_users|join('\n') if settings.file_sync_allowed_users else '' }}</textarea>
+                                <div class="form-text">Personal File Sync is available to all users when this list is empty, except blocked users.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="file_sync_blocked_users" class="form-label">Blocked Users</label>
+                                <textarea class="form-control" id="file_sync_blocked_users" name="file_sync_blocked_users" rows="3" placeholder="user@contoso.com&#10;00000000-0000-0000-0000-000000000000">{{ settings.file_sync_blocked_users|join('\n') if settings.file_sync_blocked_users else '' }}</textarea>
+                                <div class="form-text">Use user email, GUID, or OID. Block entries override allow entries.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="file_sync_allowed_groups" class="form-label">Allowed Group IDs</label>
+                                <textarea class="form-control" id="file_sync_allowed_groups" name="file_sync_allowed_groups" rows="3" placeholder="group-id-1&#10;group-id-2">{{ settings.file_sync_allowed_groups|join('\n') if settings.file_sync_allowed_groups else '' }}</textarea>
+                                <div class="form-text">Group File Sync is available to all groups when this list is empty, except blocked groups.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="file_sync_blocked_groups" class="form-label">Blocked Group IDs</label>
+                                <textarea class="form-control" id="file_sync_blocked_groups" name="file_sync_blocked_groups" rows="3" placeholder="group-id-1&#10;group-id-2">{{ settings.file_sync_blocked_groups|join('\n') if settings.file_sync_blocked_groups else '' }}</textarea>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="file_sync_allowed_public_workspaces" class="form-label">Allowed Public Workspace IDs</label>
+                                <textarea class="form-control" id="file_sync_allowed_public_workspaces" name="file_sync_allowed_public_workspaces" rows="3" placeholder="workspace-id-1&#10;workspace-id-2">{{ settings.file_sync_allowed_public_workspaces|join('\n') if settings.file_sync_allowed_public_workspaces else '' }}</textarea>
+                                <div class="form-text">Public File Sync is available to all public workspaces when this list is empty, except blocked workspaces.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="file_sync_blocked_public_workspaces" class="form-label">Blocked Public Workspace IDs</label>
+                                <textarea class="form-control" id="file_sync_blocked_public_workspaces" name="file_sync_blocked_public_workspaces" rows="3" placeholder="workspace-id-1&#10;workspace-id-2">{{ settings.file_sync_blocked_public_workspaces|join('\n') if settings.file_sync_blocked_public_workspaces else '' }}</textarea>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-3">
+                                <label for="file_sync_max_sources_per_scope" class="form-label">Max Sources</label>
+                                <input type="number" class="form-control" id="file_sync_max_sources_per_scope" name="file_sync_max_sources_per_scope" min="1" max="100" value="{{ settings.file_sync_max_sources_per_scope }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_min_schedule_interval_minutes" class="form-label">Min Schedule Minutes</label>
+                                <input type="number" class="form-control" id="file_sync_min_schedule_interval_minutes" name="file_sync_min_schedule_interval_minutes" min="5" max="1440" value="{{ settings.file_sync_min_schedule_interval_minutes }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_max_files_per_run" class="form-label">Max Files Per Run</label>
+                                <input type="number" class="form-control" id="file_sync_max_files_per_run" name="file_sync_max_files_per_run" min="1" max="100000" value="{{ settings.file_sync_max_files_per_run }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_max_gb_per_run" class="form-label">Max GB Per Run</label>
+                                <input type="number" class="form-control" id="file_sync_max_gb_per_run" name="file_sync_max_gb_per_run" min="1" value="{{ settings.file_sync_max_gb_per_run }}">
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="file_sync_max_concurrent_runs" class="form-label">Max Concurrent Runs</label>
+                                <input type="number" class="form-control" id="file_sync_max_concurrent_runs" name="file_sync_max_concurrent_runs" min="1" max="25" value="{{ settings.file_sync_max_concurrent_runs }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="file_sync_default_remote_delete_policy" class="form-label">Remote Delete Policy</label>
+                                <select class="form-select" id="file_sync_default_remote_delete_policy" name="file_sync_default_remote_delete_policy">
+                                    <option value="ignore" {% if settings.file_sync_default_remote_delete_policy == 'ignore' %}selected{% endif %}>Ignore missing remote files</option>
+                                    <option value="hard_delete" {% if settings.file_sync_default_remote_delete_policy == 'hard_delete' %}selected{% endif %}>Delete local synced documents</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4 d-flex align-items-end">
+                                <div class="form-check form-switch mb-2">
+                                    <input type="checkbox" class="form-check-input" id="file_sync_debug_logging" name="file_sync_debug_logging" {% if settings.file_sync_debug_logging %}checked{% endif %}>
+                                    <label class="form-check-label" for="file_sync_debug_logging">Debug Logging</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-text mt-3">
+                            SMB source credentials are stored in Azure Key Vault when Key Vault secret storage is enabled; otherwise they use the app's existing encrypted settings path.
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card mb-3 p-3" id="metadata-extraction-section">
                     <h5>
                         <i class="bi bi-file-earmark-code me-2"></i>Metadata Extraction
