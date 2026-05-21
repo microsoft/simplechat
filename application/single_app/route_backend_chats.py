@@ -55,7 +55,6 @@ from functions_source_review import (
     is_source_review_enabled_for_user,
     normalize_review_url,
     perform_source_review,
-    should_auto_enable_source_review,
 )
 from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
@@ -10765,16 +10764,8 @@ def register_route_backend_chats(app):
                 user_email=current_user_email,
                 user_roles=current_user_roles,
             )
-            source_review_enabled = source_review_allowed_for_user and (
-                bool(source_review_enabled) or bool(deep_research_enabled) or should_auto_enable_source_review(
-                    settings,
-                    user_id,
-                    user_message,
-                    bool(web_search_enabled),
-                    user_email=current_user_email,
-                    user_roles=current_user_roles,
-                )
-            )
+            deep_research_requested = bool(source_review_enabled) or bool(deep_research_enabled)
+            source_review_enabled = source_review_allowed_for_user and deep_research_requested
             deep_research_enabled = bool(source_review_enabled)
 
             history_grounded_search_used = False
@@ -14065,16 +14056,8 @@ def register_route_backend_chats(app):
                     user_email=current_user_email,
                     user_roles=current_user_roles,
                 )
-                source_review_enabled = source_review_allowed_for_user and (
-                    bool(source_review_enabled) or bool(deep_research_enabled) or should_auto_enable_source_review(
-                        settings,
-                        user_id,
-                        user_message,
-                        bool(web_search_enabled),
-                        user_email=current_user_email,
-                        user_roles=current_user_roles,
-                    )
-                )
+                deep_research_requested = bool(source_review_enabled) or bool(deep_research_enabled)
+                source_review_enabled = source_review_allowed_for_user and deep_research_requested
                 deep_research_enabled = bool(source_review_enabled)
                 original_hybrid_search_enabled = bool(hybrid_search_enabled)
                 history_grounded_search_used = False

@@ -1,9 +1,9 @@
 # test_source_review_security.py
 """
 Functional test for Source Review security and evidence extraction.
-Version: 0.241.072
+Version: 0.241.079
 Implemented in: 0.241.063
-Updated in: 0.241.072
+Updated in: 0.241.072; 0.241.079
 
 This test ensures that Source Review applies access controls, clamps admin limits,
 blocks unsafe URLs, extracts bounded HTML evidence and structured archive rows,
@@ -226,7 +226,7 @@ def test_source_review_defaults_are_max_enabled_when_configured():
     assert source_review_config["enable_source_review"] is False
     assert source_review_config["require_member_of_deep_research_user"] is False
     assert source_review_config["enable_deep_source_review"] is True
-    assert source_review_config["source_review_default_mode"] == "auto_with_web_search"
+    assert source_review_config["source_review_default_mode"] == "manual"
     assert source_review_config["source_review_max_pages_per_turn"] == 10
     assert source_review_config["source_review_max_seed_pages_per_turn"] == 10
     assert source_review_config["source_review_timeout_seconds"] == 30

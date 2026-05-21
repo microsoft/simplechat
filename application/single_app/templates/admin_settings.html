@@ -5741,13 +5741,12 @@
 
                         <div class="row g-3">
                             <div class="col-md-4">
-                                <label for="source_review_default_mode" class="form-label">Default Mode</label>
-                                <select class="form-select" id="source_review_default_mode" name="source_review_default_mode">
-                                    {% set source_review_default_mode = settings.source_review_default_mode or 'auto_with_web_search' %}
-                                    <option value="manual" {% if source_review_default_mode == 'manual' %}selected{% endif %}>Manual toggle only</option>
-                                    <option value="auto_for_urls" {% if source_review_default_mode == 'auto_for_urls' %}selected{% endif %}>Auto when message has URLs</option>
-                                    <option value="auto_with_web_search" {% if source_review_default_mode == 'auto_with_web_search' %}selected{% endif %}>Auto with URLs or web search</option>
+                                <label for="source_review_default_mode" class="form-label">Activation Mode</label>
+                                <select class="form-select" id="source_review_default_mode" disabled>
+                                    <option value="manual" selected>User toggle only</option>
                                 </select>
+                                <input type="hidden" name="source_review_default_mode" value="manual" />
+                                <div class="form-text">Deep Research runs only when the user selects it for the message.</div>
                             </div>
                             <div class="col-md-4">
                                 <label for="source_review_max_pages_per_turn" class="form-label">Max Pages per Turn</label>

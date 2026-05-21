@@ -2614,7 +2614,7 @@ function setupToggles() {
         ];
 
         if (defaultMode) {
-            defaultMode.value = 'auto_with_web_search';
+            defaultMode.value = 'manual';
         }
         Object.entries(numericDefaults).forEach(([fieldId, value]) => {
             const field = document.getElementById(fieldId);

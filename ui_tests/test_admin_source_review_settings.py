@@ -1,9 +1,9 @@
 # test_admin_source_review_settings.py
 """
 UI test for Deep Research admin settings.
-Version: 0.241.072
+Version: 0.241.079
 Implemented in: 0.241.055
-Updated in: 0.241.072
+Updated in: 0.241.072; 0.241.079
 
 This test ensures the Search & Extract admin tab exposes Deep Research controls,
 including bounded review settings, query planning, ledger artifacts, editable domain
@@ -107,7 +107,9 @@ def test_admin_source_review_settings():
 
         expect(page.locator("#source_review_settings")).to_be_visible()
         expect(page.locator("#source_review_default_mode")).to_be_visible()
-        expect(page.locator("#source_review_default_mode")).to_have_value("auto_with_web_search")
+        expect(page.locator("#source_review_default_mode")).to_have_value("manual")
+        expect(page.locator("#source_review_default_mode")).to_be_disabled()
+        expect(page.get_by_text("Deep Research runs only when the user selects it for the message.")).to_be_visible()
         expect(page.locator("#source_review_max_pages_per_turn")).to_have_attribute("max", "10")
         expect(page.locator("#source_review_max_pages_per_turn")).to_have_value("10")
         expect(page.locator("#source_review_max_seed_pages_per_turn")).to_have_attribute("max", "10")

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Admin Settings Source Traversal Depth save behavior.
-Version: 0.241.078
+Version: 0.241.079
 Implemented in: 0.241.078
 
 This test ensures that the Admin Settings form contains only one

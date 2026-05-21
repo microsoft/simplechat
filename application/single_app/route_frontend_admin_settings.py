@@ -621,7 +621,7 @@ def register_route_frontend_admin_settings(app):
                 'require_member_of_deep_research_user': form_data.get('require_member_of_deep_research_user') == 'on',
                 'source_review_allow_internal_hosts': form_data.get('source_review_allow_internal_hosts') == 'on',
                 'enable_deep_source_review': form_data.get('enable_deep_source_review') == 'on',
-                'source_review_default_mode': form_data.get('source_review_default_mode', 'auto_with_web_search'),
+                'source_review_default_mode': form_data.get('source_review_default_mode', 'manual'),
                 'source_review_max_pages_per_turn': parse_admin_int(
                     form_data.get('source_review_max_pages_per_turn'),
                     settings.get('source_review_max_pages_per_turn', 10),

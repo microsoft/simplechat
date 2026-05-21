@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Web Search chat-agent isolation.
-Version: 0.241.073
+Version: 0.241.079
 Implemented in: 0.241.073
 
 This test ensures that Web Search can use its configured Azure AI Foundry agent

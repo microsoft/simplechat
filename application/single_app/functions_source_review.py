@@ -35,7 +35,7 @@ SOURCE_REVIEW_DEFAULTS = {
     "require_member_of_deep_research_user": False,
     "source_review_allow_internal_hosts": False,
     "enable_deep_source_review": True,
-    "source_review_default_mode": "auto_with_web_search",
+    "source_review_default_mode": "manual",
     "source_review_max_pages_per_turn": 10,
     "source_review_max_seed_pages_per_turn": 10,
     "source_review_max_depth": 2,
@@ -285,7 +285,7 @@ def get_source_review_config(settings: Optional[Dict[str, Any]]) -> Dict[str, An
     source_settings["source_review_default_mode"] = str(
         source_settings.get("source_review_default_mode") or "manual"
     ).strip().lower()
-    if source_settings["source_review_default_mode"] not in ("manual", "auto_for_urls", "auto_with_web_search"):
+    if source_settings["source_review_default_mode"] != "manual":
         source_settings["source_review_default_mode"] = "manual"
 
     for list_key in (
@@ -456,16 +456,7 @@ def should_auto_enable_source_review(
     user_email: Optional[str] = None,
     user_roles: Optional[List[str]] = None,
 ) -> bool:
-    """Evaluate admin default mode for requests that did not explicitly toggle Source Review."""
-    source_settings = get_source_review_config(settings)
-    if not is_source_review_enabled_for_user(settings, user_id, user_email=user_email, user_roles=user_roles):
-        return False
-
-    default_mode = source_settings.get("source_review_default_mode", "manual")
-    if default_mode == "auto_for_urls":
-        return bool(extract_urls_from_text(user_message))
-    if default_mode == "auto_with_web_search":
-        return bool(web_search_enabled or extract_urls_from_text(user_message))
+    """Deprecated: Deep Research now requires an explicit user toggle."""
     return False
 
 

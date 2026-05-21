@@ -409,7 +409,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_member_of_deep_research_user': False,
         'source_review_allow_internal_hosts': False,
         'enable_deep_source_review': True,
-        'source_review_default_mode': 'auto_with_web_search',
+        'source_review_default_mode': 'manual',
         'source_review_max_pages_per_turn': 10,
         'source_review_max_seed_pages_per_turn': 10,
         'source_review_max_depth': 2,

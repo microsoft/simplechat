@@ -46,7 +46,7 @@ The response and assistant-message metadata include:
 Admin settings include:
 
 - Enable Deep Research for chat.
-- Default mode: manual, auto for URLs, or auto with URLs/Web Search.
+- Activation mode: user toggle only. Web Search by itself does not start Deep Research or Source Review.
 - Max pages per turn.
 - Max seed pages per turn.
 - Max user URLs per turn.
