@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.074**
 
-Improved in version: **0.241.078**
+Improved in versions: **0.241.078**, **0.241.079**
 
 ## Overview
 
@@ -35,6 +35,7 @@ Both routes use the existing enhanced-citation authorization path and require `e
 ### File Structure
 
 - `application/single_app/functions_visio.py` parses VSDX files and renders page previews.
+- `application/single_app/config.py` declares the shared `VISIO_EXTENSIONS` allow-list used by upload validation and enhanced citations.
 - `application/single_app/functions_documents.py` dispatches `.vsdx` uploads to the Visio ingestion flow.
 - `application/single_app/route_enhanced_citations.py` serves Visio previews and downloads.
 - `application/single_app/static/js/chat/chat-enhanced-citations.js` opens Visio citation previews in a Bootstrap modal.
@@ -51,7 +52,7 @@ No separate admin toggle is required beyond existing document upload and enhance
 
 ## Testing and Validation
 
-Test coverage is provided by `functional_tests/test_visio_ingestion_preview.py`, which validates that `artifacts/architecture.vsdx` can be parsed, indexed into page content, rendered as a PNG preview, and expanded with master stencil geometry only for preview rendering.
+Test coverage is provided by `functional_tests/test_visio_ingestion_preview.py`, which validates that `artifacts/architecture.vsdx` can be parsed, indexed into page content, rendered as a PNG preview, and expanded with master stencil geometry only for preview rendering. `functional_tests/test_visio_extensions_config.py` validates that the shared Visio extension constant remains exported and included in allowed uploads.
 
 ## Performance Considerations
 
