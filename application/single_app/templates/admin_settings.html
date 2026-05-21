@@ -1928,7 +1928,7 @@
                                             {% for feature in release_group.features %}
                                             <div class="col-md-6">
                                                 <div class="form-check border rounded p-3 h-100">
-                                                <input type="number" min="0" max="2" class="form-control" id="source_review_max_depth" name="source_review_max_depth" value="{{ settings.source_review_max_depth if settings.source_review_max_depth is not none else 2 }}">
+                                                    <input class="form-check-input" type="checkbox" id="support_latest_feature_{{ feature.id }}" name="support_latest_feature_{{ feature.id }}"
                                                         {% if settings.support_latest_features_visibility.get(feature.id, true) %}checked{% endif %}>
                                                     <label class="form-check-label ms-2" for="support_latest_feature_{{ feature.id }}">
                                                         <span class="fw-semibold d-block">{{ feature.title }}</span>
@@ -5852,14 +5852,18 @@
                                         class="form-check-input"
                                         id="source_review_allow_js_rendering"
                                         name="source_review_allow_js_rendering"
-                                        {% if settings.source_review_allow_js_rendering %}checked{% endif %}
+                                        {% if settings.source_review_allow_js_rendering and js_runtime.js_rendering_available %}checked{% endif %}
+                                        {% if not js_runtime.js_rendering_available %}disabled{% endif %}
                                     >
                                     <label class="form-check-label ms-2" for="source_review_allow_js_rendering">Allow JavaScript rendering fallback</label>
                                 </div>
-                                <div class="form-text">Requires Playwright browser runtime support on the app host.</div>
+                                <div class="form-text">Requires verified Playwright browser runtime support on the app host.</div>
                                 <div class="small mt-1 {% if js_runtime.js_rendering_available %}text-success{% else %}text-warning{% endif %}" id="source_review_js_runtime_status">
                                     <i class="bi {% if js_runtime.js_rendering_available %}bi-check-circle{% else %}bi-exclamation-triangle{% endif %} me-1"></i>{{ js_runtime.message or 'Runtime support has not been checked yet.' }}
                                 </div>
+                                {% if not js_runtime.js_rendering_available %}
+                                <div class="small text-muted mt-1">Install/enable the Playwright Chromium runtime, then reload Admin Settings to enable this option.</div>
+                                {% endif %}
                                 {% if js_runtime.sandbox_disabled %}
                                 <div class="small text-warning mt-1">Chromium sandbox is disabled by environment configuration.</div>
                                 {% endif %}

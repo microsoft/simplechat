@@ -972,6 +972,23 @@ def _resolve_canonical_chat_agent(user_id, settings, requested_agent):
     return None
 
 
+def _get_chat_agent_selection_name(agent_selection):
+    """Return the selected chat agent name, or an empty string when no agent is selected."""
+    if isinstance(agent_selection, dict):
+        return str(agent_selection.get('name') or '').strip()
+    if isinstance(agent_selection, str):
+        return agent_selection.strip()
+    return ''
+
+
+def _has_chat_agent_selection(agent_selection):
+    """Determine whether a request payload contains an explicit chat-agent selection."""
+    if isinstance(agent_selection, dict):
+        selected_id = str(agent_selection.get('id') or '').strip()
+        return bool(selected_id or _get_chat_agent_selection_name(agent_selection))
+    return bool(_get_chat_agent_selection_name(agent_selection))
+
+
 def _set_authorized_chat_request_context(user_id, conversation_id, scope_context):
     """Persist the canonical request authorization context for downstream plugin checks."""
     authorized_context = {
@@ -10824,7 +10841,7 @@ def register_route_backend_chats(app):
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
             should_use_default_model = (
-                bool(request_agent_info)
+                _has_chat_agent_selection(request_agent_info)
                 and settings.get('enable_multi_model_endpoints', False)
                 and not data.get('model_id')
                 and not data.get('model_endpoint_id')
@@ -12831,7 +12848,7 @@ def register_route_backend_chats(app):
             enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
             
             # Check if agent_info is provided in request (e.g., from retry with agent selection)
-            force_enable_agents = bool(request_agent_info)  # Force enable agents if agent_info provided
+            force_enable_agents = _has_chat_agent_selection(request_agent_info)
             
             user_enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
             # Override user setting if agent explicitly requested via agent_info
@@ -12898,31 +12915,21 @@ def register_route_backend_chats(app):
                 agent_citations_list.append(citation)
 
             if enable_semantic_kernel and user_enable_agents:
-            # PATCH: Use new agent selection logic
-                agent_name_to_select = None
-                
-                # Priority 1: Use agent_info from request if provided (e.g., retry with specific agent)
-                if request_agent_info:
-                    # Extract agent name or create dict format expected by selection logic
-                    agent_name_to_select = request_agent_info if isinstance(request_agent_info, dict) else {'name': request_agent_info}
-                    if isinstance(agent_name_to_select, dict):
-                        agent_name_to_select = agent_name_to_select.get('name')
+                agent_name_to_select = _get_chat_agent_selection_name(request_agent_info)
+                if agent_name_to_select:
                     log_event(f"[SKChat] Using agent from request agent_info: {agent_name_to_select}")
-                # Priority 2: Use user settings
                 elif per_user_semantic_kernel:
                     selected_agent_info = user_settings.get('selected_agent')
-                    if isinstance(selected_agent_info, dict):
-                        agent_name_to_select = selected_agent_info.get('name')
-                    else:
-                        agent_name_to_select = selected_agent_info
-                    log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {selected_agent_info}")
-                # Priority 3: Use global settings
+                    agent_name_to_select = _get_chat_agent_selection_name(selected_agent_info)
+                    if agent_name_to_select:
+                        log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {agent_name_to_select}")
                 else:
                     global_selected_agent_info = settings.get('global_selected_agent')
-                    if global_selected_agent_info:
-                        agent_name_to_select = global_selected_agent_info.get('name')
+                    agent_name_to_select = _get_chat_agent_selection_name(global_selected_agent_info)
+                    if agent_name_to_select:
                         log_event(f"[SKChat] Global mode: selected_agent from global_selected_agent: {agent_name_to_select}")
-                if all_agents:
+
+                if all_agents and agent_name_to_select:
                     agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
                     agent_debug_info = []
                     for agent in agent_iter:
@@ -12932,26 +12939,22 @@ def register_route_backend_chats(app):
                             "is_global": getattr(agent, 'is_global', None),
                             "repr": repr(agent)
                         })
-                        # Prefer explicit selection, fallback to default_agent
                         if agent_name_to_select and getattr(agent, 'name', None) == agent_name_to_select:
                             selected_agent = agent
                             log_event(f"[SKChat] selected_agent found by explicit selection: {agent_name_to_select}")
                             break
                     if not selected_agent:
-                        # Fallback to default_agent
-                        for agent in agent_iter:
-                            if getattr(agent, 'default_agent', False):
-                                selected_agent = agent
-                                log_event(f"[SKChat] selected_agent found by default_agent=True")
-                                break
-                    if not selected_agent and agent_iter:
-                        selected_agent = next(iter(agent_iter), None)
-                        log_event(f"[SKChat] selected_agent fallback to first agent: {getattr(selected_agent, 'name', None)}")
+                        log_event(
+                            f"[SKChat] Requested chat agent was not found: {agent_name_to_select}",
+                            level=logging.WARNING,
+                        )
                     log_event(f"[SKChat] Agent selection debug info: {agent_debug_info}")
+                elif all_agents:
+                    log_event("[SKChat] No chat agent selected for this request; proceeding in model-only mode")
                 else:
                     log_event(f"[SKChat] all_agents is empty or None!", level=logging.WARNING)
                 if selected_agent is None:
-                    log_event(f"[SKChat][ERROR] No selected_agent found! all_agents: {all_agents}", level=logging.ERROR)
+                    log_event("[SKChat] No selected chat agent found; model-only path will be used")
                 log_event(f"[SKChat] selected_agent: {str(getattr(selected_agent, 'name', None))}")
                 agent_id = getattr(selected_agent, 'id', None)
                 extra={
@@ -13944,7 +13947,7 @@ def register_route_backend_chats(app):
                 per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
                 user_settings = {}
                 user_enable_agents = True
-                force_enable_agents = bool(request_agent_info)
+                force_enable_agents = _has_chat_agent_selection(request_agent_info)
                 
                 debug_print(f"[DEBUG] enable_semantic_kernel={enable_semantic_kernel}, per_user_semantic_kernel={per_user_semantic_kernel}")
 
@@ -14150,7 +14153,7 @@ def register_route_backend_chats(app):
                 gpt_api_version = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
                 should_use_default_model = (
-                    bool(request_agent_info)
+                    _has_chat_agent_selection(request_agent_info)
                     and settings.get('enable_multi_model_endpoints', False)
                     and not data.get('model_id')
                     and not data.get('model_endpoint_id')
@@ -15617,10 +15620,9 @@ def register_route_backend_chats(app):
                     all_agents = get_kernel_agents()
                     
                     if all_agents:
-                        agent_name_to_select = None
-                        if request_agent_info:
+                        agent_name_to_select = _get_chat_agent_selection_name(request_agent_info)
+                        if agent_name_to_select:
                             if isinstance(request_agent_info, dict):
-                                agent_name_to_select = request_agent_info.get('name')
                                 selected_agent_metadata = {
                                     'selected_agent': request_agent_info.get('name'),
                                     'agent_display_name': request_agent_info.get('display_name'),
@@ -15630,14 +15632,11 @@ def register_route_backend_chats(app):
                                     'group_name': request_agent_info.get('group_name'),
                                     'agent_id': request_agent_info.get('id')
                                 }
-                            else:
-                                agent_name_to_select = request_agent_info
                             debug_print(f"[Streaming] Request agent name to select: {agent_name_to_select}")
                         elif per_user_semantic_kernel:
-                            # user_settings.get('selected_agent') returns a dict with agent info
                             selected_agent_info = user_settings.get('selected_agent')
-                            if isinstance(selected_agent_info, dict):
-                                agent_name_to_select = selected_agent_info.get('name')
+                            agent_name_to_select = _get_chat_agent_selection_name(selected_agent_info)
+                            if agent_name_to_select and isinstance(selected_agent_info, dict):
                                 selected_agent_metadata = {
                                     'selected_agent': selected_agent_info.get('name'),
                                     'agent_display_name': selected_agent_info.get('display_name'),
@@ -15647,13 +15646,11 @@ def register_route_backend_chats(app):
                                     'group_name': selected_agent_info.get('group_name'),
                                     'agent_id': selected_agent_info.get('id')
                                 }
-                            elif isinstance(selected_agent_info, str):
-                                agent_name_to_select = selected_agent_info
-                            debug_print(f"[Streaming] Per-user agent name to select: {agent_name_to_select}")
+                            debug_print(f"[Streaming] Per-user agent name to select: {agent_name_to_select or '<none>'}")
                         else:
                             global_selected_agent_info = settings.get('global_selected_agent')
-                            if global_selected_agent_info:
-                                agent_name_to_select = global_selected_agent_info.get('name')
+                            agent_name_to_select = _get_chat_agent_selection_name(global_selected_agent_info)
+                            if agent_name_to_select and isinstance(global_selected_agent_info, dict):
                                 selected_agent_metadata = {
                                     'selected_agent': global_selected_agent_info.get('name'),
                                     'agent_display_name': global_selected_agent_info.get('display_name'),
@@ -15663,32 +15660,23 @@ def register_route_backend_chats(app):
                                     'group_name': global_selected_agent_info.get('group_name'),
                                     'agent_id': global_selected_agent_info.get('id')
                                 }
-                            debug_print(f"[Streaming] Global agent name to select: {agent_name_to_select}")
-                        
-                        # Find the agent
+                            debug_print(f"[Streaming] Global agent name to select: {agent_name_to_select or '<none>'}")
+
                         agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
-                        for agent in agent_iter:
-                            agent_obj_name = getattr(agent, 'name', None)
-                            debug_print(f"[Streaming] Checking agent: {agent_obj_name} against target: {agent_name_to_select}")
-                            if agent_name_to_select and agent_obj_name == agent_name_to_select:
-                                selected_agent = agent
-                                debug_print(f"[Streaming] ✅ Found matching agent: {agent_obj_name}")
-                                break
-                        
-                        # Fallback to default agent
-                        if not selected_agent:
+                        if agent_name_to_select:
                             for agent in agent_iter:
-                                if getattr(agent, 'default_agent', False):
+                                agent_obj_name = getattr(agent, 'name', None)
+                                debug_print(f"[Streaming] Checking agent: {agent_obj_name} against target: {agent_name_to_select}")
+                                if agent_obj_name == agent_name_to_select:
                                     selected_agent = agent
-                                    debug_print(f"[Streaming] Using default agent: {getattr(agent, 'name', 'unknown')}")
+                                    debug_print(f"[Streaming] Found matching agent: {agent_obj_name}")
                                     break
-                        
-                        # Fallback to first agent
-                        if not selected_agent:
-                            selected_agent = next(iter(agent_iter), None)
-                            if selected_agent:
-                                debug_print(f"[Streaming] Using first agent: {getattr(selected_agent, 'name', 'unknown')}")
-                        
+                            if not selected_agent:
+                                debug_print(f"[Streaming] Requested chat agent was not found: {agent_name_to_select}")
+                                selected_agent_metadata = None
+                        else:
+                            debug_print("[Streaming] No chat agent selected for this request; using model-only response path")
+
                         if selected_agent:
                             use_agent_streaming = True
                             agent_name_used = getattr(selected_agent, 'name', 'agent')

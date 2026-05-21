@@ -827,44 +827,72 @@ def _render_page_to_png(page: Dict[str, Any], max_edge_px: int) -> bytes:
     scale = max(25.0, (max_edge - (PREVIEW_MARGIN_PX * 2)) / max(width_in, height_in))
     image_width = int(width_in * scale) + (PREVIEW_MARGIN_PX * 2)
     image_height = int(height_in * scale) + (PREVIEW_MARGIN_PX * 2)
+    render_factor = _preview_render_factor(image_width, image_height)
+    render_scale = scale * render_factor
+    render_margin = int(PREVIEW_MARGIN_PX * render_factor)
+    render_width = int(image_width * render_factor)
+    render_height = int(image_height * render_factor)
+    render_page = dict(page)
+    render_page["_preview_margin_px"] = render_margin
 
-    image = Image.new("RGB", (image_width, image_height), "white")
+    image = Image.new("RGB", (render_width, render_height), "white")
     draw = ImageDraw.Draw(image)
-    title_font = _load_font(18)
-    body_font = _load_font(13)
-    small_font = _load_font(11)
+    title_font = _load_font(int(18 * render_factor))
+    body_font = _load_font(int(13 * render_factor))
+    small_font = _load_font(int(11 * render_factor))
 
     page_box = (
-        PREVIEW_MARGIN_PX,
-        PREVIEW_MARGIN_PX,
-        image_width - PREVIEW_MARGIN_PX,
-        image_height - PREVIEW_MARGIN_PX,
+        render_margin,
+        render_margin,
+        render_width - render_margin,
+        render_height - render_margin,
     )
-    draw.rectangle(page_box, outline=(210, 215, 220), width=2)
-    draw.text((PREVIEW_MARGIN_PX, 18), f"Visio page {page.get('page_number')}: {page.get('name')}", fill=(20, 35, 50), font=title_font)
+    draw.rectangle(page_box, outline=(210, 215, 220), width=max(1, int(2 * render_factor)))
+    draw.text(
+        (render_margin, int(18 * render_factor)),
+        f"Visio page {page.get('page_number')}: {page.get('name')}",
+        fill=(20, 35, 50),
+        font=title_font,
+    )
 
     shapes = page.get("shapes") or []
     shapes_by_id = {str(shape.get("id")): shape for shape in shapes if shape.get("id")}
-    _draw_connector_shape_lines(draw, page, shapes, scale)
-    _draw_connection_lines(draw, page, shapes_by_id, scale)
+    _draw_connector_shape_lines(draw, render_page, shapes, render_scale)
+    _draw_connection_lines(draw, render_page, shapes_by_id, render_scale)
 
     drawable_shapes = [shape for shape in shapes if _has_shape_bounds(shape) and not _is_connector_shape(shape)]
     for shape in sorted(drawable_shapes, key=lambda item: (-_shape_area(item), int(item.get("depth") or 0))):
-        _draw_shape_geometry(image, draw, page, shape, scale)
+        _draw_shape_geometry(image, draw, render_page, shape, render_scale)
 
     text_shapes = [shape for shape in shapes if shape.get("text") and shape.get("x") is not None and shape.get("y") is not None]
     if not text_shapes:
-        _draw_text_only_fallback(draw, page, body_font)
+        _draw_text_only_fallback(draw, render_page, body_font)
     else:
         for shape in text_shapes:
-            _draw_shape_text(draw, page, shape, scale, body_font, small_font)
+            _draw_shape_text(draw, render_page, shape, render_scale, body_font, small_font)
 
     footer = f"{len(shapes)} shapes, {len(page.get('connections') or [])} connection records"
-    draw.text((PREVIEW_MARGIN_PX, image_height - 34), footer, fill=(90, 95, 105), font=small_font)
+    draw.text((render_margin, render_height - int(34 * render_factor)), footer, fill=(90, 95, 105), font=small_font)
+
+    if render_factor > 1.0:
+        image = image.resize((image_width, image_height), Image.LANCZOS)
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
+
+
+def _preview_render_factor(image_width: int, image_height: int) -> float:
+    max_dimension = max(image_width, image_height)
+    if max_dimension <= 1800:
+        return 2.0
+    if max_dimension <= 3400:
+        return 1.5
+    return 1.0
+
+
+def _preview_margin_px(page: Dict[str, Any]) -> int:
+    return int(page.get("_preview_margin_px") or PREVIEW_MARGIN_PX)
 
 
 def _load_font(size: int) -> ImageFont.ImageFont:
@@ -892,7 +920,8 @@ def _shape_center_px(page: Dict[str, Any], shape: Dict[str, Any], scale: float) 
 
 def _page_point_to_px(page: Dict[str, Any], x: float, y: float, scale: float) -> Tuple[float, float]:
     page_height = float(page.get("height") or 8.5)
-    return PREVIEW_MARGIN_PX + (x * scale), PREVIEW_MARGIN_PX + ((page_height - y) * scale)
+    margin = _preview_margin_px(page)
+    return margin + (x * scale), margin + ((page_height - y) * scale)
 
 
 def _shape_bounds_px(page: Dict[str, Any], shape: Dict[str, Any], scale: float) -> Tuple[float, float, float, float]:
@@ -902,13 +931,15 @@ def _shape_bounds_px(page: Dict[str, Any], shape: Dict[str, Any], scale: float) 
         right = float(shape.get("right"))
         bottom = float(shape.get("bottom"))
         top = float(shape.get("top"))
-        x0 = PREVIEW_MARGIN_PX + (left * scale)
-        y0 = PREVIEW_MARGIN_PX + ((page_height - top) * scale)
-        x1 = PREVIEW_MARGIN_PX + (right * scale)
-        y1 = PREVIEW_MARGIN_PX + ((page_height - bottom) * scale)
+        margin = _preview_margin_px(page)
+        x0 = margin + (left * scale)
+        y0 = margin + ((page_height - top) * scale)
+        x1 = margin + (right * scale)
+        y1 = margin + ((page_height - bottom) * scale)
         return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
 
-    center = _shape_center_px(page, shape, scale) or (PREVIEW_MARGIN_PX, PREVIEW_MARGIN_PX)
+    margin = _preview_margin_px(page)
+    center = _shape_center_px(page, shape, scale) or (margin, margin)
     width = max(float(shape.get("width") or 0.75) * scale, 96.0)
     height = max(float(shape.get("height") or 0.35) * scale, 38.0)
     x0 = center[0] - (width / 2.0)
@@ -1054,12 +1085,19 @@ def _draw_geometry_rows(
             if curve_points:
                 current_points.extend(curve_points)
         elif row_type in {"RelEllipticalArcTo", "EllipticalArcTo"}:
-            point = _geometry_row_point(page, shape, row, scale, relative=row_type.startswith("Rel"))
-            if point:
+            arc_points = _geometry_elliptical_arc_points(
+                page,
+                shape,
+                row,
+                scale,
+                current_points,
+                row_type.startswith("Rel"),
+            )
+            if arc_points:
                 if not current_points:
-                    current_points = [point]
+                    current_points = [arc_points[-1]]
                 else:
-                    current_points.append(point)
+                    current_points.extend(arc_points)
         elif row_type == "Ellipse":
             draw.ellipse(_shape_bounds_px(page, shape, scale), fill=fill, outline=line, width=line_width)
             drew_geometry = True
@@ -1155,6 +1193,31 @@ def _geometry_quadratic_points(
     ]
 
 
+def _geometry_elliptical_arc_points(
+    page: Dict[str, Any],
+    shape: Dict[str, Any],
+    row: Dict[str, Any],
+    scale: float,
+    current_points: List[Tuple[float, float]],
+    relative: bool,
+) -> List[Tuple[float, float]]:
+    endpoint = _geometry_row_point(page, shape, row, scale, relative=relative)
+    if not endpoint:
+        return []
+    if not current_points:
+        return [endpoint]
+
+    start = current_points[-1]
+    control = _geometry_row_point(page, shape, row, scale, relative=relative, x_key="A", y_key="B")
+    if not control or _points_are_close(start, control) or _points_are_close(control, endpoint):
+        return [endpoint]
+
+    return [
+        _quadratic_bezier_point(start, control, endpoint, step / 10.0)
+        for step in range(1, 11)
+    ]
+
+
 def _cubic_bezier_point(
     start: Tuple[float, float],
     control_one: Tuple[float, float],
@@ -1204,8 +1267,8 @@ def _draw_dashed_rectangle(
     width: int,
 ) -> None:
     x0, y0, x1, y1 = bounds
-    dash = 18
-    gap = 10
+    dash = max(10, width * 9)
+    gap = max(6, width * 5)
     _draw_dashed_line(draw, (x0, y0), (x1, y0), color, width, dash, gap)
     _draw_dashed_line(draw, (x1, y0), (x1, y1), color, width, dash, gap)
     _draw_dashed_line(draw, (x1, y1), (x0, y1), color, width, dash, gap)
@@ -1308,9 +1371,12 @@ def _draw_connection_lines(
     shapes_by_id: Dict[str, Dict[str, Any]],
     scale: float,
 ) -> None:
-    for summary in _connection_endpoint_pairs(page.get("connections") or []):
-        begin_shape = shapes_by_id.get(summary[0])
-        end_shape = shapes_by_id.get(summary[1])
+    for connector_id, begin_id, end_id in _connection_endpoint_pairs(page.get("connections") or []):
+        connector_shape = shapes_by_id.get(connector_id)
+        if connector_shape and all(connector_shape.get(key) is not None for key in ("begin_x", "begin_y", "end_x", "end_y")):
+            continue
+        begin_shape = shapes_by_id.get(begin_id)
+        end_shape = shapes_by_id.get(end_id)
         if not begin_shape or not end_shape:
             continue
         begin = _shape_center_px(page, begin_shape, scale)
@@ -1320,7 +1386,7 @@ def _draw_connection_lines(
         draw.line([begin, end], fill=(120, 130, 145), width=3)
 
 
-def _connection_endpoint_pairs(connections: List[Dict[str, str]]) -> List[Tuple[str, str]]:
+def _connection_endpoint_pairs(connections: List[Dict[str, str]]) -> List[Tuple[str, str, str]]:
     grouped: Dict[str, Dict[str, str]] = {}
     for connection in connections:
         connector_id = connection.get("from_sheet") or ""
@@ -1333,8 +1399,8 @@ def _connection_endpoint_pairs(connections: List[Dict[str, str]]) -> List[Tuple[
         elif from_cell.startswith("End"):
             grouped.setdefault(connector_id, {})["end"] = to_sheet
     return [
-        (endpoints["begin"], endpoints["end"])
-        for endpoints in grouped.values()
+        (connector_id, endpoints["begin"], endpoints["end"])
+        for connector_id, endpoints in grouped.items()
         if endpoints.get("begin") and endpoints.get("end")
     ]
 
@@ -1472,11 +1538,12 @@ def _draw_shape_box(
 
 
 def _draw_text_only_fallback(draw: ImageDraw.ImageDraw, page: Dict[str, Any], font: ImageFont.ImageFont) -> None:
-    y = PREVIEW_MARGIN_PX + 24
-    draw.text((PREVIEW_MARGIN_PX + 24, y), "No positioned text shapes were found.", fill=(65, 70, 80), font=font)
+    margin = _preview_margin_px(page)
+    y = margin + 24
+    draw.text((margin + 24, y), "No positioned text shapes were found.", fill=(65, 70, 80), font=font)
     y += 30
     for shape in [shape for shape in page.get("shapes") or [] if shape.get("text")][:40]:
-        draw.text((PREVIEW_MARGIN_PX + 24, y), f"- {shape.get('text')}", fill=(22, 32, 45), font=font)
+        draw.text((margin + 24, y), f"- {shape.get('text')}", fill=(22, 32, 45), font=font)
         y += 22
 
 

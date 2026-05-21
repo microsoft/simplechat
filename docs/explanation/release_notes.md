@@ -4,6 +4,17 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.078)**
+
+#### Bug Fixes
+
+*   **Visio Connector and Arc Fidelity**
+    *   Improved Visio citation previews by approximating `RelEllipticalArcTo` geometry as smooth curves instead of straight endpoint segments.
+    *   Removed duplicate fallback center-to-center connection lines when explicit connector geometry is already available, reducing visual clutter through service icons.
+    *   Added bounded supersampling to smooth rendered PNG previews while avoiding external office-suite dependencies.
+    *   Added regression coverage for curved master stencil geometry in the preview parser path.
+    *   (Ref: Visio arc geometry, connector rendering, master stencil preview expansion, `functions_visio.py`, `test_visio_ingestion_preview.py`)
+
 ### **(v0.241.077)**
 
 #### Bug Fixes

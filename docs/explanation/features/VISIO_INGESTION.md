@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.074**
 
-Improved in version: **0.241.077**
+Improved in version: **0.241.078**
 
 ## Overview
 
@@ -55,7 +55,7 @@ Test coverage is provided by `functional_tests/test_visio_ingestion_preview.py`,
 
 ## Performance Considerations
 
-The built-in renderer draws positioned text, connector endpoints, supported VSDX path geometry, selected master stencil vector geometry, dashed containers, and supported embedded media using parsed Visio coordinates. This keeps previews dependency-light and suitable for citation context, but it does not attempt full Visio theme, gradient, shadow, icon, or connector routing fidelity.
+The built-in renderer draws positioned text, connector endpoints, supported VSDX path geometry, selected master stencil vector geometry, curve approximations, dashed containers, and supported embedded media using parsed Visio coordinates. Preview PNGs use bounded supersampling for smoother output. This keeps previews dependency-light and suitable for citation context, but it does not attempt full Visio theme, gradient, shadow, icon, or connector routing fidelity.
 
 For very large diagrams, preview rendering is capped by a configurable maximum edge size.
 

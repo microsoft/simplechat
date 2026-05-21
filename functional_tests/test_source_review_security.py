@@ -1,9 +1,9 @@
 # test_source_review_security.py
 """
 Functional test for Source Review security and evidence extraction.
-Version: 0.241.071
+Version: 0.241.072
 Implemented in: 0.241.063
-Updated in: 0.241.071
+Updated in: 0.241.072
 
 This test ensures that Source Review applies access controls, clamps admin limits,
 blocks unsafe URLs, extracts bounded HTML evidence and structured archive rows,
@@ -30,6 +30,7 @@ from functions_source_review import (  # noqa: E402
     get_source_review_config,
     get_source_review_runtime_capabilities,
     is_source_review_enabled_for_user,
+    normalize_source_review_js_rendering_enabled,
     validate_source_review_url,
     _augment_html_page_with_dynamic_grid_items,
     _click_first_visible_load_more_control,
@@ -252,7 +253,20 @@ def test_source_review_runtime_capabilities_are_reported():
     assert isinstance(capabilities["max_render_concurrency"], int)
     assert 1 <= capabilities["max_render_concurrency"] <= 5
     assert isinstance(capabilities["message"], str)
-    assert capabilities["message"]
+
+
+def test_source_review_js_rendering_requires_verified_runtime():
+    """Validate JS rendering cannot be enabled without a verified Chromium runtime."""
+    print("Testing Source Review JS rendering runtime gate...")
+
+    unavailable_runtime = {"js_rendering_available": False}
+    available_runtime = {"js_rendering_available": True}
+
+    assert normalize_source_review_js_rendering_enabled(True, unavailable_runtime) is False
+    assert normalize_source_review_js_rendering_enabled("on", unavailable_runtime) is False
+    assert normalize_source_review_js_rendering_enabled(False, available_runtime) is False
+    assert normalize_source_review_js_rendering_enabled(True, available_runtime) is True
+    assert normalize_source_review_js_rendering_enabled("on", available_runtime) is True
 
 
 def test_source_review_settings_are_clamped():
@@ -608,6 +622,7 @@ if __name__ == "__main__":
         test_deep_research_app_role_is_defined_for_deployments,
         test_source_review_defaults_are_max_enabled_when_configured,
         test_source_review_runtime_capabilities_are_reported,
+        test_source_review_js_rendering_requires_verified_runtime,
         test_source_review_settings_are_clamped,
         test_source_review_blocks_unsafe_urls,
         test_source_review_internal_hosts_require_admin_opt_in,

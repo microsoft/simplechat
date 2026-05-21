@@ -1,9 +1,9 @@
 # test_admin_source_review_settings.py
 """
 UI test for Deep Research admin settings.
-Version: 0.241.071
+Version: 0.241.072
 Implemented in: 0.241.055
-Updated in: 0.241.071
+Updated in: 0.241.072
 
 This test ensures the Search & Extract admin tab exposes Deep Research controls,
 including bounded review settings, query planning, ledger artifacts, editable domain
@@ -137,6 +137,12 @@ def test_admin_source_review_settings():
         expect(page.locator("#deep_research_enable_ledger_artifact")).to_have_count(1)
         expect(page.locator("#source_review_enable_llm_planning")).to_have_count(1)
         expect(page.locator("#source_review_js_runtime_status")).to_be_visible()
+        js_rendering_toggle = page.locator("#source_review_allow_js_rendering")
+        js_runtime_status = page.locator("#source_review_js_runtime_status").inner_text()
+        if "Chromium launch verified" in js_runtime_status:
+            expect(js_rendering_toggle).to_be_enabled()
+        else:
+            expect(js_rendering_toggle).to_be_disabled()
 
         allowed_domains_editor = page.locator('[data-deep-research-policy="source_review_allowed_domains"]')
         allowed_domains_editor.locator('[data-policy-new-input]').fill("contoso.com")

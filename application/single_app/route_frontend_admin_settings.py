@@ -6,7 +6,7 @@ from functions_authentication import *
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
-from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, parse_source_review_list
+from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
 from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
@@ -422,6 +422,10 @@ def register_route_frontend_admin_settings(app):
             settings_for_template = dict(settings)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
             source_review_runtime_capabilities = get_source_review_runtime_capabilities()
+            settings_for_template['source_review_allow_js_rendering'] = normalize_source_review_js_rendering_enabled(
+                settings_for_template.get('source_review_allow_js_rendering'),
+                source_review_runtime_capabilities,
+            )
 
             return render_template(
                 'admin_settings.html',
@@ -611,6 +615,7 @@ def register_route_frontend_admin_settings(app):
                     5
                 )
             )
+            source_review_runtime_capabilities = get_source_review_runtime_capabilities()
             source_review_settings = get_source_review_config({
                 'enable_source_review': form_data.get('enable_source_review') == 'on',
                 'require_member_of_deep_research_user': form_data.get('require_member_of_deep_research_user') == 'on',
@@ -663,7 +668,10 @@ def register_route_frontend_admin_settings(app):
                 'deep_research_enable_query_planning': form_data.get('deep_research_enable_query_planning') == 'on',
                 'deep_research_enable_ledger_artifact': form_data.get('deep_research_enable_ledger_artifact') == 'on',
                 'source_review_enable_llm_planning': form_data.get('source_review_enable_llm_planning') == 'on',
-                'source_review_allow_js_rendering': form_data.get('source_review_allow_js_rendering') == 'on',
+                'source_review_allow_js_rendering': normalize_source_review_js_rendering_enabled(
+                    form_data.get('source_review_allow_js_rendering') == 'on',
+                    source_review_runtime_capabilities,
+                ),
                 'source_review_js_load_more_clicks': parse_admin_int(
                     form_data.get('source_review_js_load_more_clicks'),
                     settings.get('source_review_js_load_more_clicks', 12),

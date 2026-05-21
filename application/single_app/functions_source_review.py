@@ -417,6 +417,20 @@ def _coerce_bool(value: Any) -> bool:
     return bool(value)
 
 
+def is_source_review_js_rendering_available(runtime_capabilities: Optional[Dict[str, Any]] = None) -> bool:
+    """Return True only when the app runtime can launch Playwright Chromium."""
+    capabilities = runtime_capabilities if isinstance(runtime_capabilities, dict) else get_source_review_runtime_capabilities()
+    return bool(capabilities.get("js_rendering_available"))
+
+
+def normalize_source_review_js_rendering_enabled(
+    requested_enabled: Any,
+    runtime_capabilities: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Allow JS rendering to be enabled only when runtime support is verified."""
+    return bool(_coerce_bool(requested_enabled) and is_source_review_js_rendering_available(runtime_capabilities))
+
+
 def is_source_review_enabled_for_user(
     settings: Optional[Dict[str, Any]],
     user_id: str,

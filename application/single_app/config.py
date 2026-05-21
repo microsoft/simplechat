@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.077"
+VERSION = "0.241.078"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -133,7 +133,6 @@ CLIENTS_LOCK = threading.Lock()
 BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
 DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'pptx', 'ppt'}
 TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
-VISIO_EXTENSIONS = {'vsdx'}
 
 # Updates to image, video, or audio extensions should also be made in static/js/chat/chat-enhanced-citations.js if the new file types can be natively rendered in the browser.
 IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic'}
@@ -160,7 +159,6 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     extensions.update(DOCUMENT_EXTENSIONS)
     extensions.update(IMAGE_EXTENSIONS)
     extensions.update(TABULAR_EXTENSIONS)
-    extensions.update(VISIO_EXTENSIONS)
 
     if enable_video:
         extensions.update(VIDEO_EXTENSIONS)

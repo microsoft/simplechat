@@ -2,7 +2,7 @@
 """
 UI test for chat Visio citation previews.
 
-Version: 0.241.077
+Version: 0.241.078
 Implemented in: 0.241.074
 
 This test ensures a `.vsdx` enhanced citation opens the Visio preview modal,

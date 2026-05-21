@@ -1,6 +1,6 @@
 # Visio Preview Fidelity Fix
 
-Fixed/Implemented in version: **0.241.077**
+Fixed/Implemented in version: **0.241.078**
 
 ## Issue Description
 
@@ -12,7 +12,7 @@ The first renderer intentionally used a lightweight parser-only approach. It dre
 
 ## Version Implemented
 
-0.241.077
+0.241.078
 
 ## Technical Details
 
@@ -32,7 +32,9 @@ The first renderer intentionally used a lightweight parser-only approach. It dre
 - Added rendering for supported VSDX geometry path rows: `MoveTo`, `LineTo`, `RelMoveTo`, `RelLineTo`, `RelCubBezTo`, `RelQuadBezTo`, elliptical arc endpoint approximation, and `Ellipse`.
 - Added preview-only expansion of master stencil shapes so citation previews can draw richer icon geometry while ingestion chunks remain focused on page-level diagram content.
 - Improved label placement for icon-backed shapes and dashed container labels based on the Microsoft Visio exported SVG/PDF reference files.
-- Bumped `application/single_app/config.py` to `VERSION = "0.241.077"`.
+- Improved elliptical arc rows with smooth curve approximation and skipped duplicate center-to-center fallback connectors when explicit connector geometry is available.
+- Added bounded supersampling for smoother PNG output without requiring external rendering tools.
+- Bumped `application/single_app/config.py` to `VERSION = "0.241.078"`.
 
 ### Testing Approach
 

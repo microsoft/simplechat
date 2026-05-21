@@ -2,7 +2,7 @@
 # test_visio_ingestion_preview.py
 """
 Functional test for Visio ingestion and preview rendering.
-Version: 0.241.077
+Version: 0.241.078
 Implemented in: 0.241.074
 
 This test ensures VSDX files can be parsed into page-level structured content
@@ -110,6 +110,26 @@ def test_visio_preview_master_expansion_is_preview_only():
     assert len(preview_master_shapes) > 0
 
 
+def test_visio_preview_master_curve_geometry():
+    """Validate preview parsing includes curved master stencil geometry rows."""
+    assert SAMPLE_VSDX.exists(), f"Sample Visio file not found: {SAMPLE_VSDX}"
+
+    preview_pages = parse_vsdx_pages(
+        str(SAMPLE_VSDX),
+        include_media=True,
+        include_master_shapes=True,
+    )
+    preview_row_types = {
+        row.get("type")
+        for shape in preview_pages[0]["shapes"]
+        if shape.get("from_master")
+        for row in shape.get("geometry", [])
+    }
+
+    assert "RelEllipticalArcTo" in preview_row_types
+    assert "RelCubBezTo" in preview_row_types
+
+
 def run_standalone():
     """Run tests without pytest for local functional validation."""
     tests = [
@@ -117,6 +137,7 @@ def run_standalone():
         test_visio_preview_rendering,
         test_visio_reference_geometry_fixture,
         test_visio_preview_master_expansion_is_preview_only,
+        test_visio_preview_master_curve_geometry,
     ]
     results = []
     for test in tests:
