@@ -1,13 +1,14 @@
 # test_admin_source_review_settings.py
 """
 UI test for Deep Research admin settings.
-Version: 0.241.079
+Version: 0.241.082
 Implemented in: 0.241.055
-Updated in: 0.241.072; 0.241.079
+Updated in: 0.241.072; 0.241.079; 0.241.081; 0.241.082
 
 This test ensures the Search & Extract admin tab exposes Deep Research controls,
-including bounded review settings, query planning, ledger artifacts, editable domain
-rules, app-role policy controls, setup guidance, and the Web Search test workflow.
+shared URL Access controls, bounded review settings, query planning, ledger
+artifacts, editable domain rules, app-role policy controls, setup guidance, and
+the Web Search test workflow.
 """
 
 import json
@@ -100,6 +101,21 @@ def test_admin_source_review_settings():
         expect(page.locator("#test_web_search_result")).to_contain_text("Web Search test passed")
         expect(page.locator("#test_web_search_result")).to_contain_text("Microsoft official site")
 
+        url_access_section = page.locator("#url-access-section")
+        expect(url_access_section).to_be_visible()
+        expect(url_access_section).to_contain_text("URL Access")
+        expect(url_access_section).to_contain_text("chat and workflows")
+        expect(page.locator("#require_member_of_url_access_user")).to_have_count(1)
+        expect(page.locator("label[for='require_member_of_url_access_user']")).to_contain_text("UrlAccessUser")
+        url_access_toggle = page.locator("#enable_url_access")
+        if not url_access_toggle.is_checked():
+            url_access_toggle.check(force=True)
+        expect(page.locator("#url_access_settings")).to_be_visible()
+        expect(page.locator("#url_access_max_chat_urls_per_turn")).to_have_attribute("max", "100")
+        expect(page.locator("#url_access_max_chat_urls_per_turn")).to_have_value("10")
+        expect(page.locator("#url_access_max_workflow_urls_per_run")).to_have_attribute("max", "500")
+        expect(page.locator("#url_access_max_workflow_urls_per_run")).to_have_value("50")
+
         source_review_toggle = page.locator("#enable_source_review")
         if source_review_toggle.is_checked():
             source_review_toggle.uncheck(force=True)
@@ -146,18 +162,18 @@ def test_admin_source_review_settings():
         else:
             expect(js_rendering_toggle).to_be_disabled()
 
-        allowed_domains_editor = page.locator('[data-deep-research-policy="source_review_allowed_domains"]')
+        allowed_domains_editor = page.locator('[data-url-access-policy="url_access_allowed_domains"]')
         allowed_domains_editor.locator('[data-policy-new-input]').fill("contoso.com")
         allowed_domains_editor.locator('[data-policy-add-button]').click()
-        expect(page.locator("#source_review_allowed_domains")).to_have_value("contoso.com")
+        expect(page.locator("#url_access_allowed_domains")).to_have_value("contoso.com")
 
         allowed_domain_row = allowed_domains_editor.locator('[data-policy-list] input').first
         allowed_domain_row.fill("*.example.org")
         allowed_domain_row.press("Enter")
-        expect(page.locator("#source_review_allowed_domains")).to_have_value("*.example.org")
+        expect(page.locator("#url_access_allowed_domains")).to_have_value("*.example.org")
 
         allowed_domains_editor.locator('[aria-label="Delete policy entry"]').first.click()
-        expect(page.locator("#source_review_allowed_domains")).to_have_value("")
+        expect(page.locator("#url_access_allowed_domains")).to_have_value("")
 
         expect(page.locator('[data-deep-research-policy="source_review_blocked_users"]')).to_have_count(0)
         expect(page.locator("#source_review_blocked_users")).to_have_count(0)

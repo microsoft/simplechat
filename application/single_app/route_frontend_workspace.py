@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_file_sync import is_file_sync_enabled_for_user
+from functions_source_review import is_url_access_enabled_for_user
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_workspace(app):
@@ -23,6 +24,11 @@ def register_route_frontend_workspace(app):
         enable_video_file_support = settings.get('enable_video_file_support', False)
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
         user_info = get_current_user_info() or {}
+        current_user_roles = (session.get('user') or {}).get('roles', [])
+        public_settings['enable_url_access'] = is_url_access_enabled_for_user(
+            settings,
+            user_roles=current_user_roles,
+        )
         file_sync_enabled = is_file_sync_enabled_for_user(settings, user_id, user_info.get('email'), user_info=user_info) if user_id else False
         if not user_id:
             print("User not authenticated.")

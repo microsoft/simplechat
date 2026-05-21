@@ -5084,6 +5084,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const finalGroupId = finalGroupIds[0] || group_id || null;
   const webSearchToggle = document.getElementById('search-web-btn');
   const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains('active') : false;
+  const urlAccessToggle = document.getElementById('url-access-btn');
+  const urlAccessEnabled = urlAccessToggle ? urlAccessToggle.classList.contains('active') : false;
   const deepResearchToggle = document.getElementById('source-review-btn');
   const deepResearchEnabled = deepResearchToggle ? deepResearchToggle.classList.contains('active') : false;
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
@@ -5119,6 +5121,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     hybrid_search: hybridSearchEnabled,
     user_workspace_context_enabled: userWorkspaceContextEnabled,
     web_search_enabled: webSearchEnabled,
+    url_access_enabled: urlAccessEnabled,
     source_review_enabled: deepResearchEnabled,
     deep_research_enabled: deepResearchEnabled,
     selected_document_id: selectedDocumentId,
@@ -5181,6 +5184,8 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'agent'
     : messageData.deep_research_enabled || messageData.source_review_enabled
     ? 'deep_research'
+    : messageData.url_access_enabled
+    ? 'url_access'
     : messageData.web_search_enabled
     ? 'web_search'
     : messageData.hybrid_search

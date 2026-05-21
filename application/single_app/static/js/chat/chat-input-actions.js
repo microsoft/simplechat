@@ -15,6 +15,7 @@ import { loadMessages } from "./chat-messages.js";
 
 const imageGenBtn = document.getElementById("image-generate-btn");
 const webSearchBtn = document.getElementById("search-web-btn");
+const urlAccessBtn = document.getElementById("url-access-btn");
 const sourceReviewBtn = document.getElementById("source-review-btn");
 const chooseFileBtn = document.getElementById("choose-file-btn");
 const fileInputEl = document.getElementById("file-input");
@@ -34,23 +35,63 @@ function getPromptUrls() {
     .filter(Boolean);
 }
 
+function isToggleButtonActive(button) {
+  return Boolean(button?.classList.contains("active"));
+}
+
+function setToggleButtonActive(button, isActive) {
+  if (!button) {
+    return;
+  }
+
+  button.classList.toggle("active", Boolean(isActive));
+  button.setAttribute("aria-pressed", isActive ? "true" : "false");
+}
+
+export function resetContextualSourceActionState() {
+  setToggleButtonActive(urlAccessBtn, false);
+  setToggleButtonActive(sourceReviewBtn, false);
+  updateUrlAccessAvailability();
+}
+
 function updateDeepResearchAvailability() {
   if (!sourceReviewBtn) {
     return;
   }
 
-  const webSearchActive = webSearchBtn ? webSearchBtn.classList.contains("active") : false;
+  const webSearchActive = isToggleButtonActive(webSearchBtn);
+  const urlAccessActive = isToggleButtonActive(urlAccessBtn);
   const promptUrls = getPromptUrls();
-  const shouldShow = webSearchActive || promptUrls.length > 0;
+  const shouldShow = webSearchActive || (urlAccessActive && promptUrls.length > 0);
 
   sourceReviewBtn.classList.toggle("d-none", !shouldShow);
   sourceReviewBtn.setAttribute("aria-hidden", shouldShow ? "false" : "true");
   sourceReviewBtn.disabled = !shouldShow || sourceReviewBtn.dataset.disabledByImageGeneration === "true";
 
   if (!shouldShow) {
-    sourceReviewBtn.classList.remove("active");
+    setToggleButtonActive(sourceReviewBtn, false);
   }
 }
+
+function updateUrlAccessAvailability() {
+  if (!urlAccessBtn) {
+    updateDeepResearchAvailability();
+    return;
+  }
+
+  const promptUrls = getPromptUrls();
+  const shouldShow = Boolean(window.appSettings?.enable_url_access) && promptUrls.length > 0;
+  urlAccessBtn.classList.toggle("d-none", !shouldShow);
+  urlAccessBtn.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  urlAccessBtn.disabled = !shouldShow || urlAccessBtn.dataset.disabledByImageGeneration === "true";
+
+  if (!shouldShow) {
+    setToggleButtonActive(urlAccessBtn, false);
+  }
+  updateDeepResearchAvailability();
+}
+
+window.addEventListener("chat:conversation-context-changed", resetContextualSourceActionState);
 
 const clipboardMimeExtensionMap = {
   "image/png": "png",
@@ -583,6 +624,7 @@ if (imageGenBtn) {
     const isImageGenEnabled = this.classList.contains("active");
     const docBtn = document.getElementById("search-documents-btn");
     const webBtn = document.getElementById("search-web-btn");
+    const urlBtn = document.getElementById("url-access-btn");
     const sourcesBtn = document.getElementById("source-review-btn");
     const fileBtn = document.getElementById("choose-file-btn");
     const modelSelectContainer = document.getElementById("model-select-container");
@@ -594,12 +636,17 @@ if (imageGenBtn) {
       }
       if (webBtn) {
         webBtn.disabled = true;
-        webBtn.classList.remove("active");
+        setToggleButtonActive(webBtn, false);
+      }
+      if (urlBtn) {
+        urlBtn.dataset.disabledByImageGeneration = "true";
+        urlBtn.disabled = true;
+        setToggleButtonActive(urlBtn, false);
       }
       if (sourcesBtn) {
         sourcesBtn.dataset.disabledByImageGeneration = "true";
         sourcesBtn.disabled = true;
-        sourcesBtn.classList.remove("active");
+        setToggleButtonActive(sourcesBtn, false);
       }
       if (fileBtn) {
         fileBtn.disabled = true;
@@ -611,6 +658,10 @@ if (imageGenBtn) {
     } else {
       if (docBtn) docBtn.disabled = false;
       if (webBtn) webBtn.disabled = false;
+      if (urlBtn) {
+        urlBtn.dataset.disabledByImageGeneration = "false";
+        updateUrlAccessAvailability();
+      }
       if (sourcesBtn) {
         sourcesBtn.dataset.disabledByImageGeneration = "false";
         updateDeepResearchAvailability();
@@ -653,11 +704,28 @@ if (webSearchBtn) {
   }
   
   webSearchBtn.addEventListener("click", function () {
-    this.classList.toggle("active");
-    const isActive = this.classList.contains("active");
+    setToggleButtonActive(this, !isToggleButtonActive(this));
+    const isActive = isToggleButtonActive(this);
     updateWebSearchNotice(isActive);
+    updateUrlAccessAvailability();
     updateDeepResearchAvailability();
   });
+}
+
+if (urlAccessBtn) {
+  urlAccessBtn.addEventListener("click", function () {
+    if (this.classList.contains("d-none") || this.disabled) {
+      return;
+    }
+    setToggleButtonActive(this, !isToggleButtonActive(this));
+    const maxChatUrls = Number.parseInt(window.appSettings?.url_access_max_chat_urls_per_turn || "10", 10);
+    const promptUrlCount = getPromptUrls().length;
+    if (isToggleButtonActive(this) && promptUrlCount > maxChatUrls) {
+      showToast(`URL Access supports up to ${maxChatUrls} URL(s) in this message.`, "warning");
+    }
+    updateDeepResearchAvailability();
+  });
+  updateUrlAccessAvailability();
 }
 
 if (sourceReviewBtn) {
@@ -665,11 +733,11 @@ if (sourceReviewBtn) {
     if (this.classList.contains("d-none") || this.disabled) {
       return;
     }
-    this.classList.toggle("active");
-    const maxUserUrls = Number.parseInt(window.appSettings?.deep_research_max_user_urls_per_turn || "10", 10);
+    setToggleButtonActive(this, !isToggleButtonActive(this));
+    const maxUserUrls = Number.parseInt(window.appSettings?.url_access_max_chat_urls_per_turn || window.appSettings?.deep_research_max_user_urls_per_turn || "10", 10);
     const promptUrlCount = getPromptUrls().length;
-    if (this.classList.contains("active") && promptUrlCount > maxUserUrls) {
-      showToast(`Deep Research will review the first ${maxUserUrls} URL(s) from this message.`, "info");
+    if (isToggleButtonActive(this) && promptUrlCount > maxUserUrls) {
+      showToast(`Deep Research supports up to ${maxUserUrls} direct URL(s) from this message.`, "info");
     }
   });
   updateDeepResearchAvailability();
@@ -728,10 +796,10 @@ if (uploadBtn) {
 }
 
 if (userInputEl) {
-  userInputEl.addEventListener("input", updateDeepResearchAvailability);
+  userInputEl.addEventListener("input", updateUrlAccessAvailability);
 
   userInputEl.addEventListener("paste", (event) => {
-    setTimeout(updateDeepResearchAvailability, 0);
+    setTimeout(updateUrlAccessAvailability, 0);
     const clipboardFiles = getClipboardFiles(event.clipboardData);
     if (clipboardFiles.length === 0) {
       return;

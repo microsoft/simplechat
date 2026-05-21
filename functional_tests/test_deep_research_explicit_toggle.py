@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for explicit Deep Research activation.
-Version: 0.241.079
+Version: 0.241.082
 Implemented in: 0.241.079
+Updated in: 0.241.081; 0.241.082
 
 This test ensures that Web Search alone does not auto-enable Deep Research or
 Source Review. Deep Research should run only when the user explicitly selects it.
@@ -62,7 +63,8 @@ def test_chat_backend_uses_explicit_deep_research_toggle():
 
     assert "should_auto_enable_source_review" not in route_source
     assert "deep_research_requested = bool(source_review_enabled) or bool(deep_research_enabled)" in route_source
-    assert "source_review_enabled = source_review_allowed_for_user and deep_research_requested" in route_source
+    assert "deep_research_enabled = source_review_allowed_for_user and deep_research_requested" in route_source
+    assert "source_review_enabled = bool(deep_research_enabled or url_access_enabled)" in route_source
 
     print("Chat backend explicit toggle handling verified.")
     return True

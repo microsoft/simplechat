@@ -136,6 +136,35 @@ def _build_workspace_generated_artifact_file_name(file_name, artifact_message_id
     return f"{normalized_base_name} (artifact {suffix}){normalized_extension}"
 
 
+def _resolve_generated_artifact_file_name(message_item):
+    """Resolve the best workspace/download filename for a generated chat artifact."""
+    message_item = message_item if isinstance(message_item, dict) else {}
+    raw_file_name = str(message_item.get("filename") or "generated-artifact.json").strip() or "generated-artifact.json"
+    normalized_file_name = raw_file_name.replace("\\", "/").split("/")[-1].strip() or "generated-artifact.json"
+    metadata = message_item.get("metadata", {}) if isinstance(message_item.get("metadata", {}), dict) else {}
+    output_format = str(metadata.get("generated_artifact_output_format") or "").strip().lower().lstrip(".")
+    output_extension = {
+        "csv": ".csv",
+        "json": ".json",
+        "markdown": ".md",
+        "md": ".md",
+    }.get(output_format)
+
+    if not output_extension:
+        return normalized_file_name
+
+    base_name, current_extension = os.path.splitext(normalized_file_name)
+    normalized_current_extension = current_extension.lower()
+    if normalized_current_extension == output_extension:
+        return normalized_file_name
+
+    if normalized_current_extension in {"", ".json"} and output_extension != ".json":
+        normalized_base_name = base_name.strip() or "generated-artifact"
+        return f"{normalized_base_name}{output_extension}"
+
+    return normalized_file_name
+
+
 def _log_enhanced_citations_debug(message, **details):
     """Write debug-gated enhanced citations diagnostics."""
     log_event(
@@ -549,7 +578,7 @@ def register_enhanced_citations_routes(app):
             message_item = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
             return serve_enhanced_citation_content(
                 {
-                    'file_name': message_item.get('filename') or 'generated-artifact',
+                    'file_name': _resolve_generated_artifact_file_name(message_item),
                     'blob_container': message_item.get('blob_container'),
                     'blob_path': message_item.get('blob_path'),
                 },
@@ -588,7 +617,7 @@ def register_enhanced_citations_routes(app):
             workspace_scope = _normalize_generated_artifact_target_scope(payload.get("workspace_scope"))
             message_item = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
 
-            file_name = str(message_item.get("filename") or "generated-artifact.json").strip() or "generated-artifact.json"
+            file_name = _resolve_generated_artifact_file_name(message_item)
             artifact_metadata = message_item.get("metadata", {}) or {}
             source_blob_container = str(message_item.get("blob_container") or "").strip()
             source_blob_path = str(message_item.get("blob_path") or "").strip()

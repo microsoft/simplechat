@@ -51,10 +51,15 @@ from functions_source_review import (
     build_deep_research_query_plan,
     compact_deep_research_result_for_metadata,
     compact_source_review_result_for_metadata,
+    extract_urls_from_text,
     get_deep_research_config,
+    get_url_access_max_urls,
     is_source_review_enabled_for_user,
+    is_url_access_enabled_for_user,
     normalize_review_url,
     perform_source_review,
+    validate_url_access_request,
+    URL_ACCESS_CONTEXT_CHAT,
 )
 from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
@@ -10606,6 +10611,7 @@ def register_route_backend_chats(app):
                 conversation_id = str(conversation_id).strip() or None
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
+            url_access_enabled = data.get('url_access_enabled')
             source_review_enabled = data.get('source_review_enabled')
             deep_research_enabled = data.get('deep_research_enabled')
             selected_document_id = data.get('selected_document_id')
@@ -10745,6 +10751,8 @@ def register_route_backend_chats(app):
                 hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
             if isinstance(web_search_enabled, str):
                 web_search_enabled = web_search_enabled.lower() == 'true'
+            if isinstance(url_access_enabled, str):
+                url_access_enabled = url_access_enabled.lower() == 'true'
             if isinstance(source_review_enabled, str):
                 source_review_enabled = source_review_enabled.lower() == 'true'
             if isinstance(deep_research_enabled, str):
@@ -10758,6 +10766,29 @@ def register_route_backend_chats(app):
             current_user_info = get_current_user_info() or {}
             current_user_email = current_user_info.get('email')
             current_user_roles = (session.get('user') or {}).get('roles', [])
+            prompt_urls = extract_urls_from_text(user_message)
+            url_access_requested = bool(url_access_enabled)
+            if url_access_requested:
+                url_access_validation = validate_url_access_request(
+                    user_message,
+                    settings,
+                    URL_ACCESS_CONTEXT_CHAT,
+                    user_roles=current_user_roles,
+                )
+                if not url_access_validation.get('allowed'):
+                    limit = url_access_validation.get('limit') or get_url_access_max_urls(URL_ACCESS_CONTEXT_CHAT, settings)
+                    if url_access_validation.get('reason') == 'url_count_exceeded':
+                        return jsonify({
+                            'error': f'URL Access supports up to {limit} URL(s) per chat message.'
+                        }), 400
+                    if url_access_validation.get('reason') == 'url_access_role_required':
+                        return jsonify({'error': 'URL Access requires the UrlAccessUser app role.'}), 403
+                    return jsonify({'error': 'URL Access is disabled by an administrator.'}), 403
+            url_access_enabled = bool(
+                url_access_requested
+                and prompt_urls
+                and is_url_access_enabled_for_user(settings, user_roles=current_user_roles)
+            )
             source_review_allowed_for_user = is_source_review_enabled_for_user(
                 settings,
                 user_id,
@@ -10765,8 +10796,8 @@ def register_route_backend_chats(app):
                 user_roles=current_user_roles,
             )
             deep_research_requested = bool(source_review_enabled) or bool(deep_research_enabled)
-            source_review_enabled = source_review_allowed_for_user and deep_research_requested
-            deep_research_enabled = bool(source_review_enabled)
+            deep_research_enabled = source_review_allowed_for_user and deep_research_requested
+            source_review_enabled = bool(deep_research_enabled or url_access_enabled)
 
             history_grounded_search_used = False
             history_only_answerability = None
@@ -11055,6 +11086,7 @@ def register_route_backend_chats(app):
                     'image_generation': image_gen_enabled,
                     'document_search': hybrid_search_enabled,
                     'web_search': bool(web_search_enabled),
+                    'url_access': bool(url_access_enabled),
                     'deep_research': bool(deep_research_enabled)
                 }
                 
@@ -12378,17 +12410,26 @@ def register_route_backend_chats(app):
                         thought_tracker.add_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
 
             if source_review_enabled:
-                thought_tracker.add_thought('deep_research', "Reviewing source pages for supporting evidence")
+                source_review_thought_label = 'deep_research' if deep_research_enabled else 'url_access'
+                source_review_start_text = (
+                    "Reviewing source pages for supporting evidence"
+                    if deep_research_enabled
+                    else "Reviewing pasted URLs"
+                )
+                thought_tracker.add_thought(source_review_thought_label, source_review_start_text)
                 source_review_result = perform_source_review(
                     settings=settings,
                     user_id=user_id,
                     user_email=current_user_email,
                     user_roles=current_user_roles,
                     user_message=user_message,
-                    web_search_citations=web_search_citations_list,
+                    web_search_citations=web_search_citations_list if deep_research_enabled else [],
                     conversation_id=conversation_id,
                     source_review_planner_client=gpt_client,
                     source_review_planner_model=gpt_model,
+                    url_access_only=not deep_research_enabled,
+                    url_access_context=URL_ACCESS_CONTEXT_CHAT,
+                    include_direct_user_urls=bool(url_access_enabled),
                 )
                 source_review_message = source_review_result.get('system_message') if isinstance(source_review_result, dict) else None
                 if source_review_message:
@@ -12410,8 +12451,8 @@ def register_route_backend_chats(app):
                     elif coverage.get('llm_planning_attempted'):
                         planner_status = 'attempted'
                     thought_tracker.add_thought(
-                        'deep_research',
-                        f"Reviewed {coverage.get('pages_reviewed', 0)} source pages",
+                        source_review_thought_label,
+                        f"Reviewed {coverage.get('pages_reviewed', 0)} URL source pages",
                         detail=(
                             f"seed={coverage.get('seed_pages_reviewed', 0)}, "
                             f"child={coverage.get('child_pages_reviewed', 0)}, "
@@ -12422,28 +12463,29 @@ def register_route_backend_chats(app):
                     )
                 else:
                     thought_tracker.add_thought(
-                        'deep_research',
-                        "Deep Research did not add page evidence",
+                        source_review_thought_label,
+                        "Deep Research did not add page evidence" if deep_research_enabled else "URL Access did not add page evidence",
                         detail=source_review_result.get('skipped_reason') if isinstance(source_review_result, dict) else None
                     )
 
-                deep_research_ledger = build_deep_research_ledger(
-                    settings=settings,
-                    user_message=user_message,
-                    query_plan=deep_research_query_plan,
-                    web_search_runs=deep_research_web_search_runs,
-                    web_search_citations=web_search_citations_list,
-                    source_review_result=source_review_result,
-                )
-                deep_research_artifact = _maybe_create_deep_research_ledger_artifact(
-                    settings,
-                    conversation_id,
-                    deep_research_ledger,
-                )
-                if deep_research_artifact:
-                    deep_research_ledger['ledger_artifact'] = deep_research_artifact
-                    generated_analysis_artifacts_list.append(deep_research_artifact)
-                deep_research_result = compact_deep_research_result_for_metadata(deep_research_ledger)
+                if deep_research_enabled:
+                    deep_research_ledger = build_deep_research_ledger(
+                        settings=settings,
+                        user_message=user_message,
+                        query_plan=deep_research_query_plan,
+                        web_search_runs=deep_research_web_search_runs,
+                        web_search_citations=web_search_citations_list,
+                        source_review_result=source_review_result,
+                    )
+                    deep_research_artifact = _maybe_create_deep_research_ledger_artifact(
+                        settings,
+                        conversation_id,
+                        deep_research_ledger,
+                    )
+                    if deep_research_artifact:
+                        deep_research_ledger['ledger_artifact'] = deep_research_artifact
+                        generated_analysis_artifacts_list.append(deep_research_artifact)
+                    deep_research_result = compact_deep_research_result_for_metadata(deep_research_ledger)
 
         # region 5 - FINAL conversation history preparation
             # ---------------------------------------------------------------------
@@ -13878,6 +13920,7 @@ def register_route_backend_chats(app):
                 conversation_id = finalized_conversation_id
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
+                url_access_enabled = data.get('url_access_enabled')
                 source_review_enabled = data.get('source_review_enabled')
                 deep_research_enabled = data.get('deep_research_enabled')
                 selected_document_id = data.get('selected_document_id')
@@ -14042,6 +14085,8 @@ def register_route_backend_chats(app):
                     hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
                 if isinstance(web_search_enabled, str):
                     web_search_enabled = web_search_enabled.lower() == 'true'
+                if isinstance(url_access_enabled, str):
+                    url_access_enabled = url_access_enabled.lower() == 'true'
                 if isinstance(source_review_enabled, str):
                     source_review_enabled = source_review_enabled.lower() == 'true'
                 if isinstance(deep_research_enabled, str):
@@ -14050,6 +14095,29 @@ def register_route_backend_chats(app):
                 if isinstance(user_workspace_context_requested, str):
                     user_workspace_context_requested = user_workspace_context_requested.lower() == 'true'
                 user_workspace_context_requested = bool(user_workspace_context_requested)
+                prompt_urls = extract_urls_from_text(user_message)
+                url_access_requested = bool(url_access_enabled)
+                if url_access_requested:
+                    url_access_validation = validate_url_access_request(
+                        user_message,
+                        settings,
+                        URL_ACCESS_CONTEXT_CHAT,
+                        user_roles=current_user_roles,
+                    )
+                    if not url_access_validation.get('allowed'):
+                        limit = url_access_validation.get('limit') or get_url_access_max_urls(URL_ACCESS_CONTEXT_CHAT, settings)
+                        if url_access_validation.get('reason') == 'url_count_exceeded':
+                            yield f"data: {json.dumps({'error': f'URL Access supports up to {limit} URL(s) per chat message.'})}\n\n"
+                        elif url_access_validation.get('reason') == 'url_access_role_required':
+                            yield f"data: {json.dumps({'error': 'URL Access requires the UrlAccessUser app role.'})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'error': 'URL Access is disabled by an administrator.'})}\n\n"
+                        return
+                url_access_enabled = bool(
+                    url_access_requested
+                    and prompt_urls
+                    and is_url_access_enabled_for_user(settings, user_roles=current_user_roles)
+                )
                 source_review_allowed_for_user = is_source_review_enabled_for_user(
                     settings,
                     user_id,
@@ -14057,8 +14125,8 @@ def register_route_backend_chats(app):
                     user_roles=current_user_roles,
                 )
                 deep_research_requested = bool(source_review_enabled) or bool(deep_research_enabled)
-                source_review_enabled = source_review_allowed_for_user and deep_research_requested
-                deep_research_enabled = bool(source_review_enabled)
+                deep_research_enabled = source_review_allowed_for_user and deep_research_requested
+                source_review_enabled = bool(deep_research_enabled or url_access_enabled)
                 original_hybrid_search_enabled = bool(hybrid_search_enabled)
                 history_grounded_search_used = False
                 history_only_answerability = None
@@ -14281,6 +14349,7 @@ def register_route_backend_chats(app):
                     'image_generation': False,
                     'document_search': hybrid_search_enabled,
                     'web_search': bool(web_search_enabled),
+                    'url_access': bool(url_access_enabled),
                     'deep_research': bool(deep_research_enabled)
                 }
                 
@@ -15244,17 +15313,26 @@ def register_route_backend_chats(app):
                     debug_print(
                         f"[Streaming] Starting Source Review for conversation_id={conversation_id}"
                     )
-                    yield emit_thought('deep_research', "Reviewing source pages for supporting evidence")
+                    source_review_thought_label = 'deep_research' if deep_research_enabled else 'url_access'
+                    source_review_start_text = (
+                        "Reviewing source pages for supporting evidence"
+                        if deep_research_enabled
+                        else "Reviewing pasted URLs"
+                    )
+                    yield emit_thought(source_review_thought_label, source_review_start_text)
                     source_review_result = perform_source_review(
                         settings=settings,
                         user_id=user_id,
                         user_email=current_user_email,
                         user_roles=current_user_roles,
                         user_message=user_message,
-                        web_search_citations=web_search_citations_list,
+                        web_search_citations=web_search_citations_list if deep_research_enabled else [],
                         conversation_id=conversation_id,
                         source_review_planner_client=gpt_client,
                         source_review_planner_model=gpt_model,
+                        url_access_only=not deep_research_enabled,
+                        url_access_context=URL_ACCESS_CONTEXT_CHAT,
+                        include_direct_user_urls=bool(url_access_enabled),
                     )
                     source_review_message = source_review_result.get('system_message') if isinstance(source_review_result, dict) else None
                     if source_review_message:
@@ -15276,8 +15354,8 @@ def register_route_backend_chats(app):
                         elif coverage.get('llm_planning_attempted'):
                             planner_status = 'attempted'
                         yield emit_thought(
-                            'deep_research',
-                            f"Reviewed {coverage.get('pages_reviewed', 0)} source pages",
+                            source_review_thought_label,
+                            f"Reviewed {coverage.get('pages_reviewed', 0)} URL source pages",
                             detail=(
                                 f"seed={coverage.get('seed_pages_reviewed', 0)}, "
                                 f"child={coverage.get('child_pages_reviewed', 0)}, "
@@ -15288,28 +15366,29 @@ def register_route_backend_chats(app):
                         )
                     else:
                         yield emit_thought(
-                            'deep_research',
-                            "Deep Research did not add page evidence",
+                            source_review_thought_label,
+                            "Deep Research did not add page evidence" if deep_research_enabled else "URL Access did not add page evidence",
                             detail=source_review_result.get('skipped_reason') if isinstance(source_review_result, dict) else None
                         )
 
-                    deep_research_ledger = build_deep_research_ledger(
-                        settings=settings,
-                        user_message=user_message,
-                        query_plan=deep_research_query_plan,
-                        web_search_runs=deep_research_web_search_runs,
-                        web_search_citations=web_search_citations_list,
-                        source_review_result=source_review_result,
-                    )
-                    deep_research_artifact = _maybe_create_deep_research_ledger_artifact(
-                        settings,
-                        conversation_id,
-                        deep_research_ledger,
-                    )
-                    if deep_research_artifact:
-                        deep_research_ledger['ledger_artifact'] = deep_research_artifact
-                        generated_analysis_artifacts_list.append(deep_research_artifact)
-                    deep_research_result = compact_deep_research_result_for_metadata(deep_research_ledger)
+                    if deep_research_enabled:
+                        deep_research_ledger = build_deep_research_ledger(
+                            settings=settings,
+                            user_message=user_message,
+                            query_plan=deep_research_query_plan,
+                            web_search_runs=deep_research_web_search_runs,
+                            web_search_citations=web_search_citations_list,
+                            source_review_result=source_review_result,
+                        )
+                        deep_research_artifact = _maybe_create_deep_research_ledger_artifact(
+                            settings,
+                            conversation_id,
+                            deep_research_ledger,
+                        )
+                        if deep_research_artifact:
+                            deep_research_ledger['ledger_artifact'] = deep_research_artifact
+                            generated_analysis_artifacts_list.append(deep_research_artifact)
+                        deep_research_result = compact_deep_research_result_for_metadata(deep_research_ledger)
 
                 # Update message chat type
                 message_chat_type = None

@@ -6,7 +6,7 @@ from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_assigned_knowledge import get_agent_assigned_knowledge
-from functions_source_review import get_deep_research_config, is_source_review_enabled_for_user
+from functions_source_review import get_deep_research_config, is_source_review_enabled_for_user, is_url_access_enabled_for_user
 from functions_documents import *
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
 from functions_group_agents import get_group_agents
@@ -285,10 +285,15 @@ def register_route_frontend_chats(app):
             user_email=current_user_info.get('email'),
             user_roles=current_user_roles,
         )
+        url_access_enabled_for_user = is_url_access_enabled_for_user(
+            settings,
+            user_roles=current_user_roles,
+        )
         for source_review_key in list(public_settings.keys()):
             if source_review_key.startswith('source_review_') or source_review_key == 'enable_deep_source_review':
                 public_settings.pop(source_review_key, None)
         public_settings['enable_source_review'] = source_review_enabled_for_user
+        public_settings['enable_url_access'] = url_access_enabled_for_user
         public_settings['enable_deep_source_review'] = bool(
             source_review_enabled_for_user and settings.get('enable_deep_source_review', False)
         )

@@ -404,7 +404,13 @@ def get_settings(use_cosmos=False, include_source=False):
             }
         },
 
-        # Deep Research (bounded source-page inspection for web evidence)
+        # URL Access and Deep Research (bounded source-page inspection for web evidence)
+        'enable_url_access': False,
+        'url_access_max_chat_urls_per_turn': 10,
+        'url_access_max_workflow_urls_per_run': 50,
+        'url_access_allowed_domains': [],
+        'url_access_blocked_domains': [],
+        'require_member_of_url_access_user': False,
         'enable_source_review': False,
         'require_member_of_deep_research_user': False,
         'source_review_allow_internal_hosts': False,

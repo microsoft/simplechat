@@ -617,6 +617,26 @@ def register_route_frontend_admin_settings(app):
             )
             source_review_runtime_capabilities = get_source_review_runtime_capabilities()
             source_review_settings = get_source_review_config({
+                'enable_url_access': form_data.get('enable_url_access') == 'on',
+                'url_access_max_chat_urls_per_turn': parse_admin_int(
+                    form_data.get('url_access_max_chat_urls_per_turn'),
+                    settings.get('url_access_max_chat_urls_per_turn', 10),
+                    'url_access_max_chat_urls_per_turn',
+                    10
+                ),
+                'url_access_max_workflow_urls_per_run': parse_admin_int(
+                    form_data.get('url_access_max_workflow_urls_per_run'),
+                    settings.get('url_access_max_workflow_urls_per_run', 50),
+                    'url_access_max_workflow_urls_per_run',
+                    50
+                ),
+                'url_access_allowed_domains': parse_source_review_list(
+                    form_data.get('url_access_allowed_domains') or form_data.get('source_review_allowed_domains')
+                ),
+                'url_access_blocked_domains': parse_source_review_list(
+                    form_data.get('url_access_blocked_domains') or form_data.get('source_review_blocked_domains')
+                ),
+                'require_member_of_url_access_user': form_data.get('require_member_of_url_access_user') == 'on',
                 'enable_source_review': form_data.get('enable_source_review') == 'on',
                 'require_member_of_deep_research_user': form_data.get('require_member_of_deep_research_user') == 'on',
                 'source_review_allow_internal_hosts': form_data.get('source_review_allow_internal_hosts') == 'on',
@@ -679,8 +699,12 @@ def register_route_frontend_admin_settings(app):
                     12
                 ),
                 'source_review_respect_robots_txt': form_data.get('source_review_respect_robots_txt') == 'on',
-                'source_review_allowed_domains': parse_source_review_list(form_data.get('source_review_allowed_domains')),
-                'source_review_blocked_domains': parse_source_review_list(form_data.get('source_review_blocked_domains')),
+                'source_review_allowed_domains': parse_source_review_list(
+                    form_data.get('url_access_allowed_domains') or form_data.get('source_review_allowed_domains')
+                ),
+                'source_review_blocked_domains': parse_source_review_list(
+                    form_data.get('url_access_blocked_domains') or form_data.get('source_review_blocked_domains')
+                ),
                 'source_review_allowed_users': [],
                 'source_review_blocked_users': [],
                 'source_review_audit_logging': form_data.get('source_review_audit_logging') == 'on',
@@ -1593,7 +1617,13 @@ def register_route_frontend_admin_settings(app):
                     }
                 },
 
-                # Search (Source Review)
+                # Search (URL Access and Source Review)
+                'enable_url_access': source_review_settings['enable_url_access'],
+                'url_access_max_chat_urls_per_turn': source_review_settings['url_access_max_chat_urls_per_turn'],
+                'url_access_max_workflow_urls_per_run': source_review_settings['url_access_max_workflow_urls_per_run'],
+                'url_access_allowed_domains': source_review_settings['url_access_allowed_domains'],
+                'url_access_blocked_domains': source_review_settings['url_access_blocked_domains'],
+                'require_member_of_url_access_user': source_review_settings['require_member_of_url_access_user'],
                 'enable_source_review': source_review_settings['enable_source_review'],
                 'require_member_of_deep_research_user': source_review_settings['require_member_of_deep_research_user'],
                 'source_review_allow_internal_hosts': source_review_settings['source_review_allow_internal_hosts'],

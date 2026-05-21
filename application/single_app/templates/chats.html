@@ -341,6 +341,16 @@
                             <i class="bi bi-globe"></i> <span class="search-btn-text">Web</span>
                         </button>
                         {% endif %}
+                        {% if settings.enable_url_access %}
+                        <button
+                            id="url-access-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn d-none"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Review pasted URLs"
+                            aria-label="URL Access"
+                        >
+                            <i class="bi bi-link-45deg"></i> <span class="search-btn-text">URLs</span>
+                        </button>
+                        {% endif %}
                         {% if settings.enable_source_review %}
                         <button
                             id="source-review-btn"
@@ -1432,6 +1442,8 @@
         enable_text_to_speech: {{ app_settings.enable_text_to_speech|tojson }},
         enable_speech_to_text_input: {{ app_settings.enable_speech_to_text_input|tojson }},
         enable_web_search_user_notice: {{ settings.enable_web_search_user_notice|tojson }},
+        enable_url_access: {{ settings.enable_url_access|tojson }},
+        url_access_max_chat_urls_per_turn: {{ settings.url_access_max_chat_urls_per_turn|default(10, true)|tojson }},
         enable_source_review: {{ settings.enable_source_review|tojson }},
         deep_research_max_user_urls_per_turn: {{ settings.deep_research_max_user_urls_per_turn|default(10, true)|tojson }},
         deep_research_max_search_queries_per_turn: {{ settings.deep_research_max_search_queries_per_turn|default(3, true)|tojson }},

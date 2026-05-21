@@ -1284,7 +1284,7 @@ def _normalize_generated_document_file_name(file_name: str) -> str:
 
     base_name, extension = os.path.splitext(normalized_file_name)
     normalized_extension = extension.lower().strip()
-    if normalized_extension in {".json", ".csv"} and base_name.strip():
+    if normalized_extension and normalized_extension != "." and base_name.strip():
         return normalized_file_name
 
     normalized_base_name = base_name.strip() or normalized_file_name.strip() or "generated_tabular_output"

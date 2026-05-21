@@ -128,8 +128,8 @@ function createIconButton(iconClass, label, buttonClass = 'btn-outline-secondary
 }
 
 function setupDeepResearchPolicyEditors() {
-    document.querySelectorAll('[data-deep-research-policy]').forEach(editor => {
-        const policyName = editor.dataset.deepResearchPolicy;
+    document.querySelectorAll('[data-deep-research-policy], [data-url-access-policy]').forEach(editor => {
+        const policyName = editor.dataset.urlAccessPolicy || editor.dataset.deepResearchPolicy;
         const policyKind = editor.dataset.policyKind || 'text';
         const hiddenField = document.getElementById(policyName);
         const listContainer = editor.querySelector('[data-policy-list]');
@@ -2581,6 +2581,32 @@ function setupToggles() {
     if (enableWebSearchUserNotice && webSearchUserNoticeSettings) {
         enableWebSearchUserNotice.addEventListener('change', function() {
             toggleVisibility(webSearchUserNoticeSettings, this.checked);
+            markFormAsModified();
+        });
+    }
+
+    const enableUrlAccess = document.getElementById('enable_url_access');
+    const urlAccessSettings = document.getElementById('url_access_settings');
+    const applyUrlAccessDefaults = () => {
+        const numericDefaults = {
+            url_access_max_chat_urls_per_turn: '10',
+            url_access_max_workflow_urls_per_run: '50',
+        };
+        Object.entries(numericDefaults).forEach(([fieldId, value]) => {
+            const field = document.getElementById(fieldId);
+            if (field && !field.value) {
+                field.value = value;
+            }
+        });
+    };
+
+    if (enableUrlAccess && urlAccessSettings) {
+        toggleVisibility(urlAccessSettings, enableUrlAccess.checked);
+        enableUrlAccess.addEventListener('change', function () {
+            toggleVisibility(urlAccessSettings, this.checked);
+            if (this.checked) {
+                applyUrlAccessDefaults();
+            }
             markFormAsModified();
         });
     }

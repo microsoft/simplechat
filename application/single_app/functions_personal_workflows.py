@@ -55,6 +55,16 @@ def _normalize_text(value, field_name, required=False):
     return normalized
 
 
+def _normalize_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
 def _normalize_schedule(schedule_payload):
     schedule_payload = schedule_payload if isinstance(schedule_payload, dict) else {}
     unit = str(schedule_payload.get('unit') or '').strip().lower()
@@ -391,6 +401,20 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         raise ValueError('Trigger type must be manual or interval.')
 
     is_enabled = bool(workflow_data.get('is_enabled', existing_workflow.get('is_enabled', True) if existing_workflow else True))
+    url_access_enabled = _normalize_bool(
+        workflow_data.get(
+            'url_access_enabled',
+            existing_workflow.get('url_access_enabled', False) if existing_workflow else False,
+        ),
+        default=False,
+    )
+    url_access_authorized = _normalize_bool(
+        workflow_data.get(
+            'url_access_authorized',
+            existing_workflow.get('url_access_authorized', False) if existing_workflow else False,
+        ),
+        default=False,
+    ) if url_access_enabled else False
     alert_priority = _normalize_alert_priority(
         workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
     )
@@ -432,6 +456,16 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'runner_type': runner_type,
         'trigger_type': trigger_type,
         'is_enabled': is_enabled,
+        'url_access_enabled': url_access_enabled,
+        'url_access_authorized': url_access_authorized,
+        'url_access_authorized_by': _normalize_text(
+            workflow_data.get('url_access_authorized_by') or (existing_workflow or {}).get('url_access_authorized_by'),
+            'URL Access authorized by',
+        ) if url_access_authorized else '',
+        'url_access_authorized_at': _normalize_text(
+            workflow_data.get('url_access_authorized_at') or (existing_workflow or {}).get('url_access_authorized_at'),
+            'URL Access authorized at',
+        ) if url_access_authorized else '',
         'alert_priority': alert_priority,
         'schedule': schedule,
         'document_action': document_action,

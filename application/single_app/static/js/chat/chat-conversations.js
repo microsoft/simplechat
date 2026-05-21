@@ -37,6 +37,16 @@ const deleteConversationNewOwnerSelectEl = document.getElementById("delete-conve
 const deleteConversationImpactNoteEl = document.getElementById("delete-conversation-impact-note");
 const confirmDeleteConversationBtn = document.getElementById("confirm-delete-conversation-btn");
 
+function notifyConversationContextChanged(reason, conversationId = null, options = {}) {
+  window.dispatchEvent(new CustomEvent("chat:conversation-context-changed", {
+    detail: {
+      reason,
+      conversationId,
+      preserveSelections: Boolean(options.preserveSelections),
+    },
+  }));
+}
+
 // Track selected conversations
 let selectedConversations = new Set();
 
@@ -1383,6 +1393,7 @@ export function addConversationToList(conversationId, title = null, classificati
 export async function selectConversation(conversationId) {
   currentConversationId = conversationId;
   window.currentConversationId = conversationId;
+  notifyConversationContextChanged("select", conversationId);
 
   const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
   if (!convoItem) {
@@ -1883,6 +1894,9 @@ export async function createNewConversation(callback, options = {}) {
     }
 
   const { preserveSelections = false, initialMessage = "" } = options;
+  if (!preserveSelections) {
+    notifyConversationContextChanged("new", null, { preserveSelections });
+  }
 
     // Disable new button? Show loading?
     if (newConversationBtn) newConversationBtn.disabled = true;

@@ -20,6 +20,7 @@ const workflowIdInput = document.getElementById("workflow-id");
 const workflowNameInput = document.getElementById("workflow-name");
 const workflowDescriptionInput = document.getElementById("workflow-description");
 const workflowTaskPromptInput = document.getElementById("workflow-task-prompt");
+const workflowUrlAccessEnabledToggle = document.getElementById("workflow-url-access-enabled");
 const workflowRunnerTypeSelect = document.getElementById("workflow-runner-type");
 const workflowAgentFields = document.getElementById("workflow-agent-fields");
 const workflowAgentSelect = document.getElementById("workflow-agent-select");
@@ -77,6 +78,7 @@ const workflowAnalysisWindowPercentInput = document.getElementById("workflow-ana
 const workflowAnalysisRetriesInput = document.getElementById("workflow-analysis-retries");
 const workflowUseSelectedDocumentsBtn = document.getElementById("workflow-use-selected-documents-btn");
 const workflowSelectedDocumentsSummary = document.getElementById("workflow-selected-documents-summary");
+const WORKFLOW_URL_PATTERN = /https?:\/\/[^\s<>'"]+/gi;
 
 const workflowHistoryModalEl = document.getElementById("workflowHistoryModal");
 const workflowHistoryModal = workflowHistoryModalEl && window.bootstrap ? bootstrap.Modal.getOrCreateInstance(workflowHistoryModalEl) : null;
@@ -118,6 +120,34 @@ function getDocumentActionDisplayLabel(actionType) {
         return "Analyze";
     }
     return "Search";
+}
+
+function isWorkflowUrlAccessAvailable() {
+    return Boolean(window.urlAccessSettings?.enable_url_access);
+}
+
+function getWorkflowUrlAccessMaxUrls() {
+    const configuredLimit = Number.parseInt(window.urlAccessSettings?.url_access_max_workflow_urls_per_run || 50, 10);
+    return Number.isFinite(configuredLimit) && configuredLimit > 0 ? configuredLimit : 50;
+}
+
+function getWorkflowPromptUrls() {
+    const promptText = normalizeText(workflowTaskPromptInput?.value);
+    if (!promptText) {
+        return [];
+    }
+
+    const urls = [];
+    const seenUrls = new Set();
+    for (const match of promptText.matchAll(WORKFLOW_URL_PATTERN)) {
+        const url = normalizeText(match[0]).replace(/[.,);\]}>]+$/g, "");
+        if (!url || seenUrls.has(url)) {
+            continue;
+        }
+        seenUrls.add(url);
+        urls.push(url);
+    }
+    return urls;
 }
 
 function getDocumentActionDescription(actionType) {
@@ -1231,6 +1261,9 @@ function resetWorkflowForm() {
     if (workflowTaskPromptInput) {
         workflowTaskPromptInput.value = "";
     }
+    if (workflowUrlAccessEnabledToggle) {
+        workflowUrlAccessEnabledToggle.checked = false;
+    }
     if (workflowRunnerTypeSelect) {
         workflowRunnerTypeSelect.value = "model";
     }
@@ -1325,6 +1358,9 @@ async function openWorkflowModal(workflow = null) {
         }
         if (workflowTaskPromptInput) {
             workflowTaskPromptInput.value = normalizeText(workflow.task_prompt);
+        }
+        if (workflowUrlAccessEnabledToggle) {
+            workflowUrlAccessEnabledToggle.checked = Boolean(workflow.url_access_enabled);
         }
         if (workflowRunnerTypeSelect) {
             workflowRunnerTypeSelect.value = normalizeText(workflow.runner_type) || "model";
@@ -1421,6 +1457,7 @@ function buildWorkflowPayload() {
         name: normalizeText(workflowNameInput?.value),
         description: normalizeText(workflowDescriptionInput?.value),
         task_prompt: normalizeText(workflowTaskPromptInput?.value),
+        url_access_enabled: isWorkflowUrlAccessAvailable() ? Boolean(workflowUrlAccessEnabledToggle?.checked) : false,
         runner_type: runnerType,
         trigger_type: triggerType,
         alert_priority: normalizeText(workflowAlertPrioritySelect?.value).toLowerCase() || "none",
@@ -1462,6 +1499,13 @@ function buildWorkflowPayload() {
     }
     if (!payload.task_prompt) {
         throw new Error("Task prompt is required.");
+    }
+    if (payload.url_access_enabled) {
+        const promptUrls = getWorkflowPromptUrls();
+        const maxWorkflowUrls = getWorkflowUrlAccessMaxUrls();
+        if (promptUrls.length > maxWorkflowUrls) {
+            throw new Error(`URL Access workflows support up to ${maxWorkflowUrls} URLs per run.`);
+        }
     }
     if (documentActionType === DOCUMENT_ACTION_ANALYZE && !payload.document_action.document_ids.length) {
         throw new Error("Add one or more document ids for analysis.");

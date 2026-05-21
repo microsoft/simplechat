@@ -69,6 +69,12 @@ from functions_personal_workflows import save_personal_workflow_run
 from functions_search_service import resolve_document_context
 from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, normalize_model_endpoints
+from functions_source_review import (
+    URL_ACCESS_CONTEXT_WORKFLOW,
+    compact_source_review_result_for_metadata,
+    perform_source_review,
+    validate_url_access_request,
+)
 from functions_thoughts import ThoughtTracker
 from semantic_kernel_loader import load_user_semantic_kernel
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
@@ -1420,6 +1426,179 @@ def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, ri
 
 def _build_workflow_generation_prompt(task_prompt):
     return append_proactive_chart_guidance(task_prompt)
+
+
+def _workflow_url_access_enabled(workflow):
+    value = (workflow or {}).get('url_access_enabled', False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _get_workflow_url_access_system_content(url_access_context=None):
+    url_access_context = url_access_context if isinstance(url_access_context, dict) else {}
+    system_message = url_access_context.get('system_message')
+    if not system_message:
+        source_review_result = url_access_context.get('source_review_result')
+        source_review_result = source_review_result if isinstance(source_review_result, dict) else {}
+        system_message = source_review_result.get('system_message')
+    if isinstance(system_message, dict):
+        return str(system_message.get('content') or '').strip()
+    return str(system_message or '').strip()
+
+
+def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
+    user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
+    messages = []
+    source_review_content = _get_workflow_url_access_system_content(url_access_context)
+    if source_review_content:
+        messages.append({'role': 'system', 'content': source_review_content})
+    messages.append({'role': 'user', 'content': user_content})
+    return messages
+
+
+def _build_workflow_agent_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
+    user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
+    source_review_content = _get_workflow_url_access_system_content(url_access_context)
+    if source_review_content:
+        user_content = f'{source_review_content}\n\n[Workflow Task]\n{user_content}'
+    return [ChatMessageContent(role='user', content=user_content)]
+
+
+def _format_workflow_url_access_error(validation_result):
+    validation_result = validation_result if isinstance(validation_result, dict) else {}
+    reason = str(validation_result.get('reason') or '').strip()
+    if reason == 'url_access_disabled':
+        return 'URL Access is disabled by an administrator for workflow runs.'
+    if reason == 'url_access_role_required':
+        return 'Workflow URL Access requires the UrlAccessUser app role.'
+    if reason == 'url_count_exceeded':
+        return (
+            f"Workflow URL Access supports up to {int(validation_result.get('limit') or 0)} direct URLs per run; "
+            f"found {int(validation_result.get('url_count') or 0)}."
+        )
+    return 'Workflow URL Access request was not allowed.'
+
+
+def _prepare_workflow_url_access_context(workflow, settings, conversation_id, run_id, thought_tracker=None, user_roles=None):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    task_prompt = str(workflow.get('task_prompt') or '')
+    requested = _workflow_url_access_enabled(workflow)
+    url_access_context = {
+        'requested': requested,
+        'enabled': False,
+        'authorization_prechecked': bool(workflow.get('url_access_authorized')),
+        'validation': {},
+        'source_review_result': {},
+        'system_message': None,
+    }
+    if not requested:
+        return url_access_context
+
+    validation_result = validate_url_access_request(
+        task_prompt,
+        settings,
+        execution_context=URL_ACCESS_CONTEXT_WORKFLOW,
+        user_roles=user_roles,
+        authorization_prechecked=bool(workflow.get('url_access_authorized')),
+    )
+    url_access_context['validation'] = validation_result
+    url_access_context['enabled'] = bool(validation_result.get('enabled'))
+    if not validation_result.get('allowed'):
+        _add_workflow_activity_thought(
+            thought_tracker,
+            workflow,
+            run_id,
+            step_type='url_access',
+            content='Workflow URL Access request was blocked',
+            detail=_format_workflow_url_access_error(validation_result),
+            activity_key=f'url-access:{run_id}',
+            kind='url_access',
+            title='URL Access',
+            status='failed',
+        )
+        raise ValueError(_format_workflow_url_access_error(validation_result))
+
+    urls = validation_result.get('urls') if isinstance(validation_result.get('urls'), list) else []
+    if not urls:
+        return url_access_context
+
+    _add_workflow_activity_thought(
+        thought_tracker,
+        workflow,
+        run_id,
+        step_type='url_access',
+        content='Reviewing workflow URLs',
+        detail=f"urls={len(urls)} | limit={validation_result.get('limit')}",
+        activity_key=f'url-access:{run_id}',
+        kind='url_access',
+        title='URL Access',
+        status='running',
+    )
+    source_review_result = perform_source_review(
+        settings=settings,
+        user_id=str(workflow.get('user_id') or '').strip(),
+        user_email=None,
+        user_roles=[],
+        user_message=task_prompt,
+        web_search_citations=[],
+        conversation_id=conversation_id,
+        url_access_only=True,
+        url_access_context=URL_ACCESS_CONTEXT_WORKFLOW,
+        include_direct_user_urls=True,
+        url_access_authorization_prechecked=bool(workflow.get('url_access_authorized')),
+    )
+    url_access_context['source_review_result'] = source_review_result if isinstance(source_review_result, dict) else {}
+    url_access_context['system_message'] = url_access_context['source_review_result'].get('system_message')
+    coverage = url_access_context['source_review_result'].get('coverage')
+    coverage = coverage if isinstance(coverage, dict) else {}
+    pages_reviewed = int(coverage.get('pages_reviewed') or 0)
+    pages_skipped = int(coverage.get('pages_skipped') or 0)
+    thought_content = (
+        f'Reviewed {pages_reviewed} workflow URL source page(s)'
+        if pages_reviewed
+        else 'URL Access did not add workflow page evidence'
+    )
+    thought_detail = f"skipped={pages_skipped} | reason={url_access_context['source_review_result'].get('skipped_reason') or 'none'}"
+    _add_workflow_activity_thought(
+        thought_tracker,
+        workflow,
+        run_id,
+        step_type='url_access',
+        content=thought_content,
+        detail=thought_detail,
+        activity_key=f'url-access:{run_id}',
+        kind='url_access',
+        title='URL Access',
+        status='completed',
+    )
+    return url_access_context
+
+
+def _attach_workflow_url_access_result(execution_result, url_access_context=None):
+    execution_result = execution_result if isinstance(execution_result, dict) else {}
+    url_access_context = url_access_context if isinstance(url_access_context, dict) else {}
+    if not url_access_context.get('requested'):
+        return execution_result
+
+    source_review_result = url_access_context.get('source_review_result')
+    source_review_result = source_review_result if isinstance(source_review_result, dict) else {}
+    coverage = source_review_result.get('coverage') if isinstance(source_review_result.get('coverage'), dict) else {}
+    execution_result['url_access'] = {
+        'requested': True,
+        'enabled': bool(url_access_context.get('enabled')),
+        'validation': url_access_context.get('validation') or {},
+        'authorization_prechecked': bool(url_access_context.get('authorization_prechecked')),
+        'pages_reviewed': int(coverage.get('pages_reviewed') or 0),
+        'pages_skipped': int(coverage.get('pages_skipped') or 0),
+        'skipped_reason': source_review_result.get('skipped_reason'),
+    }
+    if source_review_result:
+        execution_result['source_review'] = compact_source_review_result_for_metadata(source_review_result)
+        execution_result['web_search_citations'] = list(source_review_result.get('citations') or [])
+    return execution_result
 
 
 def _build_tabular_analysis_request_prompt(action_type, task_prompt, tabular_document):
@@ -2793,6 +2972,8 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
             'runner_type': workflow.get('runner_type'),
             'trigger_source': trigger_source,
             'run_id': run_id,
+            'url_access_enabled': _workflow_url_access_enabled(workflow),
+            'url_access_authorized': bool(workflow.get('url_access_authorized')),
             'document_action': document_action,
             'analyze': workflow.get('analyze') or {},
         },
@@ -2884,6 +3065,9 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     user_thread_info = (user_message_doc.get('metadata') or {}).get('thread_info') or {}
     document_action = _get_document_action_config(workflow)
     raw_agent_citations = list(result.get('agent_citations') or [])
+    web_search_citations = list(result.get('web_search_citations') or [])
+    source_review_metadata = result.get('source_review') if isinstance(result.get('source_review'), dict) else {}
+    url_access_metadata = result.get('url_access') if isinstance(result.get('url_access'), dict) else {}
     prepared_agent_citations = _persist_agent_citation_artifacts(
         conversation_id=conversation.get('id'),
         assistant_message_id=assistant_message_id,
@@ -2901,17 +3085,20 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         'timestamp': timestamp,
         'model_deployment_name': result.get('model_deployment_name'),
         'agent_citations': prepared_agent_citations,
+        'web_search_citations': web_search_citations,
         'agent_display_name': result.get('agent_display_name'),
         'agent_name': result.get('agent_name'),
         'metadata': {
             'source': 'workflow',
             'token_usage': result.get('token_usage'),
+            'source_review': source_review_metadata,
             'workflow': {
                 'workflow_id': workflow.get('id'),
                 'workflow_name': workflow.get('name'),
                 'runner_type': workflow.get('runner_type'),
                 'trigger_source': trigger_source,
                 'run_id': run_id,
+                'url_access': url_access_metadata,
                 'selected_agent': workflow.get('selected_agent') or {},
                 'model_binding_summary': workflow.get('model_binding_summary') or {},
                 'document_action': document_action,
@@ -3333,7 +3520,7 @@ def _resolve_document_action_reply(result):
     return str(result.get('reply') or '').strip()
 
 
-def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None):
+def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None, url_access_context=None):
     if thought_tracker and run_id:
         _add_workflow_activity_thought(
             thought_tracker,
@@ -3352,7 +3539,11 @@ def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=Non
 
     completion = client.chat.completions.create(
         model=deployment_name,
-        messages=[{'role': 'user', 'content': _build_workflow_generation_prompt(workflow.get('task_prompt', ''))}],
+        messages=_build_workflow_chat_messages(
+            workflow.get('task_prompt', ''),
+            url_access_context=url_access_context,
+            apply_generation_guidance=True,
+        ),
     )
     reply = ''
     if getattr(completion, 'choices', None):
@@ -3387,6 +3578,7 @@ def _execute_document_analysis_workflow(
     thought_tracker=None,
     external_activity_callback=None,
     action_config=None,
+    url_access_context=None,
 ):
     analysis_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
     if analysis_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
@@ -3453,9 +3645,10 @@ def _execute_document_analysis_workflow(
                     )
 
                 def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
-                    result = asyncio.run(loaded_agent.invoke([
-                        ChatMessageContent(role='user', content=prompt_text),
-                    ]))
+                    result = asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
+                        prompt_text,
+                        url_access_context=url_access_context,
+                    )))
                     _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
@@ -3544,7 +3737,10 @@ def _execute_document_analysis_workflow(
     def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
         completion = client.chat.completions.create(
             model=deployment_name,
-            messages=[{'role': 'user', 'content': prompt_text}],
+            messages=_build_workflow_chat_messages(
+                prompt_text,
+                url_access_context=url_access_context,
+            ),
         )
         _accumulate_token_usage(token_usage_aggregate, completion)
         if not getattr(completion, 'choices', None):
@@ -3620,6 +3816,7 @@ def _execute_document_comparison_workflow(
     thought_tracker=None,
     external_activity_callback=None,
     action_config=None,
+    url_access_context=None,
 ):
     comparison_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
     if comparison_config.get('type') != DOCUMENT_ACTION_TYPE_COMPARISON:
@@ -3681,9 +3878,10 @@ def _execute_document_comparison_workflow(
                     )
 
                 def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
-                    result = asyncio.run(loaded_agent.invoke([
-                        ChatMessageContent(role='user', content=prompt_text),
-                    ]))
+                    result = asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
+                        prompt_text,
+                        url_access_context=url_access_context,
+                    )))
                     _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
@@ -3764,7 +3962,10 @@ def _execute_document_comparison_workflow(
     def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
         completion = client.chat.completions.create(
             model=deployment_name,
-            messages=[{'role': 'user', 'content': prompt_text}],
+            messages=_build_workflow_chat_messages(
+                prompt_text,
+                url_access_context=url_access_context,
+            ),
         )
         _accumulate_token_usage(token_usage_aggregate, completion)
         if not getattr(completion, 'choices', None):
@@ -3831,6 +4032,7 @@ def _execute_document_action_workflow(
     run_id=None,
     thought_tracker=None,
     external_activity_callback=None,
+    url_access_context=None,
 ):
     action_config = _get_document_action_config(workflow)
     action_type = action_config.get('type')
@@ -3853,6 +4055,7 @@ def _execute_document_action_workflow(
                 thought_tracker=thought_tracker,
                 external_activity_callback=external_activity_callback,
                 action_config=action_config,
+                url_access_context=url_access_context,
             )
         elif action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
             result = _execute_document_comparison_workflow(
@@ -3863,6 +4066,7 @@ def _execute_document_action_workflow(
                 thought_tracker=thought_tracker,
                 external_activity_callback=external_activity_callback,
                 action_config=action_config,
+                url_access_context=url_access_context,
             )
         else:
             raise ValueError('No document action is enabled for this workflow.')
@@ -3890,7 +4094,7 @@ def _execute_document_action_workflow(
     return result
 
 
-def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None, thought_tracker=None):
+def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None, thought_tracker=None, url_access_context=None):
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     if not selected_agent:
@@ -3948,9 +4152,11 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
             if loaded_agent is None:
                 loaded_agent = next(iter(agent_objs.values()))
 
-            result = asyncio.run(loaded_agent.invoke([
-                ChatMessageContent(role='user', content=_build_workflow_generation_prompt(workflow.get('task_prompt', ''))),
-            ]))
+            result = asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
+                workflow.get('task_prompt', ''),
+                url_access_context=url_access_context,
+                apply_generation_guidance=True,
+            )))
             reply = str(result)
             agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
             alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
@@ -4002,7 +4208,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 g.conversation_id = previous_conversation_id
 
 
-def run_personal_workflow(workflow, trigger_source='manual'):
+def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
     """Execute a personal workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
     user_id = str(workflow.get('user_id') or '').strip()
@@ -4056,6 +4262,14 @@ def run_personal_workflow(workflow, trigger_source='manual'):
             status='running',
         )
 
+        url_access_context = _prepare_workflow_url_access_context(
+            workflow,
+            settings,
+            conversation.get('id'),
+            run_id,
+            thought_tracker=thought_tracker,
+            user_roles=user_roles,
+        )
         document_action = _get_document_action_config(workflow)
         if document_action.get('type') != DOCUMENT_ACTION_TYPE_NONE:
             execution_result = _execute_document_action_workflow(
@@ -4064,6 +4278,7 @@ def run_personal_workflow(workflow, trigger_source='manual'):
                 conversation_id=conversation.get('id'),
                 run_id=run_id,
                 thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
             )
         elif workflow.get('runner_type') == 'agent':
             execution_result = _execute_agent_workflow(
@@ -4072,6 +4287,7 @@ def run_personal_workflow(workflow, trigger_source='manual'):
                 conversation_id=conversation.get('id'),
                 run_id=run_id,
                 thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
             )
         else:
             execution_result = _execute_model_workflow(
@@ -4079,7 +4295,9 @@ def run_personal_workflow(workflow, trigger_source='manual'):
                 settings,
                 run_id=run_id,
                 thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
             )
+        execution_result = _attach_workflow_url_access_result(execution_result, url_access_context)
 
         assistant_doc = _create_assistant_message(
             conversation,
@@ -4121,6 +4339,8 @@ def run_personal_workflow(workflow, trigger_source='manual'):
             'agent_name': execution_result.get('agent_name'),
             'agent_display_name': execution_result.get('agent_display_name'),
             'analysis_coverage': execution_result.get('analysis_coverage') or {},
+            'url_access': execution_result.get('url_access') or {},
+            'source_review': execution_result.get('source_review') or {},
             'response_preview': _build_response_preview(execution_result.get('reply')),
             'error': '',
         })

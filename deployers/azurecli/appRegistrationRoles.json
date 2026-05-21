@@ -70,6 +70,14 @@
     "id": "25558b2f-8e53-47a2-83da-022e0dfee800",
     "isEnabled": true,
     "value": "DeepResearchUser"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Allows use of URL Access when the URL Access app role requirement is enabled.",
+    "displayName": "URL Access User",
+    "id": "6faea62e-2595-48b2-92e2-842a56347c9f",
+    "isEnabled": true,
+    "value": "UrlAccessUser"
   }
 
 ]

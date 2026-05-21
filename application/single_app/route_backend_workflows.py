@@ -9,7 +9,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from flask import Response, jsonify, request, stream_with_context
+from flask import Response, jsonify, request, session, stream_with_context
 
 from background_tasks import acquire_distributed_task_lock, release_distributed_task_lock
 from config import CosmosResourceNotFoundError, cosmos_conversations_container
@@ -33,13 +33,65 @@ from functions_personal_workflows import (
     save_personal_workflow,
     update_personal_workflow_runtime_fields,
 )
-from functions_settings import enabled_required
+from functions_settings import enabled_required, get_settings
+from functions_source_review import (
+    URL_ACCESS_CONTEXT_WORKFLOW,
+    get_url_access_max_urls,
+    has_url_access_app_role,
+    is_url_access_enabled,
+    is_url_access_enabled_for_user,
+    validate_url_access_request,
+)
 from functions_workflow_runner import run_personal_workflow
 from swagger_wrapper import swagger_route, get_auth_security
 
 
 def _normalize_identifier(value):
     return str(value or '').strip()
+
+
+def _normalize_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _prepare_workflow_url_access_payload(payload, user_id):
+    payload = payload if isinstance(payload, dict) else {}
+    settings = get_settings()
+    current_user_roles = (session.get('user') or {}).get('roles', [])
+    url_access_requested = _normalize_bool(payload.get('url_access_enabled'))
+    if not url_access_requested:
+        payload['url_access_authorized'] = False
+        payload['url_access_authorized_by'] = ''
+        payload['url_access_authorized_at'] = ''
+        return payload
+
+    if not is_url_access_enabled_for_user(settings, user_roles=current_user_roles):
+        if is_url_access_enabled(settings):
+            raise PermissionError('URL Access requires the UrlAccessUser app role.')
+        raise PermissionError('URL Access is disabled by an administrator.')
+
+    validation_result = validate_url_access_request(
+        payload.get('task_prompt', ''),
+        settings,
+        URL_ACCESS_CONTEXT_WORKFLOW,
+        user_roles=current_user_roles,
+    )
+    if not validation_result.get('allowed'):
+        limit = validation_result.get('limit') or get_url_access_max_urls(URL_ACCESS_CONTEXT_WORKFLOW, settings)
+        if validation_result.get('reason') == 'url_count_exceeded':
+            raise ValueError(f'URL Access workflows support up to {limit} URL(s) per run.')
+        if validation_result.get('reason') == 'url_access_role_required':
+            raise PermissionError('URL Access requires the UrlAccessUser app role.')
+        raise PermissionError('URL Access is disabled by an administrator.')
+
+    payload['url_access_authorized'] = has_url_access_app_role(current_user_roles)
+    payload['url_access_authorized_by'] = user_id if payload['url_access_authorized'] else ''
+    payload['url_access_authorized_at'] = datetime.now(timezone.utc).isoformat() if payload['url_access_authorized'] else ''
+    return payload
 
 
 def _load_workflow_conversation(user_id, conversation_id):
@@ -172,7 +224,10 @@ def register_route_backend_workflows(app):
         is_create = not str(payload.get('id') or '').strip()
 
         try:
+            payload = _prepare_workflow_url_access_payload(payload, user_id)
             workflow = save_personal_workflow(user_id, payload, actor_user_id=user_id)
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
@@ -363,7 +418,11 @@ def register_route_backend_workflows(app):
                 },
             )
 
-            result = run_personal_workflow(workflow, trigger_source='manual')
+            result = run_personal_workflow(
+                workflow,
+                trigger_source='manual',
+                user_roles=(session.get('user') or {}).get('roles', []),
+            )
             update_fields = dict(result.get('workflow_updates') or {})
             update_fields['status'] = 'idle'
             if workflow.get('trigger_type') == 'interval' and workflow.get('is_enabled', False) and not workflow.get('next_run_at'):

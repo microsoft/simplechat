@@ -5688,6 +5688,84 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="url-access-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0"><i class="bi bi-link-45deg me-2"></i>URL Access</h5>
+                        <span class="badge text-bg-secondary">Shared Policy</span>
+                    </div>
+                    <p class="text-muted mb-2">Control direct URL content fetching for pasted chat links, workflow prompts, and Deep Research source review.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_url_access"
+                            name="enable_url_access"
+                            {% if settings.enable_url_access %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_url_access">Enable URL Access for chat and workflows</label>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="require_member_of_url_access_user"
+                            name="require_member_of_url_access_user"
+                            {% if settings.require_member_of_url_access_user %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="require_member_of_url_access_user">Require UrlAccessUser app role</label>
+                        <div class="form-text">When enabled, only users assigned the <code>UrlAccessUser</code> Enterprise App role can use URL Access in chat or enable it for workflows.</div>
+                    </div>
+
+                    <div id="url_access_settings" class="{% if not settings.enable_url_access %}d-none{% endif %}">
+                        <div class="alert alert-info small mb-3">
+                            URL Access uses the same server-side URL protections as Deep Research: non-HTTP(S) URLs, credentialed URLs, literal IP targets, localhost, metadata hosts, unsafe redirects, unsupported content types, and oversized pages are blocked before fetch.
+                        </div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="url_access_max_chat_urls_per_turn" class="form-label">Chat URL Limit</label>
+                                <input type="number" min="1" max="100" class="form-control" id="url_access_max_chat_urls_per_turn" name="url_access_max_chat_urls_per_turn" value="{{ settings.url_access_max_chat_urls_per_turn or 10 }}">
+                                <div class="form-text">Hard limit: 100 direct URLs per chat message.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="url_access_max_workflow_urls_per_run" class="form-label">Workflow URL Limit</label>
+                                <input type="number" min="1" max="500" class="form-control" id="url_access_max_workflow_urls_per_run" name="url_access_max_workflow_urls_per_run" value="{{ settings.url_access_max_workflow_urls_per_run or 50 }}">
+                                <div class="form-text">Hard limit: 500 direct URLs per workflow prompt.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mt-1">
+                        <div class="col-md-6">
+                            <div class="url-access-policy-editor" data-url-access-policy="url_access_allowed_domains" data-policy-kind="domain">
+                                <label for="url_access_allowed_domains_new" class="form-label">Allowed Domains</label>
+                                <textarea class="d-none" id="url_access_allowed_domains" name="url_access_allowed_domains" aria-hidden="true">{{ settings.url_access_allowed_domains|join('\n') if settings.url_access_allowed_domains else settings.source_review_allowed_domains|join('\n') if settings.source_review_allowed_domains else '' }}</textarea>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" id="url_access_allowed_domains_new" data-policy-new-input placeholder="example.com or *.contoso.com" />
+                                    <button type="button" class="btn btn-outline-primary" data-policy-add-button>
+                                        <i class="bi bi-plus-circle me-1"></i>Add
+                                    </button>
+                                </div>
+                                <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
+                            </div>
+                            <div class="form-text">Leave blank to allow any public domain that passes safety checks. Deep Research uses this same allow list.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="url-access-policy-editor" data-url-access-policy="url_access_blocked_domains" data-policy-kind="domain">
+                                <label for="url_access_blocked_domains_new" class="form-label">Blocked Domains</label>
+                                <textarea class="d-none" id="url_access_blocked_domains" name="url_access_blocked_domains" aria-hidden="true">{{ settings.url_access_blocked_domains|join('\n') if settings.url_access_blocked_domains else settings.source_review_blocked_domains|join('\n') if settings.source_review_blocked_domains else '' }}</textarea>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" id="url_access_blocked_domains_new" data-policy-new-input placeholder="example.org or *.contoso.net" />
+                                    <button type="button" class="btn btn-outline-primary" data-policy-add-button>
+                                        <i class="bi bi-plus-circle me-1"></i>Add
+                                    </button>
+                                </div>
+                                <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
+                            </div>
+                            <div class="form-text">Blocked domains apply to URL Access and Deep Research source-page review.</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="source-review-section">
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <h5 class="mb-0"><i class="bi bi-binoculars me-2"></i>Deep Research</h5>
@@ -5698,7 +5776,7 @@
                             </button>
                         </div>
                     </div>
-                    <p class="text-muted mb-2">Plan bounded web searches, inspect source pages, and keep an internal research ledger for evidence coverage.</p>
+                    <p class="text-muted mb-2">Plan bounded web searches, inspect source pages, and keep an internal research ledger for evidence coverage. Direct pasted URLs use the shared URL Access controls above.</p>
                     <div class="form-check form-switch mb-3">
                         <input
                             type="checkbox"
@@ -5894,36 +5972,6 @@
                                         {% if settings.source_review_audit_logging %}checked{% endif %}
                                     >
                                     <label class="form-check-label ms-2" for="source_review_audit_logging">Log Deep Research activity</label>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mt-1">
-                            <div class="col-md-6">
-                                <div class="deep-research-policy-editor" data-deep-research-policy="source_review_allowed_domains" data-policy-kind="domain">
-                                    <label for="source_review_allowed_domains_new" class="form-label">Allowed Domains</label>
-                                    <textarea class="d-none" id="source_review_allowed_domains" name="source_review_allowed_domains" aria-hidden="true">{{ settings.source_review_allowed_domains|join('\n') if settings.source_review_allowed_domains else '' }}</textarea>
-                                    <div class="input-group input-group-sm">
-                                        <input type="text" class="form-control" id="source_review_allowed_domains_new" data-policy-new-input placeholder="example.com or *.contoso.com" />
-                                        <button type="button" class="btn btn-outline-primary" data-policy-add-button>
-                                            <i class="bi bi-plus-circle me-1"></i>Add
-                                        </button>
-                                    </div>
-                                    <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
-                                </div>
-                                <div class="form-text">Leave blank to allow any public domain that passes safety checks.</div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="deep-research-policy-editor" data-deep-research-policy="source_review_blocked_domains" data-policy-kind="domain">
-                                    <label for="source_review_blocked_domains_new" class="form-label">Blocked Domains</label>
-                                    <textarea class="d-none" id="source_review_blocked_domains" name="source_review_blocked_domains" aria-hidden="true">{{ settings.source_review_blocked_domains|join('\n') if settings.source_review_blocked_domains else '' }}</textarea>
-                                    <div class="input-group input-group-sm">
-                                        <input type="text" class="form-control" id="source_review_blocked_domains_new" data-policy-new-input placeholder="example.org or *.contoso.net" />
-                                        <button type="button" class="btn btn-outline-primary" data-policy-add-button>
-                                            <i class="bi bi-plus-circle me-1"></i>Add
-                                        </button>
-                                    </div>
-                                    <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
                                 </div>
                             </div>
                         </div>

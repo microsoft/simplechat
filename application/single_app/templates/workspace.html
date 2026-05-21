@@ -1370,6 +1370,13 @@
             <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this workflow should do each time it runs." required></textarea>
             <div class="form-text">Each run appends this prompt to the workflow conversation as a new user message.</div>
           </div>
+          {% if settings.enable_url_access %}
+          <div class="form-check form-switch mb-3" id="workflow-url-access-group">
+            <input class="form-check-input" type="checkbox" id="workflow-url-access-enabled" />
+            <label class="form-check-label ms-2" for="workflow-url-access-enabled">Allow URL Access for this workflow</label>
+            <div class="form-text">Workflow runs can review up to {{ settings.url_access_max_workflow_urls_per_run|default(50, true) }} HTTP(S) URLs from the task prompt using the shared admin domain policy.</div>
+          </div>
+          {% endif %}
 
           <div class="card p-3 mb-3">
             <div class="row g-3 mb-2">
@@ -2189,6 +2196,10 @@
     window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
     window.enable_file_sharing = "{{ enable_file_sharing | tojson }}";
     window.documentActionCapabilities = {{ settings.document_action_capabilities|default({}, true)|tojson|safe }};
+    window.urlAccessSettings = {
+      enable_url_access: {{ settings.enable_url_access|default(false, true)|tojson }},
+      url_access_max_workflow_urls_per_run: {{ settings.url_access_max_workflow_urls_per_run|default(50, true)|tojson }}
+    };
     window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
     
     // Pass current user ID for ownership checks
