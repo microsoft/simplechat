@@ -20,10 +20,14 @@ DEFAULT_PREVIEW_MAX_EDGE_PX = 3200
 PREVIEW_MARGIN_PX = 56
 
 
-def parse_vsdx_pages(file_path: str, include_media: bool = False) -> List[Dict[str, Any]]:
+def parse_vsdx_pages(
+    file_path: str,
+    include_media: bool = False,
+    include_master_shapes: bool = False,
+) -> List[Dict[str, Any]]:
     """Parse a VSDX file into page-level structured content."""
     with zipfile.ZipFile(file_path) as archive:
-        master_lookup = _parse_master_lookup(archive)
+        master_catalog = _parse_master_catalog(archive)
         page_entries = _parse_page_catalog(archive)
         pages = []
 
@@ -40,11 +44,12 @@ def parse_vsdx_pages(file_path: str, include_media: bool = False) -> List[Dict[s
             page_rels = _parse_relationships(archive, _relationship_part_for(page_part))
             shapes = _parse_shapes(
                 page_root,
-                master_lookup,
+                master_catalog,
                 archive=archive,
                 page_part=page_part,
                 page_rels=page_rels,
                 include_media=include_media,
+                include_master_shapes=include_master_shapes,
             )
             connections = _parse_connections(page_root)
             width = page_entry.get("width") or _infer_page_extent(shapes, "x", "width")
@@ -132,7 +137,7 @@ def render_vsdx_page_preview(
 ) -> bytes:
     """Render a parsed Visio page to a structural PNG preview."""
     normalized_page_number = max(1, int(page_number or 1))
-    pages = parse_vsdx_pages(file_path, include_media=True)
+    pages = parse_vsdx_pages(file_path, include_media=True, include_master_shapes=True)
     if not pages:
         raise ValueError("No Visio pages were found in the document")
 
@@ -223,28 +228,48 @@ def _fallback_page_catalog(archive: zipfile.ZipFile) -> List[Dict[str, Any]]:
     ]
 
 
-def _parse_master_lookup(archive: zipfile.ZipFile) -> Dict[str, str]:
+def _parse_master_catalog(archive: zipfile.ZipFile) -> Dict[str, Dict[str, Any]]:
     try:
         root = _parse_xml_part(archive, "visio/masters/masters.xml")
     except KeyError:
         return {}
 
+    rels = _parse_relationships(archive, "visio/masters/_rels/masters.xml.rels")
     masters = {}
     for master in root.findall(_q(VISIO_NS, "Master")):
         master_id = master.get("ID")
         master_name = master.get("Name") or master.get("NameU")
-        if master_id and master_name:
-            masters[master_id] = master_name
+        rel_elem = master.find(_q(VISIO_NS, "Rel"))
+        rel_id = rel_elem.get(_q(OFFICE_REL_NS, "id")) if rel_elem is not None else ""
+        part_name = _resolve_part_path("visio/masters/masters.xml", rels.get(rel_id or "", ""))
+        root_shape = None
+        master_rels = {}
+        if part_name:
+            try:
+                master_root = _parse_xml_part(archive, part_name)
+                root_shape = master_root.find(f"{_q(VISIO_NS, 'Shapes')}/{_q(VISIO_NS, 'Shape')}")
+                master_rels = _parse_relationships(archive, _relationship_part_for(part_name))
+            except KeyError:
+                root_shape = None
+                master_rels = {}
+        if master_id:
+            masters[master_id] = {
+                "name": master_name or "",
+                "part_name": part_name,
+                "rels": master_rels,
+                "root_shape": root_shape,
+            }
     return masters
 
 
 def _parse_shapes(
     root: ElementTree.Element,
-    master_lookup: Dict[str, str],
+    master_catalog: Dict[str, Dict[str, Any]],
     archive: Optional[zipfile.ZipFile] = None,
     page_part: str = "",
     page_rels: Optional[Dict[str, str]] = None,
     include_media: bool = False,
+    include_master_shapes: bool = False,
 ) -> List[Dict[str, Any]]:
     shapes = []
     shapes_container = root.find(_q(VISIO_NS, "Shapes"))
@@ -255,11 +280,12 @@ def _parse_shapes(
         _parse_shape_recursive(
             shape_elem,
             shapes,
-            master_lookup,
+            master_catalog,
             archive=archive,
             page_part=page_part,
             page_rels=page_rels or {},
             include_media=include_media,
+            include_master_shapes=include_master_shapes,
             parent_left=0.0,
             parent_bottom=0.0,
             depth=0,
@@ -270,22 +296,25 @@ def _parse_shapes(
 def _parse_shape_recursive(
     shape_elem: ElementTree.Element,
     shapes: List[Dict[str, Any]],
-    master_lookup: Dict[str, str],
+    master_catalog: Dict[str, Dict[str, Any]],
     archive: Optional[zipfile.ZipFile],
     page_part: str,
     page_rels: Dict[str, str],
     include_media: bool,
+    include_master_shapes: bool,
     parent_left: float,
     parent_bottom: float,
     depth: int,
 ) -> Dict[str, Any]:
     master_id = shape_elem.get("Master")
+    master_definition = master_catalog.get(master_id or "", {})
+    master_root_shape = master_definition.get("root_shape")
     local_x = _get_direct_cell_number(shape_elem, "PinX")
     local_y = _get_direct_cell_number(shape_elem, "PinY")
-    width = _get_direct_cell_number(shape_elem, "Width")
-    height = _get_direct_cell_number(shape_elem, "Height")
-    loc_pin_x = _get_direct_cell_number(shape_elem, "LocPinX")
-    loc_pin_y = _get_direct_cell_number(shape_elem, "LocPinY")
+    width = _get_direct_cell_number(shape_elem, "Width") or _get_direct_cell_number(master_root_shape, "Width")
+    height = _get_direct_cell_number(shape_elem, "Height") or _get_direct_cell_number(master_root_shape, "Height")
+    loc_pin_x = _get_direct_cell_number(shape_elem, "LocPinX") or _get_direct_cell_number(master_root_shape, "LocPinX")
+    loc_pin_y = _get_direct_cell_number(shape_elem, "LocPinY") or _get_direct_cell_number(master_root_shape, "LocPinY")
 
     abs_x = parent_left + local_x if local_x is not None else None
     abs_y = parent_bottom + local_y if local_y is not None else None
@@ -314,7 +343,7 @@ def _parse_shape_recursive(
         "name": shape_elem.get("NameU") or shape_elem.get("Name") or "",
         "type": shape_elem.get("Type") or "",
         "master_id": master_id or "",
-        "master_name": master_lookup.get(master_id or "", ""),
+        "master_name": master_definition.get("name", ""),
         "text": _normalize_text(_get_shape_text(shape_elem)),
         "x": abs_x,
         "y": abs_y,
@@ -346,11 +375,16 @@ def _parse_shape_recursive(
         "fill_pattern": _get_direct_cell_value(shape_elem, "FillPattern"),
         "line_pattern": _get_direct_cell_value(shape_elem, "LinePattern"),
         "line_weight": _get_direct_cell_number(shape_elem, "LineWeight"),
+        "rounding": _get_direct_cell_number(shape_elem, "Rounding"),
+        "text_color": _get_section_cell_value(shape_elem, "Character", "Color"),
+        "horizontal_align": _get_section_cell_value(shape_elem, "Paragraph", "HorzAlign"),
         "geometry": _parse_geometry(shape_elem),
         "image_part": _get_foreign_image_part(shape_elem, page_part, page_rels),
         "image_bytes": _get_foreign_image_bytes(shape_elem, archive, page_part, page_rels, include_media),
         "shape_data": _parse_shape_data(shape_elem),
         "depth": depth,
+        "geometry_scale_x": 1.0,
+        "geometry_scale_y": 1.0,
     }
     shapes.append(shape)
 
@@ -363,13 +397,176 @@ def _parse_shape_recursive(
             child_shapes.append(_parse_shape_recursive(
                 child_elem,
                 shapes,
-                master_lookup,
+                master_catalog,
                 archive=archive,
                 page_part=page_part,
                 page_rels=page_rels,
                 include_media=include_media,
+                include_master_shapes=include_master_shapes,
                 parent_left=child_parent_left,
                 parent_bottom=child_parent_bottom,
+                depth=depth + 1,
+            ))
+
+    if include_master_shapes and master_root_shape is not None and _has_shape_bounds(shape):
+        child_shapes.extend(_parse_master_instance_shapes(
+            master_root_shape,
+            instance_shape=shape,
+            shapes=shapes,
+            archive=archive,
+            master_part=str(master_definition.get("part_name") or ""),
+            master_rels=master_definition.get("rels") or {},
+            include_media=include_media,
+            depth=depth + 1,
+        ))
+
+    if (shape.get("width") is None or shape.get("height") is None) and child_shapes:
+        _apply_child_bounds(shape, child_shapes)
+
+    return shape
+
+
+def _parse_master_instance_shapes(
+    master_root_shape: ElementTree.Element,
+    instance_shape: Dict[str, Any],
+    shapes: List[Dict[str, Any]],
+    archive: Optional[zipfile.ZipFile],
+    master_part: str,
+    master_rels: Dict[str, str],
+    include_media: bool,
+    depth: int,
+) -> List[Dict[str, Any]]:
+    child_container = master_root_shape.find(_q(VISIO_NS, "Shapes"))
+    if child_container is None:
+        return []
+
+    master_width = _get_direct_cell_number(master_root_shape, "Width") or instance_shape.get("width") or 1.0
+    master_height = _get_direct_cell_number(master_root_shape, "Height") or instance_shape.get("height") or 1.0
+    instance_width = float(instance_shape.get("width") or master_width or 1.0)
+    instance_height = float(instance_shape.get("height") or master_height or 1.0)
+    scale_x = instance_width / float(master_width or instance_width or 1.0)
+    scale_y = instance_height / float(master_height or instance_height or 1.0)
+    parsed_children = []
+    for child_elem in child_container.findall(_q(VISIO_NS, "Shape")):
+        parsed_children.append(_parse_master_shape_recursive(
+            child_elem,
+            instance_shape=instance_shape,
+            shapes=shapes,
+            archive=archive,
+            master_part=master_part,
+            master_rels=master_rels,
+            include_media=include_media,
+            parent_left=float(instance_shape["left"]),
+            parent_bottom=float(instance_shape["bottom"]),
+            scale_x=scale_x,
+            scale_y=scale_y,
+            depth=depth,
+        ))
+    return parsed_children
+
+
+def _parse_master_shape_recursive(
+    shape_elem: ElementTree.Element,
+    instance_shape: Dict[str, Any],
+    shapes: List[Dict[str, Any]],
+    archive: Optional[zipfile.ZipFile],
+    master_part: str,
+    master_rels: Dict[str, str],
+    include_media: bool,
+    parent_left: float,
+    parent_bottom: float,
+    scale_x: float,
+    scale_y: float,
+    depth: int,
+) -> Dict[str, Any]:
+    local_x = _scale_optional(_get_direct_cell_number(shape_elem, "PinX"), scale_x)
+    local_y = _scale_optional(_get_direct_cell_number(shape_elem, "PinY"), scale_y)
+    width = _scale_optional(_get_direct_cell_number(shape_elem, "Width"), scale_x)
+    height = _scale_optional(_get_direct_cell_number(shape_elem, "Height"), scale_y)
+    loc_pin_x = _scale_optional(_get_direct_cell_number(shape_elem, "LocPinX"), scale_x)
+    loc_pin_y = _scale_optional(_get_direct_cell_number(shape_elem, "LocPinY"), scale_y)
+
+    abs_x = parent_left + local_x if local_x is not None else None
+    abs_y = parent_bottom + local_y if local_y is not None else None
+    effective_width = abs(width) if width is not None else None
+    effective_height = abs(height) if height is not None else None
+    if loc_pin_x is None and effective_width is not None:
+        loc_pin_x = effective_width / 2.0
+    if loc_pin_y is None and effective_height is not None:
+        loc_pin_y = effective_height / 2.0
+
+    left = abs_x - loc_pin_x if abs_x is not None and loc_pin_x is not None else None
+    bottom = abs_y - loc_pin_y if abs_y is not None and loc_pin_y is not None else None
+    instance_fill = instance_shape.get("fill_color")
+    shape = {
+        "id": f"{instance_shape.get('id')}:master:{shape_elem.get('ID') or ''}",
+        "name": shape_elem.get("NameU") or shape_elem.get("Name") or "",
+        "type": shape_elem.get("Type") or "",
+        "master_id": instance_shape.get("master_id") or "",
+        "master_name": instance_shape.get("master_name") or "",
+        "text": "",
+        "x": abs_x,
+        "y": abs_y,
+        "local_x": local_x,
+        "local_y": local_y,
+        "width": effective_width,
+        "height": effective_height,
+        "raw_width": width,
+        "raw_height": height,
+        "left": left,
+        "bottom": bottom,
+        "right": left + effective_width if left is not None and effective_width is not None else None,
+        "top": bottom + effective_height if bottom is not None and effective_height is not None else None,
+        "loc_pin_x": loc_pin_x,
+        "loc_pin_y": loc_pin_y,
+        "angle": _get_direct_cell_number(shape_elem, "Angle"),
+        "begin_x": None,
+        "begin_y": None,
+        "end_x": None,
+        "end_y": None,
+        "txt_pin_x": None,
+        "txt_pin_y": None,
+        "txt_width": None,
+        "txt_height": None,
+        "txt_loc_pin_x": None,
+        "txt_loc_pin_y": None,
+        "fill_color": _get_direct_cell_value(shape_elem, "FillForegnd") or instance_fill,
+        "line_color": _get_direct_cell_value(shape_elem, "LineColor"),
+        "fill_pattern": _get_direct_cell_value(shape_elem, "FillPattern"),
+        "line_pattern": _get_direct_cell_value(shape_elem, "LinePattern"),
+        "line_weight": _get_direct_cell_number(shape_elem, "LineWeight"),
+        "rounding": _get_direct_cell_number(shape_elem, "Rounding"),
+        "text_color": _get_section_cell_value(shape_elem, "Character", "Color"),
+        "horizontal_align": _get_section_cell_value(shape_elem, "Paragraph", "HorzAlign"),
+        "geometry": _parse_geometry(shape_elem),
+        "image_part": _get_foreign_image_part(shape_elem, master_part, master_rels),
+        "image_bytes": _get_foreign_image_bytes(shape_elem, archive, master_part, master_rels, include_media),
+        "shape_data": {},
+        "depth": depth,
+        "from_master": True,
+        "geometry_scale_x": scale_x,
+        "geometry_scale_y": scale_y,
+    }
+    shapes.append(shape)
+
+    child_shapes = []
+    child_container = shape_elem.find(_q(VISIO_NS, "Shapes"))
+    child_parent_left = left if left is not None else parent_left
+    child_parent_bottom = bottom if bottom is not None else parent_bottom
+    if child_container is not None:
+        for child_elem in child_container.findall(_q(VISIO_NS, "Shape")):
+            child_shapes.append(_parse_master_shape_recursive(
+                child_elem,
+                instance_shape=instance_shape,
+                shapes=shapes,
+                archive=archive,
+                master_part=master_part,
+                master_rels=master_rels,
+                include_media=include_media,
+                parent_left=child_parent_left,
+                parent_bottom=child_parent_bottom,
+                scale_x=scale_x,
+                scale_y=scale_y,
                 depth=depth + 1,
             ))
 
@@ -377,6 +574,10 @@ def _parse_shape_recursive(
         _apply_child_bounds(shape, child_shapes)
 
     return shape
+
+
+def _scale_optional(value: Optional[float], scale: float) -> Optional[float]:
+    return value * scale if value is not None else None
 
 
 def _parse_connections(root: ElementTree.Element) -> List[Dict[str, str]]:
@@ -403,6 +604,8 @@ def _normalize_text(text: str) -> str:
 
 
 def _get_direct_cell_value(element: ElementTree.Element, cell_name: str) -> Optional[str]:
+    if element is None:
+        return None
     for cell in element.findall(_q(VISIO_NS, "Cell")):
         if cell.get("N") == cell_name:
             return cell.get("V") or cell.get("F")
@@ -420,12 +623,27 @@ def _get_direct_cell_number(element: ElementTree.Element, cell_name: str) -> Opt
 
 
 def _get_cell_value(element: ElementTree.Element, cell_name: str) -> Optional[str]:
+    if element is None:
+        return None
     for cell in element.findall(_q(VISIO_NS, "Cell")):
         if cell.get("N") == cell_name:
             return cell.get("V") or cell.get("F")
     for cell in element.findall(f".//{_q(VISIO_NS, 'Cell')}"):
         if cell.get("N") == cell_name:
             return cell.get("V") or cell.get("F")
+    return None
+
+
+def _get_section_cell_value(element: ElementTree.Element, section_name: str, cell_name: str) -> Optional[str]:
+    if element is None:
+        return None
+    section = element.find(f"{_q(VISIO_NS, 'Section')}[@N='{section_name}']")
+    if section is None:
+        return None
+    for row in section.findall(_q(VISIO_NS, "Row")):
+        value = _get_direct_cell_value(row, cell_name)
+        if value not in (None, ""):
+            return value
     return None
 
 
@@ -566,6 +784,8 @@ def _is_connector_shape(shape: Dict[str, Any]) -> bool:
 
 def _is_notable_shape(shape: Dict[str, Any]) -> bool:
     if _is_connector_shape(shape):
+        return False
+    if shape.get("from_master") and not shape.get("text") and not shape.get("shape_data"):
         return False
     return bool(shape.get("text") or shape.get("shape_data") or shape.get("master_name"))
 
@@ -745,6 +965,10 @@ def _should_draw_geometry(shape: Dict[str, Any]) -> bool:
     return bool(shape.get("depth") and shape.get("width") and shape.get("height"))
 
 
+def _is_dashed_container(shape: Dict[str, Any]) -> bool:
+    return str(shape.get("line_pattern") or "") == "2" and _shape_area(shape) >= 1.0
+
+
 def _draw_shape_geometry(
     image: Image.Image,
     draw: ImageDraw.ImageDraw,
@@ -757,6 +981,11 @@ def _draw_shape_geometry(
 
     bounds = _shape_bounds_px(page, shape, scale)
     if shape.get("image_bytes") and _draw_shape_image(image, shape, bounds):
+        return
+
+    if _is_dashed_container(shape):
+        line_width = max(1, min(3, int((shape.get("line_weight") or 0.01) * scale)))
+        _draw_dashed_rectangle(draw, bounds, _container_line_color(shape), line_width)
         return
 
     fill = _parse_hex_color(shape.get("fill_color"))
@@ -816,6 +1045,21 @@ def _draw_geometry_rows(
                     current_points = [point]
                 else:
                     current_points.append(point)
+        elif row_type in {"RelCubBezTo", "CubBezTo"}:
+            curve_points = _geometry_cubic_points(page, shape, row, scale, current_points, row_type.startswith("Rel"))
+            if curve_points:
+                current_points.extend(curve_points)
+        elif row_type in {"RelQuadBezTo", "QuadBezTo"}:
+            curve_points = _geometry_quadratic_points(page, shape, row, scale, current_points, row_type.startswith("Rel"))
+            if curve_points:
+                current_points.extend(curve_points)
+        elif row_type in {"RelEllipticalArcTo", "EllipticalArcTo"}:
+            point = _geometry_row_point(page, shape, row, scale, relative=row_type.startswith("Rel"))
+            if point:
+                if not current_points:
+                    current_points = [point]
+                else:
+                    current_points.append(point)
         elif row_type == "Ellipse":
             draw.ellipse(_shape_bounds_px(page, shape, scale), fill=fill, outline=line, width=line_width)
             drew_geometry = True
@@ -844,20 +1088,153 @@ def _geometry_row_point(
     row: Dict[str, Any],
     scale: float,
     relative: bool,
+    x_key: str = "X",
+    y_key: str = "Y",
 ) -> Optional[Tuple[float, float]]:
     cells = row.get("cells") or {}
-    raw_x = _number_or_none(cells.get("X"))
-    raw_y = _number_or_none(cells.get("Y"))
+    raw_x = _number_or_none(cells.get(x_key))
+    raw_y = _number_or_none(cells.get(y_key))
     if raw_x is None and raw_y is None:
         return None
 
     width = float(shape.get("width") or 0.0)
     height = float(shape.get("height") or 0.0)
-    local_x = (raw_x or 0.0) * width if relative else (raw_x or 0.0)
-    local_y = (raw_y or 0.0) * height if relative else (raw_y or 0.0)
+    geometry_scale_x = float(shape.get("geometry_scale_x") or 1.0)
+    geometry_scale_y = float(shape.get("geometry_scale_y") or 1.0)
+    local_x = (raw_x or 0.0) * width if relative else (raw_x or 0.0) * geometry_scale_x
+    local_y = (raw_y or 0.0) * height if relative else (raw_y or 0.0) * geometry_scale_y
     page_x = float(shape.get("left") or 0.0) + local_x
     page_y = float(shape.get("bottom") or 0.0) + local_y
     return _page_point_to_px(page, page_x, page_y, scale)
+
+
+def _geometry_cubic_points(
+    page: Dict[str, Any],
+    shape: Dict[str, Any],
+    row: Dict[str, Any],
+    scale: float,
+    current_points: List[Tuple[float, float]],
+    relative: bool,
+) -> List[Tuple[float, float]]:
+    if not current_points:
+        endpoint = _geometry_row_point(page, shape, row, scale, relative=relative)
+        return [endpoint] if endpoint else []
+
+    start = current_points[-1]
+    control_one = _geometry_row_point(page, shape, row, scale, relative=relative, x_key="A", y_key="B")
+    control_two = _geometry_row_point(page, shape, row, scale, relative=relative, x_key="C", y_key="D")
+    endpoint = _geometry_row_point(page, shape, row, scale, relative=relative)
+    if not control_one or not control_two or not endpoint:
+        return [endpoint] if endpoint else []
+    return [
+        _cubic_bezier_point(start, control_one, control_two, endpoint, step / 12.0)
+        for step in range(1, 13)
+    ]
+
+
+def _geometry_quadratic_points(
+    page: Dict[str, Any],
+    shape: Dict[str, Any],
+    row: Dict[str, Any],
+    scale: float,
+    current_points: List[Tuple[float, float]],
+    relative: bool,
+) -> List[Tuple[float, float]]:
+    if not current_points:
+        endpoint = _geometry_row_point(page, shape, row, scale, relative=relative)
+        return [endpoint] if endpoint else []
+
+    start = current_points[-1]
+    control = _geometry_row_point(page, shape, row, scale, relative=relative, x_key="A", y_key="B")
+    endpoint = _geometry_row_point(page, shape, row, scale, relative=relative)
+    if not control or not endpoint:
+        return [endpoint] if endpoint else []
+    return [
+        _quadratic_bezier_point(start, control, endpoint, step / 10.0)
+        for step in range(1, 11)
+    ]
+
+
+def _cubic_bezier_point(
+    start: Tuple[float, float],
+    control_one: Tuple[float, float],
+    control_two: Tuple[float, float],
+    end: Tuple[float, float],
+    t: float,
+) -> Tuple[float, float]:
+    inverse = 1.0 - t
+    x = (
+        (inverse ** 3 * start[0])
+        + (3 * inverse * inverse * t * control_one[0])
+        + (3 * inverse * t * t * control_two[0])
+        + (t ** 3 * end[0])
+    )
+    y = (
+        (inverse ** 3 * start[1])
+        + (3 * inverse * inverse * t * control_one[1])
+        + (3 * inverse * t * t * control_two[1])
+        + (t ** 3 * end[1])
+    )
+    return x, y
+
+
+def _quadratic_bezier_point(
+    start: Tuple[float, float],
+    control: Tuple[float, float],
+    end: Tuple[float, float],
+    t: float,
+) -> Tuple[float, float]:
+    inverse = 1.0 - t
+    x = (inverse * inverse * start[0]) + (2 * inverse * t * control[0]) + (t * t * end[0])
+    y = (inverse * inverse * start[1]) + (2 * inverse * t * control[1]) + (t * t * end[1])
+    return x, y
+
+
+def _container_line_color(shape: Dict[str, Any]) -> Tuple[int, int, int]:
+    text_color = _parse_hex_color(shape.get("text_color"))
+    if text_color:
+        return text_color
+    return _parse_hex_color(shape.get("line_color"), (0, 0, 0)) or (0, 0, 0)
+
+
+def _draw_dashed_rectangle(
+    draw: ImageDraw.ImageDraw,
+    bounds: Tuple[float, float, float, float],
+    color: Tuple[int, int, int],
+    width: int,
+) -> None:
+    x0, y0, x1, y1 = bounds
+    dash = 18
+    gap = 10
+    _draw_dashed_line(draw, (x0, y0), (x1, y0), color, width, dash, gap)
+    _draw_dashed_line(draw, (x1, y0), (x1, y1), color, width, dash, gap)
+    _draw_dashed_line(draw, (x1, y1), (x0, y1), color, width, dash, gap)
+    _draw_dashed_line(draw, (x0, y1), (x0, y0), color, width, dash, gap)
+
+
+def _draw_dashed_line(
+    draw: ImageDraw.ImageDraw,
+    start: Tuple[float, float],
+    end: Tuple[float, float],
+    color: Tuple[int, int, int],
+    width: int,
+    dash: int,
+    gap: int,
+) -> None:
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    length = (dx * dx + dy * dy) ** 0.5
+    if length <= 0:
+        return
+    ux = dx / length
+    uy = dy / length
+    position = 0.0
+    while position < length:
+        dash_end = min(position + dash, length)
+        segment_start = (start[0] + (ux * position), start[1] + (uy * position))
+        segment_end = (start[0] + (ux * dash_end), start[1] + (uy * dash_end))
+        draw.line([segment_start, segment_end], fill=color, width=width)
+        position += dash + gap
 
 
 def _number_or_none(value: Any) -> Optional[float]:
@@ -1020,15 +1397,24 @@ def _draw_shape_text(
     if not text or _is_connector_shape(shape):
         return
 
-    bounds = _shape_text_bounds_px(page, shape, scale)
-    if bounds is None and _has_shape_bounds(shape):
-        shape_bounds = _shape_bounds_px(page, shape, scale)
-        if _is_icon_label(shape):
+    icon_label = _is_icon_label(shape)
+    dashed_container = _is_dashed_container(shape)
+    shape_bounds = _shape_bounds_px(page, shape, scale) if _has_shape_bounds(shape) else None
+    bounds = None if icon_label or dashed_container else _shape_text_bounds_px(page, shape, scale)
+    if bounds is None and shape_bounds:
+        if icon_label:
             bounds = (
-                shape_bounds[0] - 32,
-                shape_bounds[3] + 4,
-                shape_bounds[2] + 32,
-                shape_bounds[3] + 72,
+                shape_bounds[0] - 48,
+                shape_bounds[3] + 8,
+                shape_bounds[2] + 48,
+                shape_bounds[3] + 92,
+            )
+        elif dashed_container:
+            bounds = (
+                shape_bounds[2] - min(220, max(120, shape_bounds[2] - shape_bounds[0] - 24)),
+                shape_bounds[1] + 8,
+                shape_bounds[2] - 8,
+                shape_bounds[1] + 86,
             )
         else:
             bounds = shape_bounds
@@ -1038,7 +1424,7 @@ def _draw_shape_text(
             return
         bounds = (center[0] - 70, center[1] - 20, center[0] + 70, center[1] + 40)
 
-    active_font = small_font if _is_icon_label(shape) else font
+    active_font = small_font if icon_label else font
     max_text_width = max(60, int((bounds[2] - bounds[0]) - 8))
     wrapped_lines = _wrap_text(draw, text, active_font, max_text_width)[:5]
     if not wrapped_lines:
@@ -1046,11 +1432,17 @@ def _draw_shape_text(
 
     line_height = _text_size(draw, "Ag", active_font)[1] + 3
     total_height = len(wrapped_lines) * line_height
-    y = bounds[1] + max(2, ((bounds[3] - bounds[1]) - total_height) / 2.0)
-    text_color = (32, 42, 54)
+    if icon_label or dashed_container:
+        y = bounds[1] + 2
+    else:
+        y = bounds[1] + max(2, ((bounds[3] - bounds[1]) - total_height) / 2.0)
+    text_color = _parse_hex_color(shape.get("text_color"), (32, 42, 54)) or (32, 42, 54)
     for line in wrapped_lines:
         line_width = _text_size(draw, line, active_font)[0]
-        x = bounds[0] + max(2, ((bounds[2] - bounds[0]) - line_width) / 2.0)
+        if dashed_container and str(shape.get("horizontal_align") or "") == "2":
+            x = bounds[2] - line_width - 2
+        else:
+            x = bounds[0] + max(2, ((bounds[2] - bounds[0]) - line_width) / 2.0)
         draw.text((x, y), line, fill=text_color, font=active_font)
         y += line_height
 

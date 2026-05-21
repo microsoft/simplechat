@@ -90,12 +90,33 @@ def test_visio_reference_geometry_fixture():
     assert "<path" in svg_text
 
 
+def test_visio_preview_master_expansion_is_preview_only():
+    """Validate master stencil expansion enriches previews without polluting indexed content."""
+    assert SAMPLE_VSDX.exists(), f"Sample Visio file not found: {SAMPLE_VSDX}"
+
+    indexed_pages = parse_vsdx_pages(str(SAMPLE_VSDX))
+    preview_pages = parse_vsdx_pages(
+        str(SAMPLE_VSDX),
+        include_media=True,
+        include_master_shapes=True,
+    )
+
+    indexed_shapes = indexed_pages[0]["shapes"]
+    preview_shapes = preview_pages[0]["shapes"]
+    preview_master_shapes = [shape for shape in preview_shapes if shape.get("from_master")]
+
+    assert not any(shape.get("from_master") for shape in indexed_shapes)
+    assert len(preview_shapes) > len(indexed_shapes)
+    assert len(preview_master_shapes) > 0
+
+
 def run_standalone():
     """Run tests without pytest for local functional validation."""
     tests = [
         test_visio_page_parsing,
         test_visio_preview_rendering,
         test_visio_reference_geometry_fixture,
+        test_visio_preview_master_expansion_is_preview_only,
     ]
     results = []
     for test in tests:

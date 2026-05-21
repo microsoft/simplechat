@@ -8,10 +8,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
-*   **Visio Path Geometry Rendering**
+*   **Visio Path and Master Geometry Rendering**
     *   Improved the built-in Visio citation preview renderer to draw supported VSDX geometry rows as actual local paths instead of collapsing those shapes to generic rectangles.
-    *   Added regression coverage using the Visio-exported SVG reference fixture to ensure the sample contains path geometry that the renderer should preserve.
-    *   (Ref: Visio path geometry, structural renderer, `functions_visio.py`, `test_visio_ingestion_preview.py`, `architecture.svg`)
+    *   Added preview-only expansion of referenced master stencil geometry so common Azure/service icons render with more recognizable vector structure while indexed Visio chunks stay focused on page content.
+    *   Improved label placement for icon-backed shapes and dashed container labels using the Visio-exported SVG/PDF reference fixtures.
+    *   Added regression coverage to ensure preview master expansion does not pollute default ingestion parsing.
+    *   (Ref: Visio path geometry, master stencil geometry, structural renderer, `functions_visio.py`, `test_visio_ingestion_preview.py`, `architecture.svg`, `architecture.pdf`)
 
 ### **(v0.241.076)**
 

@@ -8,7 +8,7 @@ The initial Visio enhanced-citation preview proved that `.vsdx` pages could be p
 
 ## Root Cause Analysis
 
-The first renderer intentionally used a lightweight parser-only approach. It drew text-bearing shapes as generic boxes and connected known endpoints, but did not preserve enough nested group transforms or foreign image references to resemble Visio's actual view.
+The first renderer intentionally used a lightweight parser-only approach. It drew text-bearing shapes as generic boxes and connected known endpoints, but did not preserve enough nested group transforms, master stencil geometry, curve rows, label placement, or foreign image references to resemble Visio's actual view.
 
 ## Version Implemented
 
@@ -27,9 +27,11 @@ The first renderer intentionally used a lightweight parser-only approach. It dre
 
 ### Code Changes Summary
 
-- Improved the structural fallback renderer by preserving nested shape coordinates, connector endpoints, geometry rows, and supported embedded media references.
+- Improved the structural fallback renderer by preserving nested shape coordinates, connector endpoints, geometry rows, selected master stencil geometry, and supported embedded media references.
 - Removed the optional LibreOffice conversion branch after confirming Azure Linux `tdnf` does not provide LibreOffice packages in the app builder image.
-- Added rendering for supported VSDX geometry path rows: `MoveTo`, `LineTo`, `RelMoveTo`, `RelLineTo`, and `Ellipse`.
+- Added rendering for supported VSDX geometry path rows: `MoveTo`, `LineTo`, `RelMoveTo`, `RelLineTo`, `RelCubBezTo`, `RelQuadBezTo`, elliptical arc endpoint approximation, and `Ellipse`.
+- Added preview-only expansion of master stencil shapes so citation previews can draw richer icon geometry while ingestion chunks remain focused on page-level diagram content.
+- Improved label placement for icon-backed shapes and dashed container labels based on the Microsoft Visio exported SVG/PDF reference files.
 - Bumped `application/single_app/config.py` to `VERSION = "0.241.077"`.
 
 ### Testing Approach
@@ -52,7 +54,7 @@ Users get a richer built-in Visio structural preview than the original sketch re
 
 ### Before/After Comparison
 
-Before, Visio previews rendered as sparse text boxes with limited connector context. After, previews use a parser renderer that includes more actual page geometry paths, media, and connector information.
+Before, Visio previews rendered as sparse text boxes with limited connector context. After, previews use a parser renderer that includes more actual page geometry paths, master stencil artwork, dashed containers, media, and connector information.
 
 ### User Experience Improvements
 

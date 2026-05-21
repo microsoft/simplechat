@@ -21,7 +21,7 @@ The feature parses Visio Open Packaging Convention XML, indexes each Visio page 
 
 ### Architecture
 
-The VSDX parser reads `visio/pages/pages.xml` and its relationship file to discover page tabs and page XML parts. Each page XML is parsed for shapes, text, shape data, page dimensions, and connector records.
+The VSDX parser reads `visio/pages/pages.xml` and its relationship file to discover page tabs and page XML parts. Each page XML is parsed for shapes, text, shape data, page dimensions, and connector records. Preview rendering can also expand referenced Visio master stencil shapes so common Azure and service icons have more of their original vector structure without adding an office-suite runtime.
 
 Each page is converted to Markdown-like structured text and saved as one search chunk. The chunk page number matches the Visio page index, so enhanced citation clicks can request the matching visual preview.
 
@@ -51,17 +51,17 @@ No separate admin toggle is required beyond existing document upload and enhance
 
 ## Testing and Validation
 
-Test coverage is provided by `functional_tests/test_visio_ingestion_preview.py`, which validates that `artifacts/architecture.vsdx` can be parsed, indexed into page content, and rendered as a PNG preview.
+Test coverage is provided by `functional_tests/test_visio_ingestion_preview.py`, which validates that `artifacts/architecture.vsdx` can be parsed, indexed into page content, rendered as a PNG preview, and expanded with master stencil geometry only for preview rendering.
 
 ## Performance Considerations
 
-The built-in renderer draws positioned text, connector endpoints, supported VSDX path geometry, structural geometry, and supported embedded media using parsed Visio coordinates. This keeps previews dependency-light and suitable for citation context, but it does not attempt full Visio theme, stencil, icon, fill, or connector routing fidelity.
+The built-in renderer draws positioned text, connector endpoints, supported VSDX path geometry, selected master stencil vector geometry, dashed containers, and supported embedded media using parsed Visio coordinates. This keeps previews dependency-light and suitable for citation context, but it does not attempt full Visio theme, gradient, shadow, icon, or connector routing fidelity.
 
 For very large diagrams, preview rendering is capped by a configurable maximum edge size.
 
 ## Known Limitations
 
 - `.vsd` binary Visio files are not supported.
-- Embedded stencil artwork and theme styling are approximated.
+- Embedded stencil artwork, curves, gradients, shadows, and theme styling are approximated.
 - Grouped shape coordinate transforms may not perfectly match the Visio desktop rendering.
 - The preview is intended for citation orientation; the original `.vsdx` remains available for exact inspection.
