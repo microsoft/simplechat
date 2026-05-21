@@ -23,7 +23,7 @@ def register_route_frontend_workspace(app):
         enable_video_file_support = settings.get('enable_video_file_support', False)
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
         user_info = get_current_user_info() or {}
-        file_sync_enabled = is_file_sync_enabled_for_user(settings, user_id, user_info.get('email')) if user_id else False
+        file_sync_enabled = is_file_sync_enabled_for_user(settings, user_id, user_info.get('email'), user_info=user_info) if user_id else False
         if not user_id:
             print("User not authenticated.")
             return redirect(url_for('login'))

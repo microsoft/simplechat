@@ -5,6 +5,7 @@ from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
+from functions_assigned_knowledge import get_agent_assigned_knowledge
 from functions_source_review import get_deep_research_config, is_source_review_enabled_for_user
 from functions_documents import *
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
@@ -23,6 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 def _serialize_chat_agent_option(agent, *, is_global=False, is_group=False, group_id=None, group_name=None):
+    if is_group:
+        agent_scope = 'group'
+    elif is_global:
+        agent_scope = 'global'
+    else:
+        agent_scope = 'personal'
+
     return {
         'id': agent.get('id'),
         'name': agent.get('name', ''),
@@ -31,6 +39,11 @@ def _serialize_chat_agent_option(agent, *, is_global=False, is_group=False, grou
         'is_group': is_group,
         'group_id': group_id,
         'group_name': group_name,
+        'assigned_knowledge': get_agent_assigned_knowledge(
+            agent,
+            agent_scope=agent_scope,
+            group_id=group_id,
+        ),
     }
 
 
@@ -265,10 +278,12 @@ def register_route_frontend_chats(app):
         user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         public_settings = sanitize_settings_for_user(settings)
         current_user_info = get_current_user_info() or {}
+        current_user_roles = (session.get('user') or {}).get('roles', [])
         source_review_enabled_for_user = is_source_review_enabled_for_user(
             settings,
             user_id,
-            user_email=current_user_info.get('email')
+            user_email=current_user_info.get('email'),
+            user_roles=current_user_roles,
         )
         for source_review_key in list(public_settings.keys()):
             if source_review_key.startswith('source_review_') or source_review_key == 'enable_deep_source_review':

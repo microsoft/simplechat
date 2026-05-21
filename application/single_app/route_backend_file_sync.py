@@ -8,6 +8,7 @@ from functions_file_sync import (
     FILE_SYNC_SCOPE_GROUP,
     FILE_SYNC_SCOPE_PERSONAL,
     FILE_SYNC_SCOPE_PUBLIC,
+    FILE_SYNC_SOURCE_TYPE_SMB,
     assert_public_workspace_role,
     create_file_sync_source,
     delete_file_sync_source,
@@ -15,6 +16,7 @@ from functions_file_sync import (
     is_file_sync_enabled_for_group,
     is_file_sync_enabled_for_public_workspace,
     is_file_sync_enabled_for_user,
+    is_file_sync_source_type_visible,
     list_file_sync_runs,
     list_file_sync_sources,
     queue_file_sync_source_run,
@@ -24,7 +26,9 @@ from functions_file_sync import (
     test_file_sync_source_connection,
     update_file_sync_source,
 )
-from functions_group import require_active_group
+from functions_group import find_group_by_id, require_active_group
+from functions_group import search_all_groups
+from functions_public_workspaces import find_public_workspace_by_id, search_all_public_workspaces
 from functions_settings import get_settings
 from functions_simplechat_operations import search_directory_users
 from swagger_wrapper import get_auth_security, swagger_route
@@ -48,27 +52,67 @@ def register_route_backend_file_sync(app):
         if not user_id:
             raise PermissionError("User not authenticated")
         settings = get_settings()
-        if not is_file_sync_enabled_for_user(settings, user_id, user_info.get("email")):
+        if not is_file_sync_enabled_for_user(settings, user_id, user_info.get("email"), user_info=user_info):
             raise PermissionError("File Sync is not enabled for this user")
         return user_id
 
     def _require_group_context():
-        user_id, _ = _current_user()
+        user_id, user_info = _current_user()
         if not user_id:
             raise PermissionError("User not authenticated")
         group_id = require_active_group(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
-        if not is_file_sync_enabled_for_group(get_settings(), group_id):
+        if not is_file_sync_enabled_for_group(get_settings(), group_id, user_info=user_info):
             raise PermissionError("File Sync is not enabled for this group")
         return user_id, group_id
 
     def _require_public_context(public_workspace_id):
-        user_id, _ = _current_user()
+        user_id, user_info = _current_user()
         if not user_id:
             raise PermissionError("User not authenticated")
         assert_public_workspace_role(user_id, public_workspace_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
-        if not is_file_sync_enabled_for_public_workspace(get_settings(), public_workspace_id):
+        if not is_file_sync_enabled_for_public_workspace(get_settings(), public_workspace_id, user_info=user_info):
             raise PermissionError("File Sync is not enabled for this public workspace")
         return user_id, public_workspace_id
+
+    def _require_admin_target_context(scope_type, scope_id):
+        admin_user_id, _ = _current_user()
+        if not admin_user_id:
+            raise PermissionError("User not authenticated")
+
+        settings = get_settings()
+        if scope_type == FILE_SYNC_SCOPE_PERSONAL:
+            enabled = is_file_sync_enabled_for_user(settings, scope_id, admin_management=True)
+            target_name = "target user"
+        elif scope_type == FILE_SYNC_SCOPE_GROUP:
+            if not find_group_by_id(scope_id):
+                raise LookupError("File Sync target group not found")
+            enabled = is_file_sync_enabled_for_group(settings, scope_id, admin_management=True)
+            target_name = "target group"
+        elif scope_type == FILE_SYNC_SCOPE_PUBLIC:
+            if not find_public_workspace_by_id(scope_id):
+                raise LookupError("File Sync target public workspace not found")
+            enabled = is_file_sync_enabled_for_public_workspace(settings, scope_id, admin_management=True)
+            target_name = "target public workspace"
+        else:
+            raise ValueError("Unsupported File Sync scope")
+
+        if not enabled:
+            raise PermissionError(f"File Sync is not enabled for this {target_name}")
+        return admin_user_id, scope_id
+
+    def _serialize_group_target(group):
+        return {
+            "id": str(group.get("id") or ""),
+            "name": str(group.get("name") or group.get("id") or ""),
+            "description": str(group.get("description") or ""),
+        }
+
+    def _serialize_public_workspace_target(workspace):
+        return {
+            "id": str(workspace.get("id") or ""),
+            "name": str(workspace.get("name") or workspace.get("id") or ""),
+            "description": str(workspace.get("description") or ""),
+        }
 
     def _map_exception(error):
         if isinstance(error, PermissionError):
@@ -83,8 +127,15 @@ def register_route_backend_file_sync(app):
         sources = [sanitize_file_sync_source(source) for source in list_file_sync_sources(scope_type, scope_id)]
         return jsonify({"sources": sources}), 200
 
+    def _assert_new_source_type_visible(payload):
+        source_type = str(payload.get("source_type") or FILE_SYNC_SOURCE_TYPE_SMB).strip().lower()
+        if not is_file_sync_source_type_visible(get_settings(), source_type):
+            raise PermissionError("This File Sync source type is not available")
+
     def _create_source(scope_type, scope_id, user_id):
-        source = create_file_sync_source(scope_type, scope_id, _payload(), user_id)
+        payload = _payload()
+        _assert_new_source_type_visible(payload)
+        source = create_file_sync_source(scope_type, scope_id, payload, user_id)
         return jsonify({"source": sanitize_file_sync_source(source)}), 201
 
     def _update_source(scope_type, scope_id, source_id, user_id):
@@ -119,7 +170,10 @@ def register_route_backend_file_sync(app):
         return jsonify({"item": item}), 200
 
     def _test_connection(scope_type, scope_id, user_id, source_id=None):
-        result = test_file_sync_source_connection(scope_type, scope_id, _payload(), user_id, source_id=source_id)
+        payload = _payload()
+        if not source_id:
+            _assert_new_source_type_visible(payload)
+        result = test_file_sync_source_connection(scope_type, scope_id, payload, user_id, source_id=source_id)
         return jsonify({"connection": result}), 200
 
     @app.route('/api/admin/file-sync/users/search', methods=['GET'])
@@ -133,6 +187,322 @@ def register_route_backend_file_sync(app):
                 return jsonify({"users": []}), 200
             users = search_directory_users(query, limit=10)
             return jsonify({"users": users}), 200
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/groups/search', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_admin_file_sync_group_search():
+        try:
+            query = str(request.args.get("q") or request.args.get("query") or "").strip()
+            if len(query) < 2:
+                return jsonify({"groups": []}), 200
+            groups = [_serialize_group_target(group) for group in search_all_groups(query, limit=10)]
+            return jsonify({"groups": groups}), 200
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public-workspaces/search', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_admin_file_sync_public_workspace_search():
+        try:
+            query = str(request.args.get("q") or request.args.get("query") or "").strip()
+            if len(query) < 2:
+                return jsonify({"workspaces": []}), 200
+            workspaces = [_serialize_public_workspace_target(workspace) for workspace in search_all_public_workspaces(query)[:10]]
+            return jsonify({"workspaces": workspaces}), 200
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/personal/<target_user_id>/sources', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_personal_sources_list(target_user_id):
+        try:
+            _, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PERSONAL, target_user_id)
+            return _list_sources(FILE_SYNC_SCOPE_PERSONAL, scope_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/personal/<target_user_id>/sources', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_personal_sources_create(target_user_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PERSONAL, target_user_id)
+            return _create_source(FILE_SYNC_SCOPE_PERSONAL, scope_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/personal/<target_user_id>/sources/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_personal_source_test_connection_new(target_user_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PERSONAL, target_user_id)
+            return _test_connection(FILE_SYNC_SCOPE_PERSONAL, scope_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/personal/<target_user_id>/sources/<source_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_personal_source_update(target_user_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PERSONAL, target_user_id)
+            return _update_source(FILE_SYNC_SCOPE_PERSONAL, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/personal/<target_user_id>/sources/<source_id>/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_personal_source_test_connection_existing(target_user_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PERSONAL, target_user_id)
+            return _test_connection(FILE_SYNC_SCOPE_PERSONAL, scope_id, admin_user_id, source_id=source_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/personal/<target_user_id>/sources/<source_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_personal_source_delete(target_user_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PERSONAL, target_user_id)
+            return _delete_source(FILE_SYNC_SCOPE_PERSONAL, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/personal/<target_user_id>/sources/<source_id>/sync', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_personal_source_sync(target_user_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PERSONAL, target_user_id)
+            return _sync_now(FILE_SYNC_SCOPE_PERSONAL, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/personal/<target_user_id>/sources/<source_id>/runs', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_personal_source_runs(target_user_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PERSONAL, target_user_id)
+            return _list_runs(FILE_SYNC_SCOPE_PERSONAL, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/group/<group_id>/sources', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_group_sources_list(group_id):
+        try:
+            _, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_GROUP, group_id)
+            return _list_sources(FILE_SYNC_SCOPE_GROUP, scope_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/group/<group_id>/sources', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_group_sources_create(group_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_GROUP, group_id)
+            return _create_source(FILE_SYNC_SCOPE_GROUP, scope_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/group/<group_id>/sources/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_group_source_test_connection_new(group_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_GROUP, group_id)
+            return _test_connection(FILE_SYNC_SCOPE_GROUP, scope_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/group/<group_id>/sources/<source_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_group_source_update(group_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_GROUP, group_id)
+            return _update_source(FILE_SYNC_SCOPE_GROUP, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/group/<group_id>/sources/<source_id>/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_group_source_test_connection_existing(group_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_GROUP, group_id)
+            return _test_connection(FILE_SYNC_SCOPE_GROUP, scope_id, admin_user_id, source_id=source_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/group/<group_id>/sources/<source_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_group_source_delete(group_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_GROUP, group_id)
+            return _delete_source(FILE_SYNC_SCOPE_GROUP, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/group/<group_id>/sources/<source_id>/sync', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_group_source_sync(group_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_GROUP, group_id)
+            return _sync_now(FILE_SYNC_SCOPE_GROUP, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/group/<group_id>/sources/<source_id>/runs', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_group_source_runs(group_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_GROUP, group_id)
+            return _list_runs(FILE_SYNC_SCOPE_GROUP, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public/<public_workspace_id>/sources', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_public_sources_list(public_workspace_id):
+        try:
+            _, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            return _list_sources(FILE_SYNC_SCOPE_PUBLIC, scope_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public/<public_workspace_id>/sources', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_public_sources_create(public_workspace_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            return _create_source(FILE_SYNC_SCOPE_PUBLIC, scope_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public/<public_workspace_id>/sources/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_public_source_test_connection_new(public_workspace_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            return _test_connection(FILE_SYNC_SCOPE_PUBLIC, scope_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public/<public_workspace_id>/sources/<source_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_public_source_update(public_workspace_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            return _update_source(FILE_SYNC_SCOPE_PUBLIC, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public/<public_workspace_id>/sources/<source_id>/test-connection', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_public_source_test_connection_existing(public_workspace_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            return _test_connection(FILE_SYNC_SCOPE_PUBLIC, scope_id, admin_user_id, source_id=source_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public/<public_workspace_id>/sources/<source_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_public_source_delete(public_workspace_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            return _delete_source(FILE_SYNC_SCOPE_PUBLIC, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public/<public_workspace_id>/sources/<source_id>/sync', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_public_source_sync(public_workspace_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            return _sync_now(FILE_SYNC_SCOPE_PUBLIC, scope_id, source_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/public/<public_workspace_id>/sources/<source_id>/runs', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_public_source_runs(public_workspace_id, source_id):
+        try:
+            admin_user_id, scope_id = _require_admin_target_context(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            return _list_runs(FILE_SYNC_SCOPE_PUBLIC, scope_id, source_id, admin_user_id)
         except Exception as error:
             return _map_exception(error)
 

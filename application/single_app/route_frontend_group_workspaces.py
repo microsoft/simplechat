@@ -25,7 +25,8 @@ def register_route_frontend_group_workspaces(app):
             active_group_id = None
         try:
             require_active_group(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
-            file_sync_enabled = is_file_sync_enabled_for_group(settings, active_group_id) if active_group_id else False
+            user_info = get_current_user_info() or {}
+            file_sync_enabled = is_file_sync_enabled_for_group(settings, active_group_id, user_info=user_info) if active_group_id else False
         except (ValueError, LookupError, PermissionError):
             file_sync_enabled = False
         enable_document_classification = settings.get('enable_document_classification', False)

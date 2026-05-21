@@ -1,11 +1,11 @@
 # test_workspace_file_sync_ui.py
 """
 UI test for workspace File Sync tab.
-Version: 0.241.061
+Version: 0.241.073
 Implemented in: 0.241.042
 
 This test ensures the workspace Sync tab renders, loads source rows, opens the
-SMB source form, and queues a manual sync without browser console errors.
+source workflow modal, and queues a manual sync without browser console errors.
 """
 
 import json
@@ -51,6 +51,7 @@ def test_workspace_file_sync_tab():
             {
                 "id": "source-1",
                 "name": "Finance Share",
+                "source_type": "smb",
                 "enabled": True,
                 "recursive": True,
                 "connection": {"unc_path": "\\\\fileserver\\finance"},
@@ -145,6 +146,7 @@ def test_workspace_file_sync_tab():
         page.locator("#sync-tab-btn").click()
         expect(page.get_by_role("heading", name="Sync Sources")).to_be_visible()
         expect(page.get_by_text("Finance Share")).to_be_visible()
+        expect(page.get_by_text("SMB Share")).to_be_visible()
         expect(page.get_by_text("queued 2, unchanged 4, skipped 1, failed 0")).to_be_visible()
 
         page.get_by_role("button", name="Delete").click()
@@ -154,9 +156,16 @@ def test_workspace_file_sync_tab():
         page.get_by_role("button", name="Cancel").click()
 
         page.get_by_role("button", name="Add Source").click()
-        expect(page.get_by_label("UNC path")).to_be_visible()
-        expect(page.locator("#file-sync-recursive")).to_be_visible()
-        expect(page.get_by_role("button", name="Test Connection")).to_be_visible()
+        source_modal = page.locator('[data-file-sync-source-modal="true"]')
+        expect(source_modal.get_by_role("heading", name="Add Sync Source")).to_be_visible()
+        expect(source_modal.get_by_text("SMB Share")).to_be_visible()
+        source_modal.get_by_role("button", name="Configure Source").click()
+        expect(source_modal.get_by_text("Source Type")).to_be_visible()
+        expect(source_modal.get_by_label("UNC path")).to_be_visible()
+        expect(source_modal.locator("#file-sync-recursive")).to_be_visible()
+        expect(source_modal.get_by_role("button", name="Test Connection")).to_be_visible()
+        source_modal.get_by_role("button", name="Cancel").click()
+        expect(source_modal).to_be_hidden()
 
         page.get_by_role("button", name="History").click()
         expect(page.get_by_role("heading", name="Sync History")).to_be_visible()

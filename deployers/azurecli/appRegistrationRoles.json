@@ -62,6 +62,14 @@
     "id": "6399b062-9114-49ec-a291-c445a0b2b33e",
     "isEnabled": true,
     "value": "ControlCenterDashboardReader"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Allows use of Deep Research when the Deep Research app role requirement is enabled.",
+    "displayName": "Deep Research User",
+    "id": "25558b2f-8e53-47a2-83da-022e0dfee800",
+    "isEnabled": true,
+    "value": "DeepResearchUser"
   }
 
 ]

@@ -18,6 +18,12 @@ const docSearchInput = document.getElementById("document-search-input");
 const documentActionSelect = document.getElementById("document-action-select");
 
 const DOCUMENT_ACTION_NONE = "none";
+const ASSIGNED_KNOWLEDGE_DEFAULT_USER_ACTIONS = Object.freeze(['search', 'analyze', 'compare']);
+const ASSIGNED_KNOWLEDGE_ACTION_TO_DOCUMENT_ACTION = Object.freeze({
+  search: DOCUMENT_ACTION_NONE,
+  analyze: 'analyze',
+  compare: 'comparison',
+});
 
 // Tags filter elements
 const chatTagsFilter = document.getElementById("chat-tags-filter");
@@ -50,6 +56,10 @@ let tagFilteredOutItems = [];
 // Scope lock state
 let scopeLocked = null;    // null = auto-lockable, true = locked, false = user-unlocked
 let lockedContexts = [];   // Array of {scope, id} identifying locked workspaces
+let assignedKnowledgeActive = false;
+let assignedKnowledgeAllowsUserContext = false;
+let assignedKnowledgeAllowedUserActions = new Set(ASSIGNED_KNOWLEDGE_DEFAULT_USER_ACTIONS);
+let userWorkspaceContextActive = false;
 
 // Build name maps from server-provided data (fixes activeGroupName bug)
 const groupIdToName = {};
@@ -106,6 +116,162 @@ function setSearchDocumentsButtonActiveState(isActive) {
 
   searchDocumentsBtn.classList.toggle('active', isActive);
   searchDocumentsBtn.setAttribute('aria-expanded', String(isActive));
+}
+
+function normalizeAssignedKnowledgeArray(values = []) {
+  return Array.from(new Set((Array.isArray(values) ? values : []).map(value => String(value || '').trim()).filter(Boolean)));
+}
+
+function normalizeAssignedKnowledgeUserActions(values) {
+  if (values === null || values === undefined) {
+    return [...ASSIGNED_KNOWLEDGE_DEFAULT_USER_ACTIONS];
+  }
+  const normalizedActions = normalizeAssignedKnowledgeArray(values).map(action => {
+    const normalizedAction = action.toLowerCase();
+    return normalizedAction === 'comparison' ? 'compare' : normalizedAction;
+  });
+  return normalizedActions.filter(action => ASSIGNED_KNOWLEDGE_DEFAULT_USER_ACTIONS.includes(action));
+}
+
+function getAssignedKnowledgeScopes(assignedKnowledge = {}) {
+  const scopes = assignedKnowledge.scopes || {};
+  return {
+    personal: Boolean(scopes.personal),
+    groupIds: normalizeAssignedKnowledgeArray(scopes.group_ids),
+    publicWorkspaceIds: normalizeAssignedKnowledgeArray(scopes.public_workspace_ids),
+  };
+}
+
+function syncAssignedKnowledgeButtonState() {
+  if (!searchDocumentsBtn) {
+    return;
+  }
+
+  if (!assignedKnowledgeActive) {
+    setSearchDocumentsButtonActiveState(Boolean(userWorkspaceContextActive));
+    searchDocumentsBtn.title = 'Search workspaces';
+    searchDocumentsBtn.setAttribute('aria-expanded', String(userWorkspaceContextActive));
+    return;
+  }
+
+  searchDocumentsBtn.classList.add('active');
+  searchDocumentsBtn.title = assignedKnowledgeAllowsUserContext
+    ? 'Assigned Knowledge active. Open Workspaces to add task documents.'
+    : 'Assigned Knowledge active for the selected agent.';
+  searchDocumentsBtn.setAttribute('aria-expanded', String(userWorkspaceContextActive));
+}
+
+function syncAssignedKnowledgeDocumentActionOptions() {
+  if (!documentActionSelect) {
+    return;
+  }
+
+  const allowedDocumentActions = new Set(
+    Array.from(assignedKnowledgeAllowedUserActions)
+      .map(action => ASSIGNED_KNOWLEDGE_ACTION_TO_DOCUMENT_ACTION[action])
+      .filter(Boolean)
+  );
+  Array.from(documentActionSelect.options || []).forEach(option => {
+    option.disabled = assignedKnowledgeActive
+      && assignedKnowledgeAllowsUserContext
+      && !allowedDocumentActions.has(option.value);
+  });
+
+  if (assignedKnowledgeActive && assignedKnowledgeAllowsUserContext && allowedDocumentActions.size === 0) {
+    documentActionSelect.disabled = true;
+  }
+
+  if (documentActionSelect.selectedOptions?.[0]?.disabled) {
+    const firstEnabledOption = Array.from(documentActionSelect.options || []).find(option => !option.disabled);
+    documentActionSelect.value = firstEnabledOption?.value || DOCUMENT_ACTION_NONE;
+  }
+}
+
+function setAssignedKnowledgeControlState(isActive) {
+  const lockPickerControls = isActive && !assignedKnowledgeAllowsUserContext;
+  [scopeDropdownButton, tagsDropdownButton, docDropdownButton].forEach(button => {
+    if (!button) {
+      return;
+    }
+    button.disabled = lockPickerControls;
+    button.setAttribute('aria-disabled', String(lockPickerControls));
+    button.title = lockPickerControls ? 'Controlled by the selected agent assigned knowledge.' : '';
+  });
+  if (documentActionSelect) {
+    documentActionSelect.disabled = lockPickerControls;
+  }
+  syncAssignedKnowledgeDocumentActionOptions();
+  syncAssignedKnowledgeButtonState();
+}
+
+function applyTagSelectionForValues(tags = []) {
+  const selectedTags = new Set(normalizeAssignedKnowledgeArray(tags));
+  if (chatTagsFilter) {
+    Array.from(chatTagsFilter.options).forEach(option => {
+      option.selected = selectedTags.has(option.value);
+    });
+  }
+  if (tagsDropdownItems) {
+    tagsDropdownItems.querySelectorAll('.dropdown-item').forEach(item => {
+      const checkbox = item.querySelector('.tag-checkbox');
+      const value = item.getAttribute('data-tag-value');
+      if (checkbox) {
+        checkbox.checked = selectedTags.has(value);
+      }
+    });
+  }
+  syncTagsDropdownButtonText();
+  filterDocumentsBySelectedTags();
+}
+
+export function isAssignedKnowledgeActive() {
+  return assignedKnowledgeActive;
+}
+
+export function isUserWorkspaceContextEnabled() {
+  if (assignedKnowledgeActive) {
+    return assignedKnowledgeAllowsUserContext && userWorkspaceContextActive;
+  }
+  return Boolean(searchDocumentsBtn?.classList.contains('active'));
+}
+
+export function getAssignedKnowledgeAllowedUserActions() {
+  return Array.from(assignedKnowledgeAllowedUserActions);
+}
+
+export function clearAssignedKnowledgeLock() {
+  const panelVisible = Boolean(
+    searchDocumentsContainer
+    && searchDocumentsContainer.style.display !== 'none'
+    && !searchDocumentsContainer.classList.contains('d-none')
+  );
+  assignedKnowledgeActive = false;
+  assignedKnowledgeAllowsUserContext = false;
+  assignedKnowledgeAllowedUserActions = new Set(ASSIGNED_KNOWLEDGE_DEFAULT_USER_ACTIONS);
+  userWorkspaceContextActive = panelVisible && Boolean(searchDocumentsBtn?.classList.contains('active'));
+  setAssignedKnowledgeControlState(false);
+}
+
+export async function applyAssignedKnowledgeLock(agent = null) {
+  const assignedKnowledge = agent?.assigned_knowledge || agent?.assignedKnowledge || null;
+  if (!assignedKnowledge?.enabled) {
+    clearAssignedKnowledgeLock();
+    return false;
+  }
+
+  assignedKnowledgeActive = true;
+  assignedKnowledgeAllowsUserContext = Boolean(assignedKnowledge.allow_user_workspace_context);
+  assignedKnowledgeAllowedUserActions = new Set(
+    normalizeAssignedKnowledgeUserActions(
+      assignedKnowledge.allowed_user_workspace_actions ?? assignedKnowledge.allowed_user_context_actions
+    )
+  );
+  userWorkspaceContextActive = false;
+  hideSearchDocumentsPanel();
+  setAssignedKnowledgeControlState(true);
+  syncDropdownButtonText();
+  setAssignedKnowledgeControlState(true);
+  return true;
 }
 
 function setTagsDropdownButtonState({ state, message, enabled }) {
@@ -436,17 +602,25 @@ export function hideSearchDocumentsPanel() {
 
 if (searchDocumentsContainer) {
   searchDocumentsContainer.addEventListener('shown.bs.offcanvas', () => {
+    if (assignedKnowledgeActive && assignedKnowledgeAllowsUserContext) {
+      userWorkspaceContextActive = true;
+    }
     setSearchDocumentsButtonActiveState(true);
+    syncAssignedKnowledgeButtonState();
   });
 
   searchDocumentsContainer.addEventListener('hidden.bs.offcanvas', () => {
     closeSearchDocumentsDropdowns();
+    if (assignedKnowledgeActive) {
+      userWorkspaceContextActive = false;
+    }
 
     if (isSearchDocumentsMobileDrawerViewport()) {
       searchDocumentsContainer.style.display = 'none';
     }
 
     setSearchDocumentsButtonActiveState(false);
+    syncAssignedKnowledgeButtonState();
   });
 }
 
@@ -2129,7 +2303,7 @@ if (scopeDropdownItems) {
     e.stopPropagation();
 
     // Guard: prevent changes when scope is locked
-    if (scopeLocked === true) { e.preventDefault(); return; }
+    if (scopeLocked === true || (assignedKnowledgeActive && !assignedKnowledgeAllowsUserContext)) { e.preventDefault(); return; }
 
     const item = e.target.closest('.dropdown-item');
     if (!item) return;
@@ -2180,6 +2354,10 @@ if (tagsDropdownItems) {
   // Click handler for tag items with checkbox toggling
   tagsDropdownItems.addEventListener('click', function(e) {
     e.stopPropagation();
+    if (assignedKnowledgeActive && !assignedKnowledgeAllowsUserContext) {
+      e.preventDefault();
+      return;
+    }
     const item = e.target.closest('.dropdown-item');
     if (!item) return;
 
@@ -2224,8 +2402,29 @@ if (tagsDropdownItems) {
 }
 
 if (searchDocumentsBtn) {
-  searchDocumentsBtn.addEventListener("click", function () {
+  searchDocumentsBtn.addEventListener("click", async function () {
     if (!searchDocumentsContainer) return;
+
+    if (assignedKnowledgeActive) {
+      if (!assignedKnowledgeAllowsUserContext) {
+        userWorkspaceContextActive = false;
+        hideSearchDocumentsPanel();
+        setAssignedKnowledgeControlState(true);
+        showToast('This agent uses assigned knowledge. Ask the agent what knowledge it has for details.', 'info');
+        return;
+      }
+
+      if (userWorkspaceContextActive) {
+        userWorkspaceContextActive = false;
+        hideSearchDocumentsPanel();
+        setAssignedKnowledgeControlState(true);
+      } else {
+        userWorkspaceContextActive = true;
+        await ensureSearchDocumentsVisible();
+        setAssignedKnowledgeControlState(true);
+      }
+      return;
+    }
 
     if (this.classList.contains("active")) {
       hideSearchDocumentsPanel();
@@ -2271,6 +2470,12 @@ if (docDropdownItems) {
 
   // Multi-select click handler with checkbox toggling
   docDropdownItems.addEventListener('click', function(e) {
+    if (assignedKnowledgeActive && !assignedKnowledgeAllowsUserContext) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     const item = e.target.closest('.dropdown-item');
     if (!item) return;
 

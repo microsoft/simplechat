@@ -18,12 +18,13 @@ from functions_authentication import login_required, user_required, get_current_
 from functions_appinsights import log_event
 from functions_settings import get_settings, enabled_required
 from functions_documents import create_document, get_document_blob_storage_info, update_document
+from functions_visio import render_vsdx_page_preview
 from functions_group import check_group_status_allows_operation, find_group_by_id, get_user_groups, require_active_group
 from functions_notifications import create_group_notification, create_notification, create_public_workspace_notification
 from functions_public_workspaces import check_public_workspace_status_allows_operation, get_user_visible_public_workspace_ids_from_settings, require_active_public_workspace
 from functions_simplechat_operations import download_blob_content, upload_generated_document_for_current_user
 from swagger_wrapper import swagger_route, get_auth_security
-from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
+from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, VISIO_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
 from functions_debug import debug_print
 
 
@@ -943,6 +944,82 @@ def register_enhanced_citations_routes(app):
         except Exception as e:
             debug_print(f"Error generating tabular preview: {e}")
             return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/enhanced_citations/visio", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_visio_preview():
+        """Return a PNG preview for a Visio page or download the original VSDX."""
+        doc_id = request.args.get("doc_id")
+        page_number = request.args.get("page", 1, type=int)
+        force_download = str(request.args.get("download", "")).lower() == "true"
+
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        if not page_number or page_number < 1:
+            return jsonify({"error": "page must be a positive integer"}), 400
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            file_name = raw_doc.get('file_name', '')
+            ext = file_name.lower().rsplit('.', 1)[-1] if '.' in file_name else ''
+            if ext not in VISIO_EXTENSIONS:
+                return jsonify({"error": "File is not a Visio VSDX document"}), 400
+
+            if force_download:
+                return serve_enhanced_citation_content(raw_doc, force_download=True)
+
+            settings = get_settings()
+            max_blob_size = int(settings.get('visio_preview_max_blob_size_mb', settings.get('max_file_size_mb', 16))) * 1024 * 1024
+            max_edge_px = int(settings.get('visio_preview_max_edge_px', 3200))
+            blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+            if not blob_service_client:
+                return jsonify({"error": "Blob storage client not available"}), 500
+
+            container_name, blob_name = _resolve_document_blob_reference(raw_doc)
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            blob_props = blob_client.get_blob_properties()
+            if blob_props.size > max_blob_size:
+                return jsonify({"error": "File is too large to preview"}), 400
+
+            temp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".vsdx", delete=False) as temp_file:
+                    temp_path = temp_file.name
+                    blob_client.download_blob().readinto(temp_file)
+
+                png_bytes = render_vsdx_page_preview(
+                    temp_path,
+                    page_number=page_number,
+                    max_edge_px=max_edge_px,
+                )
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+            response = Response(png_bytes, mimetype="image/png")
+            response.headers["Content-Disposition"] = f"inline; filename=visio-page-{page_number}.png"
+            response.headers["Cache-Control"] = "private, max-age=300"
+            return response
+
+        except ValueError as value_error:
+            return jsonify({"error": str(value_error)}), 400
+        except FileNotFoundError as file_error:
+            return jsonify({"error": str(file_error)}), 404
+        except Exception as error:
+            debug_print(f"Error generating Visio preview: {error}")
+            return jsonify({"error": str(error)}), 500
 
 def get_document(user_id, doc_id):
     """

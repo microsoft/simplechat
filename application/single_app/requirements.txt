@@ -59,3 +59,4 @@ aiohttp==3.13.4
 html2text==2025.4.15
 matplotlib==3.10.7
 azure-cognitiveservices-speech==1.48.2
+playwright==1.58.0

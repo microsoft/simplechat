@@ -36,6 +36,15 @@ from flask import Response, copy_current_request_context, g, has_request_context
 from functions_authentication import *
 from functions_search import *
 from functions_settings import *
+from functions_assigned_knowledge import (
+    ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
+    ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
+    ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH,
+    build_assigned_knowledge_runtime_filters,
+)
+from functions_global_agents import get_global_agents
+from functions_group_agents import get_group_agents
+from functions_personal_agents import get_personal_agents
 from functions_source_review import (
     build_deep_research_ledger,
     build_deep_research_ledger_markdown,
@@ -43,6 +52,7 @@ from functions_source_review import (
     compact_deep_research_result_for_metadata,
     compact_source_review_result_for_metadata,
     get_deep_research_config,
+    is_source_review_enabled_for_user,
     normalize_review_url,
     perform_source_review,
     should_auto_enable_source_review,
@@ -105,6 +115,61 @@ from functions_tabular_generated_exports import (
 
 
 DEFAULT_CONVERSATION_TITLE = 'New Conversation'
+ASSIGNED_KNOWLEDGE_DOCUMENT_ACTION_MAP = {
+    DOCUMENT_ACTION_TYPE_NONE: ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH,
+    DOCUMENT_ACTION_TYPE_ANALYZE: ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
+    DOCUMENT_ACTION_TYPE_COMPARISON: ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
+}
+
+
+def _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters):
+    return bool(
+        isinstance(assigned_knowledge_filters, dict)
+        and assigned_knowledge_filters.get('allow_user_workspace_context')
+    )
+
+
+def _assigned_knowledge_allows_document_action(assigned_knowledge_filters, document_action_type):
+    if not _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters):
+        return False
+    required_action = ASSIGNED_KNOWLEDGE_DOCUMENT_ACTION_MAP.get(
+        document_action_type or DOCUMENT_ACTION_TYPE_NONE,
+        ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH,
+    )
+    allowed_actions = assigned_knowledge_filters.get('allowed_user_workspace_actions') or []
+    return required_action in allowed_actions
+
+
+def _build_assigned_knowledge_search_args(assigned_knowledge_filters, *, query, user_id, top_n):
+    return {
+        'query': query,
+        'user_id': user_id,
+        'top_n': top_n,
+        'doc_scope': assigned_knowledge_filters.get('doc_scope') or 'all',
+        'document_ids': list(assigned_knowledge_filters.get('document_ids') or []),
+        'tags_filter': list(assigned_knowledge_filters.get('tags_filter') or []),
+        'active_group_ids': list(assigned_knowledge_filters.get('active_group_ids') or []),
+        'active_public_workspace_id': list(assigned_knowledge_filters.get('active_public_workspace_ids') or []),
+        'document_filter_mode': assigned_knowledge_filters.get('document_filter_mode') or 'union',
+    }
+
+
+def _merge_search_results_by_identity(*result_sets):
+    merged_results = []
+    seen_keys = set()
+    for result_set in result_sets:
+        for result in result_set or []:
+            if not isinstance(result, dict):
+                continue
+            identity = (
+                result.get('id')
+                or f"{result.get('document_id') or ''}:{result.get('chunk_id') or result.get('chunk_sequence') or ''}"
+            )
+            if identity in seen_keys:
+                continue
+            seen_keys.add(identity)
+            merged_results.append(result)
+    return merged_results
 
 
 def _conversation_title_is_default(title):
@@ -797,6 +862,114 @@ def _get_authorized_chat_scope_context(
             allowed_public_workspace_ids[0] if allowed_public_workspace_ids else None
         ),
     }
+
+
+def _build_user_accessible_chat_agents(user_id, settings, requested_agent=None):
+    """Build canonical agent records the current user may invoke in chat."""
+    requested_agent = requested_agent if isinstance(requested_agent, dict) else {}
+    candidates = []
+
+    for agent in get_personal_agents(user_id):
+        candidate = dict(agent)
+        candidate['is_global'] = False
+        candidate['is_group'] = False
+        candidate['group_id'] = None
+        candidate['group_name'] = None
+        candidates.append(candidate)
+
+    include_global_agents = (
+        bool(requested_agent.get('is_global'))
+        or not settings.get('per_user_semantic_kernel', False)
+        or (
+            settings.get('per_user_semantic_kernel', False)
+            and settings.get('merge_global_semantic_kernel_with_workspace', False)
+        )
+    )
+    if include_global_agents:
+        for agent in get_global_agents():
+            candidate = dict(agent)
+            candidate['is_global'] = True
+            candidate['is_group'] = False
+            candidate['group_id'] = None
+            candidate['group_name'] = None
+            candidates.append(candidate)
+
+    requested_group_id = str(requested_agent.get('group_id') or '').strip()
+    if requested_agent.get('is_group') and not requested_group_id:
+        try:
+            requested_group_id = require_active_group(user_id)
+        except Exception:
+            requested_group_id = ''
+
+    if requested_group_id:
+        group_doc = find_group_by_id(requested_group_id)
+        if group_doc and get_user_role_in_group(group_doc, user_id):
+            group_name = requested_agent.get('group_name') or group_doc.get('name')
+            for agent in get_group_agents(requested_group_id):
+                candidate = dict(agent)
+                candidate['is_global'] = False
+                candidate['is_group'] = True
+                candidate['group_id'] = requested_group_id
+                candidate['group_name'] = group_name
+                candidates.append(candidate)
+
+    return candidates
+
+
+def _chat_agent_scope_matches(candidate, requested_agent):
+    requested_is_global = bool(requested_agent.get('is_global', False))
+    requested_is_group = bool(requested_agent.get('is_group', False))
+    requested_group_id = str(requested_agent.get('group_id') or '').strip()
+    candidate_is_global = bool(candidate.get('is_global', False))
+    candidate_is_group = bool(candidate.get('is_group', False))
+
+    if requested_is_group:
+        if not candidate_is_group:
+            return False
+        return not requested_group_id or str(candidate.get('group_id') or '') == requested_group_id
+    if requested_is_global:
+        return candidate_is_global and not candidate_is_group
+    return not candidate_is_global and not candidate_is_group
+
+
+def _resolve_canonical_chat_agent(user_id, settings, requested_agent):
+    """Resolve a browser-supplied agent selection to a trusted stored agent record."""
+    if isinstance(requested_agent, str):
+        requested_agent = {'name': requested_agent}
+    if not isinstance(requested_agent, dict) or not requested_agent:
+        return None
+
+    requested_id = str(requested_agent.get('id') or '').strip()
+    requested_name = str(requested_agent.get('name') or '').strip()
+    if not requested_id and not requested_name:
+        return None
+
+    candidates = _build_user_accessible_chat_agents(user_id, settings, requested_agent=requested_agent)
+    if requested_id:
+        match = next(
+            (
+                candidate
+                for candidate in candidates
+                if str(candidate.get('id') or '') == requested_id
+                and _chat_agent_scope_matches(candidate, requested_agent)
+            ),
+            None,
+        )
+        if match:
+            return match
+
+    if requested_name:
+        return next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.get('name') == requested_name
+                and _chat_agent_scope_matches(candidate, requested_agent)
+            ),
+            None,
+        )
+
+    return None
 
 
 def _set_authorized_chat_request_context(user_id, conversation_id, scope_context):
@@ -9953,6 +10126,21 @@ def register_route_backend_chats(app):
         active_group_ids = normalized_action.get('active_group_ids', [])
         active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
         request_agent_info = data.get('agent_info') if isinstance(data.get('agent_info'), dict) else {}
+        canonical_request_agent = _resolve_canonical_chat_agent(user_id, settings, request_agent_info)
+        assigned_knowledge_filters = (
+            build_assigned_knowledge_runtime_filters(canonical_request_agent)
+            if canonical_request_agent
+            else None
+        )
+        if assigned_knowledge_filters and not _assigned_knowledge_allows_document_action(
+            assigned_knowledge_filters,
+            normalized_action.get('type'),
+        ):
+            return {
+                'error': 'This agent does not allow that workspace document action with user context.'
+            }, 403
+        if canonical_request_agent:
+            request_agent_info = canonical_request_agent
         runner_type = 'agent' if request_agent_info else 'model'
         debug_print(
             '[ChatDocumentAction] Normalized action | '
@@ -10547,18 +10735,31 @@ def register_route_backend_chats(app):
                 deep_research_enabled = deep_research_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
+            user_workspace_context_requested = data.get('user_workspace_context_enabled')
+            if isinstance(user_workspace_context_requested, str):
+                user_workspace_context_requested = user_workspace_context_requested.lower() == 'true'
+            user_workspace_context_requested = bool(user_workspace_context_requested)
             current_user_info = get_current_user_info() or {}
             current_user_email = current_user_info.get('email')
-            source_review_enabled = bool(source_review_enabled) or bool(deep_research_enabled) or should_auto_enable_source_review(
+            current_user_roles = (session.get('user') or {}).get('roles', [])
+            source_review_allowed_for_user = is_source_review_enabled_for_user(
                 settings,
                 user_id,
-                user_message,
-                bool(web_search_enabled),
                 user_email=current_user_email,
+                user_roles=current_user_roles,
+            )
+            source_review_enabled = source_review_allowed_for_user and (
+                bool(source_review_enabled) or bool(deep_research_enabled) or should_auto_enable_source_review(
+                    settings,
+                    user_id,
+                    user_message,
+                    bool(web_search_enabled),
+                    user_email=current_user_email,
+                    user_roles=current_user_roles,
+                )
             )
             deep_research_enabled = bool(source_review_enabled)
 
-            original_hybrid_search_enabled = bool(hybrid_search_enabled)
             history_grounded_search_used = False
             history_only_answerability = None
             prior_grounded_document_refs = []
@@ -10569,6 +10770,49 @@ def register_route_backend_chats(app):
             effective_active_group_id = active_group_id
             effective_active_public_workspace_ids = list(active_public_workspace_ids or [])
             effective_active_public_workspace_id = active_public_workspace_id
+            assigned_knowledge_filters = None
+            canonical_request_agent = _resolve_canonical_chat_agent(user_id, settings, request_agent_info)
+            if canonical_request_agent:
+                request_agent_info = canonical_request_agent
+                assigned_knowledge_filters = build_assigned_knowledge_runtime_filters(canonical_request_agent)
+
+            assigned_knowledge_user_context_active = False
+            if assigned_knowledge_filters:
+                hybrid_search_enabled = True
+                assigned_knowledge_user_context_active = (
+                    user_workspace_context_requested
+                    and _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters)
+                    and _assigned_knowledge_allows_document_action(
+                        assigned_knowledge_filters,
+                        DOCUMENT_ACTION_TYPE_NONE,
+                    )
+                )
+                if not assigned_knowledge_user_context_active:
+                    effective_document_scope = assigned_knowledge_filters.get('doc_scope') or 'all'
+                    effective_selected_document_ids = list(assigned_knowledge_filters.get('document_ids') or [])
+                    effective_selected_document_id = None
+                    effective_active_group_ids = list(assigned_knowledge_filters.get('active_group_ids') or [])
+                    effective_active_group_id = effective_active_group_ids[0] if effective_active_group_ids else None
+                    effective_active_public_workspace_ids = list(
+                        assigned_knowledge_filters.get('active_public_workspace_ids') or []
+                    )
+                    effective_active_public_workspace_id = (
+                        effective_active_public_workspace_ids[0]
+                        if effective_active_public_workspace_ids
+                        else None
+                    )
+                    tags_filter = list(assigned_knowledge_filters.get('tags_filter') or [])
+                    document_scope = effective_document_scope
+                    selected_document_ids = list(effective_selected_document_ids)
+                    selected_document_id = None
+                    active_group_ids = list(effective_active_group_ids)
+                    active_group_id = effective_active_group_id
+                    active_public_workspace_ids = list(effective_active_public_workspace_ids)
+                    active_public_workspace_id = effective_active_public_workspace_id
+                g.assigned_knowledge_context = assigned_knowledge_filters
+                g.assigned_knowledge_user_context_active = assigned_knowledge_user_context_active
+
+            original_hybrid_search_enabled = bool(hybrid_search_enabled)
 
             # GPT & Image generation APIM or direct
             gpt_model = ""
@@ -10810,22 +11054,34 @@ def register_route_backend_chats(app):
                 if hybrid_search_enabled:
                     user_metadata['workspace_search'] = {
                         'search_enabled': True,
-                        'document_scope': document_scope,
-                        'selected_document_id': selected_document_id,
+                        'document_scope': effective_document_scope,
+                        'selected_document_id': effective_selected_document_id,
+                        'selected_document_ids': effective_selected_document_ids,
+                        'tags': tags_filter,
                         'classification': classifications_to_send
                     }
+                    if assigned_knowledge_filters:
+                        assigned_knowledge = assigned_knowledge_filters.get('assigned_knowledge') or {}
+                        user_metadata['workspace_search']['assigned_knowledge'] = {
+                            'enabled': True,
+                            'document_count': len(assigned_knowledge.get('document_ids') or []),
+                            'tag_count': len(assigned_knowledge.get('tags') or []),
+                            'document_scope': effective_document_scope,
+                            'active_group_ids': effective_active_group_ids,
+                            'active_public_workspace_ids': effective_active_public_workspace_ids,
+                        }
                 
                 # Get document details if specific document selected
-                if selected_document_id and selected_document_id != "all":
+                if effective_selected_document_id and effective_selected_document_id != "all":
                     try:
                         doc_info = _resolve_chat_selected_document_metadata(
-                            selected_document_id,
+                            effective_selected_document_id,
                             user_id=user_id,
-                            document_scope=document_scope,
-                            active_group_id=active_group_id,
-                            active_group_ids=active_group_ids,
-                            active_public_workspace_id=active_public_workspace_id,
-                            active_public_workspace_ids=active_public_workspace_ids,
+                            document_scope=effective_document_scope,
+                            active_group_id=effective_active_group_id,
+                            active_group_ids=effective_active_group_ids,
+                            active_public_workspace_id=effective_active_public_workspace_id,
+                            active_public_workspace_ids=effective_active_public_workspace_ids,
                         )
                         if doc_info and 'workspace_search' in user_metadata:
                             user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
@@ -10834,10 +11090,10 @@ def register_route_backend_chats(app):
                         debug_print(f"Error retrieving document details: {e}")
                 
                 # Add scope-specific details
-                if document_scope == 'group' and active_group_id:
+                if effective_document_scope == 'group' and effective_active_group_id:
                     try:
-                        debug_print(f"Workspace search - looking up group for id: {active_group_id}")
-                        group_doc = find_group_by_id(active_group_id)
+                        debug_print(f"Workspace search - looking up group for id: {effective_active_group_id}")
+                        group_doc = find_group_by_id(effective_active_group_id)
                         debug_print(f"Workspace search group lookup result: {group_doc}")
                         
                         if group_doc:
@@ -10853,11 +11109,11 @@ def register_route_backend_chats(app):
                                     user_metadata['workspace_search']['group_name'] = group_name
                                     debug_print(f"Workspace search - set group_name to: {group_name}")
                             else:
-                                debug_print(f"Workspace search - no name for group: {active_group_id}")
+                                debug_print(f"Workspace search - no name for group: {effective_active_group_id}")
                                 if 'workspace_search' in user_metadata:
                                     user_metadata['workspace_search']['group_name'] = None
                         else:
-                            debug_print(f"Workspace search - no group found for id: {active_group_id}")
+                            debug_print(f"Workspace search - no group found for id: {effective_active_group_id}")
                             if 'workspace_search' in user_metadata:
                                 user_metadata['workspace_search']['group_name'] = None
                             
@@ -10868,11 +11124,11 @@ def register_route_backend_chats(app):
                         import traceback
                         traceback.print_exc()
                 
-                if document_scope == 'public' and active_public_workspace_id:
+                if effective_document_scope == 'public' and effective_active_public_workspace_id:
                     # Check if public workspace status allows chat operations
                     try:
                         from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
-                        workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+                        workspace_doc = find_public_workspace_by_id(effective_active_public_workspace_id)
                         if workspace_doc:
                             allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
                             if not allowed:
@@ -10881,7 +11137,7 @@ def register_route_backend_chats(app):
                         debug_print(f"Error checking public workspace status: {e}")
                     
                     if 'workspace_search' in user_metadata:
-                        user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
+                        user_metadata['workspace_search']['active_public_workspace_id'] = effective_active_public_workspace_id
                 
                 # Ensure workspace_search key always exists for consistency
                 if 'workspace_search' not in user_metadata:
@@ -10942,6 +11198,8 @@ def register_route_backend_chats(app):
                         'group_name': agent_info.get('group_name'),
                         'agent_id': agent_info.get('id')
                     }
+                    if assigned_knowledge_filters:
+                        user_metadata['agent_selection']['assigned_knowledge_enabled'] = True
                 
                 # Model selection information
                 user_metadata['model_selection'] = {
@@ -11381,10 +11639,14 @@ def register_route_backend_chats(app):
                     ):
                         search_args["active_group_ids"] = effective_active_group_ids
     
-                    # Add active_public_workspace_id when:
+                    # Add active_public_workspace_id(s) when:
                     # 1. Document scope is 'public' or
                     # 2. Document scope is 'all' and public workspaces are enabled
-                    if effective_active_public_workspace_id and (
+                    if effective_active_public_workspace_ids and (
+                        effective_document_scope == 'public' or effective_document_scope == 'all'
+                    ):
+                        search_args["active_public_workspace_id"] = effective_active_public_workspace_ids
+                    elif effective_active_public_workspace_id and (
                         effective_document_scope == 'public' or effective_document_scope == 'all'
                     ):
                         search_args["active_public_workspace_id"] = effective_active_public_workspace_id
@@ -11402,8 +11664,25 @@ def register_route_backend_chats(app):
                     if top_n != default_top_n:
                         debug_print(f"Using custom top_n value: {top_n} (requested: {top_n_results})")
                     
-                    # Public scope now automatically searches all visible public workspaces
-                    search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
+                    if assigned_knowledge_filters:
+                        assigned_search_args = _build_assigned_knowledge_search_args(
+                            assigned_knowledge_filters,
+                            query=search_query,
+                            user_id=user_id,
+                            top_n=top_n,
+                        )
+                        assigned_search_results = hybrid_search(**assigned_search_args)
+                        if assigned_knowledge_user_context_active:
+                            user_context_search_results = hybrid_search(**search_args)
+                            search_results = _merge_search_results_by_identity(
+                                assigned_search_results,
+                                user_context_search_results,
+                            )[:top_n]
+                        else:
+                            search_results = assigned_search_results
+                    else:
+                        # Public scope now automatically searches all visible public workspaces
+                        search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
                 except Exception as e:
                     debug_print(f"Error during hybrid search: {e}")
                     # Only treat as error if the exception is from embedding failure
@@ -12096,6 +12375,7 @@ def register_route_backend_chats(app):
                     settings=settings,
                     user_id=user_id,
                     user_email=current_user_email,
+                    user_roles=current_user_roles,
                     user_message=user_message,
                     web_search_citations=web_search_citations_list,
                     conversation_id=conversation_id,
@@ -13436,6 +13716,7 @@ def register_route_backend_chats(app):
             user_id = get_current_user_id()
             current_user_info = get_current_user_info() or {}
             current_user_email = current_user_info.get('email')
+            current_user_roles = (session.get('user') or {}).get('roles', [])
             settings = get_settings()
             request_start_time = time.time()
         except Exception as e:
@@ -13771,12 +14052,25 @@ def register_route_backend_chats(app):
                     source_review_enabled = source_review_enabled.lower() == 'true'
                 if isinstance(deep_research_enabled, str):
                     deep_research_enabled = deep_research_enabled.lower() == 'true'
-                source_review_enabled = bool(source_review_enabled) or bool(deep_research_enabled) or should_auto_enable_source_review(
+                user_workspace_context_requested = data.get('user_workspace_context_enabled')
+                if isinstance(user_workspace_context_requested, str):
+                    user_workspace_context_requested = user_workspace_context_requested.lower() == 'true'
+                user_workspace_context_requested = bool(user_workspace_context_requested)
+                source_review_allowed_for_user = is_source_review_enabled_for_user(
                     settings,
                     user_id,
-                    user_message,
-                    bool(web_search_enabled),
                     user_email=current_user_email,
+                    user_roles=current_user_roles,
+                )
+                source_review_enabled = source_review_allowed_for_user and (
+                    bool(source_review_enabled) or bool(deep_research_enabled) or should_auto_enable_source_review(
+                        settings,
+                        user_id,
+                        user_message,
+                        bool(web_search_enabled),
+                        user_email=current_user_email,
+                        user_roles=current_user_roles,
+                    )
                 )
                 deep_research_enabled = bool(source_review_enabled)
                 original_hybrid_search_enabled = bool(hybrid_search_enabled)
@@ -13790,6 +14084,55 @@ def register_route_backend_chats(app):
                 effective_active_group_id = active_group_id
                 effective_active_public_workspace_ids = list(active_public_workspace_ids or [])
                 effective_active_public_workspace_id = active_public_workspace_id
+                assigned_knowledge_filters = None
+                canonical_request_agent = _resolve_canonical_chat_agent(user_id, settings, request_agent_info)
+                if canonical_request_agent:
+                    request_agent_info = canonical_request_agent
+                    assigned_knowledge_filters = build_assigned_knowledge_runtime_filters(canonical_request_agent)
+
+                assigned_knowledge_user_context_active = False
+                if assigned_knowledge_filters:
+                    hybrid_search_enabled = True
+                    assigned_knowledge_user_context_active = (
+                        user_workspace_context_requested
+                        and _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters)
+                        and _assigned_knowledge_allows_document_action(
+                            assigned_knowledge_filters,
+                            DOCUMENT_ACTION_TYPE_NONE,
+                        )
+                    )
+                    if not assigned_knowledge_user_context_active:
+                        effective_document_scope = assigned_knowledge_filters.get('doc_scope') or 'all'
+                        effective_selected_document_ids = list(assigned_knowledge_filters.get('document_ids') or [])
+                        effective_selected_document_id = effective_selected_document_ids[0] if len(effective_selected_document_ids) == 1 else None
+                        effective_active_group_ids = list(assigned_knowledge_filters.get('active_group_ids') or [])
+                        effective_active_group_id = effective_active_group_ids[0] if len(effective_active_group_ids) == 1 else None
+                        effective_active_public_workspace_ids = list(
+                            assigned_knowledge_filters.get('active_public_workspace_ids') or []
+                        )
+                        effective_active_public_workspace_id = (
+                            effective_active_public_workspace_ids[0]
+                            if len(effective_active_public_workspace_ids) == 1
+                            else None
+                        )
+                        tags_filter = list(assigned_knowledge_filters.get('tags_filter') or [])
+                        document_scope = effective_document_scope
+                        selected_document_ids = effective_selected_document_ids
+                        selected_document_id = effective_selected_document_id
+                        active_group_ids = effective_active_group_ids
+                        active_group_id = effective_active_group_id
+                        active_public_workspace_ids = effective_active_public_workspace_ids
+                        active_public_workspace_id = effective_active_public_workspace_id
+                    g.assigned_knowledge_context = assigned_knowledge_filters
+                    g.assigned_knowledge_user_context_active = assigned_knowledge_user_context_active
+                    debug_print(
+                        "[Streaming] Assigned Knowledge applied | "
+                        f"scope={effective_document_scope} | "
+                        f"documents={len(effective_selected_document_ids)} | "
+                        f"groups={len(effective_active_group_ids)} | "
+                        f"public_workspaces={len(effective_active_public_workspace_ids)} | "
+                        f"tags={len(tags_filter)}"
+                    )
                 debug_print(
                     "[Streaming] Normalized toggles | "
                     f"hybrid_search={hybrid_search_enabled} | "
@@ -13959,22 +14302,35 @@ def register_route_backend_chats(app):
                 if hybrid_search_enabled:
                     user_metadata['workspace_search'] = {
                         'search_enabled': True,
-                        'document_scope': document_scope,
-                        'selected_document_id': selected_document_id,
+                        'document_scope': effective_document_scope,
+                        'selected_document_id': effective_selected_document_id,
+                        'selected_document_ids': effective_selected_document_ids,
+                        'active_group_ids': effective_active_group_ids,
+                        'active_public_workspace_ids': effective_active_public_workspace_ids,
                         'classification': classifications_to_send
                     }
+                    if assigned_knowledge_filters:
+                        assigned_knowledge = assigned_knowledge_filters.get('assigned_knowledge') or {}
+                        user_metadata['workspace_search']['assigned_knowledge'] = {
+                            'enabled': True,
+                            'document_count': len(assigned_knowledge.get('document_ids') or []),
+                            'tag_count': len(assigned_knowledge.get('tags') or []),
+                            'effective_scope': effective_document_scope,
+                            'active_group_ids': effective_active_group_ids,
+                            'active_public_workspace_ids': effective_active_public_workspace_ids,
+                        }
                     
                     # Get document details if specific document selected
-                    if selected_document_id and selected_document_id != "all":
+                    if effective_selected_document_id and effective_selected_document_id != "all":
                         try:
                             doc_info = _resolve_chat_selected_document_metadata(
-                                selected_document_id,
+                                effective_selected_document_id,
                                 user_id=user_id,
-                                document_scope=document_scope,
-                                active_group_id=active_group_id,
-                                active_group_ids=active_group_ids,
-                                active_public_workspace_id=active_public_workspace_id,
-                                active_public_workspace_ids=active_public_workspace_ids,
+                                document_scope=effective_document_scope,
+                                active_group_id=effective_active_group_id,
+                                active_group_ids=effective_active_group_ids,
+                                active_public_workspace_id=effective_active_public_workspace_id,
+                                active_public_workspace_ids=effective_active_public_workspace_ids,
                             )
                             if doc_info:
                                 user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
@@ -13983,11 +14339,11 @@ def register_route_backend_chats(app):
                             debug_print(f"Error retrieving document details: {e}")
                     
                     # Add scope-specific details
-                    if document_scope == 'group' and active_group_id:
+                    if effective_document_scope == 'group' and effective_active_group_id:
                         try:
                             from functions_debug import debug_print
-                            debug_print(f"Workspace search - looking up group for id: {active_group_id}")
-                            group_doc = find_group_by_id(active_group_id)
+                            debug_print(f"Workspace search - looking up group for id: {effective_active_group_id}")
+                            group_doc = find_group_by_id(effective_active_group_id)
                             debug_print(f"Workspace search group lookup result: {group_doc}")
                             
                             if group_doc and group_doc.get('name'):
@@ -13995,7 +14351,7 @@ def register_route_backend_chats(app):
                                 user_metadata['workspace_search']['group_name'] = group_name
                                 debug_print(f"Workspace search - set group_name to: {group_name}")
                             else:
-                                debug_print(f"Workspace search - no group found or no name for id: {active_group_id}")
+                                debug_print(f"Workspace search - no group found or no name for id: {effective_active_group_id}")
                                 user_metadata['workspace_search']['group_name'] = None
                                 
                         except Exception as e:
@@ -14004,11 +14360,11 @@ def register_route_backend_chats(app):
                             import traceback
                             traceback.print_exc()
                     
-                    if document_scope == 'public' and active_public_workspace_id:
+                    if effective_document_scope == 'public' and effective_active_public_workspace_id:
                         # Check if public workspace status allows chat operations
                         try:
                             from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
-                            workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+                            workspace_doc = find_public_workspace_by_id(effective_active_public_workspace_id)
                             if workspace_doc:
                                 allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
                                 if not allowed:
@@ -14017,7 +14373,7 @@ def register_route_backend_chats(app):
                         except Exception as e:
                             debug_print(f"Error checking public workspace status: {e}")
                         
-                        user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
+                        user_metadata['workspace_search']['active_public_workspace_id'] = effective_active_public_workspace_id
                 else:
                     user_metadata['workspace_search'] = {
                         'search_enabled': False
@@ -14098,11 +14454,11 @@ def register_route_backend_chats(app):
                         message_length=len(user_message) if user_message else 0,
                         has_document_search=hybrid_search_enabled,
                         has_image_generation=False,
-                        document_scope=document_scope,
+                        document_scope=effective_document_scope,
                         chat_context=actual_chat_type,
                         workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
-                        group_id=active_group_id if actual_chat_type == 'group' else None,
-                        public_workspace_id=active_public_workspace_id if actual_chat_type == 'public' else None,
+                        group_id=effective_active_group_id if actual_chat_type == 'group' else None,
+                        public_workspace_id=effective_active_public_workspace_id if actual_chat_type == 'public' else None,
                     )
                 except Exception as e:
                     debug_print(f"Activity logging error: {e}")
@@ -14456,10 +14812,14 @@ def register_route_backend_chats(app):
                         ):
                             search_args['active_group_ids'] = effective_active_group_ids
                         
-                        # Add active_public_workspace_id when:
+                        # Add active_public_workspace_id(s) when:
                         # 1. Document scope is 'public' or
                         # 2. Document scope is 'all' and public workspaces are enabled
-                        if effective_active_public_workspace_id and (
+                        if effective_active_public_workspace_ids and (
+                            effective_document_scope == 'public' or effective_document_scope == 'all'
+                        ):
+                            search_args['active_public_workspace_id'] = effective_active_public_workspace_ids
+                        elif effective_active_public_workspace_id and (
                             effective_document_scope == 'public' or effective_document_scope == 'all'
                         ):
                             search_args['active_public_workspace_id'] = effective_active_public_workspace_id
@@ -14473,7 +14833,24 @@ def register_route_backend_chats(app):
                         if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
                             search_args['tags_filter'] = tags_filter
                         
-                        search_results = hybrid_search(**search_args)
+                        if assigned_knowledge_filters:
+                            assigned_search_args = _build_assigned_knowledge_search_args(
+                                assigned_knowledge_filters,
+                                query=search_query,
+                                user_id=user_id,
+                                top_n=12,
+                            )
+                            assigned_search_results = hybrid_search(**assigned_search_args)
+                            if assigned_knowledge_user_context_active:
+                                user_context_search_results = hybrid_search(**search_args)
+                                search_results = _merge_search_results_by_identity(
+                                    assigned_search_results,
+                                    user_context_search_results,
+                                )[:12]
+                            else:
+                                search_results = assigned_search_results
+                        else:
+                            search_results = hybrid_search(**search_args)
                         debug_print(
                             f"[Streaming] Hybrid search completed | results={len(search_results) if search_results else 0}"
                         )
@@ -14886,6 +15263,7 @@ def register_route_backend_chats(app):
                         settings=settings,
                         user_id=user_id,
                         user_email=current_user_email,
+                        user_roles=current_user_roles,
                         user_message=user_message,
                         web_search_citations=web_search_citations_list,
                         conversation_id=conversation_id,

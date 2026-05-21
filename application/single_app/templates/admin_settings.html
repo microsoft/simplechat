@@ -909,6 +909,12 @@
                 </button>
             </li>
             <li class="nav-item" role="presentation">
+                <button class="nav-link" id="file-sync-tab" data-bs-toggle="tab" data-bs-target="#file-sync" type="button"
+                    role="tab" aria-controls="file-sync" aria-selected="false">
+                    File Sync
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="citation-tab" data-bs-toggle="tab" data-bs-target="#citation"
                     type="button" role="tab" aria-controls="citation" aria-selected="false">
                     Citations
@@ -4117,6 +4123,292 @@
             </div>
 
 
+            <div class="tab-pane fade" id="file-sync" role="tabpanel" aria-labelledby="file-sync-tab">
+                <p class="text-muted">
+                    Configure SMB file synchronization for personal, group, and public workspaces.
+                </p>
+
+                <div class="card mb-3 p-3" id="file-sync-section">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-arrow-repeat me-2"></i>File Sync
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#file-sync-app-role-setup-modal">
+                            <i class="bi bi-info-circle me-1"></i>App Role Setup
+                        </button>
+                    </div>
+                    <p class="text-muted">
+                        Enable File Sync globally, set conservative run limits, and choose whether workspace managers or SimpleChat admins manage sync sources.
+                    </p>
+
+                    <div class="alert alert-warning" role="alert">
+                        File Sync can scan large remote shares and create many document versions. Start with narrow filters, conservative schedules, and low per-run limits before enabling broad workspace access.
+                    </div>
+
+                    {% if not settings.file_sync_redis_ready %}
+                    <div class="alert alert-danger" role="alert">
+                        Redis Cache must be enabled and configured before File Sync can run. Saved File Sync settings remain inactive until Redis is ready.
+                    </div>
+                    {% elif settings.requested_enable_file_sync and not settings.file_sync_effective_enabled %}
+                    <div class="alert alert-warning" role="alert">
+                        File Sync is saved as requested but is not currently active. Check Redis configuration and scope controls.
+                    </div>
+                    {% endif %}
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_file_sync"
+                            name="enable_file_sync"
+                            {% if settings.requested_enable_file_sync %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_sync">
+                            Enable File Sync
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable SMB source management and sync runs for allowed workspaces. Redis Cache is required before sync is active."></i>
+                    </div>
+
+                    <div id="file_sync_settings" class="{% if not settings.requested_enable_file_sync %}d-none{% endif %}">
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-3">
+                                <label for="file_sync_max_sources_per_scope" class="form-label">Max Sources</label>
+                                <input type="number" class="form-control" id="file_sync_max_sources_per_scope" name="file_sync_max_sources_per_scope" min="1" max="100" value="{{ settings.file_sync_max_sources_per_scope }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_min_schedule_interval_minutes" class="form-label">Min Schedule Minutes</label>
+                                <input type="number" class="form-control" id="file_sync_min_schedule_interval_minutes" name="file_sync_min_schedule_interval_minutes" min="5" max="1440" value="{{ settings.file_sync_min_schedule_interval_minutes }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_max_files_per_run" class="form-label">Max Files Per Run</label>
+                                <input type="number" class="form-control" id="file_sync_max_files_per_run" name="file_sync_max_files_per_run" min="1" max="100000" value="{{ settings.file_sync_max_files_per_run }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_max_gb_per_run" class="form-label">Max GB Per Run</label>
+                                <input type="number" class="form-control" id="file_sync_max_gb_per_run" name="file_sync_max_gb_per_run" min="1" value="{{ settings.file_sync_max_gb_per_run }}">
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label for="file_sync_max_concurrent_runs" class="form-label">Max Concurrent Runs</label>
+                                <input type="number" class="form-control" id="file_sync_max_concurrent_runs" name="file_sync_max_concurrent_runs" min="1" max="25" value="{{ settings.file_sync_max_concurrent_runs }}">
+                            </div>
+                            <div class="col-md-4 d-flex align-items-end">
+                                <div class="form-check form-switch mb-2">
+                                    <input type="checkbox" class="form-check-input" id="file_sync_allow_recursive_sources" name="file_sync_allow_recursive_sources" {% if settings.file_sync_allow_recursive_sources %}checked{% endif %}>
+                                    <label class="form-check-label" for="file_sync_allow_recursive_sources">Allow Recursive Sources</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {% set file_sync_visible_source_types = settings.file_sync_visible_source_types|default(['smb']) %}
+                        <div class="border rounded p-3 mb-4">
+                            <h6 class="mb-2"><i class="bi bi-sliders me-2"></i>Visible Source Types</h6>
+                            <p class="text-muted small mb-3">
+                                Choose which source types appear in the Add Source workflow. Future connectors remain unavailable until their backend support is implemented.
+                            </p>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_smb" name="file_sync_visible_source_types" value="smb" {% if 'smb' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_smb">SMB Share</label>
+                                        <div class="form-text">Available now.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_sharepoint_on_prem" name="file_sync_visible_source_types" value="sharepoint_on_prem" {% if 'sharepoint_on_prem' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_sharepoint_on_prem">On-prem SharePoint</label>
+                                        <div class="form-text">Visible as coming soon.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_google_workspace" name="file_sync_visible_source_types" value="google_workspace" {% if 'google_workspace' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_google_workspace">Google Workspace</label>
+                                        <div class="form-text">Visible as coming soon.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <div class="border rounded h-100 p-3" data-testid="file-sync-personal-card">
+                                    <h6 class="mb-3"><i class="bi bi-person me-2"></i>Personal Workspace Sync</h6>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="enable_file_sync_personal" name="enable_file_sync_personal" {% if settings.enable_file_sync_personal %}checked{% endif %}>
+                                        <label class="form-check-label" for="enable_file_sync_personal">Enable personal sync</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_personal_admin_only" name="file_sync_personal_admin_only" {% if settings.file_sync_personal_admin_only %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_personal_admin_only">Admins manage sources only</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_personal_require_app_role" name="file_sync_personal_require_app_role" {% if settings.file_sync_personal_require_app_role %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_personal_require_app_role">Require app role for personal sync</label>
+                                    </div>
+                                    <div class="form-text mb-3">Required app role: <code>PersonalFileSyncUser</code></div>
+                                    <hr />
+                                    <div data-file-sync-admin-target data-scope="personal" data-search-endpoint="/api/admin/file-sync/users/search" data-results-key="users" data-value-field="id" data-title-field="displayName" data-subtitle-field="email">
+                                        <label class="form-label" for="file-sync-admin-personal-target-query">Manage User Sources</label>
+                                        <div class="input-group mb-2">
+                                            <input type="search" class="form-control" id="file-sync-admin-personal-target-query" data-file-sync-admin-target-query placeholder="Search user" aria-label="Search user to manage" />
+                                            <button class="btn btn-outline-secondary" type="button" data-file-sync-admin-target-search>Search</button>
+                                        </div>
+                                        <div class="list-group small mb-2 d-none" data-file-sync-admin-target-results></div>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" data-file-sync-admin-target-id placeholder="User ID" aria-label="Target user ID" />
+                                            <button class="btn btn-primary" type="button" data-file-sync-admin-target-manage disabled>Manage Sources</button>
+                                        </div>
+                                        <div class="form-text" data-file-sync-admin-target-label>No user selected.</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12">
+                                <div class="border rounded h-100 p-3" data-testid="file-sync-group-card">
+                                    <h6 class="mb-3"><i class="bi bi-people me-2"></i>Group Workspace Sync</h6>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="enable_file_sync_group" name="enable_file_sync_group" {% if settings.enable_file_sync_group %}checked{% endif %}>
+                                        <label class="form-check-label" for="enable_file_sync_group">Enable group sync</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_group_admin_only" name="file_sync_group_admin_only" {% if settings.file_sync_group_admin_only %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_group_admin_only">Admins manage sources only</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_group_require_app_role" name="file_sync_group_require_app_role" {% if settings.file_sync_group_require_app_role %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_group_require_app_role">Require app role for group sync</label>
+                                    </div>
+                                    <div class="form-text mb-3">Required app role: <code>GroupFileSyncUser</code></div>
+                                    <hr />
+                                    <div data-file-sync-admin-target data-scope="group" data-search-endpoint="/api/admin/file-sync/groups/search" data-results-key="groups" data-value-field="id" data-title-field="name" data-subtitle-field="description">
+                                        <label class="form-label" for="file-sync-admin-group-target-query">Manage Group Sources</label>
+                                        <div class="input-group mb-2">
+                                            <input type="search" class="form-control" id="file-sync-admin-group-target-query" data-file-sync-admin-target-query placeholder="Search group" aria-label="Search group to manage" />
+                                            <button class="btn btn-outline-secondary" type="button" data-file-sync-admin-target-search>Search</button>
+                                        </div>
+                                        <div class="list-group small mb-2 d-none" data-file-sync-admin-target-results></div>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" data-file-sync-admin-target-id placeholder="Group ID" aria-label="Target group ID" />
+                                            <button class="btn btn-primary" type="button" data-file-sync-admin-target-manage disabled>Manage Sources</button>
+                                        </div>
+                                        <div class="form-text" data-file-sync-admin-target-label>No group selected.</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12">
+                                <div class="border rounded h-100 p-3" data-testid="file-sync-public-card">
+                                    <h6 class="mb-3"><i class="bi bi-globe me-2"></i>Public Workspace Sync</h6>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="enable_file_sync_public" name="enable_file_sync_public" {% if settings.enable_file_sync_public %}checked{% endif %}>
+                                        <label class="form-check-label" for="enable_file_sync_public">Enable public sync</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_public_admin_only" name="file_sync_public_admin_only" {% if settings.file_sync_public_admin_only %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_public_admin_only">Admins manage sources only</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_public_require_app_role" name="file_sync_public_require_app_role" {% if settings.file_sync_public_require_app_role %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_public_require_app_role">Require app role for public sync</label>
+                                    </div>
+                                    <div class="form-text mb-3">Required app role: <code>PublicWorkspaceFileSyncUser</code></div>
+                                    <hr />
+                                    <div data-file-sync-admin-target data-scope="public" data-search-endpoint="/api/admin/file-sync/public-workspaces/search" data-results-key="workspaces" data-value-field="id" data-title-field="name" data-subtitle-field="description">
+                                        <label class="form-label" for="file-sync-admin-public-target-query">Manage Public Workspace Sources</label>
+                                        <div class="input-group mb-2">
+                                            <input type="search" class="form-control" id="file-sync-admin-public-target-query" data-file-sync-admin-target-query placeholder="Search public workspace" aria-label="Search public workspace to manage" />
+                                            <button class="btn btn-outline-secondary" type="button" data-file-sync-admin-target-search>Search</button>
+                                        </div>
+                                        <div class="list-group small mb-2 d-none" data-file-sync-admin-target-results></div>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" data-file-sync-admin-target-id placeholder="Public workspace ID" aria-label="Target public workspace ID" />
+                                            <button class="btn btn-primary" type="button" data-file-sync-admin-target-manage disabled>Manage Sources</button>
+                                        </div>
+                                        <div class="form-text" data-file-sync-admin-target-label>No public workspace selected.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-text mt-3">
+                            SMB source credentials are stored in Azure Key Vault when Key Vault secret storage is enabled; otherwise they use the app's existing encrypted settings path.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="file-sync-admin-manager-modal" tabindex="-1" aria-labelledby="file-sync-admin-manager-title" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title" id="file-sync-admin-manager-title">Manage File Sync Sources</h5>
+                                    <div class="text-muted small" id="file-sync-admin-manager-context"></div>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div id="file-sync-admin-manager-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="file-sync-app-role-setup-modal" tabindex="-1" aria-labelledby="file-sync-app-role-setup-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="file-sync-app-role-setup-title">File Sync App Role Setup</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="text-muted">
+                                    Create these app roles on the SimpleChat app registration, then assign users or groups to the roles in the Enterprise App before enabling the matching require-role toggles.
+                                </p>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Capability</th>
+                                                <th scope="col">App role value</th>
+                                                <th scope="col">Typical assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>Personal File Sync</td>
+                                                <td><code>PersonalFileSyncUser</code></td>
+                                                <td>Users allowed to manage personal sync sources</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Group File Sync</td>
+                                                <td><code>GroupFileSyncUser</code></td>
+                                                <td>Workspace managers allowed to manage group sync sources</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Public Workspace File Sync</td>
+                                                <td><code>PublicWorkspaceFileSyncUser</code></td>
+                                                <td>Workspace managers allowed to manage public sync sources</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <ol class="mb-0">
+                                    <li>Open Microsoft Entra admin center and edit the SimpleChat app registration.</li>
+                                    <li>Add each app role with allowed member type <strong>Users/Groups</strong> and value exactly matching the table.</li>
+                                    <li>Open the Enterprise App for SimpleChat and assign users or groups to the app roles.</li>
+                                    <li>Have affected users sign out and sign back in so their role claims refresh.</li>
+                                </ol>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="tab-pane fade" id="workspaces" role="tabpanel" aria-labelledby="workspaces-tab">
                 <p class="text-muted">
                     Configure workspace settings like personal/group access, multimedia support, metadata, and document classification.
@@ -4284,163 +4576,6 @@
                             Enable File Sharing
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload, share, and manage files within workspaces for document-based AI interactions and collaboration."></i>
-                    </div>
-                </div>
-
-                <div class="card mb-3 p-3" id="file-sync-section">
-                    <h5>
-                        <i class="bi bi-arrow-repeat me-2"></i>File Sync
-                    </h5>
-                    <p class="text-muted">
-                        Configure SMB file synchronization for personal, group, and public workspaces.
-                    </p>
-
-                    <div class="alert alert-warning" role="alert">
-                        File Sync can scan large remote shares and create many document versions. Start with narrow filters, conservative schedules, and low per-run limits before enabling broad workspace access.
-                    </div>
-
-                    {% if not settings.file_sync_redis_ready %}
-                    <div class="alert alert-danger" role="alert">
-                        Redis Cache must be enabled and configured before File Sync can run. Saved File Sync settings remain inactive until Redis is ready.
-                    </div>
-                    {% elif settings.requested_enable_file_sync and not settings.file_sync_effective_enabled %}
-                    <div class="alert alert-warning" role="alert">
-                        File Sync is saved as requested but is not currently active. Check Redis configuration and scope controls.
-                    </div>
-                    {% endif %}
-
-                    <div class="form-group form-check form-switch mb-3">
-                        <input type="checkbox"
-                            class="form-check-input"
-                            id="enable_file_sync"
-                            name="enable_file_sync"
-                            {% if settings.requested_enable_file_sync %}checked{% endif %}>
-                        <label class="form-check-label ms-2" for="enable_file_sync">
-                            Enable File Sync
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable SMB source management and sync runs for allowed workspaces. Redis Cache is required before sync is active."></i>
-                    </div>
-
-                    <div id="file_sync_settings" class="{% if not settings.requested_enable_file_sync %}d-none{% endif %}">
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-4">
-                                <div class="form-check form-switch">
-                                    <input type="checkbox" class="form-check-input" id="enable_file_sync_personal" name="enable_file_sync_personal" {% if settings.enable_file_sync_personal %}checked{% endif %}>
-                                    <label class="form-check-label" for="enable_file_sync_personal">Personal Workspaces</label>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-check form-switch">
-                                    <input type="checkbox" class="form-check-input" id="enable_file_sync_group" name="enable_file_sync_group" {% if settings.enable_file_sync_group %}checked{% endif %}>
-                                    <label class="form-check-label" for="enable_file_sync_group">Group Workspaces</label>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-check form-switch">
-                                    <input type="checkbox" class="form-check-input" id="enable_file_sync_public" name="enable_file_sync_public" {% if settings.enable_file_sync_public %}checked{% endif %}>
-                                    <label class="form-check-label" for="enable_file_sync_public">Public Workspaces</label>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6">
-                                <div class="file-sync-user-access-list" data-file-sync-user-list data-target="file_sync_allowed_users">
-                                    <label for="file_sync_allowed_users" class="form-label">Allowed Users</label>
-                                    <textarea class="form-control d-none" id="file_sync_allowed_users" name="file_sync_allowed_users" rows="3" aria-hidden="true" tabindex="-1">{{ settings.file_sync_allowed_users|join('\n') if settings.file_sync_allowed_users else '' }}</textarea>
-                                    <div class="input-group mb-2">
-                                        <input type="search" class="form-control" data-file-sync-user-query placeholder="Search or enter email/GUID" aria-label="Search allowed users" />
-                                        <button class="btn btn-outline-secondary" type="button" data-file-sync-user-search>Search</button>
-                                        <button class="btn btn-outline-primary" type="button" data-file-sync-user-add>Add</button>
-                                    </div>
-                                    <div class="list-group small mb-2 d-none" data-file-sync-user-results></div>
-                                    <div class="input-group">
-                                        <textarea class="form-control" rows="2" data-file-sync-user-bulk placeholder="Paste multiple users, one per line"></textarea>
-                                        <button class="btn btn-outline-secondary" type="button" data-file-sync-user-bulk-add>Bulk Add</button>
-                                    </div>
-                                    <div class="d-flex flex-wrap gap-2 mt-2" data-file-sync-user-chips></div>
-                                </div>
-                                <div class="form-text">Personal File Sync is available to all users when this list is empty, except blocked users.</div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="file-sync-user-access-list" data-file-sync-user-list data-target="file_sync_blocked_users">
-                                    <label for="file_sync_blocked_users" class="form-label">Blocked Users</label>
-                                    <textarea class="form-control d-none" id="file_sync_blocked_users" name="file_sync_blocked_users" rows="3" aria-hidden="true" tabindex="-1">{{ settings.file_sync_blocked_users|join('\n') if settings.file_sync_blocked_users else '' }}</textarea>
-                                    <div class="input-group mb-2">
-                                        <input type="search" class="form-control" data-file-sync-user-query placeholder="Search or enter email/GUID" aria-label="Search blocked users" />
-                                        <button class="btn btn-outline-secondary" type="button" data-file-sync-user-search>Search</button>
-                                        <button class="btn btn-outline-primary" type="button" data-file-sync-user-add>Add</button>
-                                    </div>
-                                    <div class="list-group small mb-2 d-none" data-file-sync-user-results></div>
-                                    <div class="input-group">
-                                        <textarea class="form-control" rows="2" data-file-sync-user-bulk placeholder="Paste multiple users, one per line"></textarea>
-                                        <button class="btn btn-outline-secondary" type="button" data-file-sync-user-bulk-add>Bulk Add</button>
-                                    </div>
-                                    <div class="d-flex flex-wrap gap-2 mt-2" data-file-sync-user-chips></div>
-                                </div>
-                                <div class="form-text">Use user email, GUID, or OID. Block entries override allow entries.</div>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6">
-                                <label for="file_sync_allowed_groups" class="form-label">Allowed Group IDs</label>
-                                <textarea class="form-control" id="file_sync_allowed_groups" name="file_sync_allowed_groups" rows="3" placeholder="group-id-1&#10;group-id-2">{{ settings.file_sync_allowed_groups|join('\n') if settings.file_sync_allowed_groups else '' }}</textarea>
-                                <div class="form-text">Group File Sync is available to all groups when this list is empty, except blocked groups.</div>
-                            </div>
-                            <div class="col-md-6">
-                                <label for="file_sync_blocked_groups" class="form-label">Blocked Group IDs</label>
-                                <textarea class="form-control" id="file_sync_blocked_groups" name="file_sync_blocked_groups" rows="3" placeholder="group-id-1&#10;group-id-2">{{ settings.file_sync_blocked_groups|join('\n') if settings.file_sync_blocked_groups else '' }}</textarea>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6">
-                                <label for="file_sync_allowed_public_workspaces" class="form-label">Allowed Public Workspace IDs</label>
-                                <textarea class="form-control" id="file_sync_allowed_public_workspaces" name="file_sync_allowed_public_workspaces" rows="3" placeholder="workspace-id-1&#10;workspace-id-2">{{ settings.file_sync_allowed_public_workspaces|join('\n') if settings.file_sync_allowed_public_workspaces else '' }}</textarea>
-                                <div class="form-text">Public File Sync is available to all public workspaces when this list is empty, except blocked workspaces.</div>
-                            </div>
-                            <div class="col-md-6">
-                                <label for="file_sync_blocked_public_workspaces" class="form-label">Blocked Public Workspace IDs</label>
-                                <textarea class="form-control" id="file_sync_blocked_public_workspaces" name="file_sync_blocked_public_workspaces" rows="3" placeholder="workspace-id-1&#10;workspace-id-2">{{ settings.file_sync_blocked_public_workspaces|join('\n') if settings.file_sync_blocked_public_workspaces else '' }}</textarea>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-3">
-                                <label for="file_sync_max_sources_per_scope" class="form-label">Max Sources</label>
-                                <input type="number" class="form-control" id="file_sync_max_sources_per_scope" name="file_sync_max_sources_per_scope" min="1" max="100" value="{{ settings.file_sync_max_sources_per_scope }}">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="file_sync_min_schedule_interval_minutes" class="form-label">Min Schedule Minutes</label>
-                                <input type="number" class="form-control" id="file_sync_min_schedule_interval_minutes" name="file_sync_min_schedule_interval_minutes" min="5" max="1440" value="{{ settings.file_sync_min_schedule_interval_minutes }}">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="file_sync_max_files_per_run" class="form-label">Max Files Per Run</label>
-                                <input type="number" class="form-control" id="file_sync_max_files_per_run" name="file_sync_max_files_per_run" min="1" max="100000" value="{{ settings.file_sync_max_files_per_run }}">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="file_sync_max_gb_per_run" class="form-label">Max GB Per Run</label>
-                                <input type="number" class="form-control" id="file_sync_max_gb_per_run" name="file_sync_max_gb_per_run" min="1" value="{{ settings.file_sync_max_gb_per_run }}">
-                            </div>
-                        </div>
-
-                        <div class="row g-3">
-                            <div class="col-md-4">
-                                <label for="file_sync_max_concurrent_runs" class="form-label">Max Concurrent Runs</label>
-                                <input type="number" class="form-control" id="file_sync_max_concurrent_runs" name="file_sync_max_concurrent_runs" min="1" max="25" value="{{ settings.file_sync_max_concurrent_runs }}">
-                            </div>
-                            <div class="col-md-4 d-flex align-items-end">
-                                <div class="form-check form-switch mb-2">
-                                    <input type="checkbox" class="form-check-input" id="file_sync_allow_recursive_sources" name="file_sync_allow_recursive_sources" {% if settings.file_sync_allow_recursive_sources %}checked{% endif %}>
-                                    <label class="form-check-label" for="file_sync_allow_recursive_sources">Allow Recursive Sources</label>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-text mt-3">
-                            SMB source credentials are stored in Azure Key Vault when Key Vault secret storage is enabled; otherwise they use the app's existing encrypted settings path.
-                        </div>
                     </div>
                 </div>
 
@@ -5556,7 +5691,12 @@
                 <div class="card p-3 mb-3" id="source-review-section">
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <h5 class="mb-0"><i class="bi bi-binoculars me-2"></i>Deep Research</h5>
-                        <span class="badge text-bg-secondary">Optional</span>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge text-bg-secondary">Optional</span>
+                            <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#deepResearchInfoModal">
+                                <i class="bi bi-info-circle me-1"></i>Setup Guide
+                            </button>
+                        </div>
                     </div>
                     <p class="text-muted mb-2">Plan bounded web searches, inspect source pages, and keep an internal research ledger for evidence coverage.</p>
                     <div class="form-check form-switch mb-3">
@@ -5572,14 +5712,38 @@
 
                     <div id="source_review_settings" class="{% if not settings.enable_source_review %}d-none{% endif %}">
                         <div class="alert alert-info small mb-3">
-                            Server-side protections always block non-HTTP(S) URLs, private or internal IP ranges, localhost, single-label hosts, credentialed URLs, excessive redirects, unsupported content types, oversized pages, and requests beyond the configured page budget.
+                            Server-side protections always block non-HTTP(S) URLs, literal IP URL targets, localhost, metadata hosts, credentialed URLs, excessive redirects, unsupported content types, oversized pages, and requests beyond the configured page budget. DNS hostnames that resolve to private/internal addresses require the internal-host opt-in below.
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_deep_research_user"
+                                name="require_member_of_deep_research_user"
+                                {% if settings.require_member_of_deep_research_user %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="require_member_of_deep_research_user">Require DeepResearchUser app role</label>
+                            <div class="form-text">When enabled, only users assigned the <code>DeepResearchUser</code> Enterprise App role can use Deep Research.</div>
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="source_review_allow_internal_hosts"
+                                name="source_review_allow_internal_hosts"
+                                {% if settings.source_review_allow_internal_hosts %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="source_review_allow_internal_hosts">Allow internal network hostnames</label>
+                            <div class="form-text">Allows DNS hostnames that resolve to private/internal addresses. Literal IP URL targets, localhost, metadata hosts, link-local addresses, and reserved addresses remain blocked.</div>
                         </div>
 
                         <div class="row g-3">
                             <div class="col-md-4">
                                 <label for="source_review_default_mode" class="form-label">Default Mode</label>
                                 <select class="form-select" id="source_review_default_mode" name="source_review_default_mode">
-                                    {% set source_review_default_mode = settings.source_review_default_mode or 'manual' %}
+                                    {% set source_review_default_mode = settings.source_review_default_mode or 'auto_with_web_search' %}
                                     <option value="manual" {% if source_review_default_mode == 'manual' %}selected{% endif %}>Manual toggle only</option>
                                     <option value="auto_for_urls" {% if source_review_default_mode == 'auto_for_urls' %}selected{% endif %}>Auto when message has URLs</option>
                                     <option value="auto_with_web_search" {% if source_review_default_mode == 'auto_with_web_search' %}selected{% endif %}>Auto with URLs or web search</option>
@@ -5587,37 +5751,37 @@
                             </div>
                             <div class="col-md-4">
                                 <label for="source_review_max_pages_per_turn" class="form-label">Max Pages per Turn</label>
-                                <input type="number" min="1" max="10" class="form-control" id="source_review_max_pages_per_turn" name="source_review_max_pages_per_turn" value="{{ settings.source_review_max_pages_per_turn or 5 }}">
+                                <input type="number" min="1" max="10" class="form-control" id="source_review_max_pages_per_turn" name="source_review_max_pages_per_turn" value="{{ settings.source_review_max_pages_per_turn or 10 }}">
                                 <div class="form-text">Hard limit: 10 pages.</div>
                             </div>
                             <div class="col-md-4">
                                 <label for="source_review_max_seed_pages_per_turn" class="form-label">Max Seed Pages per Turn</label>
-                                <input type="number" min="1" max="10" class="form-control" id="source_review_max_seed_pages_per_turn" name="source_review_max_seed_pages_per_turn" value="{{ settings.source_review_max_seed_pages_per_turn or 3 }}">
+                                <input type="number" min="1" max="10" class="form-control" id="source_review_max_seed_pages_per_turn" name="source_review_max_seed_pages_per_turn" value="{{ settings.source_review_max_seed_pages_per_turn or 10 }}">
                                 <div class="form-text">Limits initial search-result and direct URL pages so budget remains for child pages.</div>
                             </div>
                             <div class="col-md-4">
                                 <label for="deep_research_max_user_urls_per_turn" class="form-label">Max User URLs per Turn</label>
-                                <input type="number" min="1" max="100" class="form-control" id="deep_research_max_user_urls_per_turn" name="deep_research_max_user_urls_per_turn" value="{{ settings.deep_research_max_user_urls_per_turn or 10 }}">
+                                <input type="number" min="1" max="100" class="form-control" id="deep_research_max_user_urls_per_turn" name="deep_research_max_user_urls_per_turn" value="{{ settings.deep_research_max_user_urls_per_turn or 100 }}">
                                 <div class="form-text">Direct URLs beyond this cap are recorded as omitted in the ledger.</div>
                             </div>
                             <div class="col-md-4">
                                 <label for="deep_research_max_search_queries_per_turn" class="form-label">Max Search Queries per Turn</label>
-                                <input type="number" min="1" max="8" class="form-control" id="deep_research_max_search_queries_per_turn" name="deep_research_max_search_queries_per_turn" value="{{ settings.deep_research_max_search_queries_per_turn or 3 }}">
+                                <input type="number" min="1" max="8" class="form-control" id="deep_research_max_search_queries_per_turn" name="deep_research_max_search_queries_per_turn" value="{{ settings.deep_research_max_search_queries_per_turn or 8 }}">
                                 <div class="form-text">Includes the original current-message query.</div>
                             </div>
                             <div class="col-md-4">
                                 <label for="source_review_timeout_seconds" class="form-label">Timeout per Turn</label>
-                                <input type="number" min="3" max="30" class="form-control" id="source_review_timeout_seconds" name="source_review_timeout_seconds" value="{{ settings.source_review_timeout_seconds or 20 }}">
+                                <input type="number" min="3" max="30" class="form-control" id="source_review_timeout_seconds" name="source_review_timeout_seconds" value="{{ settings.source_review_timeout_seconds or 30 }}">
                                 <div class="form-text">Hard limit: 30 seconds.</div>
                             </div>
                             <div class="col-md-4">
                                 <label for="source_review_max_redirects" class="form-label">Max Redirects</label>
-                                <input type="number" min="0" max="5" class="form-control" id="source_review_max_redirects" name="source_review_max_redirects" value="{{ settings.source_review_max_redirects if settings.source_review_max_redirects is not none else 3 }}">
+                                <input type="number" min="0" max="5" class="form-control" id="source_review_max_redirects" name="source_review_max_redirects" value="{{ settings.source_review_max_redirects if settings.source_review_max_redirects is not none else 5 }}">
                                 <div class="form-text">Every redirect target is revalidated.</div>
                             </div>
                             <div class="col-md-4">
                                 <label for="source_review_max_bytes_per_page_mb" class="form-label">Max MB per Page</label>
-                                <input type="number" min="1" max="5" class="form-control" id="source_review_max_bytes_per_page_mb" name="source_review_max_bytes_per_page_mb" value="{{ (((settings.source_review_max_bytes_per_page|default(2000000, true)|int) / 1000000)|round(0, 'ceil'))|int }}">
+                                <input type="number" min="1" max="5" class="form-control" id="source_review_max_bytes_per_page_mb" name="source_review_max_bytes_per_page_mb" value="{{ (((settings.source_review_max_bytes_per_page|default(5000000, true)|int) / 1000000)|round(0, 'ceil'))|int }}">
                                 <div class="form-text">Hard limit: 5 MB.</div>
                             </div>
                             <div class="col-md-4">
@@ -5629,6 +5793,7 @@
 
                         <div class="row g-3 mt-1">
                             <div class="col-md-6">
+                                {% set js_runtime = source_review_runtime_capabilities or {} %}
                                 <div class="form-check form-switch mb-2">
                                     <input
                                         type="checkbox"
@@ -5692,10 +5857,16 @@
                                     <label class="form-check-label ms-2" for="source_review_allow_js_rendering">Allow JavaScript rendering fallback</label>
                                 </div>
                                 <div class="form-text">Requires Playwright browser runtime support on the app host.</div>
+                                <div class="small mt-1 {% if js_runtime.js_rendering_available %}text-success{% else %}text-warning{% endif %}" id="source_review_js_runtime_status">
+                                    <i class="bi {% if js_runtime.js_rendering_available %}bi-check-circle{% else %}bi-exclamation-triangle{% endif %} me-1"></i>{{ js_runtime.message or 'Runtime support has not been checked yet.' }}
+                                </div>
+                                {% if js_runtime.sandbox_disabled %}
+                                <div class="small text-warning mt-1">Chromium sandbox is disabled by environment configuration.</div>
+                                {% endif %}
                             </div>
                             <div class="col-md-6">
                                 <label for="source_review_js_load_more_clicks" class="form-label">Rendered Load More Clicks</label>
-                                <input type="number" min="0" max="12" class="form-control" id="source_review_js_load_more_clicks" name="source_review_js_load_more_clicks" value="{{ settings.source_review_js_load_more_clicks if settings.source_review_js_load_more_clicks is not none else 6 }}">
+                                <input type="number" min="0" max="12" class="form-control" id="source_review_js_load_more_clicks" name="source_review_js_load_more_clicks" value="{{ settings.source_review_js_load_more_clicks if settings.source_review_js_load_more_clicks is not none else 12 }}">
                                 <div class="form-text">When JavaScript rendering is enabled, Deep Research can click visible Load More controls until this cap is reached.</div>
                             </div>
                             <div class="col-md-6">
@@ -5748,47 +5919,6 @@
                                         <button type="button" class="btn btn-outline-primary" data-policy-add-button>
                                             <i class="bi bi-plus-circle me-1"></i>Add
                                         </button>
-                                    </div>
-                                    <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="deep-research-policy-editor" data-deep-research-policy="source_review_allowed_users" data-policy-kind="user">
-                                    <label for="source_review_allowed_users_search" class="form-label">Allowed Users</label>
-                                    <textarea class="d-none" id="source_review_allowed_users" name="source_review_allowed_users" aria-hidden="true">{{ settings.source_review_allowed_users|join('\n') if settings.source_review_allowed_users else '' }}</textarea>
-                                    <div class="input-group input-group-sm">
-                                        <input type="search" class="form-control" id="source_review_allowed_users_search" data-user-search-input placeholder="Search by name or email" />
-                                        <button type="button" class="btn btn-outline-primary" data-user-search-button>
-                                            <i class="bi bi-search me-1"></i>Search
-                                        </button>
-                                    </div>
-                                    <div class="small text-muted mt-1" data-user-search-status></div>
-                                    <div class="list-group mt-2 d-none" data-user-search-results aria-live="polite"></div>
-                                    <label for="source_review_allowed_users_bulk" class="form-label small mt-3 mb-1">Bulk Add</label>
-                                    <div class="input-group input-group-sm">
-                                        <textarea class="form-control" id="source_review_allowed_users_bulk" data-user-bulk-input rows="2" placeholder="one email or user id per line"></textarea>
-                                        <button type="button" class="btn btn-outline-secondary" data-user-bulk-add-button>Add Bulk</button>
-                                    </div>
-                                    <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
-                                </div>
-                                <div class="form-text">Leave blank to allow all signed-in users unless blocked.</div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="deep-research-policy-editor" data-deep-research-policy="source_review_blocked_users" data-policy-kind="user">
-                                    <label for="source_review_blocked_users_search" class="form-label">Blocked Users</label>
-                                    <textarea class="d-none" id="source_review_blocked_users" name="source_review_blocked_users" aria-hidden="true">{{ settings.source_review_blocked_users|join('\n') if settings.source_review_blocked_users else '' }}</textarea>
-                                    <div class="input-group input-group-sm">
-                                        <input type="search" class="form-control" id="source_review_blocked_users_search" data-user-search-input placeholder="Search by name or email" />
-                                        <button type="button" class="btn btn-outline-primary" data-user-search-button>
-                                            <i class="bi bi-search me-1"></i>Search
-                                        </button>
-                                    </div>
-                                    <div class="small text-muted mt-1" data-user-search-status></div>
-                                    <div class="list-group mt-2 d-none" data-user-search-results aria-live="polite"></div>
-                                    <label for="source_review_blocked_users_bulk" class="form-label small mt-3 mb-1">Bulk Add</label>
-                                    <div class="input-group input-group-sm">
-                                        <textarea class="form-control" id="source_review_blocked_users_bulk" data-user-bulk-input rows="2" placeholder="one email or user id per line"></textarea>
-                                        <button type="button" class="btn btn-outline-secondary" data-user-bulk-add-button>Add Bulk</button>
                                     </div>
                                     <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
                                 </div>
@@ -6893,6 +7023,9 @@
         <!-- Web Search Foundry Info Modal -->
         {% include '_web_search_foundry_info.html' %}
 
+        <!-- Deep Research Info Modal -->
+        {% include '_deep_research_info.html' %}
+
         <!-- Key Vault Info Modal -->
         {% include '_key_vault_info.html' %}
 
@@ -7091,6 +7224,7 @@
     };
 
 </script>
+<script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>

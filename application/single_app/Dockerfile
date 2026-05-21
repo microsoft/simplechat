@@ -1,11 +1,13 @@
 # Create nonroot user/group with a stable UID/GID (choose values consistent with your org)
 ARG UID=65532
 ARG GID=65532
+ARG INSTALL_PLAYWRIGHT_CHROMIUM=true
 
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
 ARG UID
 ARG GID
+ARG INSTALL_PLAYWRIGHT_CHROMIUM
 
 # Copy pip.conf into the image for pip configuration
 COPY docker-customization/pip.conf /etc/pip.conf
@@ -17,6 +19,7 @@ RUN update-ca-trust enable \
     && update-ca-trust extract
 
 ENV PYTHONUNBUFFERED=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 ENV ACCEPT_EULA=Y
 
@@ -58,6 +61,52 @@ RUN set -eux; \
     rm -rf /var/cache/tdnf
 
 RUN set -eux; \
+    mkdir -p /playwright-runtime; \
+    case "$(printf '%s' "${INSTALL_PLAYWRIGHT_CHROMIUM}" | tr '[:upper:]' '[:lower:]')" in \
+        true|1|yes|on) \
+            tdnf install -y \
+                alsa-lib \
+                atk \
+                at-spi2-atk \
+                at-spi2-core \
+                cairo \
+                cups-libs \
+                dbus-libs \
+                expat \
+                fontconfig \
+                freetype \
+                glib2 \
+                gtk3 \
+                libdrm \
+                libjpeg-turbo \
+                libpng \
+                libX11 \
+                libxcb \
+                libXcomposite \
+                libXcursor \
+                libXdamage \
+                libXext \
+                libXfixes \
+                libXi \
+                libXrandr \
+                libXrender \
+                libXtst \
+                libxkbcommon \
+                libxshmfence \
+                mesa-libgbm \
+                nspr \
+                nss \
+                pango; \
+            tdnf install -y xorg-x11-fonts-Type1 xorg-x11-fonts-misc || true; \
+            ;; \
+        *) \
+            echo "Skipping Chromium runtime package installation because INSTALL_PLAYWRIGHT_CHROMIUM=${INSTALL_PLAYWRIGHT_CHROMIUM}"; \
+            ;; \
+    esac; \
+    tdnf clean all; \
+    rm -rf /var/cache/tdnf
+
+RUN set -eux; \
     echo "nonroot:x:${GID}:" >> /etc/group; \
     echo "nonroot:x:${UID}:${GID}:nonroot:/home/nonroot:/bin/bash" >> /etc/passwd; \
     mkdir -p /home/nonroot; \
@@ -93,6 +142,24 @@ WORKDIR /app
 COPY --chown=${UID}:${GID} application/single_app/requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
+RUN set -eux; \
+    mkdir -p /playwright-runtime; \
+    case "$(printf '%s' "${INSTALL_PLAYWRIGHT_CHROMIUM}" | tr '[:upper:]' '[:lower:]')" in \
+        true|1|yes|on) \
+            python3 -m playwright install chromium; \
+            find /ms-playwright -name chrome_sandbox -exec chown root:root {} \; -exec chmod 4755 {} \;; \
+            mkdir -p /playwright-runtime/ms-playwright /playwright-runtime/usr/lib64 /playwright-runtime/usr/share /playwright-runtime/etc; \
+            cp -a /ms-playwright/. /playwright-runtime/ms-playwright/; \
+            cp -a /usr/lib64/*.so* /playwright-runtime/usr/lib64/; \
+            if [ -d /usr/share/fonts ]; then cp -a /usr/share/fonts /playwright-runtime/usr/share/; fi; \
+            if [ -d /usr/share/fontconfig ]; then cp -a /usr/share/fontconfig /playwright-runtime/usr/share/; fi; \
+            if [ -d /etc/fonts ]; then cp -a /etc/fonts /playwright-runtime/etc/; fi; \
+            ;; \
+        *) \
+            echo "Skipping Playwright Chromium browser installation because INSTALL_PLAYWRIGHT_CHROMIUM=${INSTALL_PLAYWRIGHT_CHROMIUM}"; \
+            ;; \
+    esac
+
 FROM mcr.microsoft.com/azurelinux/distroless/python:3.12
 
 ARG UID
@@ -105,6 +172,7 @@ COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
 COPY --from=builder /usr/lib/python3.12 /usr/lib/python3.12
 COPY --from=builder /odbc-runtime/ /
+COPY --from=builder /playwright-runtime/ /
 
 USER ${UID}:${GID}
 
@@ -119,6 +187,7 @@ ENV HOME=/home/nonroot \
     LC_ALL=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
     LD_LIBRARY_PATH=/usr/lib64:/opt/microsoft/msodbcsql18/lib64 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
     SSL_CERT_DIR=/etc/ssl/certs \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-bundle.crt

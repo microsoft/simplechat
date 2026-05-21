@@ -3,6 +3,7 @@
 import re
 import traceback
 from config import *
+from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
 from functions_settings import *
 from functions_search import *
@@ -5910,6 +5911,100 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+def process_visio(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes Visio VSDX files as one searchable chunk per page."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing Visio file...")
+    total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+        update_callback(enhanced_citations=True, status="Enhanced citations enabled for Visio file")
+
+    try:
+        pages = parse_vsdx_pages(temp_file_path)
+    except Exception as parse_error:
+        raise Exception(f"Failed parsing Visio file {original_filename}: {parse_error}") from parse_error
+
+    if not pages:
+        update_callback(number_of_pages=0, status="Processing complete - no Visio pages found")
+        return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+    all_chunks = []
+    for page in pages:
+        all_chunks.append({
+            "page_text_content": build_visio_page_markdown(original_filename, page),
+            "page_number": page.get("page_number") or len(all_chunks) + 1,
+            "file_name": original_filename,
+        })
+
+    update_callback(
+        number_of_pages=len(all_chunks),
+        current_file_chunk=1,
+        status=f"Indexing {len(all_chunks)} Visio page(s)..."
+    )
+
+    batch_token_usage = save_chunks_batch(
+        all_chunks,
+        user_id,
+        document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id
+    )
+    total_chunks_saved = len(all_chunks)
+    if batch_token_usage:
+        total_embedding_tokens = batch_token_usage.get('total_tokens', 0)
+        embedding_model_name = batch_token_usage.get('model_deployment_name')
+
+    settings = get_settings()
+    enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
+    if enable_extract_meta_data and total_chunks_saved > 0:
+        try:
+            update_callback(status="Extracting final metadata...")
+            args = {
+                "document_id": document_id,
+                "user_id": user_id
+            }
+
+            if public_workspace_id:
+                args["public_workspace_id"] = public_workspace_id
+            elif group_id:
+                args["group_id"] = group_id
+
+            document_metadata = extract_document_metadata(**args)
+            if document_metadata:
+                update_fields = {key: value for key, value in document_metadata.items() if value is not None and value != ""}
+                if update_fields:
+                    update_fields['status'] = "Final metadata extracted"
+                    update_callback(**update_fields)
+                else:
+                    update_callback(status="Final metadata extraction yielded no new info")
+        except Exception as metadata_error:
+            log_event(
+                f"[process_visio] Error extracting final metadata for Visio document {document_id}: {metadata_error}",
+                level=logging.WARNING,
+            )
+            update_callback(status="Processing complete (metadata extraction warning)")
+
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
 def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes documents supported by Azure Document Intelligence (PDF, Word, PPT, Image)."""
     is_group = group_id is not None
@@ -6641,6 +6736,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
     di_supported_extensions = tuple('.' + ext for ext in DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS)
     video_extensions = tuple('.' + ext for ext in VIDEO_EXTENSIONS)
     audio_extensions = tuple('.' + ext for ext in AUDIO_EXTENSIONS)
+    visio_extensions = tuple('.' + ext for ext in VISIO_EXTENSIONS)
 
     # --- Define update_document callback wrapper ---
     # This makes it easier to pass the update function to helpers without repeating args
@@ -6753,6 +6849,12 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 total_chunks_saved = result
         elif file_ext in tabular_extensions:
             result = process_tabular(**args)
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
+        elif file_ext in visio_extensions:
+            result = process_visio(**{k: v for k, v in args.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:

@@ -252,23 +252,46 @@ def get_cache_partition_key(
         active_group_ids = [active_group_id]
     # Use first sorted group ID for partition key (deterministic)
     first_group_id = sorted(active_group_ids)[0] if active_group_ids else None
+    public_workspace_ids = _normalize_cache_id_list(active_public_workspace_id)
+    public_partition_id = '|'.join(sorted(public_workspace_ids)) if public_workspace_ids else None
 
     if doc_scope == "personal":
         return user_id
     elif doc_scope == "group":
         return f"group:{first_group_id}" if first_group_id else user_id
     elif doc_scope == "public":
-        return f"public:{active_public_workspace_id}" if active_public_workspace_id else user_id
+        return f"public:{public_partition_id}" if public_partition_id else user_id
     elif doc_scope == "all":
         # For "all" scope, prioritize group > public > personal
         if first_group_id:
             return f"group:{first_group_id}"
-        elif active_public_workspace_id:
-            return f"public:{active_public_workspace_id}"
+        elif public_partition_id:
+            return f"public:{public_partition_id}"
         else:
             return user_id
     else:
         return user_id
+
+
+def _normalize_cache_id_list(raw_ids) -> List[str]:
+    if raw_ids is None:
+        return []
+    if isinstance(raw_ids, str):
+        candidates = [raw_ids]
+    elif isinstance(raw_ids, list):
+        candidates = raw_ids
+    else:
+        candidates = [raw_ids]
+
+    normalized = []
+    seen = set()
+    for candidate in candidates:
+        value = str(candidate).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
 
 
 def generate_search_cache_key(
@@ -282,7 +305,8 @@ def generate_search_cache_key(
     active_public_workspace_id: Optional[str] = None,
     top_n: int = 12,
     enable_file_sharing: bool = True,
-    tags_filter: Optional[List[str]] = None
+    tags_filter: Optional[List[str]] = None,
+    document_filter_mode: str = "intersection"
 ) -> str:
     """
     Generate a cache key that includes document set fingerprints and tags filter.
@@ -298,12 +322,14 @@ def generate_search_cache_key(
         query: Search query text
         user_id: User ID (for personal scope)
         document_id: Specific document filter
+        document_ids: Specific document filter list
         doc_scope: Scope of search ("personal", "group", "public", "all")
         active_group_id: Active group ID (for group scope)
         active_public_workspace_id: Active public workspace ID (for public scope)
         top_n: Number of results
         enable_file_sharing: Whether file sharing is enabled
         tags_filter: Optional list of tags to filter by
+        document_filter_mode: How document IDs and tags combine in the filter
         
     Returns:
         SHA256 hash string to use as cache key
@@ -314,6 +340,10 @@ def generate_search_cache_key(
     # Backwards compat: wrap single group ID into list
     if not active_group_ids and active_group_id:
         active_group_ids = [active_group_id]
+    public_workspace_ids = _normalize_cache_id_list(active_public_workspace_id)
+    normalized_document_filter_mode = str(document_filter_mode or "intersection").strip().lower()
+    if normalized_document_filter_mode not in {"intersection", "union"}:
+        normalized_document_filter_mode = "intersection"
 
     # Normalize and sort tags filter for consistent cache keys
     tags_str = ''
@@ -333,9 +363,10 @@ def generate_search_cache_key(
             group_fp = get_group_document_fingerprint(gid)
             fingerprints.append(f"group:{gid}:{group_fp}")
 
-    if doc_scope in ["public", "all"] and active_public_workspace_id:
-        public_fp = get_public_workspace_document_fingerprint(active_public_workspace_id)
-        fingerprints.append(f"public:{public_fp}")
+    if doc_scope in ["public", "all"] and public_workspace_ids:
+        for workspace_id in sorted(public_workspace_ids):
+            public_fp = get_public_workspace_document_fingerprint(workspace_id)
+            fingerprints.append(f"public:{workspace_id}:{public_fp}")
     
     # Build document IDs string for cache key
     doc_ids_str = ','.join(sorted(document_ids)) if document_ids else (document_id or '')
@@ -352,20 +383,23 @@ def generate_search_cache_key(
             str(top_n),
             str(enable_file_sharing),
             tags_str,
+            normalized_document_filter_mode,
             '|'.join(fingerprints)
         ]
     else:
         # For group/public/all, exclude user_id to enable cache sharing
         group_ids_str = ','.join(sorted(active_group_ids)) if active_group_ids else ''
+        public_workspace_ids_str = ','.join(sorted(public_workspace_ids))
         cache_key_components = [
             normalized_query,
             doc_ids_str,
             doc_scope,
             group_ids_str,
-            active_public_workspace_id or '',
+            public_workspace_ids_str,
             str(top_n),
             str(enable_file_sharing),
             tags_str,
+            normalized_document_filter_mode,
             '|'.join(fingerprints)
         ]
     

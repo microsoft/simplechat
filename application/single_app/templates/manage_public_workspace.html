@@ -566,6 +566,7 @@
           data-api-base="/api/file-sync/public/{{ workspace_id }}"
           data-tags-api="/api/public_workspace_documents/tags?workspace_ids={{ workspace_id|urlencode }}"
           data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
+          data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb'])|join(',') }}"
         ></div>
       </div>
     </div>

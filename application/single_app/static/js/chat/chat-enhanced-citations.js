@@ -8,7 +8,7 @@ import { getDocumentMetadata, fetchDocumentMetadata } from './chat-documents.js'
 /**
  * Determine file type from filename extension
  * @param {string} fileName - The file name
- * @returns {string} - File type: 'image', 'pdf', 'video', 'audio', or 'other'
+ * @returns {string} - File type: 'image', 'pdf', 'video', 'audio', 'tabular', 'visio', or 'other'
  */
 export function getFileType(fileName) {
     if (!fileName) return 'other';
@@ -19,12 +19,14 @@ export function getFileType(fileName) {
     const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'webm', 'wmv', 'm4v', '3gp'];
     const audioExtensions = ['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'];
     const tabularExtensions = ['csv', 'xlsx', 'xls', 'xlsm'];
+    const visioExtensions = ['vsdx'];
 
     if (imageExtensions.includes(ext)) return 'image';
     if (ext === 'pdf') return 'pdf';
     if (videoExtensions.includes(ext)) return 'video';
     if (audioExtensions.includes(ext)) return 'audio';
     if (tabularExtensions.includes(ext)) return 'tabular';
+    if (visioExtensions.includes(ext)) return 'visio';
     
     return 'other';
 }
@@ -79,6 +81,9 @@ export async function showEnhancedCitationModal(docId, pageNumberOrTimestamp, ci
             break;
         case 'tabular':
             showTabularDownloadModal(docId, docMetadata.file_name, initialSheetName);
+            break;
+        case 'visio':
+            showVisioModal(docId, pageNumberOrTimestamp, docMetadata.file_name, citationId);
             break;
         default:
             // Fall back to text citation for unsupported types
@@ -185,6 +190,16 @@ async function getResponseErrorMessage(response, fallbackMessage) {
     return fallbackMessage;
 }
 
+function buildSameOriginEndpoint(path, params = {}) {
+    const url = new URL(path, window.location.origin);
+    Object.entries(params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+            url.searchParams.set(key, String(value));
+        }
+    });
+    return `${url.pathname}${url.search}`;
+}
+
 /**
  * Show PDF modal using server-side rendering
  * @param {string} docId - Document ID  
@@ -260,6 +275,121 @@ export async function showPdfModal(docId, pageNumber, citationId) {
             pageNumber,
         });
     }
+}
+
+async function downloadVisioFile(downloadUrl, fallbackFilename, downloadBtn) {
+    downloadBtn.disabled = true;
+    downloadBtn.classList.add('disabled');
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner-border spinner-border-sm me-1';
+    spinner.setAttribute('role', 'status');
+    spinner.setAttribute('aria-hidden', 'true');
+    downloadBtn.replaceChildren(spinner, document.createTextNode('Downloading...'));
+
+    try {
+        const response = await fetch(downloadUrl, {
+            credentials: 'same-origin',
+        });
+
+        if (!response.ok) {
+            const errorMessage = await getResponseErrorMessage(
+                response,
+                `Could not download Visio file (${response.status}).`
+            );
+            throw new Error(errorMessage);
+        }
+
+        const blob = await response.blob();
+        const downloadFilename = getDownloadFilename(response, fallbackFilename);
+        triggerBlobDownload(blob, downloadFilename);
+    } catch (error) {
+        console.error('Error downloading Visio file:', error);
+        showToast(error.message || 'Could not download Visio file.', 'danger');
+    } finally {
+        downloadBtn.disabled = false;
+        downloadBtn.classList.remove('disabled');
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-download me-1';
+        icon.setAttribute('aria-hidden', 'true');
+        downloadBtn.replaceChildren(icon, document.createTextNode('Download File'));
+    }
+}
+
+/**
+ * Show Visio page preview in a modal
+ * @param {string} docId - Document ID
+ * @param {string|number} pageNumber - Visio page number
+ * @param {string} fileName - File name
+ * @param {string} citationId - Citation ID for fallback
+ */
+export function showVisioModal(docId, pageNumber, fileName, citationId) {
+    const resolvedPageNumber = Math.max(1, Number.parseInt(pageNumber, 10) || 1);
+    console.log(`Showing Visio modal for docId: ${docId}, page: ${resolvedPageNumber}, fileName: ${fileName}`);
+    showLoadingIndicator();
+
+    let visioModal = document.getElementById("enhanced-visio-modal");
+    if (!visioModal) {
+        visioModal = createVisioModal();
+    }
+
+    const title = visioModal.querySelector(".modal-title");
+    const image = visioModal.querySelector("#enhanced-visio-image");
+    const pageInfo = visioModal.querySelector("#enhanced-visio-page-info");
+    const errorContainer = visioModal.querySelector("#enhanced-visio-error");
+    const downloadBtn = visioModal.querySelector("#enhanced-visio-download");
+    const previewUrl = buildSameOriginEndpoint('/api/enhanced_citations/visio', {
+        doc_id: docId,
+        page: resolvedPageNumber,
+    });
+    const downloadUrl = buildSameOriginEndpoint('/api/enhanced_citations/visio', {
+        doc_id: docId,
+        download: 'true',
+    });
+
+    title.textContent = `Visio: ${fileName}`;
+    pageInfo.textContent = `Page ${resolvedPageNumber}`;
+    errorContainer.textContent = '';
+    errorContainer.classList.add('d-none');
+    image.classList.remove('d-none');
+    image.removeAttribute('src');
+
+    if (image.visioImageController) {
+        image.visioImageController.abort();
+    }
+    const imageController = new AbortController();
+    image.visioImageController = imageController;
+
+    if (downloadBtn.visioDownloadController) {
+        downloadBtn.visioDownloadController.abort();
+    }
+    const downloadController = new AbortController();
+    downloadBtn.visioDownloadController = downloadController;
+    downloadBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        downloadVisioFile(downloadUrl, fileName, downloadBtn);
+    }, { signal: downloadController.signal });
+
+    image.addEventListener('load', () => {
+        hideLoadingIndicator();
+        console.log('Visio preview loaded successfully');
+    }, { signal: imageController.signal });
+
+    image.addEventListener('error', () => {
+        hideLoadingIndicator();
+        image.classList.add('d-none');
+        errorContainer.textContent = 'Could not load the Visio preview. You can still download the original file.';
+        errorContainer.classList.remove('d-none');
+        showToast('Could not load Visio preview', 'warning');
+        fallBackToTextCitation(citationId, {
+            documentId: docId,
+            pageNumber: resolvedPageNumber,
+        });
+    }, { signal: imageController.signal });
+
+    image.src = previewUrl;
+
+    const modalInstance = new bootstrap.Modal(visioModal);
+    modalInstance.show();
 }
 
 /**
@@ -767,6 +897,39 @@ function createPdfModal() {
                     <iframe id="pdfFrame" class="w-100" style="height: 70vh; border: none;">
                         Your browser does not support PDF viewing.
                     </iframe>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+}
+
+/**
+ * Create Visio page preview modal HTML structure
+ * @returns {HTMLElement} - Modal element
+ */
+function createVisioModal() {
+    const modal = document.createElement("div");
+    modal.id = "enhanced-visio-modal";
+    modal.classList.add("modal", "fade");
+    modal.tabIndex = -1;
+    modal.innerHTML = `
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Visio Citation</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <div id="enhanced-visio-error" class="alert alert-warning text-start d-none"></div>
+                    <img id="enhanced-visio-image" class="img-fluid border rounded" alt="Visio page preview" style="max-height: 70vh; object-fit: contain;">
+                </div>
+                <div class="modal-footer d-flex justify-content-between align-items-center">
+                    <span id="enhanced-visio-page-info" class="text-muted small"></span>
+                    <button type="button" id="enhanced-visio-download" class="btn btn-primary btn-sm">
+                        <i class="bi bi-download me-1"></i>Download File
+                    </button>
                 </div>
             </div>
         </div>

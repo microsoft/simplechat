@@ -5,8 +5,8 @@ from functions_documents import *
 from functions_authentication import *
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
-from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config, parse_file_sync_list
-from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, parse_source_review_list
+from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
+from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, parse_source_review_list
 from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
@@ -421,6 +421,7 @@ def register_route_frontend_admin_settings(app):
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
+            source_review_runtime_capabilities = get_source_review_runtime_capabilities()
 
             return render_template(
                 'admin_settings.html',
@@ -439,7 +440,8 @@ def register_route_frontend_admin_settings(app):
                 chunk_size_defaults=get_chunk_size_defaults(),
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
-                chunk_size_effective=get_chunk_size_config(settings)
+                chunk_size_effective=get_chunk_size_config(settings),
+                source_review_runtime_capabilities=source_review_runtime_capabilities
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -596,9 +598,9 @@ def register_route_frontend_admin_settings(app):
 
             existing_source_review_max_bytes = parse_admin_int(
                 settings.get('source_review_max_bytes_per_page'),
-                2000000,
+                5000000,
                 'source_review_max_bytes_per_page',
-                2000000
+                5000000
             )
             source_review_max_bytes_mb = max(
                 1,
@@ -606,24 +608,26 @@ def register_route_frontend_admin_settings(app):
                     form_data.get('source_review_max_bytes_per_page_mb'),
                     max(1, int(existing_source_review_max_bytes / 1000000)),
                     'source_review_max_bytes_per_page_mb',
-                    2
+                    5
                 )
             )
             source_review_settings = get_source_review_config({
                 'enable_source_review': form_data.get('enable_source_review') == 'on',
+                'require_member_of_deep_research_user': form_data.get('require_member_of_deep_research_user') == 'on',
+                'source_review_allow_internal_hosts': form_data.get('source_review_allow_internal_hosts') == 'on',
                 'enable_deep_source_review': form_data.get('enable_deep_source_review') == 'on',
-                'source_review_default_mode': form_data.get('source_review_default_mode', 'manual'),
+                'source_review_default_mode': form_data.get('source_review_default_mode', 'auto_with_web_search'),
                 'source_review_max_pages_per_turn': parse_admin_int(
                     form_data.get('source_review_max_pages_per_turn'),
-                    settings.get('source_review_max_pages_per_turn', 5),
+                    settings.get('source_review_max_pages_per_turn', 10),
                     'source_review_max_pages_per_turn',
-                    5
+                    10
                 ),
                 'source_review_max_seed_pages_per_turn': parse_admin_int(
                     form_data.get('source_review_max_seed_pages_per_turn'),
-                    settings.get('source_review_max_seed_pages_per_turn', 3),
+                    settings.get('source_review_max_seed_pages_per_turn', 10),
                     'source_review_max_seed_pages_per_turn',
-                    3
+                    10
                 ),
                 'source_review_max_depth': parse_admin_int(
                     form_data.get('source_review_max_depth'),
@@ -633,28 +637,28 @@ def register_route_frontend_admin_settings(app):
                 ),
                 'source_review_timeout_seconds': parse_admin_int(
                     form_data.get('source_review_timeout_seconds'),
-                    settings.get('source_review_timeout_seconds', 20),
+                    settings.get('source_review_timeout_seconds', 30),
                     'source_review_timeout_seconds',
-                    20
+                    30
                 ),
                 'source_review_max_redirects': parse_admin_int(
                     form_data.get('source_review_max_redirects'),
-                    settings.get('source_review_max_redirects', 3),
+                    settings.get('source_review_max_redirects', 5),
                     'source_review_max_redirects',
-                    3
+                    5
                 ),
                 'source_review_max_bytes_per_page': source_review_max_bytes_mb * 1000000,
                 'deep_research_max_user_urls_per_turn': parse_admin_int(
                     form_data.get('deep_research_max_user_urls_per_turn'),
-                    settings.get('deep_research_max_user_urls_per_turn', 10),
+                    settings.get('deep_research_max_user_urls_per_turn', 100),
                     'deep_research_max_user_urls_per_turn',
-                    10
+                    100
                 ),
                 'deep_research_max_search_queries_per_turn': parse_admin_int(
                     form_data.get('deep_research_max_search_queries_per_turn'),
-                    settings.get('deep_research_max_search_queries_per_turn', 3),
+                    settings.get('deep_research_max_search_queries_per_turn', 8),
                     'deep_research_max_search_queries_per_turn',
-                    3
+                    8
                 ),
                 'deep_research_enable_query_planning': form_data.get('deep_research_enable_query_planning') == 'on',
                 'deep_research_enable_ledger_artifact': form_data.get('deep_research_enable_ledger_artifact') == 'on',
@@ -662,15 +666,15 @@ def register_route_frontend_admin_settings(app):
                 'source_review_allow_js_rendering': form_data.get('source_review_allow_js_rendering') == 'on',
                 'source_review_js_load_more_clicks': parse_admin_int(
                     form_data.get('source_review_js_load_more_clicks'),
-                    settings.get('source_review_js_load_more_clicks', 6),
+                    settings.get('source_review_js_load_more_clicks', 12),
                     'source_review_js_load_more_clicks',
-                    6
+                    12
                 ),
                 'source_review_respect_robots_txt': form_data.get('source_review_respect_robots_txt') == 'on',
                 'source_review_allowed_domains': parse_source_review_list(form_data.get('source_review_allowed_domains')),
                 'source_review_blocked_domains': parse_source_review_list(form_data.get('source_review_blocked_domains')),
-                'source_review_allowed_users': parse_source_review_list(form_data.get('source_review_allowed_users')),
-                'source_review_blocked_users': parse_source_review_list(form_data.get('source_review_blocked_users')),
+                'source_review_allowed_users': [],
+                'source_review_blocked_users': [],
                 'source_review_audit_logging': form_data.get('source_review_audit_logging') == 'on',
             })
 
@@ -685,12 +689,13 @@ def register_route_frontend_admin_settings(app):
                 'enable_file_sync_personal': form_data.get('enable_file_sync_personal') == 'on',
                 'enable_file_sync_group': form_data.get('enable_file_sync_group') == 'on',
                 'enable_file_sync_public': form_data.get('enable_file_sync_public') == 'on',
-                'file_sync_allowed_users': parse_file_sync_list(form_data.get('file_sync_allowed_users')),
-                'file_sync_blocked_users': parse_file_sync_list(form_data.get('file_sync_blocked_users')),
-                'file_sync_allowed_groups': parse_file_sync_list(form_data.get('file_sync_allowed_groups')),
-                'file_sync_blocked_groups': parse_file_sync_list(form_data.get('file_sync_blocked_groups')),
-                'file_sync_allowed_public_workspaces': parse_file_sync_list(form_data.get('file_sync_allowed_public_workspaces')),
-                'file_sync_blocked_public_workspaces': parse_file_sync_list(form_data.get('file_sync_blocked_public_workspaces')),
+                'file_sync_personal_require_app_role': form_data.get('file_sync_personal_require_app_role') == 'on',
+                'file_sync_group_require_app_role': form_data.get('file_sync_group_require_app_role') == 'on',
+                'file_sync_public_require_app_role': form_data.get('file_sync_public_require_app_role') == 'on',
+                'file_sync_personal_admin_only': form_data.get('file_sync_personal_admin_only') == 'on',
+                'file_sync_group_admin_only': form_data.get('file_sync_group_admin_only') == 'on',
+                'file_sync_public_admin_only': form_data.get('file_sync_public_admin_only') == 'on',
+                'file_sync_visible_source_types': form_data.getlist('file_sync_visible_source_types'),
                 'file_sync_max_sources_per_scope': parse_admin_int(
                     form_data.get('file_sync_max_sources_per_scope'),
                     settings.get('file_sync_max_sources_per_scope', FILE_SYNC_DEFAULTS['file_sync_max_sources_per_scope']),
@@ -1450,12 +1455,13 @@ def register_route_frontend_admin_settings(app):
                 'enable_file_sync_personal': file_sync_settings['enable_file_sync_personal'],
                 'enable_file_sync_group': file_sync_settings['enable_file_sync_group'],
                 'enable_file_sync_public': file_sync_settings['enable_file_sync_public'],
-                'file_sync_allowed_users': file_sync_settings['file_sync_allowed_users'],
-                'file_sync_blocked_users': file_sync_settings['file_sync_blocked_users'],
-                'file_sync_allowed_groups': file_sync_settings['file_sync_allowed_groups'],
-                'file_sync_blocked_groups': file_sync_settings['file_sync_blocked_groups'],
-                'file_sync_allowed_public_workspaces': file_sync_settings['file_sync_allowed_public_workspaces'],
-                'file_sync_blocked_public_workspaces': file_sync_settings['file_sync_blocked_public_workspaces'],
+                'file_sync_personal_require_app_role': file_sync_settings['file_sync_personal_require_app_role'],
+                'file_sync_group_require_app_role': file_sync_settings['file_sync_group_require_app_role'],
+                'file_sync_public_require_app_role': file_sync_settings['file_sync_public_require_app_role'],
+                'file_sync_personal_admin_only': file_sync_settings['file_sync_personal_admin_only'],
+                'file_sync_group_admin_only': file_sync_settings['file_sync_group_admin_only'],
+                'file_sync_public_admin_only': file_sync_settings['file_sync_public_admin_only'],
+                'file_sync_visible_source_types': file_sync_settings['file_sync_visible_source_types'],
                 'file_sync_max_sources_per_scope': file_sync_settings['file_sync_max_sources_per_scope'],
                 'file_sync_min_schedule_interval_minutes': file_sync_settings['file_sync_min_schedule_interval_minutes'],
                 'file_sync_max_files_per_run': file_sync_settings['file_sync_max_files_per_run'],
@@ -1581,6 +1587,8 @@ def register_route_frontend_admin_settings(app):
 
                 # Search (Source Review)
                 'enable_source_review': source_review_settings['enable_source_review'],
+                'require_member_of_deep_research_user': source_review_settings['require_member_of_deep_research_user'],
+                'source_review_allow_internal_hosts': source_review_settings['source_review_allow_internal_hosts'],
                 'enable_deep_source_review': source_review_settings['enable_deep_source_review'],
                 'source_review_default_mode': source_review_settings['source_review_default_mode'],
                 'source_review_max_pages_per_turn': source_review_settings['source_review_max_pages_per_turn'],

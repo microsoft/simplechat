@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional test for Deep Research query planning and ledger metadata.
-Version: 0.241.051
+Version: 0.241.066
 Implemented in: 0.241.051
+Updated in: 0.241.066
 
 This test ensures Deep Research clamps admin budgets, caps user-provided URLs,
 plans bounded current-message-only query variants, and records a research ledger
@@ -18,6 +19,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 def test_deep_research_config_clamps():
     """Validate Deep Research admin settings are clamped to hard ceilings."""
     from functions_source_review import get_deep_research_config
+
+    default_config = get_deep_research_config({})
+    assert default_config['deep_research_max_user_urls_per_turn'] == 100
+    assert default_config['deep_research_max_search_queries_per_turn'] == 8
+    assert default_config['deep_research_enable_query_planning'] is True
+    assert default_config['deep_research_enable_ledger_artifact'] is True
+    assert default_config['source_review_allow_js_rendering'] is True
+    assert default_config['source_review_js_load_more_clicks'] == 12
 
     config = get_deep_research_config({
         'enable_source_review': True,

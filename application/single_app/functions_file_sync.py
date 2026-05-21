@@ -56,19 +56,30 @@ FILE_SYNC_SCOPE_GROUP = "group"
 FILE_SYNC_SCOPE_PUBLIC = "public"
 FILE_SYNC_SCOPES = {FILE_SYNC_SCOPE_PERSONAL, FILE_SYNC_SCOPE_GROUP, FILE_SYNC_SCOPE_PUBLIC}
 FILE_SYNC_SOURCE_TYPE_SMB = "smb"
+FILE_SYNC_SOURCE_TYPE_SHAREPOINT_ON_PREM = "sharepoint_on_prem"
+FILE_SYNC_SOURCE_TYPE_GOOGLE_WORKSPACE = "google_workspace"
+FILE_SYNC_KNOWN_SOURCE_TYPES = {
+    FILE_SYNC_SOURCE_TYPE_SMB,
+    FILE_SYNC_SOURCE_TYPE_SHAREPOINT_ON_PREM,
+    FILE_SYNC_SOURCE_TYPE_GOOGLE_WORKSPACE,
+}
 FILE_SYNC_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+FILE_SYNC_PERSONAL_APP_ROLE = "PersonalFileSyncUser"
+FILE_SYNC_GROUP_APP_ROLE = "GroupFileSyncUser"
+FILE_SYNC_PUBLIC_APP_ROLE = "PublicWorkspaceFileSyncUser"
 
 FILE_SYNC_DEFAULTS = {
     "enable_file_sync": False,
     "enable_file_sync_personal": True,
     "enable_file_sync_group": True,
     "enable_file_sync_public": False,
-    "file_sync_allowed_users": [],
-    "file_sync_blocked_users": [],
-    "file_sync_allowed_groups": [],
-    "file_sync_blocked_groups": [],
-    "file_sync_allowed_public_workspaces": [],
-    "file_sync_blocked_public_workspaces": [],
+    "file_sync_personal_require_app_role": False,
+    "file_sync_group_require_app_role": False,
+    "file_sync_public_require_app_role": False,
+    "file_sync_personal_admin_only": False,
+    "file_sync_group_admin_only": False,
+    "file_sync_public_admin_only": False,
+    "file_sync_visible_source_types": [FILE_SYNC_SOURCE_TYPE_SMB],
     "file_sync_max_sources_per_scope": 10,
     "file_sync_min_schedule_interval_minutes": 15,
     "file_sync_max_files_per_run": 1000,
@@ -135,8 +146,32 @@ def parse_file_sync_list(value: Any) -> List[str]:
     return normalized_values
 
 
-def _identifier_set(values: Iterable[str]) -> set:
-    return {str(value).strip().lower() for value in values if str(value).strip()}
+def _user_info_has_admin_role(user_info: Optional[Dict[str, Any]]) -> bool:
+    return _user_info_has_app_role(user_info, "Admin")
+
+
+def _user_info_has_app_role(user_info: Optional[Dict[str, Any]], role_name: str) -> bool:
+    if not isinstance(user_info, dict):
+        return False
+    roles = user_info.get("roles") or []
+    if isinstance(roles, str):
+        roles = [roles]
+    normalized_role = str(role_name or "").strip().lower()
+    return any(str(role).strip().lower() == normalized_role for role in roles)
+
+
+def _normalize_source_type_list(value: Any) -> List[str]:
+    source_types = []
+    seen_source_types = set()
+    for source_type in parse_file_sync_list(value):
+        normalized_source_type = str(source_type or "").strip().lower()
+        if normalized_source_type not in FILE_SYNC_KNOWN_SOURCE_TYPES:
+            continue
+        if normalized_source_type in seen_source_types:
+            continue
+        seen_source_types.add(normalized_source_type)
+        source_types.append(normalized_source_type)
+    return source_types
 
 
 def _is_redis_ready(settings: Dict[str, Any]) -> bool:
@@ -196,6 +231,7 @@ def get_file_sync_config(settings: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     remote_delete_policy = str(config.get("file_sync_default_remote_delete_policy") or "ignore").strip().lower()
     config["file_sync_default_remote_delete_policy"] = remote_delete_policy if remote_delete_policy in FILE_SYNC_REMOTE_DELETE_POLICIES else "ignore"
+    config["file_sync_visible_source_types"] = _normalize_source_type_list(config.get("file_sync_visible_source_types"))
 
     config["requested_enable_file_sync"] = config["enable_file_sync"]
     config["redis_ready"] = _is_redis_ready(source_settings)
@@ -203,49 +239,60 @@ def get_file_sync_config(settings: Optional[Dict[str, Any]] = None) -> Dict[str,
     return config
 
 
-def is_file_sync_enabled_for_user(settings: Dict[str, Any], user_id: str, user_email: Optional[str] = None) -> bool:
+def is_file_sync_source_type_visible(settings: Dict[str, Any], source_type: str) -> bool:
+    config = get_file_sync_config(settings)
+    normalized_source_type = str(source_type or FILE_SYNC_SOURCE_TYPE_SMB).strip().lower()
+    return normalized_source_type in config.get("file_sync_visible_source_types", [])
+
+
+def is_file_sync_enabled_for_user(
+    settings: Dict[str, Any],
+    user_id: str,
+    user_email: Optional[str] = None,
+    user_info: Optional[Dict[str, Any]] = None,
+    admin_management: bool = False,
+) -> bool:
     config = get_file_sync_config(settings)
     if not config["enable_file_sync"] or not config["enable_file_sync_personal"]:
         return False
 
-    caller_values = {str(user_id or "").strip().lower()}
-    if user_email:
-        caller_values.add(str(user_email).strip().lower())
-
-    blocked_users = _identifier_set(config["file_sync_blocked_users"])
-    if caller_values.intersection(blocked_users):
+    if config.get("file_sync_personal_admin_only") and not admin_management and not _user_info_has_admin_role(user_info):
         return False
-
-    allowed_users = _identifier_set(config["file_sync_allowed_users"])
-    if allowed_users and not caller_values.intersection(allowed_users):
+    if config.get("file_sync_personal_require_app_role") and not admin_management and not _user_info_has_app_role(user_info, FILE_SYNC_PERSONAL_APP_ROLE):
         return False
     return True
 
 
-def is_file_sync_enabled_for_group(settings: Dict[str, Any], group_id: str) -> bool:
+def is_file_sync_enabled_for_group(
+    settings: Dict[str, Any],
+    group_id: str,
+    user_info: Optional[Dict[str, Any]] = None,
+    admin_management: bool = False,
+) -> bool:
     config = get_file_sync_config(settings)
     if not config["enable_file_sync"] or not config["enable_file_sync_group"]:
         return False
 
-    normalized_group_id = str(group_id or "").strip().lower()
-    if normalized_group_id in _identifier_set(config["file_sync_blocked_groups"]):
+    if config.get("file_sync_group_admin_only") and not admin_management and not _user_info_has_admin_role(user_info):
         return False
-    allowed_groups = _identifier_set(config["file_sync_allowed_groups"])
-    if allowed_groups and normalized_group_id not in allowed_groups:
+    if config.get("file_sync_group_require_app_role") and not admin_management and not _user_info_has_app_role(user_info, FILE_SYNC_GROUP_APP_ROLE):
         return False
     return True
 
 
-def is_file_sync_enabled_for_public_workspace(settings: Dict[str, Any], public_workspace_id: str) -> bool:
+def is_file_sync_enabled_for_public_workspace(
+    settings: Dict[str, Any],
+    public_workspace_id: str,
+    user_info: Optional[Dict[str, Any]] = None,
+    admin_management: bool = False,
+) -> bool:
     config = get_file_sync_config(settings)
     if not config["enable_file_sync"] or not config["enable_file_sync_public"]:
         return False
 
-    normalized_workspace_id = str(public_workspace_id or "").strip().lower()
-    if normalized_workspace_id in _identifier_set(config["file_sync_blocked_public_workspaces"]):
+    if config.get("file_sync_public_admin_only") and not admin_management and not _user_info_has_admin_role(user_info):
         return False
-    allowed_workspaces = _identifier_set(config["file_sync_allowed_public_workspaces"])
-    if allowed_workspaces and normalized_workspace_id not in allowed_workspaces:
+    if config.get("file_sync_public_require_app_role") and not admin_management and not _user_info_has_app_role(user_info, FILE_SYNC_PUBLIC_APP_ROLE):
         return False
     return True
 

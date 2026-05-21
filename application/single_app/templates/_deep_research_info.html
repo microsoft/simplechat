@@ -1,0 +1,175 @@
+<!-- Deep Research Configuration Information Modal -->
+<div class="modal fade" id="deepResearchInfoModal" tabindex="-1" aria-labelledby="deepResearchInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deepResearchInfoModalLabel">
+                    <i class="bi bi-binoculars me-2"></i>
+                    Deep Research Setup Guide
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>Deep Research expands Web Search with bounded source-page review.</strong> It plans searches, reviews public source pages, records skipped URLs, and can save a research ledger artifact for the chat.
+                </div>
+
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Deep Research fetches public web content from the app server. Keep the page, domain, timeout, and JavaScript rendering limits aligned with your organization's web access and compliance expectations.
+                </div>
+
+                <section class="mb-4" aria-labelledby="deepResearchSetupStepsHeading">
+                    <h6 id="deepResearchSetupStepsHeading"><i class="bi bi-list-ol me-2"></i>Recommended Setup</h6>
+                    <ol class="mb-0">
+                        <li>Configure and test <strong>Web Search via Foundry Agent</strong> first. Deep Research uses web-search citations and optional query planning as source seeds.</li>
+                        <li>Enable <strong>Deep Research for chat</strong> in this section.</li>
+                        <li>Decide whether every signed-in chat user can use Deep Research, or whether access should be restricted by an Enterprise App role.</li>
+                        <li>If restriction is required, assign users or groups to the <code>DeepResearchUser</code> app role before turning on the requirement.</li>
+                        <li>Save settings, then test with a prompt that asks a current question and enables Web Search or includes public URLs.</li>
+                    </ol>
+                </section>
+
+                <section class="mb-4" aria-labelledby="deepResearchRoleSetupHeading">
+                    <h6 id="deepResearchRoleSetupHeading"><i class="bi bi-shield-lock me-2"></i>DeepResearchUser App Role Setup</h6>
+                    <p class="mb-2">Use this only when <strong>Require DeepResearchUser app role</strong> is enabled.</p>
+                    <ol class="mb-3">
+                        <li>Open the Azure Portal and go to <strong>Microsoft Entra ID</strong>.</li>
+                        <li>Open <strong>Enterprise applications</strong> and select the SimpleChat enterprise application.</li>
+                        <li>Open <strong>Users and groups</strong>, then choose <strong>Add user/group</strong>.</li>
+                        <li>Select the users or groups that should use Deep Research.</li>
+                        <li>Under role, select <strong>Deep Research User</strong>, which emits the <code>DeepResearchUser</code> role value.</li>
+                        <li>Complete the assignment and have affected users sign out and back in so their session includes the new role claim.</li>
+                    </ol>
+                    <div class="alert alert-secondary py-2 mb-0">
+                        <i class="bi bi-lightbulb me-2"></i>
+                        If the role is missing in an existing deployment, update the app registration roles from <code>deployers/azurecli/appRegistrationRoles.json</code>. Deployer version <code>1.0.4</code> includes the <code>DeepResearchUser</code> role definition.
+                    </div>
+                </section>
+
+                <section class="mb-4" aria-labelledby="deepResearchSettingsReferenceHeading">
+                    <h6 id="deepResearchSettingsReferenceHeading"><i class="bi bi-sliders me-2"></i>Settings Reference</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Setting</th>
+                                    <th>What it controls</th>
+                                    <th>Typical guidance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Enable Deep Research for chat</strong></td>
+                                    <td>Turns the feature on for eligible chat users.</td>
+                                    <td>Enable after Web Search has been tested successfully.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Require DeepResearchUser app role</strong></td>
+                                    <td>Restricts use to sessions with the <code>DeepResearchUser</code> role claim.</td>
+                                    <td>Use for tenant-scale governance. Leave off to allow all signed-in chat users.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Allow internal network hostnames</strong></td>
+                                    <td>Allows DNS hostnames that resolve to private/internal network addresses.</td>
+                                    <td>Use only for approved internal sites. Literal IP URL targets, localhost, metadata hosts, link-local addresses, reserved addresses, and unspecified addresses remain blocked.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Default Mode</strong></td>
+                                    <td>Controls whether Deep Research starts manually, when URLs are present, or with Web Search.</td>
+                                    <td><strong>Auto with URLs or web search</strong> gives the most complete research behavior.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Max Pages per Turn</strong></td>
+                                    <td>Total reviewed source-page budget for one chat turn.</td>
+                                    <td>Hard limit is 10. Lower it to reduce latency and outbound requests.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Max Seed Pages per Turn</strong></td>
+                                    <td>Limits the initial direct URL and web-search citation pages before child links are considered.</td>
+                                    <td>Keep near the total page budget for broad review, or lower it to leave budget for linked pages.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Max User URLs per Turn</strong></td>
+                                    <td>Caps direct URLs accepted from the user's message.</td>
+                                    <td>Extra URLs are recorded as omitted in the ledger.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Max Search Queries per Turn</strong></td>
+                                    <td>Caps query-planner variants sent to the configured Web Search agent.</td>
+                                    <td>Hard limit is 8. Lower this if your search agent has tight request budgets.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Inspect linked source pages</strong></td>
+                                    <td>Allows Deep Research to follow selected policy-approved links from source pages.</td>
+                                    <td>Leave enabled for deeper evidence coverage.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Plan multiple web search queries</strong></td>
+                                    <td>Lets the selected chat model propose current-message-only query variants.</td>
+                                    <td>Useful for research prompts with multiple facets or named entities.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Save research ledger artifacts</strong></td>
+                                    <td>Saves a Markdown artifact listing queries, reviewed pages, skipped URLs, and coverage.</td>
+                                    <td>Recommended for auditability and user-visible research traceability.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Use model-assisted source link planning</strong></td>
+                                    <td>Lets the selected chat model rank candidate links found on reviewed pages.</td>
+                                    <td>Useful when source pages expose many archive, release, or pagination links.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Allow JavaScript rendering fallback</strong></td>
+                                    <td>Uses Playwright/Chromium when static HTML does not expose enough source content.</td>
+                                    <td>Requires the browser runtime in the hosting environment. Disable if outbound rendering is not allowed.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Respect robots.txt</strong></td>
+                                    <td>Skips pages disallowed for the SimpleChat source-review user agent.</td>
+                                    <td>Leave enabled unless your organization has a specific approved exception.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Allowed and Blocked Domains</strong></td>
+                                    <td>Restricts or excludes public domains before any page fetch is attempted.</td>
+                                    <td>Use allowed domains for strict research scopes. Use blocked domains for known low-quality or disallowed sources.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Log Deep Research activity</strong></td>
+                                    <td>Writes activity summaries to application telemetry.</td>
+                                    <td>Recommended for troubleshooting skipped pages, latency, and policy decisions.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section class="mb-4" aria-labelledby="deepResearchSafetyHeading">
+                    <h6 id="deepResearchSafetyHeading"><i class="bi bi-shield-check me-2"></i>Built-In Safety Boundaries</h6>
+                    <ul class="mb-0">
+                        <li>Only HTTP and HTTPS URLs are eligible for review.</li>
+                        <li>Literal IP URL targets, localhost, metadata hosts, link-local addresses, reserved addresses, unspecified addresses, credentialed URLs, excessive redirects, and oversized pages are blocked.</li>
+                        <li>DNS hostnames that resolve to private/internal addresses are blocked unless <strong>Allow internal network hostnames</strong> is enabled by an admin.</li>
+                        <li>Unsupported content types are skipped instead of downloaded into chat context.</li>
+                        <li>Every redirect target is revalidated before fetch.</li>
+                        <li>Skipped pages are tracked in the ledger so admins and users can see coverage gaps.</li>
+                    </ul>
+                </section>
+
+                <section aria-labelledby="deepResearchTroubleshootingHeading">
+                    <h6 id="deepResearchTroubleshootingHeading"><i class="bi bi-tools me-2"></i>Troubleshooting Checklist</h6>
+                    <ul class="mb-0">
+                        <li>If users cannot see Deep Research, confirm the global toggle is enabled and, if required, the user has the <code>DeepResearchUser</code> role in their current session.</li>
+                        <li>If searches do not produce source pages, run the Web Search test button and verify the Foundry agent returns web citations.</li>
+                        <li>If JavaScript-heavy pages are skipped, confirm Playwright Chromium support is available in the app runtime.</li>
+                        <li>If pages are skipped unexpectedly, check domain policies, robots.txt behavior, timeout limits, and Application Insights activity logs.</li>
+                    </ul>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>

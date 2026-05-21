@@ -535,9 +535,20 @@ hooks:
 
         cd ..
         timestamp="$(date +"%Y%m%d-%H%M%S")"
+        install_chromium="${SIMPLECHAT_INSTALL_CHROMIUM:-true}"
+        install_chromium="$(printf '%s' "${install_chromium}" | tr '[:upper:]' '[:lower:]')"
+        case "${install_chromium}" in
+            true|1|yes|on) install_chromium="true" ;;
+            false|0|no|off) install_chromium="false" ;;
+            *)
+                echo "⚠ Invalid SIMPLECHAT_INSTALL_CHROMIUM value '${install_chromium}'. Defaulting to true."
+                install_chromium="true"
+                ;;
+        esac
         echo ""
         echo "Deployment timestamp: ${timestamp}"
         echo "Image: ${var_containerRegistry}/${var_imageName}:${timestamp}"
+        echo "Chromium rendering runtime install: ${install_chromium}"
 
         echo ""
         echo "[1/4] Stopping web service..."
@@ -558,6 +569,7 @@ hooks:
         if az acr build \
             --registry ${var_acrName} \
             --file application/single_app/Dockerfile \
+            --build-arg INSTALL_PLAYWRIGHT_CHROMIUM=${install_chromium} \
             --image ${var_imageName}:${timestamp} \
             --image ${var_imageName}:latest \
             .; then
@@ -708,9 +720,19 @@ hooks:
 
         Set-Location ..
         $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $installChromium = if ([string]::IsNullOrWhiteSpace($env:SIMPLECHAT_INSTALL_CHROMIUM)) { 'true' } else { $env:SIMPLECHAT_INSTALL_CHROMIUM.Trim().ToLowerInvariant() }
+        switch ($installChromium) {
+            { $_ -in @('true', '1', 'yes', 'on') } { $installChromium = 'true'; break }
+            { $_ -in @('false', '0', 'no', 'off') } { $installChromium = 'false'; break }
+            default {
+                Write-Warning "Invalid SIMPLECHAT_INSTALL_CHROMIUM value '$installChromium'. Defaulting to true."
+                $installChromium = 'true'
+            }
+        }
         Write-Host ""
         Write-Host "Deployment timestamp: $timestamp"
         Write-Host "Image: $($env:var_containerRegistry)/$($env:var_imageName):$timestamp"
+        Write-Host "Chromium rendering runtime install: $installChromium"
 
         Write-Host ""
         Write-Host "[1/4] Stopping web service..."
@@ -727,7 +749,7 @@ hooks:
         if ($env:var_enablePrivateNetworking -eq 'true') {
             Write-Host "ℹ ACR public access remains enabled until POST-UP so Azure Container Registry Tasks can complete the build"
         }
-        $runId = az acr build --registry $env:var_acrName --resource-group $rgName --subscription $subscriptionId --file application/single_app/Dockerfile --image "$($env:var_imageName):$timestamp" --image "$($env:var_imageName):latest" --no-logs --query runId -o tsv .
+        $runId = az acr build --registry $env:var_acrName --resource-group $rgName --subscription $subscriptionId --file application/single_app/Dockerfile --build-arg "INSTALL_PLAYWRIGHT_CHROMIUM=$installChromium" --image "$($env:var_imageName):$timestamp" --image "$($env:var_imageName):latest" --no-logs --query runId -o tsv .
         if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runId)) {
             Cleanup-OnError -StepName 'ACR build'
         }

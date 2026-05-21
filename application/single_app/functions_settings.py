@@ -237,12 +237,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_file_sync_personal': True,
         'enable_file_sync_group': True,
         'enable_file_sync_public': False,
-        'file_sync_allowed_users': [],
-        'file_sync_blocked_users': [],
-        'file_sync_allowed_groups': [],
-        'file_sync_blocked_groups': [],
-        'file_sync_allowed_public_workspaces': [],
-        'file_sync_blocked_public_workspaces': [],
+        'file_sync_personal_require_app_role': False,
+        'file_sync_group_require_app_role': False,
+        'file_sync_public_require_app_role': False,
+        'file_sync_personal_admin_only': False,
+        'file_sync_group_admin_only': False,
+        'file_sync_public_admin_only': False,
+        'file_sync_visible_source_types': ['smb'],
         'file_sync_max_sources_per_scope': 10,
         'file_sync_min_schedule_interval_minutes': 15,
         'file_sync_max_files_per_run': 1000,
@@ -360,7 +361,8 @@ def get_settings(use_cosmos=False, include_source=False):
             'excel': {'value': 800, 'unit': 'characters'},
             'transcript': {'value': 400, 'unit': 'words'},
             'pdf': {'value': 1, 'unit': 'pages'},
-            'pptx': {'value': 1, 'unit': 'slides'}
+            'pptx': {'value': 1, 'unit': 'slides'},
+            'vsdx': {'value': 1, 'unit': 'pages'}
         },
         
         # Search Result Caching
@@ -404,21 +406,23 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Deep Research (bounded source-page inspection for web evidence)
         'enable_source_review': False,
-        'enable_deep_source_review': False,
-        'source_review_default_mode': 'manual',
-        'source_review_max_pages_per_turn': 5,
-        'source_review_max_seed_pages_per_turn': 3,
+        'require_member_of_deep_research_user': False,
+        'source_review_allow_internal_hosts': False,
+        'enable_deep_source_review': True,
+        'source_review_default_mode': 'auto_with_web_search',
+        'source_review_max_pages_per_turn': 10,
+        'source_review_max_seed_pages_per_turn': 10,
         'source_review_max_depth': 2,
-        'source_review_timeout_seconds': 20,
-        'source_review_max_redirects': 3,
-        'source_review_max_bytes_per_page': 2000000,
-        'deep_research_max_user_urls_per_turn': 10,
-        'deep_research_max_search_queries_per_turn': 3,
+        'source_review_timeout_seconds': 30,
+        'source_review_max_redirects': 5,
+        'source_review_max_bytes_per_page': 5000000,
+        'deep_research_max_user_urls_per_turn': 100,
+        'deep_research_max_search_queries_per_turn': 8,
         'deep_research_enable_query_planning': True,
         'deep_research_enable_ledger_artifact': True,
         'source_review_enable_llm_planning': True,
-        'source_review_allow_js_rendering': False,
-        'source_review_js_load_more_clicks': 6,
+        'source_review_allow_js_rendering': True,
+        'source_review_js_load_more_clicks': 12,
         'source_review_respect_robots_txt': True,
         'source_review_allowed_domains': [],
         'source_review_blocked_domains': [],
@@ -698,7 +702,8 @@ def get_chunk_size_defaults():
         'excel': {'value': 800, 'unit': 'characters'},
         'transcript': {'value': 400, 'unit': 'words'},
         'pdf': {'value': 1, 'unit': 'pages'},
-        'pptx': {'value': 1, 'unit': 'slides'}
+        'pptx': {'value': 1, 'unit': 'slides'},
+        'vsdx': {'value': 1, 'unit': 'pages'}
     }
 
 

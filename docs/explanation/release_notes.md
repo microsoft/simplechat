@@ -4,6 +4,70 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.077)**
+
+#### Bug Fixes
+
+*   **Visio Path Geometry Rendering**
+    *   Improved the built-in Visio citation preview renderer to draw supported VSDX geometry rows as actual local paths instead of collapsing those shapes to generic rectangles.
+    *   Added regression coverage using the Visio-exported SVG reference fixture to ensure the sample contains path geometry that the renderer should preserve.
+    *   (Ref: Visio path geometry, structural renderer, `functions_visio.py`, `test_visio_ingestion_preview.py`, `architecture.svg`)
+
+### **(v0.241.076)**
+
+#### Bug Fixes
+
+*   **Visio Preview Runtime Simplification**
+    *   Removed the optional LibreOffice conversion branch from Visio citation previews after confirming Azure Linux `tdnf` does not provide LibreOffice packages in the app builder image.
+    *   Visio previews now consistently use the built-in structural renderer with nested shape coordinates, connector endpoint lines, supported embedded media, and page geometry.
+    *   (Ref: Visio previews, structural renderer, `functions_visio.py`, `VISIO_PREVIEW_FIDELITY_FIX.md`)
+
+### **(v0.241.075)**
+
+#### Bug Fixes
+
+*   **Visio Citation Preview Fidelity**
+    *   Strengthened the built-in Visio renderer so it preserves nested shape coordinates, connector endpoint lines, supported embedded media, and page geometry more accurately.
+    *   (Ref: Visio previews, structural rendering, `functions_visio.py`, `VISIO_PREVIEW_FIDELITY_FIX.md`)
+
+### **(v0.241.074)**
+
+#### New Features
+
+*   **Visio Ingestion and Citation Previews**
+    *   Added native `.vsdx` upload support that parses Visio package XML and indexes each diagram page as a structured searchable chunk.
+    *   Enhanced citations now render a lightweight PNG preview for the cited Visio page and keep the original `.vsdx` available for download.
+    *   Added functional and UI coverage for Visio parsing, preview rendering, and chat citation modal behavior.
+    *   (Ref: Visio ingestion, enhanced citations, `functions_visio.py`, `functions_documents.py`, `route_enhanced_citations.py`, `chat-enhanced-citations.js`, `test_visio_ingestion_preview.py`, `VISIO_INGESTION.md`)
+
+### **(v0.241.068)**
+
+#### New Features
+
+*   **Assigned Knowledge for Agents**
+    *   Added agent-level Assigned Knowledge so agent creators can bind agents to governed workspace sources, documents, and tags.
+    *   Chat now resolves the selected agent from trusted server-side records and enforces its assigned search scope for both regular and streaming chat, including personal, group, and public workspace boundaries.
+    *   When an Assigned Knowledge agent is selected in chat, document search is forced on and the workspace, document, and tag controls become read-only while displaying the agent's configured knowledge context.
+    *   (Ref: Assigned Knowledge, agent modal Knowledge step, chat document search enforcement, `functions_assigned_knowledge.py`, `route_backend_agents.py`, `route_backend_chats.py`, `agent_modal_stepper.js`, `chat-agents.js`, `chat-documents.js`)
+
+### **(v0.241.067)**
+
+#### New Features
+
+*   **Deep Research Distroless JavaScript Rendering Runtime**
+    *   Added Playwright Chromium packaging for the existing Azure Linux distroless app image so Deep Research can optionally render JavaScript-heavy source pages without changing the final container base image.
+    *   Added a runtime capability check that verifies Chromium launch support and surfaces the status in Admin Settings before admins rely on rendered-page fallback.
+    *   Kept Chromium sandboxing enabled by default, added an explicit `SOURCE_REVIEW_CHROMIUM_NO_SANDBOX` escape hatch for reviewed deployments, and capped rendered fetch concurrency with `SOURCE_REVIEW_JS_RENDER_MAX_CONCURRENCY`.
+    *   (Ref: Deep Research JavaScript rendering, distroless container runtime, `Dockerfile`, `requirements.txt`, `functions_source_review.py`, `admin_settings.html`)
+
+#### User Interface Enhancements
+
+*   **Deep Research Allowed-User Management Modal**
+    *   Replaced inline Deep Research user policy controls with a compact **Manage Users** modal that supports directory search, manual user additions, filtering, removal, CSV upload, and example CSV download.
+    *   Removed blocked-user policy controls from Deep Research and switched runtime behavior to allow-only user access; legacy blocked-user settings are ignored and cleared on admin save.
+    *   Deep Research now applies max/enabled defaults when newly enabled while keeping the master feature toggle off by default.
+    *   (Ref: Deep Research access policy, allowed users modal, `admin_settings.html`, `admin_settings.js`, `functions_source_review.py`, `route_frontend_admin_settings.py`)
+
 ### **(v0.241.046)**
 
 #### New Features

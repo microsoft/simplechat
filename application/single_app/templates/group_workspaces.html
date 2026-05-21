@@ -830,6 +830,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           data-api-base="/api/file-sync/group"
           data-tags-api="/api/group_documents/tags"
           data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
+          data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb'])|join(',') }}"
         ></div>
       </div>
     </div>

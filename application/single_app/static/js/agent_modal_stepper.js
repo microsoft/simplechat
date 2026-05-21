@@ -5,6 +5,20 @@ import * as agentsCommon from "./agents_common.js";
 import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
 const ACTION_CAPABILITIES_KEY = 'action_capabilities';
+const ASSIGNED_KNOWLEDGE_KEY = 'assigned_knowledge';
+const ASSIGNED_KNOWLEDGE_USER_ACTIONS = Object.freeze(['search', 'analyze', 'compare']);
+const EMPTY_ASSIGNED_KNOWLEDGE = Object.freeze({
+  enabled: false,
+  scopes: {
+    personal: false,
+    group_ids: [],
+    public_workspace_ids: []
+  },
+  document_ids: [],
+  tags: [],
+  allow_user_workspace_context: false,
+  allowed_user_workspace_actions: ASSIGNED_KNOWLEDGE_USER_ACTIONS
+});
 const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
   {
     key: 'create_group',
@@ -165,7 +179,7 @@ const CHART_CAPABILITY_DEFINITIONS = [
 export class AgentModalStepper {
   constructor(isAdmin = false, options = {}) {
     this.currentStep = 1;
-    this.maxSteps = 6;
+    this.maxSteps = 7;
     this.isEditMode = false;
     this.isAdmin = isAdmin; // Track if this is admin context
     this.workspaceScope = options.workspaceScope || (isAdmin ? 'admin' : 'user');
@@ -180,6 +194,9 @@ export class AgentModalStepper {
     this.instructionsEditor = null;
     this.foundryEndpoints = [];
     this.foundryAgents = [];
+    this.assignedKnowledgeCatalog = { sources: [], documents: [], tags: [] };
+    this.assignedKnowledgeCatalogLoaded = false;
+    this.pendingAssignedKnowledge = this.cloneAssignedKnowledge(EMPTY_ASSIGNED_KNOWLEDGE);
     
     this.bindEvents();
 
@@ -239,12 +256,911 @@ export class AgentModalStepper {
     if (foundryAgentSelect) {
       foundryAgentSelect.addEventListener('change', () => this.applyFoundryAgentSelection());
     }
+
+    const assignedKnowledgeToggle = document.getElementById('agent-assigned-knowledge-enabled');
+    const assignedKnowledgeRefresh = document.getElementById('agent-assigned-knowledge-refresh');
+    const assignedKnowledgeUserContextToggle = document.getElementById('agent-assigned-knowledge-user-context-enabled');
+    if (assignedKnowledgeToggle) {
+      assignedKnowledgeToggle.addEventListener('change', () => this.handleAssignedKnowledgeToggle());
+    }
+    if (assignedKnowledgeRefresh) {
+      assignedKnowledgeRefresh.addEventListener('click', () => this.loadAssignedKnowledgeCatalog({ force: true }));
+    }
+    if (assignedKnowledgeUserContextToggle) {
+      assignedKnowledgeUserContextToggle.addEventListener('change', () => this.handleAssignedKnowledgeUserContextToggle());
+    }
+    document.querySelectorAll('.agent-assigned-knowledge-user-action').forEach(actionCheckbox => {
+      actionCheckbox.addEventListener('change', () => this.handleAssignedKnowledgeUserActionChange());
+    });
+
+    [
+      'agent-assigned-knowledge-source-available-search',
+      'agent-assigned-knowledge-source-selected-search',
+      'agent-assigned-knowledge-tag-available-search',
+      'agent-assigned-knowledge-tag-selected-search',
+      'agent-assigned-knowledge-document-available-search',
+      'agent-assigned-knowledge-document-selected-search'
+    ].forEach(inputId => {
+      const input = document.getElementById(inputId);
+      if (input) {
+        input.addEventListener('input', () => this.renderAssignedKnowledgeCatalog());
+      }
+    });
+
+    this.initializeAssignedKnowledgeDropZones();
     
     // Set up display name to generated name conversion
     this.setupNameGeneration();
     
     // Set up model change listener for reasoning effort
     this.setupModelChangeListener();
+  }
+
+  cloneAssignedKnowledge(value) {
+    return JSON.parse(JSON.stringify(value || EMPTY_ASSIGNED_KNOWLEDGE));
+  }
+
+  getAssignedKnowledgeAgentScope() {
+    if (this.isAdmin) {
+      return 'global';
+    }
+    if (this.workspaceScope === 'group') {
+      return 'group';
+    }
+    return 'personal';
+  }
+
+  normalizeAssignedKnowledge(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return this.cloneAssignedKnowledge(EMPTY_ASSIGNED_KNOWLEDGE);
+    }
+
+    const scopes = value.scopes && typeof value.scopes === 'object' && !Array.isArray(value.scopes)
+      ? value.scopes
+      : {};
+    return {
+      enabled: Boolean(value.enabled),
+      scopes: {
+        personal: Boolean(scopes.personal || value.personal),
+        group_ids: this.normalizeStringArray(scopes.group_ids || value.group_ids),
+        public_workspace_ids: this.normalizeStringArray(scopes.public_workspace_ids || value.public_workspace_ids)
+      },
+      document_ids: this.normalizeStringArray(value.document_ids || value.selected_document_ids),
+      tags: this.normalizeStringArray(value.tags),
+      allow_user_workspace_context: Boolean(value.allow_user_workspace_context),
+      allowed_user_workspace_actions: this.normalizeAssignedKnowledgeUserActions(
+        value.allowed_user_workspace_actions ?? value.allowed_user_context_actions
+      )
+    };
+  }
+
+  normalizeAssignedKnowledgeUserActions(value) {
+    if (value === null || value === undefined) {
+      return [...ASSIGNED_KNOWLEDGE_USER_ACTIONS];
+    }
+    const actions = this.normalizeStringArray(value).map(action => {
+      const normalizedAction = action.toLowerCase();
+      return normalizedAction === 'comparison' ? 'compare' : normalizedAction;
+    });
+    return actions.filter(action => ASSIGNED_KNOWLEDGE_USER_ACTIONS.includes(action));
+  }
+
+  normalizeStringArray(value) {
+    if (!value) {
+      return [];
+    }
+    const candidates = Array.isArray(value) ? value : [value];
+    const seen = new Set();
+    const normalized = [];
+    candidates.forEach(item => {
+      const text = String(item || '').trim();
+      if (!text || seen.has(text)) {
+        return;
+      }
+      seen.add(text);
+      normalized.push(text);
+    });
+    return normalized;
+  }
+
+  getAssignedKnowledgeSourceKey(scope, id) {
+    return `${scope}:${id || scope}`;
+  }
+
+  getCatalogSourceKey(source) {
+    const sourceScope = String(source?.scope || '').trim();
+    const sourceId = String(source?.id || sourceScope || '').trim();
+    return this.getAssignedKnowledgeSourceKey(sourceScope, sourceId);
+  }
+
+  getCatalogDocumentSourceKey(documentItem) {
+    return this.getAssignedKnowledgeSourceKey(documentItem?.scope, documentItem?.source_id);
+  }
+
+  getAssignedKnowledgeSelectedSourceKeys(config = this.pendingAssignedKnowledge) {
+    const scopes = config.scopes || {};
+    const keys = new Set();
+    if (scopes.personal) {
+      keys.add(this.getAssignedKnowledgeSourceKey('personal', 'personal'));
+    }
+    (scopes.group_ids || []).forEach(groupId => keys.add(this.getAssignedKnowledgeSourceKey('group', groupId)));
+    (scopes.public_workspace_ids || []).forEach(workspaceId => keys.add(this.getAssignedKnowledgeSourceKey('public', workspaceId)));
+    return keys;
+  }
+
+  getAssignedKnowledgeSourceByKey(sourceKey) {
+    const normalizedKey = String(sourceKey || '').trim();
+    return (this.assignedKnowledgeCatalog.sources || []).find(source => this.getCatalogSourceKey(source) === normalizedKey) || null;
+  }
+
+  getAssignedKnowledgeDocumentById(documentId) {
+    const normalizedId = String(documentId || '').trim();
+    return (this.assignedKnowledgeCatalog.documents || []).find(documentItem => String(documentItem.id || '') === normalizedId) || null;
+  }
+
+  getAssignedKnowledgeSearchText(inputId) {
+    return String(document.getElementById(inputId)?.value || '').trim().toLowerCase();
+  }
+
+  matchesAssignedKnowledgeSearch(values, searchText) {
+    const query = String(searchText || '').trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+    const haystack = values.map(value => String(value || '').toLowerCase()).join(' ');
+    return query.split(/\s+/).every(token => haystack.includes(token));
+  }
+
+  setAssignedKnowledgeControls(config) {
+    this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge(config);
+    const toggle = document.getElementById('agent-assigned-knowledge-enabled');
+    if (toggle) {
+      toggle.checked = Boolean(this.pendingAssignedKnowledge.enabled);
+    }
+    this.syncAssignedKnowledgeUserContextControls();
+    this.toggleAssignedKnowledgeControls(Boolean(this.pendingAssignedKnowledge.enabled));
+    if (this.assignedKnowledgeCatalogLoaded) {
+      this.renderAssignedKnowledgeCatalog();
+    }
+  }
+
+  resetAssignedKnowledgeControls() {
+    this.assignedKnowledgeCatalogLoaded = false;
+    this.assignedKnowledgeCatalog = { sources: [], documents: [], tags: [] };
+    this.pendingAssignedKnowledge = this.cloneAssignedKnowledge(EMPTY_ASSIGNED_KNOWLEDGE);
+    const toggle = document.getElementById('agent-assigned-knowledge-enabled');
+    if (toggle) {
+      toggle.checked = false;
+    }
+    this.syncAssignedKnowledgeUserContextControls();
+    this.toggleAssignedKnowledgeControls(false);
+    [
+      'agent-assigned-knowledge-source-available',
+      'agent-assigned-knowledge-source-selected',
+      'agent-assigned-knowledge-tag-available',
+      'agent-assigned-knowledge-tag-selected',
+      'agent-assigned-knowledge-document-available',
+      'agent-assigned-knowledge-document-selected',
+      'agent-assigned-knowledge-resolved-documents'
+    ].forEach(elementId => {
+      const element = document.getElementById(elementId);
+      if (element) {
+        element.textContent = '';
+      }
+    });
+    [
+      'agent-assigned-knowledge-source-available-search',
+      'agent-assigned-knowledge-source-selected-search',
+      'agent-assigned-knowledge-tag-available-search',
+      'agent-assigned-knowledge-tag-selected-search',
+      'agent-assigned-knowledge-document-available-search',
+      'agent-assigned-knowledge-document-selected-search'
+    ].forEach(inputId => {
+      const input = document.getElementById(inputId);
+      if (input) {
+        input.value = '';
+      }
+    });
+    const documentsSelect = document.getElementById('agent-assigned-knowledge-documents');
+    if (documentsSelect) {
+      documentsSelect.textContent = '';
+    }
+    this.updateAssignedKnowledgeCounts();
+  }
+
+  syncAssignedKnowledgeUserContextControls() {
+    const userContextToggle = document.getElementById('agent-assigned-knowledge-user-context-enabled');
+    const userActionControls = document.getElementById('agent-assigned-knowledge-user-action-controls');
+    const allowUserContext = Boolean(this.pendingAssignedKnowledge?.allow_user_workspace_context);
+    const selectedActions = new Set(this.pendingAssignedKnowledge?.allowed_user_workspace_actions ?? ASSIGNED_KNOWLEDGE_USER_ACTIONS);
+
+    if (userContextToggle) {
+      userContextToggle.checked = allowUserContext;
+    }
+    if (userActionControls) {
+      userActionControls.classList.toggle('d-none', !allowUserContext);
+    }
+    document.querySelectorAll('.agent-assigned-knowledge-user-action').forEach(actionCheckbox => {
+      const action = String(actionCheckbox.value || '').trim().toLowerCase();
+      actionCheckbox.checked = selectedActions.has(action);
+      actionCheckbox.disabled = !allowUserContext;
+    });
+  }
+
+  getAssignedKnowledgeSelectedUserActions() {
+    const selectedActions = Array.from(document.querySelectorAll('.agent-assigned-knowledge-user-action:checked'))
+      .map(actionCheckbox => String(actionCheckbox.value || '').trim().toLowerCase())
+      .filter(action => ASSIGNED_KNOWLEDGE_USER_ACTIONS.includes(action));
+    return selectedActions;
+  }
+
+  handleAssignedKnowledgeUserContextToggle() {
+    const allowUserContext = Boolean(document.getElementById('agent-assigned-knowledge-user-context-enabled')?.checked);
+    this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge({
+      ...this.pendingAssignedKnowledge,
+      allow_user_workspace_context: allowUserContext,
+      allowed_user_workspace_actions: this.getAssignedKnowledgeSelectedUserActions()
+    });
+    this.syncAssignedKnowledgeUserContextControls();
+    this.syncAssignedKnowledgeToAdditionalSettings();
+  }
+
+  handleAssignedKnowledgeUserActionChange() {
+    this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge({
+      ...this.pendingAssignedKnowledge,
+      allowed_user_workspace_actions: this.getAssignedKnowledgeSelectedUserActions()
+    });
+    this.syncAssignedKnowledgeUserContextControls();
+    this.syncAssignedKnowledgeToAdditionalSettings();
+  }
+
+  handleAssignedKnowledgeToggle() {
+    const enabled = Boolean(document.getElementById('agent-assigned-knowledge-enabled')?.checked);
+    this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge({
+      ...this.pendingAssignedKnowledge,
+      enabled
+    });
+    this.toggleAssignedKnowledgeControls(enabled);
+    if (enabled) {
+      this.loadAssignedKnowledgeCatalog();
+    } else {
+      this.renderAssignedKnowledgeCatalog();
+    }
+    this.syncAssignedKnowledgeUserContextControls();
+    this.syncAssignedKnowledgeToAdditionalSettings();
+  }
+
+  toggleAssignedKnowledgeControls(enabled) {
+    const controls = document.getElementById('agent-assigned-knowledge-controls');
+    if (controls) {
+      controls.classList.toggle('d-none', !enabled);
+    }
+  }
+
+  async loadAssignedKnowledgeCatalog({ force = false } = {}) {
+    if (this.assignedKnowledgeCatalogLoaded && !force) {
+      this.renderAssignedKnowledgeCatalog();
+      return;
+    }
+
+    const loading = document.getElementById('agent-assigned-knowledge-loading');
+    if (loading) {
+      loading.classList.remove('d-none');
+    }
+
+    try {
+      const scope = this.getAssignedKnowledgeAgentScope();
+      const response = await fetch(`/api/agents/assigned-knowledge/catalog?agent_scope=${encodeURIComponent(scope)}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Unable to load assigned knowledge sources.');
+      }
+      this.assignedKnowledgeCatalog = {
+        sources: Array.isArray(payload.sources) ? payload.sources : [],
+        documents: Array.isArray(payload.documents) ? payload.documents : [],
+        tags: Array.isArray(payload.tags) ? payload.tags : []
+      };
+      this.assignedKnowledgeCatalogLoaded = true;
+      this.renderAssignedKnowledgeCatalog();
+    } catch (error) {
+      console.error('Failed to load assigned knowledge catalog:', error);
+      this.showError(error.message || 'Unable to load assigned knowledge sources.');
+    } finally {
+      if (loading) {
+        loading.classList.add('d-none');
+      }
+    }
+  }
+
+  renderAssignedKnowledgeCatalog() {
+    this.ensureSourcesForSelectedAssignedDocuments();
+    this.ensureDefaultAssignedKnowledgeSource();
+    this.pruneAssignedKnowledgeSelections();
+    this.renderAssignedKnowledgeSources();
+    this.renderAssignedKnowledgeDocuments();
+    this.renderAssignedKnowledgeTags();
+    this.renderAssignedKnowledgeResolvedDocuments();
+    this.updateAssignedKnowledgeCounts();
+    const empty = document.getElementById('agent-assigned-knowledge-empty');
+    if (empty) {
+      empty.classList.toggle('d-none', (this.assignedKnowledgeCatalog.sources || []).length > 0);
+    }
+  }
+
+  renderAssignedKnowledgeSources() {
+    const selectedKeys = this.getAssignedKnowledgeSelectedSourceKeys(this.pendingAssignedKnowledge);
+    const availableSearch = this.getAssignedKnowledgeSearchText('agent-assigned-knowledge-source-available-search');
+    const selectedSearch = this.getAssignedKnowledgeSearchText('agent-assigned-knowledge-source-selected-search');
+    const sources = this.assignedKnowledgeCatalog.sources || [];
+    const availableSources = sources.filter(source => {
+      const sourceKey = this.getCatalogSourceKey(source);
+      return !selectedKeys.has(sourceKey) && this.matchesAssignedKnowledgeSearch([
+        source.label,
+        source.id,
+        source.scope
+      ], availableSearch);
+    });
+    const selectedSources = sources.filter(source => {
+      const sourceKey = this.getCatalogSourceKey(source);
+      return selectedKeys.has(sourceKey) && this.matchesAssignedKnowledgeSearch([
+        source.label,
+        source.id,
+        source.scope
+      ], selectedSearch);
+    });
+
+    this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-source-available', availableSources, {
+      category: 'source',
+      listRole: 'available',
+      emptyText: 'No available sources',
+      getKey: source => this.getCatalogSourceKey(source),
+      renderContent: source => this.createAssignedKnowledgeSourceContent(source)
+    });
+    this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-source-selected', selectedSources, {
+      category: 'source',
+      listRole: 'selected',
+      emptyText: 'No selected sources',
+      getKey: source => this.getCatalogSourceKey(source),
+      renderContent: source => this.createAssignedKnowledgeSourceContent(source)
+    });
+  }
+
+  createAssignedKnowledgeSourceContent(source) {
+    const content = document.createElement('div');
+    content.className = 'agent-assigned-knowledge-item-content flex-grow-1';
+
+    const title = document.createElement('div');
+    title.className = 'agent-assigned-knowledge-item-title fw-medium';
+    title.textContent = source.label || source.id || source.scope || 'Knowledge source';
+
+    const meta = document.createElement('div');
+    meta.className = 'agent-assigned-knowledge-item-meta';
+    meta.textContent = source.scope || 'source';
+
+    content.appendChild(title);
+    content.appendChild(meta);
+    return content;
+  }
+
+  ensureDefaultAssignedKnowledgeSource() {
+    const toggle = document.getElementById('agent-assigned-knowledge-enabled');
+    const selectedKeys = this.getAssignedKnowledgeSelectedSourceKeys(this.pendingAssignedKnowledge);
+    const sources = this.assignedKnowledgeCatalog.sources || [];
+    if (!toggle?.checked || selectedKeys.size || this.workspaceScope !== 'group' || sources.length !== 1) {
+      return;
+    }
+    this.updateAssignedKnowledgeSourceSelection(this.getCatalogSourceKey(sources[0]), true, { skipRender: true });
+  }
+
+  renderAssignedKnowledgeDocuments() {
+    const selectedIds = new Set(this.pendingAssignedKnowledge.document_ids || []);
+    const selectedSourceKeys = this.getCheckedAssignedKnowledgeSourceKeys();
+    const availableSearch = this.getAssignedKnowledgeSearchText('agent-assigned-knowledge-document-available-search');
+    const selectedSearch = this.getAssignedKnowledgeSearchText('agent-assigned-knowledge-document-selected-search');
+    const documents = this.assignedKnowledgeCatalog.documents || [];
+    const selectableDocuments = documents.filter(documentItem => {
+      const sourceKey = this.getCatalogDocumentSourceKey(documentItem);
+      return !selectedSourceKeys.size || selectedSourceKeys.has(sourceKey) || selectedIds.has(documentItem.id);
+    });
+    const availableDocuments = selectableDocuments.filter(documentItem => {
+      return !selectedIds.has(documentItem.id) && this.matchesAssignedKnowledgeSearch([
+        documentItem.title,
+        documentItem.file_name,
+        documentItem.source_name,
+        documentItem.scope,
+        ...(documentItem.tags || [])
+      ], availableSearch);
+    });
+    const selectedDocuments = documents.filter(documentItem => {
+      return selectedIds.has(documentItem.id) && this.matchesAssignedKnowledgeSearch([
+        documentItem.title,
+        documentItem.file_name,
+        documentItem.source_name,
+        documentItem.scope,
+        ...(documentItem.tags || [])
+      ], selectedSearch);
+    });
+
+    this.renderAssignedKnowledgeDocumentsSelect(selectableDocuments);
+    this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-document-available', availableDocuments, {
+      category: 'document',
+      listRole: 'available',
+      emptyText: 'No available documents',
+      getKey: documentItem => documentItem.id || '',
+      renderContent: documentItem => this.createAssignedKnowledgeDocumentContent(documentItem)
+    });
+    this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-document-selected', selectedDocuments, {
+      category: 'document',
+      listRole: 'selected',
+      emptyText: 'No selected documents',
+      getKey: documentItem => documentItem.id || '',
+      renderContent: documentItem => this.createAssignedKnowledgeDocumentContent(documentItem)
+    });
+  }
+
+  renderAssignedKnowledgeDocumentsSelect(documents) {
+    const select = document.getElementById('agent-assigned-knowledge-documents');
+    if (!select) {
+      return;
+    }
+    const selectedIds = new Set(this.pendingAssignedKnowledge.document_ids || []);
+    select.textContent = '';
+
+    (documents || []).forEach(documentItem => {
+      const option = document.createElement('option');
+      option.value = documentItem.id || '';
+      option.dataset.scope = documentItem.scope || '';
+      option.dataset.sourceId = documentItem.source_id || '';
+      option.dataset.sourceKey = this.getCatalogDocumentSourceKey(documentItem);
+      option.textContent = `${documentItem.title || documentItem.file_name || 'Untitled document'} (${documentItem.source_name || documentItem.scope || 'source'})`;
+      option.selected = selectedIds.has(option.value);
+      select.appendChild(option);
+    });
+  }
+
+  createAssignedKnowledgeDocumentContent(documentItem) {
+    const content = document.createElement('div');
+    content.className = 'agent-assigned-knowledge-item-content flex-grow-1';
+
+    const title = document.createElement('div');
+    title.className = 'agent-assigned-knowledge-item-title fw-medium';
+    title.textContent = documentItem.title || documentItem.file_name || 'Untitled document';
+
+    const meta = document.createElement('div');
+    meta.className = 'agent-assigned-knowledge-item-meta';
+    meta.textContent = documentItem.source_name || documentItem.scope || 'source';
+
+    content.appendChild(title);
+    content.appendChild(meta);
+    this.appendAssignedKnowledgeTagBadges(content, documentItem.tags || []);
+    return content;
+  }
+
+  appendAssignedKnowledgeTagBadges(container, tags, badgeClass = 'text-bg-light') {
+    const visibleTags = (tags || []).slice(0, 3);
+    if (!visibleTags.length) {
+      return;
+    }
+    const badgeRow = document.createElement('div');
+    badgeRow.className = 'd-flex flex-wrap gap-1 mt-1';
+    visibleTags.forEach(tag => {
+      const badge = document.createElement('span');
+      badge.className = `badge ${badgeClass}`;
+      badge.textContent = tag;
+      badgeRow.appendChild(badge);
+    });
+    if ((tags || []).length > visibleTags.length) {
+      const more = document.createElement('span');
+      more.className = `badge ${badgeClass}`;
+      more.textContent = `+${tags.length - visibleTags.length}`;
+      badgeRow.appendChild(more);
+    }
+    container.appendChild(badgeRow);
+  }
+
+  renderAssignedKnowledgeTags() {
+    const selectedTags = new Set(this.pendingAssignedKnowledge.tags || []);
+    const selectedSourceKeys = this.getAssignedKnowledgeSelectedSourceKeys(this.pendingAssignedKnowledge);
+    const availableSearch = this.getAssignedKnowledgeSearchText('agent-assigned-knowledge-tag-available-search');
+    const selectedSearch = this.getAssignedKnowledgeSearchText('agent-assigned-knowledge-tag-selected-search');
+    const tagMap = new Map();
+    (this.assignedKnowledgeCatalog.documents || []).forEach(documentItem => {
+      const sourceKey = this.getCatalogDocumentSourceKey(documentItem);
+      if (selectedSourceKeys.size && !selectedSourceKeys.has(sourceKey)) {
+        return;
+      }
+      (documentItem.tags || []).forEach(tag => {
+        const tagName = String(tag || '').trim();
+        if (!tagName) {
+          return;
+        }
+        const existing = tagMap.get(tagName) || { name: tagName, count: 0 };
+        existing.count += 1;
+        tagMap.set(tagName, existing);
+      });
+    });
+    selectedTags.forEach(tagName => {
+      if (tagName && !tagMap.has(tagName)) {
+        tagMap.set(tagName, { name: tagName, count: 0 });
+      }
+    });
+    const tags = Array.from(tagMap.values()).sort((left, right) => left.name.localeCompare(right.name));
+    const availableTags = tags.filter(tag => !selectedTags.has(tag.name) && this.matchesAssignedKnowledgeSearch([tag.name], availableSearch));
+    const selectedTagItems = tags.filter(tag => selectedTags.has(tag.name) && this.matchesAssignedKnowledgeSearch([tag.name], selectedSearch));
+
+    this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-tag-available', availableTags, {
+      category: 'tag',
+      listRole: 'available',
+      emptyText: 'No available tags',
+      getKey: tag => tag.name,
+      renderContent: tag => this.createAssignedKnowledgeTagContent(tag)
+    });
+    this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-tag-selected', selectedTagItems, {
+      category: 'tag',
+      listRole: 'selected',
+      emptyText: 'No selected tags',
+      getKey: tag => tag.name,
+      renderContent: tag => this.createAssignedKnowledgeTagContent(tag)
+    });
+  }
+
+  createAssignedKnowledgeTagContent(tag) {
+    const content = document.createElement('div');
+    content.className = 'agent-assigned-knowledge-item-content flex-grow-1';
+
+    const title = document.createElement('div');
+    title.className = 'agent-assigned-knowledge-item-title fw-medium';
+    title.textContent = tag.name || 'Tag';
+
+    const meta = document.createElement('div');
+    meta.className = 'agent-assigned-knowledge-item-meta';
+    meta.textContent = tag.count ? `${tag.count} document${tag.count === 1 ? '' : 's'}` : 'tag';
+
+    content.appendChild(title);
+    content.appendChild(meta);
+    return content;
+  }
+
+  getCheckedAssignedKnowledgeSourceKeys() {
+    return this.getAssignedKnowledgeSelectedSourceKeys(this.pendingAssignedKnowledge);
+  }
+
+  ensureSourcesForSelectedAssignedDocuments() {
+    (this.pendingAssignedKnowledge.document_ids || []).forEach(documentId => {
+      const documentItem = this.getAssignedKnowledgeDocumentById(documentId);
+      if (documentItem) {
+        this.updateAssignedKnowledgeSourceSelection(this.getCatalogDocumentSourceKey(documentItem), true, { skipRender: true });
+      }
+    });
+  }
+
+  pruneAssignedKnowledgeSelections() {
+    const sourceKeys = new Set((this.assignedKnowledgeCatalog.sources || []).map(source => this.getCatalogSourceKey(source)));
+    const selectedSourceKeys = this.getAssignedKnowledgeSelectedSourceKeys(this.pendingAssignedKnowledge);
+    const validSelectedSourceKeys = new Set(Array.from(selectedSourceKeys).filter(sourceKey => sourceKeys.has(sourceKey)));
+    this.pendingAssignedKnowledge.scopes = this.buildAssignedKnowledgeScopesFromSourceKeys(validSelectedSourceKeys);
+
+    const availableDocumentIds = new Set((this.assignedKnowledgeCatalog.documents || []).map(documentItem => String(documentItem.id || '')));
+    this.pendingAssignedKnowledge.document_ids = (this.pendingAssignedKnowledge.document_ids || []).filter(documentId => {
+      if (!availableDocumentIds.has(documentId)) {
+        return false;
+      }
+      const documentItem = this.getAssignedKnowledgeDocumentById(documentId);
+      return !documentItem || validSelectedSourceKeys.has(this.getCatalogDocumentSourceKey(documentItem));
+    });
+    this.pendingAssignedKnowledge.tags = this.normalizeStringArray(this.pendingAssignedKnowledge.tags);
+  }
+
+  buildAssignedKnowledgeScopesFromSourceKeys(sourceKeys) {
+    const scopes = {
+      personal: false,
+      group_ids: [],
+      public_workspace_ids: []
+    };
+    Array.from(sourceKeys || []).forEach(sourceKey => {
+      const source = this.getAssignedKnowledgeSourceByKey(sourceKey);
+      if (!source) {
+        return;
+      }
+      const sourceScope = String(source.scope || '').trim();
+      const sourceId = String(source.id || sourceScope || '').trim();
+      if (sourceScope === 'personal') {
+        scopes.personal = true;
+      } else if (sourceScope === 'group' && sourceId) {
+        scopes.group_ids.push(sourceId);
+      } else if (sourceScope === 'public' && sourceId) {
+        scopes.public_workspace_ids.push(sourceId);
+      }
+    });
+    scopes.group_ids = this.normalizeStringArray(scopes.group_ids);
+    scopes.public_workspace_ids = this.normalizeStringArray(scopes.public_workspace_ids);
+    return scopes;
+  }
+
+  updateAssignedKnowledgeSourceSelection(sourceKey, selected, { skipRender = false } = {}) {
+    const selectedKeys = this.getAssignedKnowledgeSelectedSourceKeys(this.pendingAssignedKnowledge);
+    if (selected) {
+      selectedKeys.add(sourceKey);
+    } else {
+      selectedKeys.delete(sourceKey);
+    }
+    this.pendingAssignedKnowledge.scopes = this.buildAssignedKnowledgeScopesFromSourceKeys(selectedKeys);
+
+    if (!selected) {
+      this.pendingAssignedKnowledge.document_ids = (this.pendingAssignedKnowledge.document_ids || []).filter(documentId => {
+        const documentItem = this.getAssignedKnowledgeDocumentById(documentId);
+        return !documentItem || this.getCatalogDocumentSourceKey(documentItem) !== sourceKey;
+      });
+    }
+
+    if (!skipRender) {
+      this.renderAssignedKnowledgeCatalog();
+      this.syncAssignedKnowledgeToAdditionalSettings();
+    }
+  }
+
+  updateAssignedKnowledgeTagSelection(tagName, selected, { skipRender = false } = {}) {
+    const tags = new Set(this.pendingAssignedKnowledge.tags || []);
+    const normalizedTag = String(tagName || '').trim();
+    if (!normalizedTag) {
+      return;
+    }
+    if (selected) {
+      tags.add(normalizedTag);
+    } else {
+      tags.delete(normalizedTag);
+    }
+    this.pendingAssignedKnowledge.tags = this.normalizeStringArray(Array.from(tags));
+
+    if (!skipRender) {
+      this.renderAssignedKnowledgeCatalog();
+      this.syncAssignedKnowledgeToAdditionalSettings();
+    }
+  }
+
+  updateAssignedKnowledgeDocumentSelection(documentId, selected, { skipRender = false } = {}) {
+    const documentIds = new Set(this.pendingAssignedKnowledge.document_ids || []);
+    const normalizedId = String(documentId || '').trim();
+    if (!normalizedId) {
+      return;
+    }
+    if (selected) {
+      documentIds.add(normalizedId);
+      const documentItem = this.getAssignedKnowledgeDocumentById(normalizedId);
+      if (documentItem) {
+        this.updateAssignedKnowledgeSourceSelection(this.getCatalogDocumentSourceKey(documentItem), true, { skipRender: true });
+      }
+    } else {
+      documentIds.delete(normalizedId);
+    }
+    this.pendingAssignedKnowledge.document_ids = this.normalizeStringArray(Array.from(documentIds));
+
+    if (!skipRender) {
+      this.renderAssignedKnowledgeCatalog();
+      this.syncAssignedKnowledgeToAdditionalSettings();
+    }
+  }
+
+  moveAssignedKnowledgeItem(category, key, selected) {
+    if (category === 'source') {
+      this.updateAssignedKnowledgeSourceSelection(key, selected);
+    } else if (category === 'tag') {
+      this.updateAssignedKnowledgeTagSelection(key, selected);
+    } else if (category === 'document') {
+      this.updateAssignedKnowledgeDocumentSelection(key, selected);
+    }
+  }
+
+  initializeAssignedKnowledgeDropZones() {
+    document.querySelectorAll('.agent-assigned-knowledge-transfer-list').forEach(dropZone => {
+      dropZone.addEventListener('dragover', event => {
+        event.preventDefault();
+        dropZone.classList.add('drag-over');
+      });
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+      });
+      dropZone.addEventListener('drop', event => {
+        event.preventDefault();
+        dropZone.classList.remove('drag-over');
+        const category = event.dataTransfer?.getData('text/assigned-knowledge-category');
+        const key = event.dataTransfer?.getData('text/assigned-knowledge-key');
+        if (!category || !key || category !== dropZone.dataset.category) {
+          return;
+        }
+        this.moveAssignedKnowledgeItem(category, key, dropZone.dataset.listRole === 'selected');
+      });
+    });
+  }
+
+  renderAssignedKnowledgeTransferItems(containerId, items, options) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+      return;
+    }
+    container.textContent = '';
+
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'agent-assigned-knowledge-empty-list';
+      empty.textContent = options.emptyText || 'No items';
+      container.appendChild(empty);
+      return;
+    }
+
+    items.forEach(item => {
+      const key = String(options.getKey(item) || '').trim();
+      if (!key) {
+        return;
+      }
+      const row = document.createElement('div');
+      row.className = 'agent-assigned-knowledge-transfer-item';
+      row.draggable = true;
+      row.dataset.category = options.category;
+      row.dataset.assignedKnowledgeKey = key;
+      row.dataset.listRole = options.listRole;
+      row.addEventListener('dragstart', event => {
+        row.classList.add('dragging');
+        event.dataTransfer?.setData('text/assigned-knowledge-category', options.category);
+        event.dataTransfer?.setData('text/assigned-knowledge-key', key);
+      });
+      row.addEventListener('dragend', () => row.classList.remove('dragging'));
+      row.addEventListener('dblclick', () => {
+        this.moveAssignedKnowledgeItem(options.category, key, options.listRole === 'available');
+      });
+
+      row.appendChild(options.renderContent(item));
+      const button = this.createAssignedKnowledgeMoveButton(options.category, key, options.listRole === 'available');
+      row.appendChild(button);
+      container.appendChild(row);
+    });
+  }
+
+  createAssignedKnowledgeMoveButton(category, key, addToSelected) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `btn btn-sm ${addToSelected ? 'btn-outline-primary' : 'btn-outline-secondary'} flex-shrink-0`;
+    button.title = addToSelected ? 'Add' : 'Remove';
+    button.setAttribute('aria-label', addToSelected ? 'Add item' : 'Remove item');
+    const icon = document.createElement('i');
+    icon.className = addToSelected ? 'bi bi-arrow-right' : 'bi bi-arrow-left';
+    button.appendChild(icon);
+    button.addEventListener('click', () => this.moveAssignedKnowledgeItem(category, key, addToSelected));
+    return button;
+  }
+
+  getResolvedAssignedKnowledgeDocuments(config = this.pendingAssignedKnowledge) {
+    const selectedSourceKeys = this.getAssignedKnowledgeSelectedSourceKeys(config);
+    if (!selectedSourceKeys.size) {
+      return [];
+    }
+    const explicitDocumentIds = new Set(config.document_ids || []);
+    const selectedTags = new Set(config.tags || []);
+    const includeAllSourceDocuments = !explicitDocumentIds.size && !selectedTags.size;
+    const resolved = [];
+
+    (this.assignedKnowledgeCatalog.documents || []).forEach(documentItem => {
+      const sourceKey = this.getCatalogDocumentSourceKey(documentItem);
+      if (!selectedSourceKeys.has(sourceKey)) {
+        return;
+      }
+
+      const matchingTags = (documentItem.tags || []).filter(tag => selectedTags.has(tag));
+      const reasons = [];
+      if (includeAllSourceDocuments) {
+        reasons.push('source');
+      }
+      if (explicitDocumentIds.has(documentItem.id)) {
+        reasons.push('explicit');
+      }
+      if (matchingTags.length) {
+        reasons.push(...matchingTags.map(tag => `tag:${tag}`));
+      }
+      if (!reasons.length) {
+        return;
+      }
+      resolved.push({ documentItem, reasons });
+    });
+
+    return resolved;
+  }
+
+  renderAssignedKnowledgeResolvedDocuments() {
+    const container = document.getElementById('agent-assigned-knowledge-resolved-documents');
+    if (!container) {
+      return;
+    }
+    container.textContent = '';
+    const resolved = this.getResolvedAssignedKnowledgeDocuments(this.pendingAssignedKnowledge);
+    const selectedSourceKeys = this.getAssignedKnowledgeSelectedSourceKeys(this.pendingAssignedKnowledge);
+
+    if (!resolved.length) {
+      const empty = document.createElement('div');
+      empty.className = 'agent-assigned-knowledge-empty-list';
+      empty.textContent = selectedSourceKeys.size ? 'No current document matches' : 'No sources selected';
+      container.appendChild(empty);
+      return;
+    }
+
+    resolved.forEach(({ documentItem, reasons }) => {
+      const row = document.createElement('div');
+      row.className = 'agent-assigned-knowledge-resolved-item';
+      const content = this.createAssignedKnowledgeDocumentContent(documentItem);
+      const reasonBadges = document.createElement('div');
+      reasonBadges.className = 'd-flex flex-wrap gap-1 flex-shrink-0 justify-content-end';
+      reasons.forEach(reason => {
+        const badge = document.createElement('span');
+        badge.className = reason === 'explicit' ? 'badge text-bg-primary' : 'badge text-bg-info';
+        badge.textContent = reason.startsWith('tag:') ? reason.slice(4) : reason;
+        reasonBadges.appendChild(badge);
+      });
+      row.appendChild(content);
+      row.appendChild(reasonBadges);
+      container.appendChild(row);
+    });
+  }
+
+  updateAssignedKnowledgeCounts() {
+    const config = this.pendingAssignedKnowledge || EMPTY_ASSIGNED_KNOWLEDGE;
+    const sourceCount = this.getAssignedKnowledgeSelectedSourceKeys(config).size;
+    const tagCount = (config.tags || []).length;
+    const documentCount = (config.document_ids || []).length;
+    const resolvedCount = this.getResolvedAssignedKnowledgeDocuments(config).length;
+    const counts = [
+      ['agent-assigned-knowledge-source-count', `${sourceCount} selected`],
+      ['agent-assigned-knowledge-tag-count', `${tagCount} selected`],
+      ['agent-assigned-knowledge-document-count', `${documentCount} selected`],
+      ['agent-assigned-knowledge-resolved-count', `${resolvedCount} current match${resolvedCount === 1 ? '' : 'es'}`]
+    ];
+    counts.forEach(([elementId, text]) => {
+      const element = document.getElementById(elementId);
+      if (element) {
+        element.textContent = text;
+      }
+    });
+  }
+
+  getAssignedKnowledgeConfig() {
+    const enabled = Boolean(document.getElementById('agent-assigned-knowledge-enabled')?.checked);
+    if (!enabled) {
+      return this.cloneAssignedKnowledge(EMPTY_ASSIGNED_KNOWLEDGE);
+    }
+
+    if (!this.assignedKnowledgeCatalogLoaded && this.pendingAssignedKnowledge?.enabled) {
+      return this.normalizeAssignedKnowledge(this.pendingAssignedKnowledge);
+    }
+
+    return this.normalizeAssignedKnowledge({
+      enabled: true,
+      scopes: this.pendingAssignedKnowledge.scopes,
+      document_ids: this.pendingAssignedKnowledge.document_ids,
+      tags: this.pendingAssignedKnowledge.tags,
+      allow_user_workspace_context: Boolean(document.getElementById('agent-assigned-knowledge-user-context-enabled')?.checked),
+      allowed_user_workspace_actions: this.getAssignedKnowledgeSelectedUserActions()
+    });
+  }
+
+  syncAssignedKnowledgeToAdditionalSettings() {
+    const otherSettings = this.getParsedAdditionalSettings();
+    const assignedKnowledge = this.getAssignedKnowledgeConfig();
+    otherSettings[ASSIGNED_KNOWLEDGE_KEY] = assignedKnowledge;
+    this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge(assignedKnowledge);
+    this.setParsedAdditionalSettings(otherSettings);
+  }
+
+  validateAssignedKnowledgeStep() {
+    const assignedKnowledge = this.getAssignedKnowledgeConfig();
+    if (!assignedKnowledge.enabled) {
+      return true;
+    }
+    const scopes = assignedKnowledge.scopes || {};
+    const hasSource = Boolean(scopes.personal || scopes.group_ids?.length || scopes.public_workspace_ids?.length);
+    if (!hasSource) {
+      this.showError('Choose at least one source for Assigned Knowledge.');
+      return false;
+    }
+    this.syncAssignedKnowledgeToAdditionalSettings();
+    return true;
   }
 
   initializeInstructionsEditor() {
@@ -756,6 +1672,7 @@ export class AgentModalStepper {
     if (foundryNotesInput) foundryNotesInput.value = '';
     if (foundryStatus) foundryStatus.textContent = '';
     if (additionalSettings) additionalSettings.value = '{}';
+    this.resetAssignedKnowledgeControls();
     
     // Clear any selected actions
     this.clearSelectedActions();
@@ -1024,6 +1941,7 @@ export class AgentModalStepper {
       agentsCommon.setAgentModalFields(agent);
     }
     this.setInstructionsValue(agent.instructions || '');
+    this.setAssignedKnowledgeControls(agent.other_settings?.[ASSIGNED_KNOWLEDGE_KEY]);
 
     // any agent advanced settings
     if (this.currentAgent 
@@ -1204,8 +2122,14 @@ export class AgentModalStepper {
       }
     }
     
-    // Populate summary when reaching step 6
-    if (stepNumber === 6) {
+    if (stepNumber === 5) {
+      if (document.getElementById('agent-assigned-knowledge-enabled')?.checked) {
+        this.loadAssignedKnowledgeCatalog();
+      }
+    }
+
+    // Populate summary when reaching step 7
+    if (stepNumber === 7) {
       this.populateSummary();
     }
   }
@@ -1404,11 +2328,17 @@ export class AgentModalStepper {
         }
         break;
         
-      case 5: // Advanced
+      case 5: // Assigned Knowledge
+        if (!this.validateAssignedKnowledgeStep()) {
+          return false;
+        }
+        break;
+
+      case 6: // Advanced
         // Advanced settings validation would go here if needed
         break;
         
-      case 6: // Summary
+      case 7: // Summary
         // Final validation would go here
         break;
     }
@@ -1637,6 +2567,8 @@ export class AgentModalStepper {
       const actionsSection = document.getElementById('summary-actions-section');
       if (actionsSection) actionsSection.style.display = '';
     }
+
+    this.populateAssignedKnowledgeSummary();
     
     // Update creation date
     const createdDate = document.getElementById('summary-created-date');
@@ -1647,6 +2579,63 @@ export class AgentModalStepper {
     
     // Populate changes summary
     this.populateChangesSummary();
+  }
+
+  populateAssignedKnowledgeSummary() {
+    const container = document.getElementById('summary-assigned-knowledge');
+    if (!container) {
+      return;
+    }
+    container.textContent = '';
+    const assignedKnowledge = this.getAssignedKnowledgeConfig();
+    if (!assignedKnowledge.enabled) {
+      container.className = 'text-muted';
+      container.textContent = 'No assigned knowledge configured';
+      return;
+    }
+
+    container.className = 'd-flex flex-wrap gap-2';
+    const scopes = assignedKnowledge.scopes || {};
+    const summaryItems = [];
+    if (scopes.personal) {
+      summaryItems.push('Personal workspace');
+    }
+    if (scopes.group_ids?.length) {
+      summaryItems.push(`${scopes.group_ids.length} group source${scopes.group_ids.length === 1 ? '' : 's'}`);
+    }
+    if (scopes.public_workspace_ids?.length) {
+      summaryItems.push(`${scopes.public_workspace_ids.length} public workspace${scopes.public_workspace_ids.length === 1 ? '' : 's'}`);
+    }
+    if (assignedKnowledge.document_ids?.length) {
+      summaryItems.push(`${assignedKnowledge.document_ids.length} explicit document${assignedKnowledge.document_ids.length === 1 ? '' : 's'}`);
+    }
+    if (assignedKnowledge.tags?.length) {
+      summaryItems.push(`${assignedKnowledge.tags.length} dynamic tag${assignedKnowledge.tags.length === 1 ? '' : 's'}`);
+    }
+    if (this.assignedKnowledgeCatalogLoaded) {
+      const resolvedCount = this.getResolvedAssignedKnowledgeDocuments(assignedKnowledge).length;
+      summaryItems.push(`${resolvedCount} current document match${resolvedCount === 1 ? '' : 'es'}`);
+    }
+    if (assignedKnowledge.allow_user_workspace_context) {
+      const actionLabels = (assignedKnowledge.allowed_user_workspace_actions || ASSIGNED_KNOWLEDGE_USER_ACTIONS)
+        .map(action => action === 'compare' ? 'Compare' : action.charAt(0).toUpperCase() + action.slice(1));
+      summaryItems.push(`User context: ${actionLabels.join(', ')}`);
+    }
+
+    if (!summaryItems.length) {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-warning text-dark';
+      badge.textContent = 'Enabled, no sources selected';
+      container.appendChild(badge);
+      return;
+    }
+
+    summaryItems.forEach(item => {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-primary';
+      badge.textContent = item;
+      container.appendChild(badge);
+    });
   }
 
   createActionCard(action) {
@@ -2354,6 +3343,8 @@ export class AgentModalStepper {
       // Selected actions
       const currentActions = this.getSelectedActionIds();
       const originalActions = this.originalAgent.actions_to_load || [];
+      const currentAssignedKnowledge = this.normalizeAssignedKnowledge(this.getAssignedKnowledgeConfig());
+      const originalAssignedKnowledge = this.normalizeAssignedKnowledge(this.originalAgent.other_settings?.[ASSIGNED_KNOWLEDGE_KEY]);
       
       // Compare fields
       if (currentDisplayName !== (this.originalAgent.display_name || '')) {
@@ -2404,6 +3395,13 @@ export class AgentModalStepper {
         changes.actions = {
           before: originalActions.join(', ') || '(none)',
           after: currentActions.join(', ') || '(none)'
+        };
+      }
+
+      if (JSON.stringify(currentAssignedKnowledge) !== JSON.stringify(originalAssignedKnowledge)) {
+        changes.assignedKnowledge = {
+          before: originalAssignedKnowledge.enabled ? 'Enabled' : 'Disabled',
+          after: currentAssignedKnowledge.enabled ? 'Enabled' : 'Disabled'
         };
       }
       
@@ -2466,7 +3464,8 @@ export class AgentModalStepper {
       instructions: 'Instructions',
       model: 'Model',
       customConnection: 'Custom Connection',
-      actions: 'Selected Actions'
+      actions: 'Selected Actions',
+      assignedKnowledge: 'Assigned Knowledge'
     };
     return labels[field] || field;
   }
@@ -2531,6 +3530,7 @@ export class AgentModalStepper {
       else {
         agentData.other_settings = JSON.parse(agentData.other_settings) || {};
       }
+      agentData.other_settings[ASSIGNED_KNOWLEDGE_KEY] = this.getAssignedKnowledgeConfig();
       
       // Clean up empty reasoning_effort (inherit from model default)
       if (!agentData.reasoning_effort || agentData.reasoning_effort === '') {

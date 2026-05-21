@@ -6,7 +6,13 @@ import {
     setUserSetting
 } from '../agents_common.js';
 import { createFloatingSearchableSelectDropdownConfig, createSearchableSingleSelect } from './chat-searchable-select.js';
-import { getEffectiveScopes, isScopeLocked, setEffectiveScopes } from './chat-documents.js';
+import {
+    applyAssignedKnowledgeLock,
+    clearAssignedKnowledgeLock,
+    getEffectiveScopes,
+    isScopeLocked,
+    setEffectiveScopes
+} from './chat-documents.js';
 import { getConversationFilteringContext } from './chat-conversation-scope.js';
 
 const enableAgentsBtn = document.getElementById("enable-agents-btn");
@@ -264,6 +270,7 @@ function rebuildAgentOptions(sections, selectedAgentObj, filteringContext) {
             option.dataset.isGroup = agent.is_group ? 'true' : 'false';
             option.dataset.groupId = agent.group_id || '';
             option.dataset.groupName = agent.group_name || '';
+            option.dataset.assignedKnowledge = JSON.stringify(agent.assigned_knowledge || { enabled: false });
             option.disabled = agent.disabled;
             option.selected = !agent.disabled && optionKey === selectedKey;
 
@@ -354,6 +361,44 @@ function getPreloadedAgentOptions() {
     return Array.isArray(window.chatAgentOptions) ? window.chatAgentOptions : [];
 }
 
+function parseAssignedKnowledge(rawValue) {
+    if (!rawValue) {
+        return { enabled: false };
+    }
+    try {
+        const parsed = JSON.parse(rawValue);
+        return parsed && typeof parsed === 'object' ? parsed : { enabled: false };
+    } catch (error) {
+        console.warn('Unable to parse assigned knowledge metadata for agent option:', error);
+        return { enabled: false };
+    }
+}
+
+function buildAgentPayloadFromOption(selectedOption) {
+    if (!selectedOption) {
+        return null;
+    }
+    return {
+        name: selectedOption.dataset.name || '',
+        display_name: selectedOption.dataset.displayName || selectedOption.textContent || '',
+        id: selectedOption.dataset.agentId || null,
+        is_global: selectedOption.dataset.isGlobal === 'true',
+        is_group: selectedOption.dataset.isGroup === 'true',
+        group_id: selectedOption.dataset.groupId || null,
+        group_name: selectedOption.dataset.groupName || (window.activeGroupName || null),
+        assigned_knowledge: parseAssignedKnowledge(selectedOption.dataset.assignedKnowledge || '')
+    };
+}
+
+async function syncAssignedKnowledgeForPayload(payload) {
+    if (payload?.assigned_knowledge?.enabled) {
+        await applyAssignedKnowledgeLock(payload);
+        return true;
+    }
+    clearAssignedKnowledgeLock();
+    return false;
+}
+
 async function maybeNarrowScopeForSelectedAgent(payload) {
     const filteringContext = getConversationFilteringContext();
     if (!filteringContext.isNewConversation) {
@@ -411,7 +456,10 @@ function initializeScopeChangeListener() {
         return;
     }
 
-    window.addEventListener('chat:scope-changed', async () => {
+    window.addEventListener('chat:scope-changed', async (event) => {
+        if (event?.detail?.source === 'assigned-knowledge') {
+            return;
+        }
         if (!areAgentsEnabled()) {
             return;
         }
@@ -452,6 +500,7 @@ export async function initializeAgentInteractions() {
         enableAgentsBtn.classList.remove('active');
         agentSelectContainer.style.display = "none";
         if (modelSelectContainer) modelSelectContainer.style.display = "block";
+        clearAssignedKnowledgeLock();
     }
 
     // Button click handler
@@ -467,6 +516,7 @@ export async function initializeAgentInteractions() {
         } else {
             agentSelectContainer.style.display = "none";
             if (modelSelectContainer) modelSelectContainer.style.display = "block";
+            clearAssignedKnowledgeLock();
         }
     });
 }
@@ -489,27 +539,21 @@ export async function populateAgentDropdown() {
         rebuildAgentOptions(sections, selectedAgent, filteringContext);
         updateScopeClearAction(scopes, filteringContext);
         agentSelectorController?.refresh();
+        await syncAssignedKnowledgeForPayload(buildAgentPayloadFromOption(agentSelect.options[agentSelect.selectedIndex]));
         agentSelect.onchange = async function () {
             const selectedOption = agentSelect.options[agentSelect.selectedIndex];
             if (!selectedOption) {
                 return;
             }
-            const payload = {
-                name: selectedOption.dataset.name || '',
-                display_name: selectedOption.dataset.displayName || selectedOption.textContent || '',
-                id: selectedOption.dataset.agentId || null,
-                is_global: selectedOption.dataset.isGlobal === 'true',
-                is_group: selectedOption.dataset.isGroup === 'true',
-                group_id: selectedOption.dataset.groupId || null,
-                group_name: selectedOption.dataset.groupName || (window.activeGroupName || null)
-            };
+            const payload = buildAgentPayloadFromOption(selectedOption);
             console.log('DEBUG: Agent dropdown changed with payload:', payload);
             if (!payload.name) {
                 console.warn('Selected agent is missing a name, skipping settings update.');
                 return;
             }
             await setSelectedAgent(payload);
-            pendingScopeNarrowingAgent = payload;
+            const assignedKnowledgeApplied = await syncAssignedKnowledgeForPayload(payload);
+            pendingScopeNarrowingAgent = assignedKnowledgeApplied ? null : payload;
             console.log('DEBUG: Agent selection saved successfully');
         };
     } catch (e) {

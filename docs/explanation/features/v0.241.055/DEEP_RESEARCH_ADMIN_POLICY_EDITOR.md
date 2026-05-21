@@ -2,6 +2,8 @@
 
 Fixed/Implemented in version: **0.241.055**
 
+Superseded in version: **0.241.066** for user policy management. Deep Research now uses allowed users only; blocked-user lists are no longer exposed or enforced. See `docs/explanation/features/v0.241.066/DEEP_RESEARCH_ALLOWED_USERS_MODAL.md`.
+
 Related version update: `application/single_app/config.py` was incremented to `0.241.055` for this enhancement.
 
 ## Overview

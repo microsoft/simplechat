@@ -5,9 +5,11 @@ Source Review support for bounded, policy-controlled web evidence gathering.
 
 import asyncio
 import html
+import importlib.util
 import ipaddress
 import json
 import logging
+import os
 import re
 import socket
 import time
@@ -25,23 +27,28 @@ from functions_debug import debug_print
 
 
 SOURCE_REVIEW_USER_AGENT = "SimpleChat-SourceReview/1.0"
+DEEP_RESEARCH_APP_ROLE = "DeepResearchUser"
+_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE: Optional[Dict[str, Any]] = None
+_SOURCE_REVIEW_RENDER_SEMAPHORE: Optional[asyncio.Semaphore] = None
 SOURCE_REVIEW_DEFAULTS = {
     "enable_source_review": False,
-    "enable_deep_source_review": False,
-    "source_review_default_mode": "manual",
-    "source_review_max_pages_per_turn": 5,
-    "source_review_max_seed_pages_per_turn": 3,
+    "require_member_of_deep_research_user": False,
+    "source_review_allow_internal_hosts": False,
+    "enable_deep_source_review": True,
+    "source_review_default_mode": "auto_with_web_search",
+    "source_review_max_pages_per_turn": 10,
+    "source_review_max_seed_pages_per_turn": 10,
     "source_review_max_depth": 2,
-    "source_review_timeout_seconds": 20,
-    "source_review_max_redirects": 3,
-    "source_review_max_bytes_per_page": 2000000,
-    "deep_research_max_user_urls_per_turn": 10,
-    "deep_research_max_search_queries_per_turn": 3,
+    "source_review_timeout_seconds": 30,
+    "source_review_max_redirects": 5,
+    "source_review_max_bytes_per_page": 5000000,
+    "deep_research_max_user_urls_per_turn": 100,
+    "deep_research_max_search_queries_per_turn": 8,
     "deep_research_enable_query_planning": True,
     "deep_research_enable_ledger_artifact": True,
     "source_review_enable_llm_planning": True,
-    "source_review_allow_js_rendering": False,
-    "source_review_js_load_more_clicks": 6,
+    "source_review_allow_js_rendering": True,
+    "source_review_js_load_more_clicks": 12,
     "source_review_respect_robots_txt": True,
     "source_review_allowed_domains": [],
     "source_review_blocked_domains": [],
@@ -92,6 +99,9 @@ BLOCKED_HOSTNAMES = {
 
 BLOCKED_HOSTNAME_SUFFIXES = (
     ".localhost",
+)
+
+INTERNAL_HOSTNAME_SUFFIXES = (
     ".local",
     ".internal",
 )
@@ -285,9 +295,13 @@ def get_source_review_config(settings: Optional[Dict[str, Any]]) -> Dict[str, An
         "source_review_blocked_users",
     ):
         source_settings[list_key] = parse_source_review_list(source_settings.get(list_key))
+    source_settings["source_review_allowed_users"] = []
+    source_settings["source_review_blocked_users"] = []
 
     for bool_key in (
         "enable_source_review",
+        "require_member_of_deep_research_user",
+        "source_review_allow_internal_hosts",
         "enable_deep_source_review",
         "source_review_enable_llm_planning",
         "deep_research_enable_query_planning",
@@ -301,9 +315,98 @@ def get_source_review_config(settings: Optional[Dict[str, Any]]) -> Dict[str, An
     return source_settings
 
 
+def normalize_user_roles(user_roles: Any) -> List[str]:
+    """Normalize app role claims into a flat string list."""
+    if not user_roles:
+        return []
+    if isinstance(user_roles, str):
+        return [user_roles]
+    if isinstance(user_roles, (list, tuple, set)):
+        return [str(role).strip() for role in user_roles if str(role).strip()]
+    return [str(user_roles).strip()]
+
+
+def has_deep_research_app_role(user_roles: Any) -> bool:
+    """Return True when authenticated claims include the Deep Research app role."""
+    normalized_roles = {role.lower() for role in normalize_user_roles(user_roles)}
+    return DEEP_RESEARCH_APP_ROLE.lower() in normalized_roles
+
+
 def get_deep_research_config(settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Return Deep Research settings clamped by the same safety ceilings as Source Review."""
     return get_source_review_config(settings)
+
+
+def get_source_review_runtime_capabilities(force_refresh: bool = False) -> Dict[str, Any]:
+    """Return cached runtime support details for optional Source Review browser rendering."""
+    global _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE
+    if _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE is not None and not force_refresh:
+        return dict(_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE)
+
+    capabilities = {
+        "js_rendering_available": False,
+        "playwright_available": False,
+        "chromium_launch_available": False,
+        "sandbox_disabled": _is_chromium_no_sandbox_enabled(),
+        "browser_path": os.getenv("PLAYWRIGHT_BROWSERS_PATH", ""),
+        "max_render_concurrency": _get_source_review_render_max_concurrency(),
+        "message": "Playwright is not installed in this app runtime.",
+    }
+
+    if importlib.util.find_spec("playwright") is None:
+        _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = capabilities
+        return dict(capabilities)
+
+    capabilities["playwright_available"] = True
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright_instance:
+            browser = playwright_instance.chromium.launch(
+                headless=True,
+                args=_get_chromium_launch_args(),
+                timeout=5000,
+            )
+            browser.close()
+        capabilities.update({
+            "js_rendering_available": True,
+            "chromium_launch_available": True,
+            "message": "Playwright Chromium launch verified for this runtime.",
+        })
+    except Exception as runtime_error:
+        capabilities["message"] = f"Playwright is installed, but Chromium launch failed: {str(runtime_error)[:220]}"
+
+    _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = capabilities
+    return dict(capabilities)
+
+
+def _get_chromium_launch_args() -> List[str]:
+    launch_args = [
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+    ]
+    if _is_chromium_no_sandbox_enabled():
+        launch_args.append("--no-sandbox")
+    return launch_args
+
+
+def _is_chromium_no_sandbox_enabled() -> bool:
+    return str(os.getenv("SOURCE_REVIEW_CHROMIUM_NO_SANDBOX", "false")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _get_source_review_render_max_concurrency() -> int:
+    try:
+        configured_value = int(os.getenv("SOURCE_REVIEW_JS_RENDER_MAX_CONCURRENCY", "2"))
+    except ValueError:
+        configured_value = 2
+    return max(1, min(5, configured_value))
+
+
+def _get_source_review_render_semaphore() -> asyncio.Semaphore:
+    global _SOURCE_REVIEW_RENDER_SEMAPHORE
+    if _SOURCE_REVIEW_RENDER_SEMAPHORE is None:
+        _SOURCE_REVIEW_RENDER_SEMAPHORE = asyncio.Semaphore(_get_source_review_render_max_concurrency())
+    return _SOURCE_REVIEW_RENDER_SEMAPHORE
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -318,24 +421,14 @@ def is_source_review_enabled_for_user(
     settings: Optional[Dict[str, Any]],
     user_id: str,
     user_email: Optional[str] = None,
+    user_roles: Optional[List[str]] = None,
 ) -> bool:
-    """Return True when the global toggle and user allow/deny rules permit Source Review."""
+    """Return True when the global toggle and optional app-role gate permit Source Review."""
     source_settings = get_source_review_config(settings)
     if not source_settings.get("enable_source_review"):
         return False
 
-    identifiers = {
-        str(user_id or "").strip().lower(),
-        str(user_email or "").strip().lower(),
-    }
-    identifiers.discard("")
-
-    blocked_users = {item.lower() for item in source_settings.get("source_review_blocked_users", [])}
-    if identifiers.intersection(blocked_users):
-        return False
-
-    allowed_users = {item.lower() for item in source_settings.get("source_review_allowed_users", [])}
-    if allowed_users and not identifiers.intersection(allowed_users):
+    if source_settings.get("require_member_of_deep_research_user") and not has_deep_research_app_role(user_roles):
         return False
 
     return True
@@ -347,10 +440,11 @@ def should_auto_enable_source_review(
     user_message: str,
     web_search_enabled: bool,
     user_email: Optional[str] = None,
+    user_roles: Optional[List[str]] = None,
 ) -> bool:
     """Evaluate admin default mode for requests that did not explicitly toggle Source Review."""
     source_settings = get_source_review_config(settings)
-    if not is_source_review_enabled_for_user(settings, user_id, user_email=user_email):
+    if not is_source_review_enabled_for_user(settings, user_id, user_email=user_email, user_roles=user_roles):
         return False
 
     default_mode = source_settings.get("source_review_default_mode", "manual")
@@ -450,20 +544,21 @@ def normalize_review_url(url: Any, base_url: Optional[str] = None) -> Tuple[Opti
 
 def validate_source_review_url(url: str, source_settings: Optional[Dict[str, Any]] = None) -> Tuple[bool, str, Optional[str]]:
     """Validate URL policy before any server-side fetch."""
+    normalized_source_settings = get_source_review_config(source_settings or {})
     normalized_url, reason = normalize_review_url(url)
     if not normalized_url:
         return False, reason or "invalid_url", None
 
     parsed_url = urlparse(normalized_url)
     hostname = (parsed_url.hostname or "").lower().rstrip(".")
-    if _is_blocked_hostname(hostname):
+    if _is_blocked_hostname(hostname, normalized_source_settings):
         return False, "blocked_hostname", normalized_url
-    if not _is_domain_allowed(hostname, source_settings or {}):
+    if not _is_domain_allowed(hostname, normalized_source_settings):
         return False, "domain_not_allowed", normalized_url
-    if not _is_domain_unblocked(hostname, source_settings or {}):
+    if not _is_domain_unblocked(hostname, normalized_source_settings):
         return False, "domain_blocked", normalized_url
 
-    ip_validation = _validate_hostname_addresses(hostname)
+    ip_validation = _validate_hostname_addresses(hostname, normalized_source_settings)
     if not ip_validation[0]:
         return False, ip_validation[1], normalized_url
 
@@ -798,6 +893,7 @@ def perform_source_review(
     user_email: Optional[str],
     user_message: str,
     web_search_citations: Optional[List[Dict[str, Any]]],
+    user_roles: Optional[List[str]] = None,
     conversation_id: Optional[str] = None,
     source_review_planner_client: Optional[Any] = None,
     source_review_planner_model: Optional[str] = None,
@@ -808,6 +904,7 @@ def perform_source_review(
             settings=settings,
             user_id=user_id,
             user_email=user_email,
+            user_roles=user_roles,
             user_message=user_message,
             web_search_citations=web_search_citations,
             conversation_id=conversation_id,
@@ -830,6 +927,7 @@ async def perform_source_review_async(
     user_email: Optional[str],
     user_message: str,
     web_search_citations: Optional[List[Dict[str, Any]]],
+    user_roles: Optional[List[str]] = None,
     conversation_id: Optional[str] = None,
     source_review_planner_client: Optional[Any] = None,
     source_review_planner_model: Optional[str] = None,
@@ -837,7 +935,12 @@ async def perform_source_review_async(
     """Fetch, parse, and package bounded web evidence for a chat request."""
     source_settings = get_source_review_config(settings)
     result = _empty_source_review_result(user_message, None)
-    result["enabled"] = is_source_review_enabled_for_user(settings, user_id, user_email=user_email)
+    result["enabled"] = is_source_review_enabled_for_user(
+        settings,
+        user_id,
+        user_email=user_email,
+        user_roles=user_roles,
+    )
     result["config"] = _safe_config_summary(source_settings)
 
     if not result["enabled"]:
@@ -2540,36 +2643,45 @@ async def _try_rendered_page_fetch(
         return _skipped_page(url, "js_rendering_dependency_unavailable", depth=depth, parent_url=parent_url)
 
     start_time = time.time()
+    render_semaphore = _get_source_review_render_semaphore()
+    await render_semaphore.acquire()
     try:
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=True)
-            context = await browser.new_context(
-                java_script_enabled=True,
-                ignore_https_errors=False,
-                accept_downloads=False,
-                user_agent=SOURCE_REVIEW_USER_AGENT,
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=_get_chromium_launch_args(),
+                timeout=min(source_settings["source_review_timeout_seconds"] * 1000, 15000),
             )
+            try:
+                context = await browser.new_context(
+                    java_script_enabled=True,
+                    ignore_https_errors=False,
+                    accept_downloads=False,
+                    user_agent=SOURCE_REVIEW_USER_AGENT,
+                )
+                try:
+                    async def route_guard(route):
+                        request_url = route.request.url
+                        is_allowed, _validation_reason, _normalized_url = validate_source_review_url(request_url, source_settings)
+                        if is_allowed:
+                            await route.continue_()
+                        else:
+                            await route.abort()
 
-            async def route_guard(route):
-                request_url = route.request.url
-                is_allowed, _validation_reason, _normalized_url = validate_source_review_url(request_url, source_settings)
-                if is_allowed:
-                    await route.continue_()
-                else:
-                    await route.abort()
-
-            await context.route("**/*", route_guard)
-            page = await context.new_page()
-            await page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=source_settings["source_review_timeout_seconds"] * 1000,
-            )
-            await _wait_for_rendered_page_hydration(page, source_settings)
-            load_more_result = await _click_rendered_load_more_controls(page, user_message, source_settings)
-            rendered_content = await page.content()
-            await context.close()
-            await browser.close()
+                    await context.route("**/*", route_guard)
+                    page = await context.new_page()
+                    await page.goto(
+                        url,
+                        wait_until="domcontentloaded",
+                        timeout=source_settings["source_review_timeout_seconds"] * 1000,
+                    )
+                    await _wait_for_rendered_page_hydration(page, source_settings)
+                    load_more_result = await _click_rendered_load_more_controls(page, user_message, source_settings)
+                    rendered_content = await page.content()
+                finally:
+                    await context.close()
+            finally:
+                await browser.close()
 
         page_result = extract_source_review_evidence_from_html(
             html_content=rendered_content,
@@ -2591,6 +2703,8 @@ async def _try_rendered_page_fetch(
             parent_url=parent_url,
             error=str(render_error)[:300],
         )
+    finally:
+        render_semaphore.release()
 
 
 def _should_try_js_rendering(page_result: Dict[str, Any], source_settings: Dict[str, Any]) -> bool:
@@ -2852,47 +2966,52 @@ def _detect_encoding(response: aiohttp.ClientResponse) -> str:
     return "utf-8"
 
 
-def _is_blocked_hostname(hostname: str) -> bool:
+def _is_blocked_hostname(hostname: str, source_settings: Optional[Dict[str, Any]] = None) -> bool:
     normalized_hostname = (hostname or "").lower().rstrip(".")
+    allow_internal_hosts = bool((source_settings or {}).get("source_review_allow_internal_hosts"))
     if normalized_hostname in BLOCKED_HOSTNAMES:
         return True
     if any(normalized_hostname.endswith(suffix) for suffix in BLOCKED_HOSTNAME_SUFFIXES):
         return True
-    if "." not in normalized_hostname and not _is_ip_literal(normalized_hostname):
+    if not allow_internal_hosts and any(normalized_hostname.endswith(suffix) for suffix in INTERNAL_HOSTNAME_SUFFIXES):
+        return True
+    if not allow_internal_hosts and "." not in normalized_hostname and not _is_ip_literal(normalized_hostname):
         return True
     return False
 
 
-def _validate_hostname_addresses(hostname: str) -> Tuple[bool, str]:
+def _validate_hostname_addresses(hostname: str, source_settings: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
     if _is_ip_literal(hostname):
-        return _validate_ip_address(hostname)
+        return False, "ip_literal_hostname_not_allowed"
     try:
         address_info = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
     except socket.gaierror:
         return False, "hostname_resolution_failed"
     if not address_info:
         return False, "hostname_resolution_empty"
+    allow_internal_hosts = bool((source_settings or {}).get("source_review_allow_internal_hosts"))
     for address in address_info:
         ip_text = address[4][0]
-        is_valid, reason = _validate_ip_address(ip_text)
+        is_valid, reason = _validate_ip_address(ip_text, allow_internal_hosts=allow_internal_hosts)
         if not is_valid:
             return False, reason
     return True, "allowed"
 
 
-def _validate_ip_address(ip_text: str) -> Tuple[bool, str]:
+def _validate_ip_address(ip_text: str, allow_internal_hosts: bool = False) -> Tuple[bool, str]:
     try:
         ip_address = ipaddress.ip_address(ip_text)
     except ValueError:
         return False, "invalid_ip_address"
     if (
-        ip_address.is_private
-        or ip_address.is_loopback
+        ip_address.is_loopback
         or ip_address.is_link_local
         or ip_address.is_multicast
         or ip_address.is_reserved
         or ip_address.is_unspecified
     ):
+        return False, "blocked_ip_address"
+    if ip_address.is_private and not allow_internal_hosts:
         return False, "blocked_ip_address"
     return True, "allowed"
 
@@ -3102,6 +3221,8 @@ def _dedupe_links(links: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _safe_config_summary(source_settings: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "enable_deep_source_review": source_settings.get("enable_deep_source_review"),
+        "require_member_of_deep_research_user": source_settings.get("require_member_of_deep_research_user"),
+        "source_review_allow_internal_hosts": source_settings.get("source_review_allow_internal_hosts"),
         "source_review_default_mode": source_settings.get("source_review_default_mode"),
         "source_review_max_pages_per_turn": source_settings.get("source_review_max_pages_per_turn"),
         "source_review_max_seed_pages_per_turn": source_settings.get("source_review_max_seed_pages_per_turn"),

@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -145,6 +145,9 @@ function syncDocumentActionTooltip() {
 }
 
 function isWorkspaceDocumentSearchEnabled() {
+  if (isAssignedKnowledgeActive()) {
+    return true;
+  }
   const searchDocumentsButton = document.getElementById('search-documents-btn');
   return Boolean(searchDocumentsButton?.classList.contains('active'));
 }
@@ -4722,6 +4725,16 @@ function getCurrentAgentSelection() {
     return null;
   }
 
+  let assignedKnowledge = { enabled: false };
+  try {
+    const parsedAssignedKnowledge = JSON.parse(selectedAgentOption.dataset.assignedKnowledge || '{}');
+    if (parsedAssignedKnowledge && typeof parsedAssignedKnowledge === 'object') {
+      assignedKnowledge = parsedAssignedKnowledge;
+    }
+  } catch (error) {
+    assignedKnowledge = { enabled: false };
+  }
+
   return {
     id: selectedAgentOption.dataset.agentId || null,
     name: selectedAgentOption.dataset.name || selectedAgentOption.value || '',
@@ -4730,6 +4743,7 @@ function getCurrentAgentSelection() {
     is_group: selectedAgentOption.dataset.isGroup === 'true',
     group_id: selectedAgentOption.dataset.groupId || null,
     group_name: selectedAgentOption.dataset.groupName || null,
+    assigned_knowledge: assignedKnowledge,
   };
 }
 
@@ -5074,7 +5088,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const deepResearchEnabled = deepResearchToggle ? deepResearchToggle.classList.contains('active') : false;
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
   const selectedTags = getSelectedTags();
-  const documentActionType = hybridSearchEnabled ? getDocumentActionType() : DOCUMENT_ACTION_NONE;
+  const userWorkspaceContextEnabled = isUserWorkspaceContextEnabled();
+  const documentActionType = userWorkspaceContextEnabled ? getDocumentActionType() : DOCUMENT_ACTION_NONE;
   const comparisonTargetIds = documentActionType === DOCUMENT_ACTION_COMPARISON
     ? getSelectedComparisonTargetIds()
     : [];
@@ -5102,6 +5117,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     message: finalMessageToSend,
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
+    user_workspace_context_enabled: userWorkspaceContextEnabled,
     web_search_enabled: webSearchEnabled,
     source_review_enabled: deepResearchEnabled,
     deep_research_enabled: deepResearchEnabled,

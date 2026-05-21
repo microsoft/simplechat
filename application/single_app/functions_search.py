@@ -87,6 +87,51 @@ def normalize_search_id_list(raw_ids):
     return normalized_ids
 
 
+def _resolve_public_workspace_ids_for_search(user_id, active_public_workspace_id=None):
+    requested_workspace_ids = normalize_search_id_list(active_public_workspace_id)
+    visible_workspace_ids = normalize_search_id_list(
+        get_user_visible_public_workspace_ids_from_settings(user_id) or []
+    )
+    if requested_workspace_ids:
+        visible_workspace_id_set = set(visible_workspace_ids)
+        return [
+            workspace_id
+            for workspace_id in requested_workspace_ids
+            if workspace_id in visible_workspace_id_set
+        ]
+    return visible_workspace_ids
+
+
+def _build_public_workspace_filter_clause(public_workspace_ids):
+    if not public_workspace_ids:
+        return None
+    workspace_conditions = " or ".join([
+        _build_odata_eq("public_workspace_id", workspace_id)
+        for workspace_id in public_workspace_ids
+    ])
+    return f"({workspace_conditions})"
+
+
+def _normalize_document_filter_mode(document_filter_mode):
+    normalized_mode = str(document_filter_mode or "intersection").strip().lower()
+    if normalized_mode in {"union", "or", "additive"}:
+        return "union"
+    return "intersection"
+
+
+def _combine_odata_filters(*filter_clauses):
+    normalized_clauses = [str(clause).strip() for clause in filter_clauses if str(clause or "").strip()]
+    return " and ".join(normalized_clauses)
+
+
+def _build_document_content_filter(doc_id_filter, tags_filter_clause, document_filter_mode="intersection"):
+    if doc_id_filter and tags_filter_clause:
+        if _normalize_document_filter_mode(document_filter_mode) == "union":
+            return f"({doc_id_filter} or ({tags_filter_clause}))"
+        return f"{doc_id_filter} and {tags_filter_clause}"
+    return doc_id_filter or tags_filter_clause or ""
+
+
 def get_search_select_fields(scope_name):
     return SEARCH_SELECT_FIELDS_BY_SCOPE.get(scope_name, SEARCH_SELECT_FIELDS_BY_SCOPE["personal"])
 
@@ -201,7 +246,7 @@ def _build_odata_any_eq(collection_field: str, iterator_name: str, value: Any) -
     escaped_value = _escape_odata_literal(value)
     return f"{collection_field}/any({iterator_name}: {iterator_name} eq '{escaped_value}')"
 
-def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None):
+def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection"):
     """
     Hybrid search that queries the user doc index, group doc index, or public doc index
     depending on doc type.
@@ -210,6 +255,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     enable_file_sharing: If False, do not include shared_user_ids in filters.
     tags_filter: Optional list of tag names to filter documents by (AND logic - all tags must match)
     document_ids: Optional list of document IDs to filter by (OR logic - any document matches)
+    document_filter_mode: "intersection" keeps document IDs and tags conjunctive; "union" makes them additive
     active_group_ids: Optional list of group IDs for multi-group search (OR logic)
 
     This function uses document-set-aware caching to ensure consistent results
@@ -219,10 +265,15 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     top_n = normalize_search_top_n(top_n)
     doc_scope = normalize_search_scope(doc_scope)
     document_ids = normalize_search_id_list(document_ids)
+    document_filter_mode = _normalize_document_filter_mode(document_filter_mode)
 
     # Backwards compat: wrap single group ID into list
     if not active_group_ids and active_group_id:
         active_group_ids = [active_group_id]
+    active_public_workspace_ids = _resolve_public_workspace_ids_for_search(
+        user_id,
+        active_public_workspace_id=active_public_workspace_id,
+    )
 
     # Resolve document_ids from single document_id for backwards compat
     if document_ids and len(document_ids) > 0:
@@ -246,12 +297,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 ) or normalization_changed
 
         if doc_scope in ("all", "public"):
-            if doc_scope == "public" and active_public_workspace_id:
-                public_workspace_ids = [active_public_workspace_id]
-            else:
-                public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
-
-            for workspace_id in public_workspace_ids:
+            for workspace_id in active_public_workspace_ids:
                 normalization_changed = normalize_document_revision_families(
                     user_id=user_id,
                     public_workspace_id=workspace_id,
@@ -279,10 +325,11 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         document_ids=document_ids,
         doc_scope=doc_scope,
         active_group_ids=active_group_ids,
-        active_public_workspace_id=active_public_workspace_id,
+        active_public_workspace_id=active_public_workspace_ids,
         top_n=top_n,
         enable_file_sharing=enable_file_sharing,
-        tags_filter=tags_filter
+        tags_filter=tags_filter,
+        document_filter_mode=document_filter_mode
     )
 
     # Check cache first (pass scope parameters for correct partition key)
@@ -293,7 +340,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             user_id,
             doc_scope,
             active_group_ids=active_group_ids,
-            active_public_workspace_id=active_public_workspace_id
+            active_public_workspace_id=active_public_workspace_ids
         )
     if cached_results is not None:
         debug_print(
@@ -340,73 +387,60 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         fields="embedding"
     )
     
-    # Build tags filter clause if provided
+    # Build document/tag content filter. Default behavior remains intersection;
+    # Assigned Knowledge passes union so explicit documents add to tag matches.
     tags_filter_clause = build_tags_filter(tags_filter)
+    content_filter = _build_document_content_filter(
+        doc_id_filter,
+        tags_filter_clause,
+        document_filter_mode=document_filter_mode,
+    )
+
+    user_access_filter = (
+        f"({_build_odata_eq('user_id', user_id)} or {_build_odata_any_eq('shared_user_ids', 'u', f'{user_id},approved')})"
+        if enable_file_sharing else
+        _build_odata_eq('user_id', user_id)
+    )
+    group_access_filter = None
+    if active_group_ids:
+        group_conditions = " or ".join([_build_odata_eq("group_id", gid) for gid in active_group_ids])
+        shared_conditions = " or ".join([
+            _build_odata_any_eq("shared_group_ids", "g", f"{gid},approved")
+            for gid in active_group_ids
+        ])
+        group_access_filter = f"({group_conditions} or {shared_conditions})"
+    public_workspace_filter = _build_public_workspace_filter_clause(active_public_workspace_ids)
 
     if doc_scope == "all":
-        if doc_id_filter:
-            # Build user filter with optional tags
-            user_base_filter = (
-                (
-                    f"({_build_odata_eq('user_id', user_id)} or {_build_odata_any_eq('shared_user_ids', 'u', f'{user_id},approved')}) "
-                    if enable_file_sharing else
-                    f"{_build_odata_eq('user_id', user_id)} "
-                ) +
-                f"and {doc_id_filter}"
-            )
-            user_filter = f"{user_base_filter} and {tags_filter_clause}" if tags_filter_clause else user_base_filter
-            
-            user_results = search_client_user.search(
+        user_filter = _combine_odata_filters(user_access_filter, content_filter)
+        user_results = search_client_user.search(
+            search_text=query,
+            vector_queries=[vector_query],
+            filter=user_filter,
+            query_type="semantic",
+            semantic_configuration_name="nexus-user-index-semantic-configuration",
+            query_caption="extractive",
+            query_answer="extractive",
+            select=get_search_select_fields("personal")
+        )
+
+        if group_access_filter:
+            group_filter = _combine_odata_filters(group_access_filter, content_filter)
+            group_results = search_client_group.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=user_filter,
+                filter=group_filter,
                 query_type="semantic",
-                semantic_configuration_name="nexus-user-index-semantic-configuration",
+                semantic_configuration_name="nexus-group-index-semantic-configuration",
                 query_caption="extractive",
                 query_answer="extractive",
-                select=get_search_select_fields("personal")
+                select=get_search_select_fields("group")
             )
+        else:
+            group_results = []
 
-            # Only search group index if active_group_ids is provided
-            if active_group_ids:
-                group_conditions = " or ".join([_build_odata_eq("group_id", gid) for gid in active_group_ids])
-                shared_conditions = " or ".join([
-                    _build_odata_any_eq("shared_group_ids", "g", f"{gid},approved")
-                    for gid in active_group_ids
-                ])
-                group_base_filter = f"({group_conditions} or {shared_conditions}) and {doc_id_filter}"
-                group_filter = f"{group_base_filter} and {tags_filter_clause}" if tags_filter_clause else group_base_filter
-
-                group_results = search_client_group.search(
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=group_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-group-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("group")
-                )
-            else:
-                group_results = []
-
-            # Get visible public workspace IDs from user settings
-            visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
-            
-            # Create filter for visible public workspaces
-            if visible_public_workspace_ids:
-                # Use 'or' conditions instead of 'in' operator for OData compatibility
-                workspace_conditions = " or ".join([
-                    _build_odata_eq("public_workspace_id", workspace_id)
-                    for workspace_id in visible_public_workspace_ids
-                ])
-                public_base_filter = f"({workspace_conditions}) and {doc_id_filter}"
-            else:
-                # Fallback to active_public_workspace_id if no visible workspaces
-                public_base_filter = f"{_build_odata_eq('public_workspace_id', active_public_workspace_id)} and {doc_id_filter}"
-            
-            public_filter = f"{public_base_filter} and {tags_filter_clause}" if tags_filter_clause else public_base_filter
-                
+        if public_workspace_filter:
+            public_filter = _combine_odata_filters(public_workspace_filter, content_filter)
             public_results = search_client_public.search(
                 search_text=query,
                 vector_queries=[vector_query],
@@ -418,75 +452,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 select=get_search_select_fields("public")
             )
         else:
-            # Build user filter with optional tags
-            user_base_filter = (
-                f"({_build_odata_eq('user_id', user_id)} or {_build_odata_any_eq('shared_user_ids', 'u', f'{user_id},approved')}) "
-                if enable_file_sharing else
-                f"{_build_odata_eq('user_id', user_id)} "
-            )
-            user_filter = f"{user_base_filter} and {tags_filter_clause}" if tags_filter_clause else user_base_filter.strip()
-            
-            user_results = search_client_user.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=user_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-user-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("personal")
-            )
-
-            # Only search group index if active_group_ids is provided
-            if active_group_ids:
-                group_conditions = " or ".join([_build_odata_eq("group_id", gid) for gid in active_group_ids])
-                shared_conditions = " or ".join([
-                    _build_odata_any_eq("shared_group_ids", "g", f"{gid},approved")
-                    for gid in active_group_ids
-                ])
-                group_base_filter = f"({group_conditions} or {shared_conditions})"
-                group_filter = f"{group_base_filter} and {tags_filter_clause}" if tags_filter_clause else group_base_filter
-
-                group_results = search_client_group.search(
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=group_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-group-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("group")
-                )
-            else:
-                group_results = []
-
-            # Get visible public workspace IDs from user settings
-            visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
-            
-            # Create filter for visible public workspaces
-            if visible_public_workspace_ids:
-                # Use 'or' conditions instead of 'in' operator for OData compatibility
-                workspace_conditions = " or ".join([
-                    _build_odata_eq("public_workspace_id", workspace_id)
-                    for workspace_id in visible_public_workspace_ids
-                ])
-                public_base_filter = f"({workspace_conditions})"
-            else:
-                # Fallback to active_public_workspace_id if no visible workspaces
-                public_base_filter = _build_odata_eq("public_workspace_id", active_public_workspace_id)
-            
-            public_filter = f"{public_base_filter} and {tags_filter_clause}" if tags_filter_clause else public_base_filter
-                
-            public_results = search_client_public.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=public_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-public-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("public")
-            )
+            public_results = []
 
         # Extract results from each index
         user_results_final = extract_search_results(user_results, top_n)
@@ -516,80 +482,24 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         )
 
     elif doc_scope == "personal":
-        if doc_id_filter:
-            user_base_filter = (
-                (
-                    f"({_build_odata_eq('user_id', user_id)} or {_build_odata_any_eq('shared_user_ids', 'u', f'{user_id},approved')}) "
-                    if enable_file_sharing else
-                    f"{_build_odata_eq('user_id', user_id)} "
-                ) +
-                f"and {doc_id_filter}"
-            )
-            user_filter = f"{user_base_filter} and {tags_filter_clause}" if tags_filter_clause else user_base_filter
-
-            user_results = search_client_user.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=user_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-user-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("personal")
-            )
-            results = extract_search_results(user_results, top_n)
-        else:
-            user_base_filter = (
-                f"({_build_odata_eq('user_id', user_id)} or {_build_odata_any_eq('shared_user_ids', 'u', f'{user_id},approved')}) "
-                if enable_file_sharing else
-                f"{_build_odata_eq('user_id', user_id)} "
-            )
-            user_filter = f"{user_base_filter} and {tags_filter_clause}" if tags_filter_clause else user_base_filter.strip()
-
-            user_results = search_client_user.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=user_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-user-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("personal")
-            )
-            results = extract_search_results(user_results, top_n)
+        user_filter = _combine_odata_filters(user_access_filter, content_filter)
+        user_results = search_client_user.search(
+            search_text=query,
+            vector_queries=[vector_query],
+            filter=user_filter,
+            query_type="semantic",
+            semantic_configuration_name="nexus-user-index-semantic-configuration",
+            query_caption="extractive",
+            query_answer="extractive",
+            select=get_search_select_fields("personal")
+        )
+        results = extract_search_results(user_results, top_n)
 
     elif doc_scope == "group":
-        if not active_group_ids:
+        if not group_access_filter:
             results = []
-        elif doc_id_filter:
-            group_conditions = " or ".join([_build_odata_eq("group_id", gid) for gid in active_group_ids])
-            shared_conditions = " or ".join([
-                _build_odata_any_eq("shared_group_ids", "g", f"{gid},approved")
-                for gid in active_group_ids
-            ])
-            group_base_filter = f"({group_conditions} or {shared_conditions}) and {doc_id_filter}"
-            group_filter = f"{group_base_filter} and {tags_filter_clause}" if tags_filter_clause else group_base_filter
-
-            group_results = search_client_group.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=group_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-group-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("group")
-            )
-            results = extract_search_results(group_results, top_n)
         else:
-            group_conditions = " or ".join([_build_odata_eq("group_id", gid) for gid in active_group_ids])
-            shared_conditions = " or ".join([
-                _build_odata_any_eq("shared_group_ids", "g", f"{gid},approved")
-                for gid in active_group_ids
-            ])
-            group_base_filter = f"({group_conditions} or {shared_conditions})"
-            group_filter = f"{group_base_filter} and {tags_filter_clause}" if tags_filter_clause else group_base_filter
-
+            group_filter = _combine_odata_filters(group_access_filter, content_filter)
             group_results = search_client_group.search(
                 search_text=query,
                 vector_queries=[vector_query],
@@ -603,24 +513,8 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             results = extract_search_results(group_results, top_n)
     
     elif doc_scope == "public":
-        if doc_id_filter:
-            # Get visible public workspace IDs from user settings
-            visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
-
-            # Create filter for visible public workspaces
-            if visible_public_workspace_ids:
-                # Use 'or' conditions instead of 'in' operator for OData compatibility
-                workspace_conditions = " or ".join([
-                    _build_odata_eq("public_workspace_id", workspace_id)
-                    for workspace_id in visible_public_workspace_ids
-                ])
-                public_base_filter = f"({workspace_conditions}) and {doc_id_filter}"
-            else:
-                # Fallback to active_public_workspace_id if no visible workspaces
-                public_base_filter = f"{_build_odata_eq('public_workspace_id', active_public_workspace_id)} and {doc_id_filter}"
-
-            public_filter = f"{public_base_filter} and {tags_filter_clause}" if tags_filter_clause else public_base_filter
-
+        if public_workspace_filter:
+            public_filter = _combine_odata_filters(public_workspace_filter, content_filter)
             public_results = search_client_public.search(
                 search_text=query,
                 vector_queries=[vector_query],
@@ -633,34 +527,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             )
             results = extract_search_results(public_results, top_n)
         else:
-            # Get visible public workspace IDs from user settings
-            visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
-
-            # Create filter for visible public workspaces
-            if visible_public_workspace_ids:
-                # Use 'or' conditions instead of 'in' operator for OData compatibility
-                workspace_conditions = " or ".join([
-                    _build_odata_eq("public_workspace_id", workspace_id)
-                    for workspace_id in visible_public_workspace_ids
-                ])
-                public_base_filter = f"({workspace_conditions})"
-            else:
-                # Fallback to active_public_workspace_id if no visible workspaces
-                public_base_filter = _build_odata_eq("public_workspace_id", active_public_workspace_id)
-
-            public_filter = f"{public_base_filter} and {tags_filter_clause}" if tags_filter_clause else public_base_filter
-
-            public_results = search_client_public.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=public_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-public-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("public")
-            )
-            results = extract_search_results(public_results, top_n)
+            results = []
     
     # Log pre-sort statistics
     if results:
@@ -731,7 +598,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         user_id,
         doc_scope,
         active_group_ids=active_group_ids,
-        active_public_workspace_id=active_public_workspace_id
+        active_public_workspace_id=active_public_workspace_ids
     )
     
     debug_print(

@@ -75,6 +75,31 @@ def search_groups(search_query, user_id):
     ))
     return results
 
+
+def search_all_groups(search_query, limit=10):
+    """
+    Return groups matching a search term for admin management workflows.
+    """
+    normalized_query = str(search_query or '').strip().lower()
+    if not normalized_query:
+        return []
+
+    query = """
+        SELECT *
+        FROM c
+        WHERE CONTAINS(LOWER(c.name), @search)
+           OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search))
+    """
+    params = [
+        {"name": "@search", "value": normalized_query}
+    ]
+    results = list(cosmos_groups_container.query_items(
+        query=query,
+        parameters=params,
+        enable_cross_partition_query=True
+    ))
+    return results[:max(1, min(int(limit or 10), 25))]
+
 def get_user_groups(user_id):
     """
     Fetch all groups for which this user is a member.

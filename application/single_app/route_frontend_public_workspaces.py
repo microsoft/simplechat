@@ -27,7 +27,8 @@ def register_route_frontend_public_workspaces(app):
         public_settings = sanitize_settings_for_user(settings)
         try:
             assert_public_workspace_role(user_id, workspace_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
-            file_sync_enabled = is_file_sync_enabled_for_public_workspace(settings, workspace_id)
+            user_info = get_current_user_info() or {}
+            file_sync_enabled = is_file_sync_enabled_for_public_workspace(settings, workspace_id, user_info=user_info)
         except (LookupError, PermissionError):
             file_sync_enabled = False
         return render_template(

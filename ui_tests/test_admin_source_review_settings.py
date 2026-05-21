@@ -1,14 +1,16 @@
 # test_admin_source_review_settings.py
 """
 UI test for Deep Research admin settings.
-Version: 0.241.055
+Version: 0.241.071
 Implemented in: 0.241.055
+Updated in: 0.241.071
 
 This test ensures the Search & Extract admin tab exposes Deep Research controls,
 including bounded review settings, query planning, ledger artifacts, editable domain
-rules, and searchable/bulk user policy controls.
+rules, app-role policy controls, setup guidance, and the Web Search test workflow.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -53,21 +55,79 @@ def test_admin_source_review_settings():
         source_review_section = page.locator("#source-review-section")
         expect(source_review_section).to_be_visible()
         expect(source_review_section).to_contain_text("Deep Research")
+        page.locator('[data-bs-target="#deepResearchInfoModal"]').click()
+        deep_research_info_modal = page.locator("#deepResearchInfoModal")
+        expect(deep_research_info_modal).to_be_visible()
+        expect(deep_research_info_modal).to_contain_text("DeepResearchUser App Role Setup")
+        expect(deep_research_info_modal).to_contain_text("Settings Reference")
+        expect(deep_research_info_modal).to_contain_text("Allow internal network hostnames")
+        expect(deep_research_info_modal).to_contain_text("Playwright Chromium support")
+        deep_research_info_modal.locator(".btn-close").click()
+        expect(deep_research_info_modal).to_be_hidden()
+
+        page.route(
+            "**/api/admin/settings/test_connection",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "success": True,
+                    "status": "success",
+                    "message": "Web Search test succeeded. The Foundry agent responded to a live web-search prompt.",
+                    "details": ["Detected web citations: 1."],
+                    "guidance": [],
+                    "response_preview": "Microsoft official site: https://www.microsoft.com",
+                }),
+            ),
+        )
+
+        page.evaluate("""
+            () => {
+                const consent = document.getElementById('web_search_consent_accepted');
+                if (consent) {
+                    consent.value = 'true';
+                }
+            }
+        """)
+        web_search_toggle = page.locator("#enable_web_search")
+        if not web_search_toggle.is_checked():
+            web_search_toggle.check(force=True)
+        expect(page.locator("#web_search_foundry_settings")).to_be_visible()
+        page.locator("#web_search_foundry_endpoint").fill("https://contoso.services.ai.azure.com/api/projects/simplechat")
+        page.locator("#web_search_foundry_api_version").fill("v1")
+        page.locator("#web_search_foundry_agent_id").fill("asst_test123")
+        page.locator("#test_web_search_button").click()
+        expect(page.locator("#test_web_search_result")).to_contain_text("Web Search test passed")
+        expect(page.locator("#test_web_search_result")).to_contain_text("Microsoft official site")
 
         source_review_toggle = page.locator("#enable_source_review")
-        if not source_review_toggle.is_checked():
-            source_review_toggle.check(force=True)
+        if source_review_toggle.is_checked():
+            source_review_toggle.uncheck(force=True)
+        source_review_toggle.check(force=True)
 
         expect(page.locator("#source_review_settings")).to_be_visible()
         expect(page.locator("#source_review_default_mode")).to_be_visible()
+        expect(page.locator("#source_review_default_mode")).to_have_value("auto_with_web_search")
         expect(page.locator("#source_review_max_pages_per_turn")).to_have_attribute("max", "10")
+        expect(page.locator("#source_review_max_pages_per_turn")).to_have_value("10")
         expect(page.locator("#source_review_max_seed_pages_per_turn")).to_have_attribute("max", "10")
+        expect(page.locator("#source_review_max_seed_pages_per_turn")).to_have_value("10")
         expect(page.locator("#deep_research_max_user_urls_per_turn")).to_have_attribute("max", "100")
+        expect(page.locator("#deep_research_max_user_urls_per_turn")).to_have_value("100")
         expect(page.locator("#deep_research_max_search_queries_per_turn")).to_have_attribute("max", "8")
+        expect(page.locator("#deep_research_max_search_queries_per_turn")).to_have_value("8")
         expect(page.locator("#source_review_max_depth")).to_have_attribute("max", "2")
+        expect(page.locator("#source_review_max_depth")).to_have_value("2")
         expect(page.locator("#source_review_timeout_seconds")).to_have_attribute("max", "30")
+        expect(page.locator("#source_review_timeout_seconds")).to_have_value("30")
         expect(page.locator("#source_review_max_bytes_per_page_mb")).to_have_attribute("max", "5")
+        expect(page.locator("#source_review_max_bytes_per_page_mb")).to_have_value("5")
         expect(page.locator("#source_review_js_load_more_clicks")).to_have_attribute("max", "12")
+        expect(page.locator("#source_review_js_load_more_clicks")).to_have_value("12")
+        expect(page.locator("#require_member_of_deep_research_user")).to_have_count(1)
+        expect(page.locator("label[for='require_member_of_deep_research_user']")).to_contain_text("DeepResearchUser")
+        expect(page.locator("#source_review_allow_internal_hosts")).to_have_count(1)
+        expect(page.locator("label[for='source_review_allow_internal_hosts']")).to_contain_text("internal network hostnames")
 
         deep_review_toggle = page.locator("#enable_deep_source_review")
         if not deep_review_toggle.is_checked():
@@ -76,6 +136,7 @@ def test_admin_source_review_settings():
         expect(page.locator("#deep_research_enable_query_planning")).to_have_count(1)
         expect(page.locator("#deep_research_enable_ledger_artifact")).to_have_count(1)
         expect(page.locator("#source_review_enable_llm_planning")).to_have_count(1)
+        expect(page.locator("#source_review_js_runtime_status")).to_be_visible()
 
         allowed_domains_editor = page.locator('[data-deep-research-policy="source_review_allowed_domains"]')
         allowed_domains_editor.locator('[data-policy-new-input]').fill("contoso.com")
@@ -90,12 +151,11 @@ def test_admin_source_review_settings():
         allowed_domains_editor.locator('[aria-label="Delete policy entry"]').first.click()
         expect(page.locator("#source_review_allowed_domains")).to_have_value("")
 
-        blocked_users_editor = page.locator('[data-deep-research-policy="source_review_blocked_users"]')
-        expect(blocked_users_editor.locator('[data-user-search-input]')).to_be_visible()
-        expect(blocked_users_editor.locator('[data-user-search-button]')).to_be_visible()
-        blocked_users_editor.locator('[data-user-bulk-input]').fill("blocked.user@contoso.com\n00000000-0000-0000-0000-000000000000")
-        blocked_users_editor.locator('[data-user-bulk-add-button]').click()
-        expect(page.locator("#source_review_blocked_users")).to_have_value("blocked.user@contoso.com\n00000000-0000-0000-0000-000000000000")
+        expect(page.locator('[data-deep-research-policy="source_review_blocked_users"]')).to_have_count(0)
+        expect(page.locator("#source_review_blocked_users")).to_have_count(0)
+        expect(page.locator("#source_review_allowed_users")).to_have_count(0)
+        expect(page.locator("#manage_deep_research_allowed_users")).to_have_count(0)
+        expect(page.locator("#deepResearchAllowedUsersModal")).to_have_count(0)
     finally:
         context.close()
         browser.close()

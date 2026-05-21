@@ -1,12 +1,17 @@
 // workspace-file-sync.js
 
-const root = document.getElementById('file-sync-root');
+function initializeFileSyncRoot(root) {
+    if (!root || root.dataset.fileSyncInitialized === 'true') {
+        return;
+    }
+    root.dataset.fileSyncInitialized = 'true';
 
-if (root) {
     const state = {
         sources: [],
         editingSourceId: null,
         historySourceId: null,
+        sourceModalStep: 'type',
+        selectedSourceType: 'smb',
         availableTags: [],
         tagsLoaded: false,
     };
@@ -14,6 +19,26 @@ if (root) {
     const apiBase = root.dataset.apiBase;
     const tagApiUrl = root.dataset.tagsApi || '';
     const recursiveAllowed = root.dataset.recursiveAllowed !== 'false';
+    const sourceTypes = [
+        {
+            value: 'smb',
+            label: 'SMB Share',
+            description: 'Windows or SMB-compatible file share.',
+            enabled: true,
+        },
+        {
+            value: 'sharepoint_on_prem',
+            label: 'On-prem SharePoint',
+            description: 'Coming soon.',
+            enabled: false,
+        },
+        {
+            value: 'google_workspace',
+            label: 'Google Workspace',
+            description: 'Coming soon.',
+            enabled: false,
+        },
+    ];
 
     const createElement = (tagName, options = {}) => {
         const element = document.createElement(tagName);
@@ -36,10 +61,38 @@ if (root) {
         return parent;
     };
 
-    const parseList = (value) => value
+    const getSourceTypeDefinition = (sourceTypeValue) => sourceTypes.find((sourceType) => sourceType.value === sourceTypeValue);
+
+    const formatSourceType = (sourceTypeValue) => {
+        const sourceType = getSourceTypeDefinition(sourceTypeValue || 'smb');
+        if (sourceType) {
+            return sourceType.label;
+        }
+        return String(sourceTypeValue || 'smb').toUpperCase();
+    };
+
+    const isSourceTypeEnabled = (sourceTypeValue) => getSourceTypeDefinition(sourceTypeValue)?.enabled === true;
+
+    const parseList = (value) => String(value || '')
         .split(/[\n,;]+/)
         .map((item) => item.trim())
         .filter((item, index, allItems) => item && allItems.indexOf(item) === index);
+
+    const visibleSourceTypeValues = new Set(
+        parseList(root.dataset.visibleSourceTypes === undefined ? 'smb' : root.dataset.visibleSourceTypes)
+            .map((sourceTypeValue) => sourceTypeValue.toLowerCase())
+            .filter((sourceTypeValue) => sourceTypes.some((sourceType) => sourceType.value === sourceTypeValue)),
+    );
+    const isSourceTypeVisible = (sourceTypeValue) => visibleSourceTypeValues.has(sourceTypeValue);
+    const isSourceTypeSelectable = (sourceTypeValue) => isSourceTypeVisible(sourceTypeValue) && isSourceTypeEnabled(sourceTypeValue);
+    const getVisibleSourceTypes = () => sourceTypes.filter((sourceType) => isSourceTypeVisible(sourceType.value));
+    const getDefaultSourceTypeValue = () => {
+        const visibleEnabledSourceType = getVisibleSourceTypes().find((sourceType) => sourceType.enabled);
+        if (visibleEnabledSourceType) {
+            return visibleEnabledSourceType.value;
+        }
+        return getVisibleSourceTypes()[0]?.value || '';
+    };
 
     const showStatus = (message, type = 'info') => {
         const status = root.querySelector('[data-file-sync-status]');
@@ -53,6 +106,23 @@ if (root) {
 
     const hideStatus = () => {
         const status = root.querySelector('[data-file-sync-status]');
+        if (status) {
+            status.classList.add('d-none');
+        }
+    };
+
+    const showModalStatus = (message, type = 'info') => {
+        const status = root.querySelector('[data-file-sync-modal-status]');
+        if (!status) {
+            return;
+        }
+        status.className = `alert alert-${type} py-2 mb-3`;
+        status.textContent = message;
+        status.classList.remove('d-none');
+    };
+
+    const hideModalStatus = () => {
+        const status = root.querySelector('[data-file-sync-modal-status]');
         if (status) {
             status.classList.add('d-none');
         }
@@ -263,6 +333,7 @@ if (root) {
     };
 
     const sourceToFormValues = (source = {}) => ({
+        sourceType: source.source_type || 'smb',
         name: source.name || '',
         enabled: source.enabled !== false,
         recursive: source.recursive !== false && recursiveAllowed,
@@ -282,18 +353,97 @@ if (root) {
 
     const getFormSource = () => state.sources.find((source) => source.id === state.editingSourceId) || null;
 
-    const renderForm = () => {
-        const formContainer = root.querySelector('[data-file-sync-form]');
-        formContainer.replaceChildren();
-        const source = getFormSource();
-        const values = sourceToFormValues(source || {});
+    const getSourceModalElement = () => root.querySelector('[data-file-sync-source-modal]');
 
-        const form = createElement('form', { className: 'border rounded p-3 mb-3' });
-        form.noValidate = true;
+    const resetSourceModalState = () => {
+        state.editingSourceId = null;
+        state.sourceModalStep = 'type';
+        state.selectedSourceType = getDefaultSourceTypeValue();
+        hideModalStatus();
+    };
 
-        const title = createElement('h6', { className: 'mb-3', text: source ? 'Edit SMB Source' : 'Add SMB Source' });
+    const closeSourceModal = () => {
+        const modalElement = getSourceModalElement();
+        if (!modalElement) {
+            resetSourceModalState();
+            return;
+        }
+        if (window.bootstrap?.Modal) {
+            const modalInstance = window.bootstrap.Modal.getInstance(modalElement);
+            if (modalInstance) {
+                modalInstance.hide();
+                return;
+            }
+        }
+        modalElement.classList.remove('show', 'd-block');
+        modalElement.setAttribute('aria-hidden', 'true');
+        resetSourceModalState();
+    };
+
+    const renderSourceTypeStep = (content, footer) => {
+        const visibleSourceTypes = getVisibleSourceTypes();
+        if (!isSourceTypeVisible(state.selectedSourceType)) {
+            state.selectedSourceType = getDefaultSourceTypeValue();
+        }
+
+        if (visibleSourceTypes.length === 0) {
+            content.appendChild(createElement('div', {
+                className: 'alert alert-info mb-0',
+                text: 'No source types are visible for this workspace. Ask an admin to enable a source type before adding a sync source.',
+            }));
+        }
+
+        const typeGrid = createElement('div', { className: 'row g-3' });
+        visibleSourceTypes.forEach((sourceType) => {
+            const column = createElement('div', { className: 'col-md-4' });
+            const optionButton = createElement('button', {
+                className: `btn w-100 h-100 text-start border rounded p-3 ${state.selectedSourceType === sourceType.value ? 'border-primary bg-primary-subtle' : 'btn-light'}`,
+                attributes: {
+                    type: 'button',
+                    'aria-pressed': String(state.selectedSourceType === sourceType.value),
+                },
+            });
+            optionButton.disabled = !sourceType.enabled;
+            const heading = createElement('div', { className: 'fw-semibold mb-1', text: sourceType.label });
+            const description = createElement('div', { className: 'small text-muted', text: sourceType.description });
+            const badge = createElement('span', {
+                className: `badge mt-3 ${sourceType.enabled ? 'text-bg-primary' : 'text-bg-secondary'}`,
+                text: sourceType.enabled ? 'Available' : 'Coming soon',
+            });
+            optionButton.addEventListener('click', () => {
+                state.selectedSourceType = sourceType.value;
+                renderSourceModal();
+            });
+            appendChildren(optionButton, [heading, description, badge]);
+            column.appendChild(optionButton);
+            typeGrid.appendChild(column);
+        });
+
+        const cancelButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button' } });
+        const nextButton = createElement('button', { className: 'btn btn-primary', text: 'Configure Source', attributes: { type: 'button' } });
+        nextButton.disabled = !isSourceTypeSelectable(state.selectedSourceType);
+        cancelButton.addEventListener('click', closeSourceModal);
+        nextButton.addEventListener('click', () => {
+            state.sourceModalStep = 'configure';
+            renderSourceModal();
+        });
+
+        if (visibleSourceTypes.length > 0) {
+            content.appendChild(typeGrid);
+        }
+        appendChildren(footer, [cancelButton, nextButton]);
+    };
+
+    const renderConfigureStep = (content, footer, source) => {
+        const values = sourceToFormValues(source || { source_type: state.selectedSourceType });
+        state.selectedSourceType = values.sourceType;
+        const selectedSourceType = values.sourceType || 'smb';
+        const typeSummary = createElement('div', { className: 'alert alert-light border py-2 mb-3' });
+        const typeLabel = createElement('span', { className: 'fw-semibold me-2', text: 'Source Type' });
+        const typeValue = createElement('span', { text: formatSourceType(selectedSourceType) });
+        appendChildren(typeSummary, [typeLabel, typeValue]);
+
         const row = createElement('div', { className: 'row g-3' });
-
         const nameField = buildLabeledInput('file-sync-source-name', 'Source name', 'text', values.name);
         const uncField = buildLabeledInput('file-sync-unc-path', 'UNC path', 'text', values.uncPath);
         const usernameField = buildLabeledInput('file-sync-username', 'Username', 'text', values.username);
@@ -357,21 +507,11 @@ if (root) {
 
         const switches = createElement('div', { className: 'd-flex flex-wrap gap-4 mt-3' });
         appendChildren(switches, [enabledField.wrapper, scheduleField.wrapper, recursiveField.wrapper]);
-
-        const actions = createElement('div', { className: 'd-flex gap-2 justify-content-end mt-3' });
-        const testButton = createElement('button', { className: 'btn btn-outline-primary', text: 'Test Connection', attributes: { type: 'button' } });
-        const cancelButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button' } });
-        const saveButton = createElement('button', { className: 'btn btn-primary', text: source ? 'Save Source' : 'Add Source', attributes: { type: 'submit' } });
-        appendChildren(actions, [testButton, cancelButton, saveButton]);
-
-        cancelButton.addEventListener('click', () => {
-            state.editingSourceId = null;
-            formContainer.classList.add('d-none');
-        });
+        appendChildren(content, [typeSummary, row, switches]);
 
         const buildPayload = () => ({
             name: nameField.input.value.trim(),
-            source_type: 'smb',
+            source_type: selectedSourceType,
             enabled: enabledField.input.checked,
             recursive: recursiveAllowed && recursiveField.input.checked,
             connection: {
@@ -397,6 +537,20 @@ if (root) {
             remote_delete_policy: deleteSelect.value,
         });
 
+        if (!source) {
+            const backButton = createElement('button', { className: 'btn btn-outline-secondary me-auto', text: 'Back', attributes: { type: 'button' } });
+            backButton.addEventListener('click', () => {
+                state.sourceModalStep = 'type';
+                renderSourceModal();
+            });
+            footer.appendChild(backButton);
+        }
+
+        const testButton = createElement('button', { className: 'btn btn-outline-primary', text: 'Test Connection', attributes: { type: 'button' } });
+        const cancelButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button' } });
+        const saveButton = createElement('button', { className: 'btn btn-primary', text: source ? 'Save Source' : 'Add Source', attributes: { type: 'button' } });
+        cancelButton.addEventListener('click', closeSourceModal);
+
         testButton.addEventListener('click', async () => {
             try {
                 testButton.disabled = true;
@@ -408,15 +562,15 @@ if (root) {
                     body: JSON.stringify(buildPayload()),
                 });
                 const connection = payload.connection || {};
-                showStatus(`Connection OK. Checked ${connection.entries_checked || 0} top-level item(s).`, 'success');
+                showModalStatus(`Connection OK. Checked ${connection.entries_checked || 0} top-level item(s).`, 'success');
             } catch (error) {
-                showStatus(error.message, 'danger');
+                showModalStatus(error.message, 'danger');
             } finally {
                 testButton.disabled = false;
             }
         });
 
-        form.addEventListener('submit', async (event) => {
+        saveButton.addEventListener('click', async (event) => {
             event.preventDefault();
             const payload = buildPayload();
 
@@ -435,18 +589,83 @@ if (root) {
                     });
                     showStatus('Source added.', 'success');
                 }
-                state.editingSourceId = null;
-                formContainer.classList.add('d-none');
+                closeSourceModal();
                 await loadSources();
             } catch (error) {
-                showStatus(error.message, 'danger');
+                showModalStatus(error.message, 'danger');
             } finally {
                 saveButton.disabled = false;
             }
         });
 
-        appendChildren(form, [title, row, switches, actions]);
-        formContainer.appendChild(form);
+        appendChildren(footer, [testButton, cancelButton, saveButton]);
+    };
+
+    const renderSourceModal = () => {
+        const modalElement = getSourceModalElement();
+        if (!modalElement) {
+            return;
+        }
+        const source = getFormSource();
+        const title = modalElement.querySelector('[data-file-sync-source-modal-title]');
+        const steps = modalElement.querySelector('[data-file-sync-source-modal-steps]');
+        const content = modalElement.querySelector('[data-file-sync-source-modal-content]');
+        const footer = modalElement.querySelector('[data-file-sync-source-modal-footer]');
+        title.textContent = source ? `Edit ${formatSourceType(source.source_type || 'smb')} Source` : 'Add Sync Source';
+        steps.replaceChildren();
+        content.replaceChildren();
+        footer.replaceChildren();
+        hideModalStatus();
+
+        const stepGroup = createElement('div', { className: 'btn-group w-100 mb-3', attributes: { role: 'group', 'aria-label': 'File Sync source steps' } });
+        [
+            ['type', '1. Source Type'],
+            ['configure', '2. Configure'],
+        ].forEach(([stepValue, stepLabel]) => {
+            const stepButton = createElement('button', {
+                className: `btn ${state.sourceModalStep === stepValue ? 'btn-primary' : 'btn-outline-primary'}`,
+                text: stepLabel,
+                attributes: {
+                    type: 'button',
+                    'aria-pressed': String(state.sourceModalStep === stepValue),
+                },
+            });
+            stepButton.disabled = stepValue === 'configure' && !isSourceTypeSelectable(state.selectedSourceType);
+            stepButton.addEventListener('click', () => {
+                if (stepValue === 'configure' && !isSourceTypeSelectable(state.selectedSourceType)) {
+                    return;
+                }
+                state.sourceModalStep = stepValue;
+                renderSourceModal();
+            });
+            stepGroup.appendChild(stepButton);
+        });
+        steps.appendChild(stepGroup);
+
+        if (state.sourceModalStep === 'configure') {
+            renderConfigureStep(content, footer, source);
+            return;
+        }
+        renderSourceTypeStep(content, footer);
+    };
+
+    const openSourceModal = async (sourceId = null) => {
+        state.editingSourceId = sourceId;
+        const source = getFormSource();
+        state.selectedSourceType = source?.source_type || getDefaultSourceTypeValue();
+        state.sourceModalStep = source ? 'configure' : 'type';
+        await loadAvailableTags();
+        renderSourceModal();
+        const modalElement = getSourceModalElement();
+        if (!modalElement) {
+            return;
+        }
+        if (window.bootstrap?.Modal) {
+            window.bootstrap.Modal.getOrCreateInstance(modalElement, { backdrop: 'static' }).show();
+            return;
+        }
+        modalElement.classList.add('show', 'd-block');
+        modalElement.removeAttribute('aria-hidden');
     };
 
     const formatDate = (value) => {
@@ -556,7 +775,7 @@ if (root) {
 
         if (state.sources.length === 0) {
             const row = createElement('tr');
-            const cell = createElement('td', { className: 'text-muted', text: 'No sync sources configured.', attributes: { colspan: '6' } });
+            const cell = createElement('td', { className: 'text-muted', text: 'No sync sources configured.', attributes: { colspan: '7' } });
             row.appendChild(cell);
             tableBody.appendChild(row);
             return;
@@ -571,6 +790,8 @@ if (root) {
             appendChildren(nameCell, [nameText, pathText, recursionText]);
 
             const statusText = source.enabled ? 'Enabled' : 'Disabled';
+            const typeCell = createElement('td');
+            typeCell.appendChild(createElement('span', { className: 'badge text-bg-light border', text: formatSourceType(source.source_type || 'smb') }));
             const statusCell = createElement('td', { text: statusText });
             const scheduleCell = createElement('td', { text: source.schedule?.enabled ? `${source.schedule.interval_minutes || ''} min` : 'Manual' });
             const lastRunCell = createElement('td');
@@ -606,11 +827,7 @@ if (root) {
             });
 
             editButton.addEventListener('click', async () => {
-                state.editingSourceId = source.id;
-                const formContainer = root.querySelector('[data-file-sync-form]');
-                await loadAvailableTags();
-                renderForm();
-                formContainer.classList.remove('d-none');
+                await openSourceModal(source.id);
             });
 
             deleteButton.addEventListener('click', async () => {
@@ -645,7 +862,7 @@ if (root) {
 
             appendChildren(actionGroup, [syncButton, historyButton, editButton, deleteButton]);
             actionsCell.appendChild(actionGroup);
-            appendChildren(row, [nameCell, statusCell, scheduleCell, lastRunCell, countsCell, actionsCell]);
+            appendChildren(row, [nameCell, typeCell, statusCell, scheduleCell, lastRunCell, countsCell, actionsCell]);
             tableBody.appendChild(row);
         });
     };
@@ -712,6 +929,53 @@ if (root) {
         }
     };
 
+    const buildSourceModal = () => {
+        const modalId = `file-sync-source-modal-${Math.random().toString(36).slice(2, 10)}`;
+        const modalElement = createElement('div', {
+            className: 'modal fade',
+            attributes: {
+                id: modalId,
+                tabindex: '-1',
+                'aria-labelledby': `${modalId}-title`,
+                'aria-hidden': 'true',
+                'data-file-sync-source-modal': 'true',
+            },
+        });
+        const dialog = createElement('div', { className: 'modal-dialog modal-xl modal-dialog-scrollable' });
+        const content = createElement('div', { className: 'modal-content' });
+        const header = createElement('div', { className: 'modal-header' });
+        const title = createElement('h5', {
+            className: 'modal-title',
+            text: 'Add Sync Source',
+            attributes: {
+                id: `${modalId}-title`,
+                'data-file-sync-source-modal-title': 'true',
+            },
+        });
+        const closeButton = createElement('button', {
+            className: 'btn-close',
+            attributes: {
+                type: 'button',
+                'aria-label': 'Close',
+                'data-bs-dismiss': 'modal',
+            },
+        });
+        const body = createElement('div', { className: 'modal-body' });
+        const status = createElement('div', { className: 'alert alert-info py-2 mb-3 d-none', attributes: { 'data-file-sync-modal-status': 'true' } });
+        const steps = createElement('div', { attributes: { 'data-file-sync-source-modal-steps': 'true' } });
+        const modalContent = createElement('div', { attributes: { 'data-file-sync-source-modal-content': 'true' } });
+        const footer = createElement('div', { className: 'modal-footer', attributes: { 'data-file-sync-source-modal-footer': 'true' } });
+
+        closeButton.addEventListener('click', closeSourceModal);
+        modalElement.addEventListener('hidden.bs.modal', resetSourceModalState);
+        appendChildren(header, [title, closeButton]);
+        appendChildren(body, [status, steps, modalContent]);
+        appendChildren(content, [header, body, footer]);
+        dialog.appendChild(content);
+        modalElement.appendChild(dialog);
+        return modalElement;
+    };
+
     const renderLayout = () => {
         root.replaceChildren();
         const toolbar = createElement('div', { className: 'd-flex flex-wrap gap-2 justify-content-between align-items-center mb-3' });
@@ -723,30 +987,34 @@ if (root) {
         appendChildren(toolbar, [title, actions]);
 
         const status = createElement('div', { className: 'alert alert-info py-2 mb-3 d-none', attributes: { 'data-file-sync-status': 'true' } });
-        const formContainer = createElement('div', { className: 'd-none', attributes: { 'data-file-sync-form': 'true' } });
+        const tableWrapper = createElement('div', { className: 'table-responsive' });
         const table = createElement('table', { className: 'table table-striped align-middle' });
         const head = createElement('thead');
         const headRow = createElement('tr');
-        ['Source', 'Status', 'Schedule', 'Last run', 'Counts', 'Actions'].forEach((headerText) => {
+        ['Source', 'Type', 'Status', 'Schedule', 'Last run', 'Counts', 'Actions'].forEach((headerText) => {
             headRow.appendChild(createElement('th', { text: headerText }));
         });
         head.appendChild(headRow);
         const body = createElement('tbody', { attributes: { 'data-file-sync-source-rows': 'true' } });
         appendChildren(table, [head, body]);
+        tableWrapper.appendChild(table);
         const history = createElement('div', { attributes: { 'data-file-sync-history': 'true' } });
+        const sourceModal = buildSourceModal();
 
         addButton.addEventListener('click', async () => {
-            state.editingSourceId = null;
-            await loadAvailableTags();
-            renderForm();
-            formContainer.classList.toggle('d-none');
+            await openSourceModal();
         });
         refreshButton.addEventListener('click', loadSources);
 
-        appendChildren(root, [toolbar, status, formContainer, table, history]);
+        appendChildren(root, [toolbar, status, tableWrapper, history, sourceModal]);
     };
 
     renderLayout();
     loadAvailableTags();
     loadSources();
 }
+
+window.initializeFileSyncRoot = initializeFileSyncRoot;
+document.querySelectorAll('#file-sync-root, [data-file-sync-root]').forEach((root) => {
+    initializeFileSyncRoot(root);
+});

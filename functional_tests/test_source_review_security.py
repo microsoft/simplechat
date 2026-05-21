@@ -1,23 +1,26 @@
 # test_source_review_security.py
 """
 Functional test for Source Review security and evidence extraction.
-Version: 0.241.065
+Version: 0.241.071
 Implemented in: 0.241.063
-Updated in: 0.241.065
+Updated in: 0.241.071
 
 This test ensures that Source Review applies access controls, clamps admin limits,
 blocks unsafe URLs, extracts bounded HTML evidence and structured archive rows,
-hydrates dynamic-grid archive JSON, and ignores missing date containers without
-trusting page text as instructions.
+hydrates dynamic-grid archive JSON, ignores missing date containers, and uses
+optional app-role access without trusting page text as instructions.
 """
 
 import asyncio
+import json
+import socket
 import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
+APP_ROLES_FILE = REPO_ROOT / "deployers" / "azurecli" / "appRegistrationRoles.json"
 sys.path.insert(0, str(APP_ROOT))
 
 from functions_source_review import (  # noqa: E402
@@ -25,6 +28,7 @@ from functions_source_review import (  # noqa: E402
     collect_source_review_seed_urls,
     extract_source_review_evidence_from_html,
     get_source_review_config,
+    get_source_review_runtime_capabilities,
     is_source_review_enabled_for_user,
     validate_source_review_url,
     _augment_html_page_with_dynamic_grid_items,
@@ -164,18 +168,91 @@ class FakeDynamicGridSession:
 
 
 def test_source_review_access_controls():
-    """Validate allowlist and blocklist precedence for Source Review users."""
+    """Validate Source Review user access uses the optional app role gate."""
     print("Testing Source Review access controls...")
 
     settings = {
         "enable_source_review": True,
-        "source_review_allowed_users": ["allowed.user@contoso.com"],
+        "source_review_allowed_users": ["allowed.user@contoso.com", "blocked.user@contoso.com"],
         "source_review_blocked_users": ["blocked.user@contoso.com"],
     }
+    role_required_settings = {
+        "enable_source_review": True,
+        "require_member_of_deep_research_user": True,
+    }
 
+    normalized_settings = get_source_review_config(settings)
+
+    assert normalized_settings["source_review_allowed_users"] == []
+    assert normalized_settings["source_review_blocked_users"] == []
     assert is_source_review_enabled_for_user(settings, "user-1", "allowed.user@contoso.com") is True
-    assert is_source_review_enabled_for_user(settings, "user-2", "other.user@contoso.com") is False
-    assert is_source_review_enabled_for_user(settings, "user-3", "blocked.user@contoso.com") is False
+    assert is_source_review_enabled_for_user(settings, "user-2", "other.user@contoso.com") is True
+    assert is_source_review_enabled_for_user(settings, "user-3", "blocked.user@contoso.com") is True
+    assert is_source_review_enabled_for_user(role_required_settings, "user-4", "user@contoso.com") is False
+    assert is_source_review_enabled_for_user(
+        role_required_settings,
+        "user-5",
+        "user@contoso.com",
+        user_roles=["User"],
+    ) is False
+    assert is_source_review_enabled_for_user(
+        role_required_settings,
+        "user-6",
+        "user@contoso.com",
+        user_roles=["DeepResearchUser"],
+    ) is True
+
+
+def test_deep_research_app_role_is_defined_for_deployments():
+    """Validate deployment app roles include the DeepResearchUser assignment option."""
+    print("Testing Deep Research app role definition...")
+
+    roles = json.loads(APP_ROLES_FILE.read_text(encoding="utf-8"))
+    deep_research_roles = [role for role in roles if role.get("value") == "DeepResearchUser"]
+
+    assert len(deep_research_roles) == 1
+    assert deep_research_roles[0]["displayName"] == "Deep Research User"
+    assert deep_research_roles[0]["allowedMemberTypes"] == ["User"]
+    assert deep_research_roles[0]["isEnabled"] is True
+
+
+def test_source_review_defaults_are_max_enabled_when_configured():
+    """Validate default Deep Research settings use max safe values behind the master toggle."""
+    print("Testing Source Review max defaults...")
+
+    source_review_config = get_source_review_config({})
+
+    assert source_review_config["enable_source_review"] is False
+    assert source_review_config["require_member_of_deep_research_user"] is False
+    assert source_review_config["enable_deep_source_review"] is True
+    assert source_review_config["source_review_default_mode"] == "auto_with_web_search"
+    assert source_review_config["source_review_max_pages_per_turn"] == 10
+    assert source_review_config["source_review_max_seed_pages_per_turn"] == 10
+    assert source_review_config["source_review_timeout_seconds"] == 30
+    assert source_review_config["source_review_max_redirects"] == 5
+    assert source_review_config["source_review_max_bytes_per_page"] == 5000000
+    assert source_review_config["deep_research_max_user_urls_per_turn"] == 100
+    assert source_review_config["deep_research_max_search_queries_per_turn"] == 8
+    assert source_review_config["source_review_allow_internal_hosts"] is False
+    assert source_review_config["source_review_allow_js_rendering"] is True
+    assert source_review_config["source_review_js_load_more_clicks"] == 12
+    assert source_review_config["source_review_blocked_users"] == []
+
+
+def test_source_review_runtime_capabilities_are_reported():
+    """Validate optional browser rendering support reports runtime capability details."""
+    print("Testing Source Review runtime capability reporting...")
+
+    capabilities = get_source_review_runtime_capabilities(force_refresh=True)
+
+    assert isinstance(capabilities["js_rendering_available"], bool)
+    assert isinstance(capabilities["playwright_available"], bool)
+    assert isinstance(capabilities["chromium_launch_available"], bool)
+    assert isinstance(capabilities["sandbox_disabled"], bool)
+    assert isinstance(capabilities["max_render_concurrency"], int)
+    assert 1 <= capabilities["max_render_concurrency"] <= 5
+    assert isinstance(capabilities["message"], str)
+    assert capabilities["message"]
 
 
 def test_source_review_settings_are_clamped():
@@ -233,6 +310,66 @@ def test_source_review_blocks_unsafe_urls():
     )
     assert is_allowed is False
     assert reason == "domain_not_allowed"
+
+
+def test_source_review_internal_hosts_require_admin_opt_in():
+    """Validate internal DNS targets require explicit admin opt-in."""
+    print("Testing Source Review internal hostname policy...")
+
+    original_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(hostname, port, family=0, type=0, proto=0, flags=0):
+        if hostname in {"intranet.contoso.com", "service.internal", "singlelabel"}:
+            return [(socket.AF_INET, socket.SOCK_STREAM, proto, "", ("10.20.30.40", 443))]
+        return original_getaddrinfo(hostname, port, family, type, proto, flags)
+
+    socket.getaddrinfo = fake_getaddrinfo
+    try:
+        default_config = get_source_review_config({"enable_source_review": True})
+        internal_config = get_source_review_config({
+            "enable_source_review": True,
+            "source_review_allow_internal_hosts": True,
+        })
+
+        is_allowed, reason, _normalized_url = validate_source_review_url(
+            "https://intranet.contoso.com/status",
+            default_config,
+        )
+        assert is_allowed is False
+        assert reason == "blocked_ip_address"
+
+        is_allowed, reason, _normalized_url = validate_source_review_url(
+            "https://intranet.contoso.com/status",
+            internal_config,
+        )
+        assert is_allowed is True
+        assert reason == "allowed"
+
+        is_allowed, reason, _normalized_url = validate_source_review_url(
+            "https://service.internal/status",
+            internal_config,
+        )
+        assert is_allowed is True
+        assert reason == "allowed"
+
+        is_allowed, reason, _normalized_url = validate_source_review_url(
+            "https://singlelabel/status",
+            internal_config,
+        )
+        assert is_allowed is True
+        assert reason == "allowed"
+
+        blocked_urls = [
+            "http://10.20.30.40/status",
+            "http://127.0.0.1/status",
+            "http://localhost/status",
+            "http://169.254.169.254/metadata/instance",
+        ]
+        for blocked_url in blocked_urls:
+            is_allowed, _reason, _normalized_url = validate_source_review_url(blocked_url, internal_config)
+            assert is_allowed is False, f"Expected {blocked_url} to remain blocked."
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
 
 
 def test_source_review_html_extraction_and_prompt_injection_markers():
@@ -468,8 +605,12 @@ def test_source_review_seed_url_collection():
 if __name__ == "__main__":
     tests = [
         test_source_review_access_controls,
+        test_deep_research_app_role_is_defined_for_deployments,
+        test_source_review_defaults_are_max_enabled_when_configured,
+        test_source_review_runtime_capabilities_are_reported,
         test_source_review_settings_are_clamped,
         test_source_review_blocks_unsafe_urls,
+        test_source_review_internal_hosts_require_admin_opt_in,
         test_source_review_html_extraction_and_prompt_injection_markers,
         test_source_review_html_extraction_detects_load_more_controls,
         test_source_review_rendered_load_more_scans_past_large_navigation,

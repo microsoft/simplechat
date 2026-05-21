@@ -392,6 +392,420 @@ function setupDeepResearchUserPolicyBulkAdd(editor, addPolicyItems) {
     });
 }
 
+function setupDeepResearchAllowedUsersManager() {
+    const hiddenField = document.getElementById('source_review_allowed_users');
+    const summary = document.getElementById('deep_research_allowed_users_summary');
+    const countLabel = document.getElementById('deep_research_allowed_users_count');
+    const filterInput = document.getElementById('deep_research_allowed_users_filter');
+    const usersTableBody = document.getElementById('deep_research_allowed_users_tbody');
+    const searchInput = document.getElementById('deep_research_user_search_term');
+    const searchButton = document.getElementById('deep_research_user_search_button');
+    const searchStatus = document.getElementById('deep_research_user_search_status');
+    const searchResultsTable = document.getElementById('deep_research_user_search_results_table');
+    const manualIdentifierInput = document.getElementById('deep_research_manual_user_identifier');
+    const manualAddButton = document.getElementById('deep_research_manual_user_add_button');
+    const csvInput = document.getElementById('deep_research_allowed_users_csv_input');
+    const csvStatus = document.getElementById('deep_research_allowed_users_csv_status');
+    const csvExampleButton = document.getElementById('deep_research_allowed_users_csv_example_button');
+
+    if (!hiddenField || !usersTableBody) {
+        return;
+    }
+
+    let allowedUsers = parsePolicyListValue(hiddenField.value)
+        .map(normalizeUserPolicyValue)
+        .filter(Boolean)
+        .filter((item, index, items) => items.indexOf(item) === index);
+
+    const syncHiddenField = (markModified = true) => {
+        hiddenField.value = allowedUsers.join('\n');
+        if (markModified) {
+            markFormAsModified();
+        }
+    };
+
+    const setSearchStatus = (message, tone = 'muted') => {
+        if (!searchStatus) {
+            return;
+        }
+        searchStatus.textContent = message || '';
+        searchStatus.className = `form-text text-${tone}`;
+    };
+
+    const setCsvStatus = (message, tone = 'info') => {
+        if (!csvStatus) {
+            return;
+        }
+        csvStatus.replaceChildren();
+        if (!message) {
+            csvStatus.classList.add('d-none');
+            return;
+        }
+        csvStatus.className = `alert alert-${tone} mt-3`;
+        const messageNode = document.createElement('div');
+        messageNode.textContent = message;
+        csvStatus.appendChild(messageNode);
+    };
+
+    const userTypeLabel = identifier => {
+        if (isEmailLike(identifier)) {
+            return 'Email';
+        }
+        if (isGuidLike(identifier)) {
+            return 'User ID';
+        }
+        return 'Identifier';
+    };
+
+    const addAllowedUsers = (rawItems, options = {}) => {
+        const { source = 'manual' } = options;
+        const normalizedItems = rawItems
+            .map(normalizeUserPolicyValue)
+            .filter(Boolean);
+        if (normalizedItems.length === 0) {
+            showToast('Enter at least one email or user ID to add.', 'warning');
+            return 0;
+        }
+
+        const existingItems = new Set(allowedUsers.map(item => item.toLowerCase()));
+        const startingCount = allowedUsers.length;
+        normalizedItems.forEach(item => {
+            const itemKey = item.toLowerCase();
+            if (!existingItems.has(itemKey)) {
+                allowedUsers.push(item);
+                existingItems.add(itemKey);
+            }
+        });
+
+        const addedCount = allowedUsers.length - startingCount;
+        if (addedCount > 0) {
+            renderAllowedUsers();
+            syncHiddenField();
+            showToast(`${addedCount} allowed user${addedCount === 1 ? '' : 's'} added.`, 'success');
+        } else if (source !== 'initial') {
+            showToast('No new allowed users were added.', 'info');
+        }
+        return addedCount;
+    };
+
+    const removeAllowedUser = identifier => {
+        const normalizedIdentifier = normalizeUserPolicyValue(identifier);
+        allowedUsers = allowedUsers.filter(item => item.toLowerCase() !== normalizedIdentifier.toLowerCase());
+        renderAllowedUsers();
+        syncHiddenField();
+    };
+
+    const renderAllowedUsers = () => {
+        const filterValue = normalizeUserPolicyValue(filterInput ? filterInput.value : '');
+        const filteredUsers = allowedUsers.filter(identifier => !filterValue || identifier.includes(filterValue));
+        usersTableBody.replaceChildren();
+
+        if (summary) {
+            summary.textContent = allowedUsers.length === 0
+                ? 'No specific users selected.'
+                : `${allowedUsers.length} allowed user${allowedUsers.length === 1 ? '' : 's'} selected.`;
+        }
+        if (countLabel) {
+            countLabel.textContent = allowedUsers.length === 0
+                ? 'All signed-in users are allowed.'
+                : `${allowedUsers.length} allowed user${allowedUsers.length === 1 ? '' : 's'}.`;
+        }
+
+        if (filteredUsers.length === 0) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = 3;
+            cell.className = 'text-center text-muted py-4';
+            cell.textContent = allowedUsers.length === 0 ? 'No allowed users configured.' : 'No allowed users match the filter.';
+            row.appendChild(cell);
+            usersTableBody.appendChild(row);
+            return;
+        }
+
+        filteredUsers.forEach(identifier => {
+            const row = document.createElement('tr');
+
+            const identifierCell = document.createElement('td');
+            identifierCell.textContent = identifier;
+
+            const typeCell = document.createElement('td');
+            typeCell.textContent = userTypeLabel(identifier);
+
+            const actionCell = document.createElement('td');
+            const removeButton = createIconButton('bi bi-trash', 'Remove allowed user', 'btn-outline-danger');
+            removeButton.addEventListener('click', () => removeAllowedUser(identifier));
+            actionCell.appendChild(removeButton);
+
+            row.appendChild(identifierCell);
+            row.appendChild(typeCell);
+            row.appendChild(actionCell);
+            usersTableBody.appendChild(row);
+        });
+    };
+
+    const renderSearchResults = users => {
+        const tableBody = searchResultsTable ? searchResultsTable.querySelector('tbody') : null;
+        if (!tableBody) {
+            return;
+        }
+        tableBody.replaceChildren();
+
+        if (!Array.isArray(users) || users.length === 0) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = 3;
+            cell.className = 'text-center text-muted';
+            cell.textContent = 'No results.';
+            row.appendChild(cell);
+            tableBody.appendChild(row);
+            return;
+        }
+
+        users.forEach(user => {
+            const identifier = normalizeUserPolicyValue(user.email || user.id || '');
+            const row = document.createElement('tr');
+
+            const nameCell = document.createElement('td');
+            nameCell.textContent = user.displayName || '(no name)';
+
+            const emailCell = document.createElement('td');
+            emailCell.textContent = user.email || user.id || '';
+
+            const actionCell = document.createElement('td');
+            const selectButton = document.createElement('button');
+            selectButton.type = 'button';
+            selectButton.className = 'btn btn-sm btn-primary';
+            selectButton.textContent = 'Select';
+            selectButton.disabled = !identifier;
+            selectButton.addEventListener('click', () => {
+                addAllowedUsers([identifier], { source: 'search' });
+            });
+            actionCell.appendChild(selectButton);
+
+            row.appendChild(nameCell);
+            row.appendChild(emailCell);
+            row.appendChild(actionCell);
+            tableBody.appendChild(row);
+        });
+    };
+
+    const searchUsers = async () => {
+        if (!searchInput || !searchButton) {
+            return;
+        }
+        const query = searchInput.value.trim();
+        if (!query) {
+            searchInput.classList.add('is-invalid');
+            setSearchStatus('Enter a name or email to search.', 'warning');
+            return;
+        }
+
+        searchInput.classList.remove('is-invalid');
+        searchButton.disabled = true;
+        setSearchStatus('Searching...', 'muted');
+
+        try {
+            const response = await fetch(`/api/userSearch?query=${encodeURIComponent(query)}`, {
+                credentials: 'same-origin',
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || response.statusText || 'User search failed');
+            }
+            renderSearchResults(payload);
+            const resultCount = Array.isArray(payload) ? payload.length : 0;
+            setSearchStatus(
+                resultCount > 0 ? `Found ${resultCount} user(s).` : 'No users found.',
+                resultCount > 0 ? 'success' : 'muted'
+            );
+        } catch (error) {
+            renderSearchResults([]);
+            setSearchStatus(`Search failed: ${error.message}`, 'danger');
+            showToast(`User search failed: ${error.message}`, 'danger');
+        } finally {
+            searchButton.disabled = false;
+        }
+    };
+
+    const addManualUser = () => {
+        if (!manualIdentifierInput) {
+            return;
+        }
+        const addedCount = addAllowedUsers([manualIdentifierInput.value], { source: 'manual' });
+        if (addedCount > 0) {
+            manualIdentifierInput.value = '';
+            manualIdentifierInput.focus();
+        }
+    };
+
+    const downloadCsvExample = () => {
+        const csvContent = 'userId,displayName,email\n00000000-0000-0000-0000-000000000001,John Smith,john.smith@contoso.com\n00000000-0000-0000-0000-000000000002,Jane Doe,jane.doe@contoso.com\n';
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const objectUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = 'deep_research_allowed_users_example.csv';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(objectUrl);
+    };
+
+    const handleCsvFileSelect = event => {
+        const file = event.target.files[0];
+        if (!file) {
+            setCsvStatus('');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = loadEvent => {
+            try {
+                const parsedUsers = parseDeepResearchAllowedUsersCsv(loadEvent.target.result || '');
+                const addedCount = addAllowedUsers(parsedUsers, { source: 'csv' });
+                setCsvStatus(
+                    `${parsedUsers.length} valid row${parsedUsers.length === 1 ? '' : 's'} parsed. ${addedCount} new allowed user${addedCount === 1 ? '' : 's'} added.`,
+                    'success'
+                );
+            } catch (error) {
+                setCsvStatus(error.message, 'danger');
+                showToast(error.message, 'danger');
+            } finally {
+                event.target.value = '';
+            }
+        };
+        reader.onerror = () => {
+            setCsvStatus('Unable to read the selected CSV file.', 'danger');
+        };
+        reader.readAsText(file);
+    };
+
+    if (searchButton) {
+        searchButton.addEventListener('click', searchUsers);
+    }
+    if (searchInput) {
+        searchInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                searchUsers();
+            }
+        });
+    }
+    if (manualAddButton) {
+        manualAddButton.addEventListener('click', addManualUser);
+    }
+    if (manualIdentifierInput) {
+        manualIdentifierInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                addManualUser();
+            }
+        });
+    }
+    if (filterInput) {
+        filterInput.addEventListener('input', renderAllowedUsers);
+    }
+    if (csvInput) {
+        csvInput.addEventListener('change', handleCsvFileSelect);
+    }
+    if (csvExampleButton) {
+        csvExampleButton.addEventListener('click', downloadCsvExample);
+    }
+
+    syncHiddenField(false);
+    renderAllowedUsers();
+    renderSearchResults([]);
+}
+
+function parseDeepResearchAllowedUsersCsv(csvText) {
+    const lines = String(csvText || '')
+        .split(/\r?\n/)
+        .filter(line => line.trim());
+    if (lines.length < 2) {
+        throw new Error('CSV must contain a header row and at least one data row.');
+    }
+
+    const headers = parseCsvLine(lines[0]).map(header => header.trim().toLowerCase());
+    const userIdIndex = headers.indexOf('userid');
+    const emailIndex = headers.indexOf('email');
+    if (emailIndex < 0 && userIdIndex < 0) {
+        throw new Error('CSV must include an email or userId column.');
+    }
+
+    const dataRows = lines.slice(1);
+    if (dataRows.length > 1000) {
+        throw new Error(`Too many rows. Maximum 1,000 users allowed (found ${dataRows.length}).`);
+    }
+
+    const parsedUsers = [];
+    const errors = [];
+    dataRows.forEach((line, index) => {
+        const rowNumber = index + 2;
+        const columns = parseCsvLine(line);
+        const email = emailIndex >= 0 ? normalizeUserPolicyValue(columns[emailIndex] || '') : '';
+        const userId = userIdIndex >= 0 ? normalizeUserPolicyValue(columns[userIdIndex] || '') : '';
+        const identifier = email || userId;
+        if (!identifier) {
+            errors.push(`Row ${rowNumber}: email or userId is required.`);
+            return;
+        }
+        if (email && !isEmailLike(email)) {
+            errors.push(`Row ${rowNumber}: invalid email format.`);
+            return;
+        }
+        if (!email && userId && !isGuidLike(userId)) {
+            errors.push(`Row ${rowNumber}: invalid userId format.`);
+            return;
+        }
+        parsedUsers.push(identifier);
+    });
+
+    if (errors.length > 0) {
+        throw new Error(`Found ${errors.length} validation error(s): ${errors.slice(0, 5).join(' ')}`);
+    }
+    if (parsedUsers.length === 0) {
+        throw new Error('No valid allowed users were found in the CSV file.');
+    }
+    return parsedUsers;
+}
+
+function parseCsvLine(line) {
+    const columns = [];
+    let currentValue = '';
+    let insideQuotes = false;
+    const value = String(line || '');
+
+    for (let index = 0; index < value.length; index++) {
+        const character = value[index];
+        const nextCharacter = value[index + 1];
+        if (character === '"' && insideQuotes && nextCharacter === '"') {
+            currentValue += '"';
+            index++;
+            continue;
+        }
+        if (character === '"') {
+            insideQuotes = !insideQuotes;
+            continue;
+        }
+        if (character === ',' && !insideQuotes) {
+            columns.push(currentValue.trim());
+            currentValue = '';
+            continue;
+        }
+        currentValue += character;
+    }
+    columns.push(currentValue.trim());
+    return columns;
+}
+
+function isEmailLike(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
+function isGuidLike(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     setupAdminFormAutofillMetadata();
 
@@ -408,6 +822,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupLandingPageLogoScaleControl();
     setupDocumentActionCapabilityControls();
     setupDeepResearchPolicyEditors();
+    setupDeepResearchAllowedUsersManager();
     
     // Initialize tooltips
     initializeTooltips();
@@ -2175,10 +2590,56 @@ function setupToggles() {
     const enableDeepSourceReview = document.getElementById('enable_deep_source_review');
     const sourceReviewDeepSettings = document.getElementById('source_review_deep_settings');
 
+    const applyDeepResearchMaxDefaults = () => {
+        const defaultMode = document.getElementById('source_review_default_mode');
+        const numericDefaults = {
+            source_review_max_pages_per_turn: '10',
+            source_review_max_seed_pages_per_turn: '10',
+            deep_research_max_user_urls_per_turn: '100',
+            deep_research_max_search_queries_per_turn: '8',
+            source_review_timeout_seconds: '30',
+            source_review_max_redirects: '5',
+            source_review_max_bytes_per_page_mb: '5',
+            source_review_max_depth: '2',
+            source_review_js_load_more_clicks: '12',
+        };
+        const enabledDefaults = [
+            'enable_deep_source_review',
+            'deep_research_enable_query_planning',
+            'deep_research_enable_ledger_artifact',
+            'source_review_enable_llm_planning',
+            'source_review_allow_js_rendering',
+            'source_review_respect_robots_txt',
+            'source_review_audit_logging',
+        ];
+
+        if (defaultMode) {
+            defaultMode.value = 'auto_with_web_search';
+        }
+        Object.entries(numericDefaults).forEach(([fieldId, value]) => {
+            const field = document.getElementById(fieldId);
+            if (field) {
+                field.value = value;
+            }
+        });
+        enabledDefaults.forEach(fieldId => {
+            const field = document.getElementById(fieldId);
+            if (field) {
+                field.checked = true;
+            }
+        });
+        if (sourceReviewDeepSettings) {
+            toggleVisibility(sourceReviewDeepSettings, true);
+        }
+    };
+
     if (enableSourceReview && sourceReviewSettings) {
         toggleVisibility(sourceReviewSettings, enableSourceReview.checked);
         enableSourceReview.addEventListener('change', function () {
             toggleVisibility(sourceReviewSettings, this.checked);
+            if (this.checked) {
+                applyDeepResearchMaxDefaults();
+            }
             markFormAsModified();
         });
     }
@@ -2579,138 +3040,101 @@ function setupToggles() {
             markFormAsModified();
         });
     }
-    setupFileSyncUserAccessLists();
+    setupFileSyncAdminTargets();
     
     // --- Workspace Dependency Validation ---
     setupWorkspaceDependencyValidation();
 }
 
-function parseFileSyncAccessList(value) {
-    return String(value || '')
-        .split(/[\n,;]+/)
-        .map(item => item.trim())
-        .filter((item, index, allItems) => item && allItems.findIndex(candidate => candidate.toLowerCase() === item.toLowerCase()) === index);
-}
-
-function setupFileSyncUserAccessLists() {
-    document.querySelectorAll('[data-file-sync-user-list]').forEach(container => {
-        setupFileSyncUserAccessList(container);
+function setupFileSyncAdminTargets() {
+    document.querySelectorAll('[data-file-sync-admin-target]').forEach(container => {
+        setupFileSyncAdminTarget(container);
     });
 }
 
-function setupFileSyncUserAccessList(container) {
-    const targetId = container.dataset.target;
-    const hiddenTextarea = document.getElementById(targetId);
-    const queryInput = container.querySelector('[data-file-sync-user-query]');
-    const searchButton = container.querySelector('[data-file-sync-user-search]');
-    const addButton = container.querySelector('[data-file-sync-user-add]');
-    const bulkTextarea = container.querySelector('[data-file-sync-user-bulk]');
-    const bulkAddButton = container.querySelector('[data-file-sync-user-bulk-add]');
-    const resultsContainer = container.querySelector('[data-file-sync-user-results]');
-    const chipsContainer = container.querySelector('[data-file-sync-user-chips]');
-    if (!hiddenTextarea || !queryInput || !searchButton || !addButton || !bulkTextarea || !bulkAddButton || !resultsContainer || !chipsContainer) {
+function setupFileSyncAdminTarget(container) {
+    const scope = container.dataset.scope || '';
+    const searchEndpoint = container.dataset.searchEndpoint || '';
+    const resultsKey = container.dataset.resultsKey || 'items';
+    const valueField = container.dataset.valueField || 'id';
+    const titleField = container.dataset.titleField || 'name';
+    const subtitleField = container.dataset.subtitleField || '';
+    const queryInput = container.querySelector('[data-file-sync-admin-target-query]');
+    const searchButton = container.querySelector('[data-file-sync-admin-target-search]');
+    const resultsContainer = container.querySelector('[data-file-sync-admin-target-results]');
+    const targetInput = container.querySelector('[data-file-sync-admin-target-id]');
+    const manageButton = container.querySelector('[data-file-sync-admin-target-manage]');
+    const labelElement = container.querySelector('[data-file-sync-admin-target-label]');
+    if (!scope || !queryInput || !searchButton || !resultsContainer || !targetInput || !manageButton || !labelElement) {
         return;
     }
 
-    let accessEntries = parseFileSyncAccessList(hiddenTextarea.value);
+    let selectedLabel = '';
 
-    const syncHiddenTextarea = (markModified = true) => {
-        hiddenTextarea.value = accessEntries.join('\n');
-        renderChips();
-        if (markModified) {
-            markFormAsModified();
-        }
-    };
-
-    const addEntries = (rawValue) => {
-        const newEntries = parseFileSyncAccessList(rawValue);
-        if (newEntries.length === 0) {
+    const updateManageState = () => {
+        const targetId = targetInput.value.trim();
+        manageButton.disabled = !targetId;
+        if (!targetId) {
+            labelElement.textContent = 'No target selected.';
             return;
         }
-        const existingKeys = new Set(accessEntries.map(item => item.toLowerCase()));
-        newEntries.forEach(entry => {
-            const entryKey = entry.toLowerCase();
-            if (!existingKeys.has(entryKey)) {
-                accessEntries.push(entry);
-                existingKeys.add(entryKey);
-            }
-        });
-        syncHiddenTextarea();
+        labelElement.textContent = selectedLabel ? selectedLabel : `Target ID: ${targetId}`;
     };
-
-    function renderChips() {
-        chipsContainer.replaceChildren();
-        if (accessEntries.length === 0) {
-            chipsContainer.appendChild(createFileSyncTextElement('span', 'text-muted small', 'No specific users selected.'));
-            return;
-        }
-        accessEntries.forEach(entry => {
-            const chip = document.createElement('span');
-            chip.className = 'badge text-bg-light border d-inline-flex align-items-center gap-2';
-            const chipText = createFileSyncTextElement('span', '', entry);
-            const removeButton = createFileSyncTextElement('button', 'btn btn-sm btn-outline-secondary py-0 px-1', 'Remove');
-            removeButton.type = 'button';
-            removeButton.addEventListener('click', () => {
-                accessEntries = accessEntries.filter(candidate => candidate.toLowerCase() !== entry.toLowerCase());
-                syncHiddenTextarea();
-            });
-            chip.appendChild(chipText);
-            chip.appendChild(removeButton);
-            chipsContainer.appendChild(chip);
-        });
-    }
 
     const renderResultsMessage = (message, type = 'muted') => {
         resultsContainer.replaceChildren();
-        const messageItem = createFileSyncTextElement('div', `list-group-item text-${type}`, message);
-        resultsContainer.appendChild(messageItem);
+        resultsContainer.appendChild(createFileSyncTextElement('div', `list-group-item text-${type}`, message));
         resultsContainer.classList.remove('d-none');
     };
 
-    const renderResults = (users) => {
+    const getResultValue = (item) => String(item?.[valueField] || item?.id || item?.email || item?.name || '').trim();
+
+    const renderResults = (items) => {
         resultsContainer.replaceChildren();
-        if (!Array.isArray(users) || users.length === 0) {
-            renderResultsMessage('No directory users found. You can still add an email or GUID manually.');
+        if (!Array.isArray(items) || items.length === 0) {
+            renderResultsMessage('No matching targets found. You can still paste an ID manually.');
             return;
         }
-        users.forEach(user => {
-            const userIdentifier = user.email || user.id || '';
-            if (!userIdentifier) {
+        items.forEach(item => {
+            const itemValue = getResultValue(item);
+            if (!itemValue) {
                 return;
             }
-            const item = document.createElement('button');
-            item.type = 'button';
-            item.className = 'list-group-item list-group-item-action';
-            const name = createFileSyncTextElement('div', 'fw-semibold', user.displayName || user.email || user.id || 'Directory user');
-            const detail = createFileSyncTextElement('div', 'text-muted', user.email || user.id || '');
-            item.appendChild(name);
-            item.appendChild(detail);
-            item.addEventListener('click', () => {
-                addEntries(userIdentifier);
+            const titleText = String(item?.[titleField] || itemValue);
+            const subtitleText = String(item?.[subtitleField] || itemValue);
+            const resultButton = document.createElement('button');
+            resultButton.type = 'button';
+            resultButton.className = 'list-group-item list-group-item-action';
+            resultButton.appendChild(createFileSyncTextElement('div', 'fw-semibold', titleText));
+            resultButton.appendChild(createFileSyncTextElement('div', 'text-muted', subtitleText));
+            resultButton.addEventListener('click', () => {
+                targetInput.value = itemValue;
+                selectedLabel = subtitleText && subtitleText !== itemValue ? `${titleText} (${subtitleText})` : titleText;
                 resultsContainer.classList.add('d-none');
+                updateManageState();
             });
-            resultsContainer.appendChild(item);
+            resultsContainer.appendChild(resultButton);
         });
         resultsContainer.classList.remove('d-none');
     };
 
-    const searchDirectoryUsers = async () => {
+    const searchTargets = async () => {
         const query = queryInput.value.trim();
         if (query.length < 2) {
             renderResultsMessage('Type at least two characters to search.', 'muted');
             return;
         }
         searchButton.disabled = true;
-        renderResultsMessage('Searching directory...', 'muted');
+        renderResultsMessage('Searching...', 'muted');
         try {
-            const response = await fetch(`/api/admin/file-sync/users/search?q=${encodeURIComponent(query)}`, {
+            const response = await fetch(`${searchEndpoint}?q=${encodeURIComponent(query)}`, {
                 credentials: 'same-origin',
             });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) {
                 throw new Error(payload.error || `Search failed with ${response.status}`);
             }
-            renderResults(payload.users || []);
+            renderResults(payload[resultsKey] || []);
         } catch (error) {
             renderResultsMessage(error.message, 'danger');
         } finally {
@@ -2718,23 +3142,72 @@ function setupFileSyncUserAccessList(container) {
         }
     };
 
-    searchButton.addEventListener('click', searchDirectoryUsers);
-    addButton.addEventListener('click', () => {
-        addEntries(queryInput.value);
-        queryInput.value = '';
-        resultsContainer.classList.add('d-none');
-    });
-    bulkAddButton.addEventListener('click', () => {
-        addEntries(bulkTextarea.value);
-        bulkTextarea.value = '';
-    });
+    searchButton.addEventListener('click', searchTargets);
     queryInput.addEventListener('keydown', event => {
         if (event.key === 'Enter') {
             event.preventDefault();
-            searchDirectoryUsers();
+            searchTargets();
         }
     });
-    syncHiddenTextarea(false);
+    targetInput.addEventListener('input', () => {
+        selectedLabel = '';
+        updateManageState();
+    });
+    manageButton.addEventListener('click', () => {
+        openFileSyncAdminManager(scope, targetInput.value.trim(), selectedLabel || targetInput.value.trim());
+    });
+    updateManageState();
+}
+
+function openFileSyncAdminManager(scope, targetId, targetLabel) {
+    if (!scope || !targetId) {
+        return;
+    }
+    const modalElement = document.getElementById('file-sync-admin-manager-modal');
+    const titleElement = document.getElementById('file-sync-admin-manager-title');
+    const contextElement = document.getElementById('file-sync-admin-manager-context');
+    const container = document.getElementById('file-sync-admin-manager-container');
+    if (!modalElement || !titleElement || !contextElement || !container) {
+        return;
+    }
+
+    const scopeLabels = {
+        personal: 'User',
+        group: 'Group',
+        public: 'Public Workspace',
+    };
+    const recursiveAllowed = document.getElementById('file_sync_allow_recursive_sources')?.checked !== false;
+    const visibleSourceTypes = getSelectedFileSyncVisibleSourceTypes();
+    const root = document.createElement('div');
+    root.dataset.fileSyncRoot = 'true';
+    root.dataset.apiBase = `/api/admin/file-sync/${encodeURIComponent(scope)}/${encodeURIComponent(targetId)}`;
+    root.dataset.recursiveAllowed = recursiveAllowed ? 'true' : 'false';
+    root.dataset.visibleSourceTypes = visibleSourceTypes.join(',');
+
+    titleElement.textContent = `Manage ${scopeLabels[scope] || 'Workspace'} Sync Sources`;
+    contextElement.textContent = targetLabel ? `${targetLabel} (${targetId})` : targetId;
+    container.replaceChildren(root);
+
+    if (typeof window.initializeFileSyncRoot === 'function') {
+        window.initializeFileSyncRoot(root);
+    } else {
+        root.appendChild(createFileSyncTextElement('div', 'alert alert-danger', 'File Sync source manager did not load.'));
+    }
+
+    if (window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(modalElement).show();
+    }
+}
+
+function getSelectedFileSyncVisibleSourceTypes() {
+    const checkboxes = Array.from(document.querySelectorAll('input[name="file_sync_visible_source_types"]'));
+    if (checkboxes.length === 0) {
+        return ['smb'];
+    }
+    return checkboxes
+        .filter((checkbox) => checkbox.checked)
+        .map((checkbox) => checkbox.value)
+        .filter((value, index, values) => value && values.indexOf(value) === index);
 }
 
 function createFileSyncTextElement(tagName, className, text) {

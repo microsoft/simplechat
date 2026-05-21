@@ -2,7 +2,7 @@
 # test_file_sync_capability.py
 """
 Functional test for File Sync capability wiring.
-Version: 0.241.061
+Version: 0.241.073
 Implemented in: 0.241.042
 
 This test ensures File Sync storage, settings, routes, scheduler hooks, and
@@ -26,7 +26,7 @@ def read_text(relative_path):
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.061"' in config_text
+    assert 'VERSION = "0.241.073"' in config_text
 
     expected_containers = [
         "personal_file_sync_sources",
@@ -55,15 +55,23 @@ def test_file_sync_settings_and_routes():
         "enable_file_sync_personal",
         "enable_file_sync_group",
         "enable_file_sync_public",
-        "file_sync_allowed_users",
-        "file_sync_blocked_users",
-        "file_sync_allowed_groups",
-        "file_sync_blocked_groups",
-        "file_sync_allowed_public_workspaces",
-        "file_sync_blocked_public_workspaces",
+        "file_sync_personal_require_app_role",
+        "file_sync_group_require_app_role",
+        "file_sync_public_require_app_role",
+        "file_sync_personal_admin_only",
+        "file_sync_group_admin_only",
+        "file_sync_public_admin_only",
+        "file_sync_visible_source_types",
         "file_sync_allow_recursive_sources",
     ]:
         assert key in settings_text
+
+    for removed_key in [
+        "file_sync_allowed_users",
+        "file_sync_allowed_groups",
+        "file_sync_allowed_public_workspaces",
+    ]:
+        assert removed_key not in settings_text
 
     route_count = len(re.findall(r"@app\.route\(", route_text))
     swagger_count = route_text.count("@swagger_route(security=get_auth_security())")
@@ -91,6 +99,7 @@ def test_file_sync_service_security_shapes():
         "check_due_file_sync_sources_once",
         "build_synced_document_delete_guard",
         "apply_synced_document_delete_action",
+        "is_file_sync_source_type_visible",
         "_read_file_sync_source_for_document_action",
     }
     assert expected_functions.issubset(function_names)
@@ -98,6 +107,20 @@ def test_file_sync_service_security_shapes():
     assert "get_user_role_in_public_workspace" in file_sync_text
     assert "password_secret_name" in file_sync_text
     assert "sanitized_source.pop(\"auth\", None)" in file_sync_text
+    assert "admin_management" in file_sync_text
+    assert "_user_info_has_admin_role" in file_sync_text
+    assert "_user_info_has_app_role" in file_sync_text
+    assert "PersonalFileSyncUser" in file_sync_text
+    assert "GroupFileSyncUser" in file_sync_text
+    assert "PublicWorkspaceFileSyncUser" in file_sync_text
+    assert "FILE_SYNC_KNOWN_SOURCE_TYPES" in file_sync_text
+    assert "file_sync_visible_source_types" in file_sync_text
+    assert "file_sync_allowed_users" not in file_sync_text
+    assert "file_sync_allowed_groups" not in file_sync_text
+    assert "file_sync_allowed_public_workspaces" not in file_sync_text
+    assert "file_sync_blocked_users" not in file_sync_text
+    assert "file_sync_blocked_groups" not in file_sync_text
+    assert "file_sync_blocked_public_workspaces" not in file_sync_text
 
 
 def test_file_sync_delete_guards():
@@ -170,12 +193,13 @@ def test_file_sync_admin_and_sidebar_discovery():
         "enable_file_sync_personal",
         "enable_file_sync_group",
         "enable_file_sync_public",
-        "file_sync_allowed_users",
-        "file_sync_blocked_users",
-        "file_sync_allowed_groups",
-        "file_sync_blocked_groups",
-        "file_sync_allowed_public_workspaces",
-        "file_sync_blocked_public_workspaces",
+        "file_sync_personal_require_app_role",
+        "file_sync_group_require_app_role",
+        "file_sync_public_require_app_role",
+        "file_sync_personal_admin_only",
+        "file_sync_group_admin_only",
+        "file_sync_public_admin_only",
+        "file_sync_visible_source_types",
         "file_sync_max_sources_per_scope",
         "file_sync_min_schedule_interval_minutes",
         "file_sync_max_files_per_run",
@@ -188,20 +212,54 @@ def test_file_sync_admin_and_sidebar_discovery():
 
     assert 'name="file_sync_default_remote_delete_policy"' not in admin_template
     assert 'name="file_sync_debug_logging"' not in admin_template
-    assert "data-file-sync-user-list" in admin_template
-    assert "data-file-sync-user-query" in admin_template
-    assert "data-file-sync-user-bulk" in admin_template
+    assert "file_sync_allowed_users" not in admin_template
+    assert "file_sync_allowed_groups" not in admin_template
+    assert "file_sync_allowed_public_workspaces" not in admin_template
+    assert "file_sync_blocked_users" not in admin_template
+    assert "file_sync_blocked_groups" not in admin_template
+    assert "file_sync_blocked_public_workspaces" not in admin_template
+    assert "data-file-sync-access-list" not in admin_template
+    assert "PersonalFileSyncUser" in admin_template
+    assert "GroupFileSyncUser" in admin_template
+    assert "PublicWorkspaceFileSyncUser" in admin_template
+    assert "file-sync-app-role-setup-modal" in admin_template
+    assert "Visible Source Types" in admin_template
+    assert "file_sync_visible_source_type_smb" in admin_template
+    assert "file_sync_visible_source_type_sharepoint_on_prem" in admin_template
+    assert "file_sync_visible_source_type_google_workspace" in admin_template
+    assert "data-file-sync-admin-target" in admin_template
+    assert "file-sync-admin-manager-modal" in admin_template
     assert "/api/admin/file-sync/users/search" in backend_route
+    assert "/api/admin/file-sync/groups/search" in backend_route
+    assert "/api/admin/file-sync/public-workspaces/search" in backend_route
+    assert "/api/admin/file-sync/personal/<target_user_id>/sources" in backend_route
+    assert "/api/admin/file-sync/group/<group_id>/sources" in backend_route
+    assert "/api/admin/file-sync/public/<public_workspace_id>/sources" in backend_route
     assert "search_directory_users" in backend_route
+    assert "search_all_groups" in backend_route
+    assert "search_all_public_workspaces" in backend_route
 
+    assert 'id="file-sync-tab"' in admin_template
+    assert 'id="file-sync"' in admin_template
     assert 'id="file-sync-section"' in admin_template
     assert 'id="file_sync_settings"' in admin_template
     assert "Redis Cache must be enabled" in admin_template
     assert "get_file_sync_config" in admin_route
-    assert "parse_file_sync_list" in admin_route
+    assert "parse_file_sync_list" not in admin_route
+    assert "file_sync_allowed_users" not in admin_route
+    assert "file_sync_allowed_groups" not in admin_route
+    assert "file_sync_allowed_public_workspaces" not in admin_route
+    assert "file_sync_blocked_users" not in admin_route
+    assert "file_sync_blocked_groups" not in admin_route
+    assert "file_sync_blocked_public_workspaces" not in admin_route
     assert "fileSyncSettings.classList.toggle('d-none'" in admin_js
-    assert "setupFileSyncUserAccessLists" in admin_js
-    assert 'data-section="file-sync-section"' in sidebar_template
+    assert "setupFileSyncAccessLists" not in admin_js
+    assert "setupFileSyncAdminTargets" in admin_js
+    assert "openFileSyncAdminManager" in admin_js
+    assert "getSelectedFileSyncVisibleSourceTypes" in admin_js
+    assert "root.dataset.visibleSourceTypes" in admin_js
+    assert 'data-tab="file-sync"' in sidebar_template
+    assert 'data-tab="workspaces" data-section="file-sync-section"' not in sidebar_template
     assert 'data-tab="sync-tab"' in sidebar_template
     assert "file_sync_enabled" in sidebar_template
 
@@ -228,6 +286,8 @@ def test_file_sync_recursive_and_connection_test_wiring():
     assert "_prepare_connection_test_auth" in file_sync_text
     assert "/sources/test-connection" in route_text
     assert "/sources/<source_id>/test-connection" in route_text
+    assert "_assert_new_source_type_visible" in route_text
+    assert "is_file_sync_source_type_visible" in route_text
 
     for template_text in [workspace_template, group_template, public_template]:
         assert "data-recursive-allowed" in template_text
@@ -235,6 +295,20 @@ def test_file_sync_recursive_and_connection_test_wiring():
 
     assert "file-sync-recursive" in file_sync_js
     assert "Include subfolders" in file_sync_js
+    assert "data-file-sync-source-modal" in file_sync_js
+    assert "data-visible-source-types" in workspace_template
+    assert "data-visible-source-types" in group_template
+    assert "data-visible-source-types" in public_template
+    assert "Source Type" in file_sync_js
+    assert "Configure Source" in file_sync_js
+    assert "SMB Share" in file_sync_js
+    assert "sharepoint_on_prem" in file_sync_js
+    assert "google_workspace" in file_sync_js
+    assert "visibleSourceTypeValues" in file_sync_js
+    assert "getVisibleSourceTypes" in file_sync_js
+    assert "No source types are visible" in file_sync_js
+    assert "source_type: selectedSourceType" in file_sync_js
+    assert "['Source', 'Type', 'Status', 'Schedule', 'Last run', 'Counts', 'Actions']" in file_sync_js
     assert "Test Connection" in file_sync_js
     assert "buildTagSelector" in file_sync_js
     assert "Choose existing tag" in file_sync_js

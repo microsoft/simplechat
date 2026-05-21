@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for SimpleChat background task deployment settings.
-Version: 0.241.057
+Version: 0.241.069
 Implemented in: 0.241.057
+Updated in: 0.241.069
 
 This test ensures deployment paths configure SIMPLECHAT_RUN_BACKGROUND_TASKS=1
 so queued background schedulers run in deployed containers.
@@ -76,8 +77,8 @@ def test_azurecli_deploy_enables_background_tasks():
 def test_deployer_version_bumped():
     """Validate deployer version tracking was updated for this deployer change."""
     deployer_version = read_text(DEPLOYER_VERSION).strip()
-    if deployer_version != "1.0.2":
-        raise AssertionError(f"Expected deployer version 1.0.2, found {deployer_version}")
+    if deployer_version != "1.0.4":
+        raise AssertionError(f"Expected deployer version 1.0.4, found {deployer_version}")
 
 
 def main():

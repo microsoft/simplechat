@@ -4,6 +4,7 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
+from functions_web_search_test import run_web_search_connection_test
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_admin_release_notifications_registration,
@@ -1119,6 +1120,16 @@ def _test_safety_connection(payload):
             return jsonify({'message': 'Safety connection successful'}), 200
     except Exception as e:
         return jsonify({'error': f'Safety connection error: {str(e)}'}), 500
+
+
+def _test_web_search_connection(payload):
+    """Attempt to run the configured Web Search Foundry agent with ephemeral settings."""
+    response_payload, status_code = run_web_search_connection_test(
+        payload,
+        global_settings=get_settings()
+    )
+    return jsonify(response_payload), status_code
+
 
 def _test_azure_ai_search_connection(payload):
     """Attempt to connect to Azure Cognitive Search (or APIM-wrapped)."""

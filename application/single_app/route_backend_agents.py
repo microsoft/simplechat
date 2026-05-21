@@ -23,6 +23,11 @@ from functions_agent_payload import (
     is_azure_ai_foundry_agent,
     sanitize_agent_payload,
 )
+from functions_assigned_knowledge import (
+    AssignedKnowledgeError,
+    apply_assigned_knowledge_to_agent_payload,
+    build_assigned_knowledge_catalog,
+)
 from functions_group_agents import (
     get_group_agents,
     get_group_agent,
@@ -575,6 +580,47 @@ def get_user_agents():
     else:
         return jsonify(agents)
 
+
+@bpa.route('/api/agents/assigned-knowledge/catalog', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+def get_assigned_knowledge_catalog_route():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'User not authenticated'}), 401
+
+    agent_scope = str(request.args.get('agent_scope') or 'personal').strip().lower()
+    if agent_scope not in {'personal', 'group', 'global'}:
+        return jsonify({'error': 'Invalid assigned knowledge agent scope.'}), 400
+
+    active_group_id = None
+    is_admin = False
+    if agent_scope == 'group':
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+    elif agent_scope == 'global':
+        user = session.get('user', {})
+        is_admin = 'Admin' in user.get('roles', [])
+        if not is_admin:
+            return jsonify({'error': 'Admin role required for global assigned knowledge.'}), 403
+
+    catalog = build_assigned_knowledge_catalog(
+        user_id=user_id,
+        agent_scope=agent_scope,
+        group_id=active_group_id,
+        is_admin=is_admin,
+    )
+    return jsonify(catalog), 200
+
 @bpa.route('/api/user/agents', methods=['POST'])
 @swagger_route(
     security=get_auth_security()
@@ -606,6 +652,15 @@ def set_user_agents():
             return jsonify({'error': str(exc)}), 400
         cleaned_agent['is_global'] = False
         cleaned_agent['is_group'] = False
+        try:
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=user_id,
+                agent_scope='personal',
+                is_admin=False,
+            )
+        except AssignedKnowledgeError as exc:
+            return jsonify({'error': str(exc)}), 400
         validation_error = validate_agent(cleaned_agent)
         if validation_error:
             return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
@@ -788,6 +843,17 @@ def create_group_agent_route():
         cleaned_payload.pop(key, None)
 
     try:
+        cleaned_payload = apply_assigned_knowledge_to_agent_payload(
+            cleaned_payload,
+            user_id=user_id,
+            agent_scope='group',
+            group_id=active_group,
+            is_admin=False,
+        )
+    except AssignedKnowledgeError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    try:
         saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to save group agent: %s', exc)
@@ -855,6 +921,17 @@ def update_group_agent_route(agent_id):
             'azure_openai_gpt_api_revision'
         ]:
             cleaned_payload.pop(key, None)
+
+    try:
+        cleaned_payload = apply_assigned_knowledge_to_agent_payload(
+            cleaned_payload,
+            user_id=user_id,
+            agent_scope='group',
+            group_id=active_group,
+            is_admin=False,
+        )
+    except AssignedKnowledgeError as exc:
+        return jsonify({'error': str(exc)}), 400
 
     try:
         saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
@@ -1270,6 +1347,16 @@ def add_agent():
             return jsonify({'error': str(exc)}), 400
         cleaned_agent['is_global'] = True
         cleaned_agent['is_group'] = False
+        try:
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=str(get_current_user_id()),
+                agent_scope='global',
+                is_admin=True,
+            )
+        except AssignedKnowledgeError as exc:
+            log_event("Add agent failed: assigned knowledge error", level=logging.WARNING, extra={"action": "add", "error": str(exc)})
+            return jsonify({'error': str(exc)}), 400
         validation_error = validate_agent(cleaned_agent)
         if validation_error:
             log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent": cleaned_agent, "error": validation_error})
@@ -1376,6 +1463,16 @@ def edit_agent(agent_name):
             return jsonify({'error': str(exc)}), 400
         cleaned_agent['is_global'] = True
         cleaned_agent['is_group'] = False
+        try:
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=str(get_current_user_id()),
+                agent_scope='global',
+                is_admin=True,
+            )
+        except AssignedKnowledgeError as exc:
+            log_event("Edit agent failed: assigned knowledge error", level=logging.WARNING, extra={"action": "edit", "agent_name": agent_name, "error": str(exc)})
+            return jsonify({'error': str(exc)}), 400
         validation_error = validate_agent(cleaned_agent)
         if validation_error:
             log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": cleaned_agent, "error": validation_error})
