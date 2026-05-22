@@ -63,7 +63,13 @@ ACR_PASSWORD = "your_acr_password"
 # Optionally override other defaults
 # param_tenant_id = "your-actual-tenant-id"
 # param_location = "usgovvirginia"
+# param_search_sku = "standard"                       # Default: Standard S1. Use "free" only for short-lived MVP/evaluation.
+# param_search_semantic_search_sku = "standard"       # Default: standard Semantic Ranker.
+# param_cosmos_capacity_mode = "provisioned"          # Default: provisioned throughput. Use "serverless" only for short-lived MVP/evaluation.
+# param_cosmos_autoscale_max_throughput = 4000        # Used when Cosmos capacity mode is provisioned.
 ```
+
+Terraform defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned shared autoscale throughput. Free Search and serverless Cosmos DB remain configurable for short-lived MVP phases, but they are not the repository defaults because they can hit semantic query, indexing, or request-unit limits during document-heavy testing.
 
 ## Deploy initial container
 

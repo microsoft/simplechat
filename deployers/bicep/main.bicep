@@ -73,6 +73,44 @@ param authenticationType string
 ''')
 param configureApplicationPermissions bool
 
+@description('''Azure Cosmos DB capacity mode.
+- provisioned: Default. Uses shared database autoscale throughput for application containers.
+- serverless: Optional for short-lived MVP or evaluation environments with very low traffic.''')
+@allowed([
+  'provisioned'
+  'serverless'
+])
+param cosmosCapacityMode string = 'provisioned'
+
+@description('''Maximum RU/s for the SimpleChat Cosmos DB shared autoscale database when cosmosCapacityMode is provisioned.
+- Default is 4000 RU/s autoscale max.
+- Ignored when cosmosCapacityMode is serverless.''')
+@minValue(1000)
+param cosmosDatabaseAutoscaleMaxThroughput int = 4000
+
+@description('''Azure AI Search service SKU.
+- standard is Azure AI Search S1 and is the default for document search.
+- free may be used only for short-lived MVP or evaluation phases with known service limits.''')
+@allowed([
+  'free'
+  'basic'
+  'standard'
+  'standard2'
+  'standard3'
+  'storage_optimized_l1'
+  'storage_optimized_l2'
+])
+param searchSkuName string = 'standard'
+
+@description('''Azure AI Search semantic ranker SKU.
+- standard is the default so workspace search does not depend on the limited free semantic quota.
+- free may be used only for short-lived MVP or evaluation phases.''')
+@allowed([
+  'free'
+  'standard'
+])
+param searchSemanticSearchSku string = 'standard'
+
 @description('Optional object containing additional tags to apply to all resources.')
 param specialTags object = {}
 
@@ -378,6 +416,8 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
 
     enablePrivateNetworking: enablePrivateNetworking
     allowedIpAddresses: cosmosDbIpRules
+    capacityMode: cosmosCapacityMode
+    databaseAutoscaleMaxThroughput: cosmosDatabaseAutoscaleMaxThroughput
   }
 }
 
@@ -414,6 +454,8 @@ module searchService 'modules/search.bicep' = {
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
     enablePrivateNetworking: enablePrivateNetworking
+    skuName: searchSkuName
+    semanticSearchSku: searchSemanticSearchSku
   }
 }
 

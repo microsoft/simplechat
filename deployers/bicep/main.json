@@ -96,6 +96,52 @@
         "description": "Configure permissions (based on authenticationType) for the deployed web application to access required resources.\n"
       }
     },
+    "cosmosCapacityMode": {
+      "type": "string",
+      "defaultValue": "provisioned",
+      "allowedValues": [
+        "provisioned",
+        "serverless"
+      ],
+      "metadata": {
+        "description": "Azure Cosmos DB capacity mode.\n- provisioned: Default. Uses shared database autoscale throughput for application containers.\n- serverless: Optional for short-lived MVP or evaluation environments with very low traffic."
+      }
+    },
+    "cosmosDatabaseAutoscaleMaxThroughput": {
+      "type": "int",
+      "defaultValue": 4000,
+      "minValue": 1000,
+      "metadata": {
+        "description": "Maximum RU/s for the SimpleChat Cosmos DB shared autoscale database when cosmosCapacityMode is provisioned.\n- Default is 4000 RU/s autoscale max.\n- Ignored when cosmosCapacityMode is serverless."
+      }
+    },
+    "searchSkuName": {
+      "type": "string",
+      "defaultValue": "standard",
+      "allowedValues": [
+        "free",
+        "basic",
+        "standard",
+        "standard2",
+        "standard3",
+        "storage_optimized_l1",
+        "storage_optimized_l2"
+      ],
+      "metadata": {
+        "description": "Azure AI Search service SKU.\n- standard is Azure AI Search S1 and is the default for document search.\n- free may be used only for short-lived MVP or evaluation phases with known service limits."
+      }
+    },
+    "searchSemanticSearchSku": {
+      "type": "string",
+      "defaultValue": "standard",
+      "allowedValues": [
+        "free",
+        "standard"
+      ],
+      "metadata": {
+        "description": "Azure AI Search semantic ranker SKU.\n- standard is the default so workspace search does not depend on the limited free semantic quota.\n- free may be used only for short-lived MVP or evaluation phases."
+      }
+    },
     "specialTags": {
       "type": "object",
       "defaultValue": {},
@@ -998,6 +1044,12 @@
           },
           "allowedIpAddresses": {
             "value": "[variables('cosmosDbIpRules')]"
+          },
+          "capacityMode": {
+            "value": "[parameters('cosmosCapacityMode')]"
+          },
+          "databaseAutoscaleMaxThroughput": {
+            "value": "[parameters('cosmosDatabaseAutoscaleMaxThroughput')]"
           }
         },
         "template": {
@@ -1044,6 +1096,19 @@
             "allowedIpAddresses": {
               "type": "array",
               "defaultValue": []
+            },
+            "capacityMode": {
+              "type": "string",
+              "defaultValue": "provisioned",
+              "allowedValues": [
+                "provisioned",
+                "serverless"
+              ]
+            },
+            "databaseAutoscaleMaxThroughput": {
+              "type": "int",
+              "defaultValue": 4000,
+              "minValue": 1000
             }
           },
           "resources": [
@@ -1056,11 +1121,7 @@
               "properties": {
                 "publicNetworkAccess": "Enabled",
                 "databaseAccountOfferType": "Standard",
-                "capabilities": [
-                  {
-                    "name": "EnableServerless"
-                  }
-                ],
+                "capabilities": "[if(equals(parameters('capacityMode'), 'serverless'), createArray(createObject('name', 'EnableServerless')), createArray())]",
                 "isVirtualNetworkFilterEnabled": "[if(parameters('enablePrivateNetworking'), true(), false())]",
                 "ipRules": "[if(parameters('enablePrivateNetworking'), parameters('allowedIpAddresses'), createArray())]",
                 "locations": [
@@ -1084,7 +1145,7 @@
                 "resource": {
                   "id": "SimpleChat"
                 },
-                "options": {}
+                "options": "[if(equals(parameters('capacityMode'), 'serverless'), createObject(), createObject('autoscaleSettings', createObject('maxThroughput', parameters('databaseAutoscaleMaxThroughput'))))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.DocumentDB/databaseAccounts', toLower(format('{0}-{1}-cosmos', parameters('appName'), parameters('environment'))))]"
@@ -1721,6 +1782,12 @@
           },
           "enablePrivateNetworking": {
             "value": "[parameters('enablePrivateNetworking')]"
+          },
+          "skuName": {
+            "value": "[parameters('searchSkuName')]"
+          },
+          "semanticSearchSku": {
+            "value": "[parameters('searchSemanticSearchSku')]"
           }
         },
         "template": {
@@ -1763,6 +1830,27 @@
             },
             "enablePrivateNetworking": {
               "type": "bool"
+            },
+            "skuName": {
+              "type": "string",
+              "defaultValue": "standard",
+              "allowedValues": [
+                "free",
+                "basic",
+                "standard",
+                "standard2",
+                "standard3",
+                "storage_optimized_l1",
+                "storage_optimized_l2"
+              ]
+            },
+            "semanticSearchSku": {
+              "type": "string",
+              "defaultValue": "standard",
+              "allowedValues": [
+                "free",
+                "standard"
+              ]
             }
           },
           "resources": [
@@ -1772,10 +1860,11 @@
               "name": "[toLower(format('{0}-{1}-search', parameters('appName'), parameters('environment')))]",
               "location": "[parameters('location')]",
               "sku": {
-                "name": "basic"
+                "name": "[parameters('skuName')]"
               },
               "properties": {
                 "hostingMode": "default",
+                "semanticSearch": "[parameters('semanticSearchSku')]",
                 "publicNetworkAccess": "[if(parameters('enablePrivateNetworking'), 'Disabled', 'Enabled')]",
                 "replicaCount": 1,
                 "partitionCount": 1,

@@ -407,7 +407,7 @@ $paramStorageAccountSuffix = "sa" # Note: Storage account names need to be globa
 # --- Resource Specific Settings ---
 
 # App Service Plan
-$paramAppServicePlanSku = "P1V3" # Basic tier, 1 core, 1.75GB RAM. For US Gov, check available SKUs. (e.g., B1, P1V3, S1, I1V2)
+$paramAppServicePlanSku = "P1V3" # Premium V3 tier. For US Gov, check available SKUs. (e.g., B1, P1V3, S1, I1V2)
 
 # App Service (Web App)
 #$paramAppServiceRuntime = "DOTNETCORE|8.0" # Example runtime. Others: "NODE|18-lts", "PYTHON|3.11", "JAVA|17-java17"
@@ -419,6 +419,9 @@ $paramStorageAccessTier = "Hot"
 
 # Cosmos DB
 $paramCosmosDbKind = "GlobalDocumentDB" # For SQL API. Other: MongoDB, Cassandra, Gremlin, Table
+$paramCosmosDbCapacityMode = "Provisioned" # Default. Set to "Serverless" only for short-lived MVP/evaluation environments.
+$paramCosmosDbDatabaseName = "SimpleChat"
+$paramCosmosDbAutoscaleMaxThroughput = 4000
 
 # Azure OpenAI & Document Intelligence (Cognitive Services)
 $paramCognitiveServicesSku = "S0" # Standard tier. Check availability for OpenAI and Doc Intel in Azure Gov.
@@ -427,7 +430,8 @@ $paramCognitiveServicesSku = "S0" # Standard tier. Check availability for OpenAI
 #$paramAcrSku = "Basic" # Other options: Standard, Premium
 
 # Search Service
-$paramSearchSku = "basic" # Other options: standard, standard2, standard3. 'free' is not available in all regions or for all subscription types.
+$paramSearchSku = "standard" # Standard is Azure AI Search S1. Use 'free' only for short-lived MVP/evaluation environments.
+$paramSearchSemanticSearchSku = "standard" # Avoid the limited free semantic ranker quota by default.
 $paramSearchReplicaCount = 1
 $paramSearchPartitionCount = 1
 
@@ -1675,15 +1679,27 @@ Write-Host "`n=====> Creating Azure Cosmos DB account: $($cosmosDbName)..."
 $account = az cosmosdb show --name $cosmosDbName --resource-group $resourceGroupName --query "name" --output tsv 2>$null
 if (-not $account) {
     Write-Host "Cosmos DB account does not exist. Creating..."
-    az cosmosdb create --name $cosmosDbName `
-    --resource-group $resourceGroupName `
-    --locations regionName=$paramLocation `
-    --kind $paramCosmosDbKind `
-    --enable-multiple-write-locations false `
-    --public-network-access Enabled `
-    --default-consistency-level 'Session' `
-    --tags $tagsJson `
-    --enable-burst-capacity True
+    if ($paramCosmosDbCapacityMode -eq "Serverless") {
+        az cosmosdb create --name $cosmosDbName `
+        --resource-group $resourceGroupName `
+        --locations regionName=$paramLocation `
+        --kind $paramCosmosDbKind `
+        --enable-multiple-write-locations false `
+        --public-network-access Enabled `
+        --default-consistency-level 'Session' `
+        --tags $tagsJson `
+        --capabilities EnableServerless
+    } else {
+        az cosmosdb create --name $cosmosDbName `
+        --resource-group $resourceGroupName `
+        --locations regionName=$paramLocation `
+        --kind $paramCosmosDbKind `
+        --enable-multiple-write-locations false `
+        --public-network-access Enabled `
+        --default-consistency-level 'Session' `
+        --tags $tagsJson `
+        --enable-burst-capacity True
+    }
 
     if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create Azure Cosmos DB account '$($cosmosDbName)'." }
     else { Write-Host "Azure Cosmos DB account '$($cosmosDbName)' created successfully." }
@@ -1692,6 +1708,33 @@ if (-not $account) {
 }
 
 az resource update --resource-group $resourceGroupName --name $cosmosDbName --resource-type "Microsoft.DocumentDB/databaseAccounts" --set properties.disableLocalAuth=false
+
+Write-Host "`n=====> Creating Azure Cosmos DB database: $($paramCosmosDbDatabaseName)..."
+$database = az cosmosdb sql database show `
+    --account-name $cosmosDbName `
+    --resource-group $resourceGroupName `
+    --name $paramCosmosDbDatabaseName `
+    --query "name" `
+    --output tsv 2>$null
+if (-not $database) {
+    if ($paramCosmosDbCapacityMode -eq "Serverless") {
+        az cosmosdb sql database create `
+            --account-name $cosmosDbName `
+            --resource-group $resourceGroupName `
+            --name $paramCosmosDbDatabaseName
+    } else {
+        az cosmosdb sql database create `
+            --account-name $cosmosDbName `
+            --resource-group $resourceGroupName `
+            --name $paramCosmosDbDatabaseName `
+            --max-throughput $paramCosmosDbAutoscaleMaxThroughput
+    }
+
+    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create Azure Cosmos DB database '$($paramCosmosDbDatabaseName)'." }
+    else { Write-Host "Azure Cosmos DB database '$($paramCosmosDbDatabaseName)' created successfully." }
+} else {
+    Write-Host "Cosmos DB database '$paramCosmosDbDatabaseName' already exists."
+}
 
 # Create cosmos db database and collection
 # TODO: SHOULD I DO THIS OR NOT? Web UI creates this.
@@ -1789,7 +1832,7 @@ Write-Host "`n=====> Creating Azure AI Search Service: $($searchServiceName)..."
 $searchService = az search service show --name $searchServiceName --resource-group $resourceGroupName 2>$null | ConvertFrom-Json
 if (-not $searchService) {
     Write-Host "Search service does not exist. Creating..."
-    $searchService = az search service create --name $searchServiceName --resource-group $resourceGroupName --location $paramLocation --sku $paramSearchSku --replica-count $paramSearchReplicaCount --partition-count $paramSearchPartitionCount --public-network-access enabled | ConvertFrom-Json
+    $searchService = az search service create --name $searchServiceName --resource-group $resourceGroupName --location $paramLocation --sku $paramSearchSku --semantic-search $paramSearchSemanticSearchSku --replica-count $paramSearchReplicaCount --partition-count $paramSearchPartitionCount --public-network-access enabled | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create Azure AI Search Service '$($searchServiceName)'. Check SKU availability and naming uniqueness." }
     else { Write-Host "Azure AI Search Service '$($searchServiceName)' created successfully." }
 

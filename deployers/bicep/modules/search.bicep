@@ -10,6 +10,23 @@ param logAnalyticsId string
 
 param enablePrivateNetworking bool
 
+@allowed([
+  'free'
+  'basic'
+  'standard'
+  'standard2'
+  'standard3'
+  'storage_optimized_l1'
+  'storage_optimized_l2'
+])
+param skuName string = 'standard'
+
+@allowed([
+  'free'
+  'standard'
+])
+param semanticSearchSku string = 'standard'
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -20,11 +37,13 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' = {
   name: toLower('${appName}-${environment}-search')
   location: location
   sku: {
-    name: 'basic'
+    name: skuName
   }
   properties: {
     #disable-next-line BCP036 // template is incorrect 
     hostingMode: 'default'
+    #disable-next-line BCP037 // 2025-05-01 supports semanticSearch even when local Bicep types lag
+    semanticSearch: semanticSearchSku
     publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     replicaCount: 1
     partitionCount: 1

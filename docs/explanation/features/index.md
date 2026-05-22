@@ -19,6 +19,7 @@ category: Version History
 
 ## Versioned Features
 
+- [Deployer Capacity Defaults](v0.241.085/DEPLOYER_CAPACITY_DEFAULTS.md)
 - [Chat Inline Export Action Progress Labels](v0.241.107/CHAT_INLINE_EXPORT_ACTION_PROGRESS.md)
 - [Chat Inline Export Actions](v0.241.106/CHAT_INLINE_EXPORT_ACTIONS.md)
 - [Deployer Version Tracking](v0.241.082/DEPLOYER_VERSION_TRACKING.md)

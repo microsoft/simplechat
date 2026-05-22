@@ -114,6 +114,46 @@ variable "param_deploy_video_indexer_service" {
   default     = false
 }
 
+variable "param_cosmos_capacity_mode" {
+  description = "Cosmos DB capacity mode. Defaults to provisioned throughput; use serverless only for short-lived MVP/evaluation environments."
+  type        = string
+  default     = "provisioned"
+  validation {
+    condition     = contains(["provisioned", "serverless"], lower(var.param_cosmos_capacity_mode))
+    error_message = "param_cosmos_capacity_mode must be 'provisioned' or 'serverless'."
+  }
+}
+
+variable "param_cosmos_autoscale_max_throughput" {
+  description = "Maximum RU/s for the SimpleChat Cosmos DB shared autoscale database when provisioned throughput is used."
+  type        = number
+  default     = 4000
+  validation {
+    condition     = var.param_cosmos_autoscale_max_throughput >= 1000
+    error_message = "param_cosmos_autoscale_max_throughput must be at least 1000."
+  }
+}
+
+variable "param_search_sku" {
+  description = "Azure AI Search SKU. Defaults to standard (S1); use free only for short-lived MVP/evaluation environments."
+  type        = string
+  default     = "standard"
+  validation {
+    condition     = contains(["free", "basic", "standard", "standard2", "standard3", "storage_optimized_l1", "storage_optimized_l2"], lower(var.param_search_sku))
+    error_message = "param_search_sku must be a valid Azure AI Search SKU."
+  }
+}
+
+variable "param_search_semantic_search_sku" {
+  description = "Azure AI Search semantic ranker SKU. Defaults to standard to avoid free semantic query quota exhaustion."
+  type        = string
+  default     = "standard"
+  validation {
+    condition     = contains(["free", "standard"], lower(var.param_search_semantic_search_sku))
+    error_message = "param_search_semantic_search_sku must be 'free' or 'standard'."
+  }
+}
+
 variable "param_custom_identity_url" {
   description = "Custom cloud login endpoint used by the app when global_which_azure_platform is Custom."
   type        = string
@@ -474,7 +514,7 @@ resource "azurerm_service_plan" "asp" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Linux" # Script uses --is-linux
-  sku_name            = "P1v3"  # Basic tier, 1 core, 1.75GB RAM.
+  sku_name            = "P1v3"  # Premium V3 tier.
   # ["B1" "B2" "B3" "S1" "S2" "S3" "P1v2" "P2v2" "P3v2" "P0v3" "P1v3" "P2v3" "P3v3" 
   # "P1mv3" "P2mv3" "P3mv3" "P4mv3" "P5mv3" "Y1" "EP1" "EP2" "EP3" "FC1" "F1" 
   # "I1" "I2" "I3" "I1v2" "I2v2" "I3v2" "I4v2" "I5v2" "I6v2" "I1mv2" "I2mv2" 
@@ -753,8 +793,11 @@ resource "azurerm_cosmosdb_account" "cosmos" {
 
   offer_type = "Standard"
 
-  capabilities {
-    name = "EnableServerless" # Or specify Provisioned Throughput
+  dynamic "capabilities" {
+    for_each = lower(var.param_cosmos_capacity_mode) == "serverless" ? [1] : []
+    content {
+      name = "EnableServerless"
+    }
   }
 
   consistency_policy {
@@ -767,6 +810,19 @@ resource "azurerm_cosmosdb_account" "cosmos" {
   }
 
   tags = local.common_tags
+}
+
+resource "azurerm_cosmosdb_sql_database" "simplechat" {
+  name                = "SimpleChat"
+  resource_group_name = azurerm_resource_group.rg.name
+  account_name        = azurerm_cosmosdb_account.cosmos.name
+
+  dynamic "autoscale_settings" {
+    for_each = lower(var.param_cosmos_capacity_mode) == "provisioned" ? [1] : []
+    content {
+      max_throughput = var.param_cosmos_autoscale_max_throughput
+    }
+  }
 }
 
 # --- Azure OpenAI Service (Cognitive Services) ---
@@ -807,10 +863,10 @@ resource "azurerm_search_service" "search" {
   name                          = local.search_service_name
   location                      = azurerm_resource_group.rg.location
   resource_group_name           = azurerm_resource_group.rg.name
-  sku                           = "basic" # Other options: standard, standard2, standard3
+  sku                           = lower(var.param_search_sku)
   replica_count                 = 1
   partition_count               = 1
-  semantic_search_sku           = "standard" #other options:  free
+  semantic_search_sku           = lower(var.param_search_semantic_search_sku)
   public_network_access_enabled = var.param_enable_private_networking ? false : true
   tags                          = local.common_tags
 }

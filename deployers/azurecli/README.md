@@ -115,6 +115,12 @@ cd deployers/azurecli
 pwsh ./deploy-simplechat.ps1
 ```
 
+## Default capacity choices
+
+The Azure CLI deployer defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned throughput using a shared autoscale `SimpleChat` database. These defaults are intended for reliable workspace search, document upload processing, and semantic retrieval after deployment.
+
+For a short-lived MVP or evaluation environment, you can edit the variables near the top of [deploy-simplechat.ps1](deploy-simplechat.ps1) to use `Serverless` Cosmos DB or `free` Azure AI Search/Semantic Ranker. Those settings are intentionally opt-in because Free Search and serverless Cosmos DB have limits that can surface as search, indexing, or quota problems under real usage.
+
 ## Code-only upgrade flow
 
 For an existing Azure CLI deployment where infrastructure is unchanged, use `upgrade-simplechat.ps1` instead of rerunning the full deployer.

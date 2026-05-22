@@ -11,6 +11,15 @@ param logAnalyticsId string
 param enablePrivateNetworking bool
 param allowedIpAddresses array = []
 
+@allowed([
+  'provisioned'
+  'serverless'
+])
+param capacityMode string = 'provisioned'
+
+@minValue(1000)
+param databaseAutoscaleMaxThroughput int = 4000
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -24,11 +33,11 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
   properties: {
     publicNetworkAccess: 'Enabled'  // configuration is set in post provision step in azure.yaml with post deployment script
     databaseAccountOfferType: 'Standard'
-    capabilities: [
+    capabilities: capacityMode == 'serverless' ? [
       {
         name: 'EnableServerless'
       }
-    ]
+    ] : []
     isVirtualNetworkFilterEnabled: enablePrivateNetworking ? true : false
     ipRules: enablePrivateNetworking ? allowedIpAddresses : []
 
@@ -53,7 +62,11 @@ resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023
     resource: {
       id: 'SimpleChat'
     }
-    options: {}
+    options: capacityMode == 'serverless' ? {} : {
+      autoscaleSettings: {
+        maxThroughput: databaseAutoscaleMaxThroughput
+      }
+    }
   }
 }
 
