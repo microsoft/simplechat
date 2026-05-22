@@ -324,7 +324,8 @@
                             <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text">Workspaces</span>
                         </button>
                         {% endif %}
-                        <input type="file" id="file-input" accept=".txt,.pdf,.doc,.docm,.docx,.xlsx,.xlsm,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv,.xml,.yaml,.yml,.log" style="display: none"/>
+                        {% if settings.enable_chat_file_uploads %}
+                        <input type="file" id="file-input" accept=".txt,.pdf,.doc,.docm,.docx,.xlsx,.xlsm,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv,.xml,.yaml,.yml,.log" style="display: none" />
                         <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, xlsx, pptx, html, images, md, json, csv, xml, yaml, yml, log)">
                             <i class="bi bi-paperclip"></i> <span class="file-btn-text">File</span>
                             <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
@@ -332,6 +333,7 @@
                             </span>
                         </button>
                         <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
+                        {% endif %}
                         {% if settings.enable_web_search and settings.web_search_consent_accepted %}
                         <button
                             id="search-web-btn"
@@ -1178,10 +1180,18 @@
                     <div class="tab-pane fade show active" id="search-panel" role="tabpanel" aria-labelledby="search-tab">
                         <form id="advancedSearchForm">
                             <div class="row mb-3">
-                                <div class="col-12">
-                                    <label for="searchMessageInput" class="form-label">Search Messages</label>
-                                    <input type="text" class="form-control" id="searchMessageInput" placeholder="Search messages (min 3 characters)..." autocomplete="off">
-                                    <small class="form-text text-muted">Search across all message content in your conversations</small>
+                                <div class="col-md-8">
+                                    <label for="searchMessageInput" class="form-label">Search Titles and Messages</label>
+                                    <input type="text" class="form-control" id="searchMessageInput" placeholder="Search titles and messages (min 3 characters)..." autocomplete="off">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="searchMatchMode" class="form-label">Match</label>
+                                    <select class="form-select" id="searchMatchMode">
+                                        <option value="contains" selected>Contains partial text</option>
+                                        <option value="all_words">All words</option>
+                                        <option value="any_word">Any word</option>
+                                        <option value="whole_word">Whole word</option>
+                                    </select>
                                 </div>
                             </div>
 
@@ -1451,6 +1461,7 @@
         enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
         enable_thoughts: {{ settings.enable_thoughts|tojson }},
         enable_collaborative_conversations: {{ settings.enable_collaborative_conversations|tojson }},
+        enable_chat_file_uploads: {{ settings.enable_chat_file_uploads|tojson }},
         documentActionCapabilities: {{ settings.document_action_capabilities|default({}, true)|tojson|safe }}
     };
 

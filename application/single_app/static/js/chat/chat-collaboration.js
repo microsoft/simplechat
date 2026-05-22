@@ -890,6 +890,23 @@ function renderCollaborationMessage(message, options = {}) {
     );
 }
 
+function applyCollaborationMessageMaskUpdate(message = {}) {
+    const messageId = String(message.id || '').trim();
+    if (!messageId) {
+        return;
+    }
+
+    cacheCollaborationMessage(message);
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!messageElement) {
+        return;
+    }
+
+    if (window.chatMessages?.applyMaskedState) {
+        window.chatMessages.applyMaskedState(messageElement, message.metadata || {});
+    }
+}
+
 async function loadConversationMessages(conversationId) {
     const payload = await fetchJson(`/api/collaboration/conversations/${conversationId}/messages`);
     const chatbox = document.getElementById('chatbox');
@@ -1018,6 +1035,14 @@ function handleConversationEvent(eventEnvelope = {}) {
         removeCollaborationMessage(payload.message_id);
         if (payload.deleted_by_user_id && payload.deleted_by_user_id !== getCurrentUserId()) {
             showToast('A shared message was deleted.', 'info');
+        }
+        return;
+    }
+
+    if (eventEnvelope.event_type === 'collaboration.message.masked' && payload.message) {
+        applyCollaborationMessageMaskUpdate(payload.message);
+        if (payload.updated_by_user_id && payload.updated_by_user_id !== getCurrentUserId()) {
+            showToast('A shared message mask was updated.', 'info');
         }
         return;
     }

@@ -21,6 +21,40 @@ def is_tabular_processing_enabled(settings):
     return bool((settings or {}).get('enable_enhanced_citations', False))
 
 
+CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
+
+
+def normalize_app_role_claims(user_roles):
+    """Normalize app role claims into a flat string list."""
+    if not user_roles:
+        return []
+    if isinstance(user_roles, str):
+        return [user_roles]
+    if isinstance(user_roles, (list, tuple, set)):
+        return [str(role).strip() for role in user_roles if str(role).strip()]
+    return [str(user_roles).strip()]
+
+
+def has_chat_file_upload_app_role(user_roles):
+    """Return True when authenticated claims include the chat file upload app role."""
+    normalized_roles = {role.lower() for role in normalize_app_role_claims(user_roles)}
+    return CHAT_FILE_UPLOAD_APP_ROLE.lower() in normalized_roles
+
+
+def is_chat_file_upload_enabled_for_user(settings, user_roles=None, authorization_prechecked=False):
+    """Return True when app settings and optional app role policy allow chat file uploads."""
+    source_settings = settings or {}
+    if not source_settings.get('enable_chat_file_uploads', True):
+        return False
+    if (
+        source_settings.get('require_member_of_chat_file_upload_user', False)
+        and not authorization_prechecked
+        and not has_chat_file_upload_app_role(user_roles)
+    ):
+        return False
+    return True
+
+
 def _authorize_user_settings_access(user_id, operation, allow_cross_user=False):
     """Authorize user-settings access for the current request context."""
     normalized_user_id = str(user_id or '').strip()
@@ -231,6 +265,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
         'enable_file_sharing': False,
+        'enable_chat_file_uploads': True,
+        'require_member_of_chat_file_upload_user': False,
         'enforce_workspace_scope_lock': True,
 
         # File Sync

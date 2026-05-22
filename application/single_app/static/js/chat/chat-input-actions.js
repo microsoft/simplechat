@@ -48,6 +48,14 @@ function setToggleButtonActive(button, isActive) {
   button.setAttribute("aria-pressed", isActive ? "true" : "false");
 }
 
+function isChatFileUploadEnabled() {
+  return Boolean(window.appSettings?.enable_chat_file_uploads);
+}
+
+function showChatFileUploadDisabledToast() {
+  showToast("Chat file uploads are not enabled for your account.", "warning");
+}
+
 export function resetContextualSourceActionState() {
   setToggleButtonActive(urlAccessBtn, false);
   setToggleButtonActive(sourceReviewBtn, false);
@@ -195,6 +203,12 @@ function beginChatFileUpload(filesLike, options = {}) {
   const uploadFiles = buildUploadFileList(filesLike, fallbackPrefix);
 
   if (uploadFiles.length === 0) {
+    return Promise.resolve(false);
+  }
+
+  if (!isChatFileUploadEnabled()) {
+    showChatFileUploadDisabledToast();
+    resetFileButton();
     return Promise.resolve(false);
   }
 
@@ -757,6 +771,12 @@ if (fileInputEl) {
     const uploadBtn = document.getElementById("upload-btn");
     if (!fileBtn || !uploadBtn) return;
 
+    if (!isChatFileUploadEnabled()) {
+      showChatFileUploadDisabledToast();
+      resetFileButton();
+      return;
+    }
+
     if (file) {
       fileBtn.classList.add("active");
       fileBtn.querySelector(".file-btn-text").textContent = file.name;
@@ -818,6 +838,14 @@ if (chatDropZoneEl) {
       }
 
       event.preventDefault();
+      if (!isChatFileUploadEnabled()) {
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = "none";
+        }
+        setChatDropActive(false);
+        return;
+      }
+
       if (event.dataTransfer) {
         event.dataTransfer.dropEffect = "copy";
       }
@@ -840,6 +868,11 @@ if (chatDropZoneEl) {
 
     event.preventDefault();
     setChatDropActive(false);
+
+    if (!isChatFileUploadEnabled()) {
+      showChatFileUploadDisabledToast();
+      return;
+    }
 
     const droppedFiles = getDataTransferFiles(event.dataTransfer);
     beginChatFileUpload(droppedFiles, { fallbackPrefix: "dropped_file" });

@@ -119,6 +119,10 @@ def register_route_frontend_admin_settings(app):
             settings['require_member_of_create_group'] = False
         if 'require_member_of_create_public_workspace' not in settings:
             settings['require_member_of_create_public_workspace'] = False
+        if 'enable_chat_file_uploads' not in settings:
+            settings['enable_chat_file_uploads'] = True
+        if 'require_member_of_chat_file_upload_user' not in settings:
+            settings['require_member_of_chat_file_upload_user'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
             settings['require_member_of_safety_violation_admin'] = False
         if 'require_member_of_control_center_admin' not in settings:
@@ -538,6 +542,7 @@ def register_route_frontend_admin_settings(app):
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
             require_owner_for_group_agent_management = form_data.get('require_owner_for_group_agent_management') == 'on'
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
+            require_member_of_chat_file_upload_user = form_data.get('require_member_of_chat_file_upload_user') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -1482,6 +1487,8 @@ def register_route_frontend_admin_settings(app):
                 'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
+                'enable_chat_file_uploads': form_data.get('enable_chat_file_uploads') == 'on',
+                'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'enforce_workspace_scope_lock': form_data.get('enforce_workspace_scope_lock') == 'on',
                 'enable_file_sync': requested_enable_file_sync,
                 'enable_file_sync_personal': file_sync_settings['enable_file_sync_personal'],

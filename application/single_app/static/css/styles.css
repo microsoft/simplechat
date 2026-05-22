@@ -891,6 +891,37 @@ main {
     justify-content: center;
 }
 
+.message-mask-controls {
+    min-width: 3.25rem;
+}
+
+.mask-action-icon {
+    position: relative;
+    display: inline-flex;
+    width: 18px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+}
+
+.mask-action-icon > .bi:first-child {
+    width: 16px;
+    height: 24px;
+}
+
+.mask-action-modifier {
+    position: absolute;
+    right: -5px;
+    bottom: 1px;
+    width: 12px !important;
+    height: 12px !important;
+    border-radius: 50%;
+    background: var(--bs-body-bg);
+    color: #b58100;
+    font-size: 0.7rem !important;
+    line-height: 1;
+}
+
 /* Dark mode styles for masked content */
 [data-bs-theme="dark"] .masked-content {
     background-color: rgba(255, 193, 7, 0.2);
@@ -918,6 +949,11 @@ main {
 [data-bs-theme="dark"] .mask-btn:hover {
     color: #ffc107;
     background-color: rgba(255, 193, 7, 0.15);
+}
+
+[data-bs-theme="dark"] .mask-action-modifier {
+    background: var(--bs-body-bg);
+    color: #ffc107;
 }
 
 /* Dark mode styles for links in messages */

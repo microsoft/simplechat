@@ -201,11 +201,12 @@ async function performAdvancedSearch(page = 1) {
     // Collect form values
     const dateFrom = document.getElementById('searchDateFrom').value;
     const dateTo = document.getElementById('searchDateTo').value;
+    const matchMode = document.getElementById('searchMatchMode')?.value || 'contains';
     
     const chatTypes = [];
     if (document.getElementById('chatTypePersonal').checked) chatTypes.push('personal');
     if (document.getElementById('chatTypeGroupSingle').checked) chatTypes.push('group-single-user');
-    if (document.getElementById('chatTypeGroupMulti').checked) chatTypes.push('group-multi-user');
+    if (document.getElementById('chatTypeGroupMulti').checked) chatTypes.push('group_multi_user');
     if (document.getElementById('chatTypePublic').checked) chatTypes.push('public');
     
     const classSelect = document.getElementById('searchClassifications');
@@ -216,6 +217,7 @@ async function performAdvancedSearch(page = 1) {
     
     currentSearchParams = {
         search_term: searchTerm,
+        match_mode: matchMode,
         date_from: dateFrom,
         date_to: dateTo,
         chat_types: chatTypes,
@@ -309,6 +311,18 @@ function renderSearchResults(data) {
             ${result.conversation.is_pinned ? '<i class="bi bi-pin-angle-fill me-1"></i>' : ''}
             ${escapeHtml(result.conversation.title)}
         `;
+        titleText.style.cursor = 'pointer';
+        titleText.tabIndex = 0;
+        titleText.setAttribute('role', 'button');
+        titleText.addEventListener('click', () => {
+            navigateToMessageWithHighlight(result.conversation.id, null, currentSearchParams.search_term);
+        });
+        titleText.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                navigateToMessageWithHighlight(result.conversation.id, null, currentSearchParams.search_term);
+            }
+        });
         
         const metaText = document.createElement('small');
         metaText.className = 'text-muted';
@@ -330,17 +344,35 @@ function renderSearchResults(data) {
             });
             cardBody.appendChild(badgesDiv);
         }
+
+        if (result.title_match) {
+            const titleMatchDiv = document.createElement('div');
+            titleMatchDiv.className = 'small text-primary mb-2';
+
+            const titleMatchIcon = document.createElement('i');
+            titleMatchIcon.className = 'bi bi-type me-1';
+            titleMatchDiv.appendChild(titleMatchIcon);
+            titleMatchDiv.appendChild(document.createTextNode('Conversation title matched'));
+
+            cardBody.appendChild(titleMatchDiv);
+        }
         
         // Message matches
         const matchesDiv = document.createElement('div');
         matchesDiv.className = 'mt-2';
-        matchesDiv.innerHTML = `<strong>${result.match_count} message${result.match_count !== 1 ? 's' : ''} matched:</strong>`;
+        if (result.match_count > 0) {
+            matchesDiv.innerHTML = `<strong>${result.match_count} message${result.match_count !== 1 ? 's' : ''} matched:</strong>`;
+        }
         
         result.messages.forEach(msg => {
             const msgDiv = document.createElement('div');
             msgDiv.className = 'border-start border-primary border-3 ps-2 py-1 mb-2 mt-2';
             msgDiv.style.cursor = 'pointer';
-            msgDiv.innerHTML = highlightSearchTerm(escapeHtml(msg.content_snippet), currentSearchParams.search_term);
+            msgDiv.innerHTML = highlightSearchTerm(
+                escapeHtml(msg.content_snippet),
+                currentSearchParams.search_term,
+                currentSearchParams.match_mode
+            );
             
             msgDiv.addEventListener('click', () => {
                 navigateToMessageWithHighlight(result.conversation.id, msg.message_id, currentSearchParams.search_term);
@@ -383,10 +415,28 @@ function renderSearchResults(data) {
     }
 }
 
-function highlightSearchTerm(text, searchTerm) {
-    const escaped = escapeHtml(searchTerm);
-    const regex = new RegExp(`(${escaped})`, 'gi');
-    return text.replace(regex, '<mark>$1</mark>');
+function getHighlightTerms(searchTerm, matchMode) {
+    if (['all_words', 'any_word'].includes(matchMode)) {
+        return searchTerm.split(/\s+/).map(term => term.trim()).filter(Boolean);
+    }
+    return [searchTerm].filter(Boolean);
+}
+
+function escapeRegExp(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightSearchTerm(text, searchTerm, matchMode = 'contains') {
+    let highlightedText = text;
+    const highlightTerms = getHighlightTerms(searchTerm, matchMode).sort((a, b) => b.length - a.length);
+
+    highlightTerms.forEach(term => {
+        const escaped = escapeRegExp(escapeHtml(term));
+        const regex = new RegExp(`(${escaped})`, 'gi');
+        highlightedText = highlightedText.replace(regex, '<mark>$1</mark>');
+    });
+
+    return highlightedText;
 }
 
 function navigateToMessageWithHighlight(convId, msgId, searchTerm) {
@@ -409,7 +459,7 @@ function navigateToMessageWithHighlight(convId, msgId, searchTerm) {
         // Wait for messages to load, then scroll and highlight
         setTimeout(() => {
             if (window.chatMessages) {
-                if (window.chatMessages.scrollToMessageSmooth) {
+                if (msgId && window.chatMessages.scrollToMessageSmooth) {
                     window.chatMessages.scrollToMessageSmooth(msgId);
                 }
                 if (window.chatMessages.applySearchHighlight) {
@@ -473,6 +523,9 @@ function clearFilters() {
     const dateTo = document.getElementById('searchDateTo');
     if (dateFrom) dateFrom.value = '';
     if (dateTo) dateTo.value = '';
+
+    const matchMode = document.getElementById('searchMatchMode');
+    if (matchMode) matchMode.value = 'contains';
     
     // Check all chat types
     document.getElementById('chatTypePersonal').checked = true;

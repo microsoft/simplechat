@@ -4601,6 +4601,40 @@
                     </div>
                 </div>
 
+                <div class="card mb-3 p-3" id="chat-file-uploads-section">
+                    <h5>
+                        <i class="bi bi-paperclip me-2"></i>Chat File Uploads
+                    </h5>
+                    <p class="text-muted">
+                        Control whether users can upload files directly into chat conversations.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_file_uploads"
+                            name="enable_chat_file_uploads"
+                            {% if settings.enable_chat_file_uploads %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_chat_file_uploads">
+                            Enable Chat File Uploads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload files directly into personal, group, and multi-user chat conversations."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_member_of_chat_file_upload_user"
+                            name="require_member_of_chat_file_upload_user"
+                            {% if settings.require_member_of_chat_file_upload_user %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="require_member_of_chat_file_upload_user">
+                            Require ChatFileUploadUser App Role
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the ChatFileUploadUser Enterprise App role can upload files into chat."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Required app role: <code>ChatFileUploadUser</code>. Existing chat attachments remain visible; this only controls new uploads.
+                    </p>
+                </div>
+
                 <div class="card mb-3 p-3" id="metadata-extraction-section">
                     <h5>
                         <i class="bi bi-file-earmark-code me-2"></i>Metadata Extraction

@@ -99,6 +99,12 @@ from functions_message_artifacts import (
     hydrate_agent_citations_from_artifacts,
     make_json_serializable,
 )
+from functions_message_masking import (
+    SUPPORTED_MESSAGE_MASK_ACTIONS,
+    apply_message_mask_action,
+    remove_masked_content,
+    resolve_mask_display_name,
+)
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
@@ -16909,46 +16915,50 @@ def register_route_backend_chats(app):
         This prevents masked content from being sent to the AI model in conversation history.
         """
         try:
-            settings = get_settings()
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             user_id = get_current_user_id()
             
             if not user_id:
                 return jsonify({'error': 'User not authenticated'}), 401
             
-            # Get action: "mask_all", "mask_selection", or "unmask_all"
+            # Get action: "mask_all", "mask_selection", "unmask_message", or "clear_all_masks".
+            # The legacy "unmask_all" action remains supported as a destructive clear-all action.
             action = data.get('action')
             selection = data.get('selection', {})
+            request_conversation_id = str(data.get('conversation_id') or '').strip()
             current_user = get_current_user_info() or {}
-            user_display_name = (
-                current_user.get('displayName')
-                or current_user.get('email')
-                or current_user.get('userPrincipalName')
-                or 'Unknown User'
-            )
+            user_display_name = resolve_mask_display_name(current_user)
             
             # Validate action
-            if action not in ['mask_all', 'mask_selection', 'unmask_all']:
+            if action not in SUPPORTED_MESSAGE_MASK_ACTIONS:
                 return jsonify({'error': 'Invalid action'}), 400
             
             # Fetch the message
             try:
-                # Query for the message (need conversation_id for partition key)
-                query = "SELECT * FROM c WHERE c.id = @message_id"
-                params = [{"name": "@message_id", "value": message_id}]
-                
-                # We need to find the message across all partitions first
-                # This is inefficient but necessary without knowing the conversation_id
-                message_results = list(cosmos_messages_container.query_items(
-                    query=query,
-                    parameters=params,
-                    enable_cross_partition_query=True
-                ))
-                
-                if not message_results:
-                    return jsonify({'error': 'Message not found'}), 404
-                
-                message_doc = message_results[0]
+                message_doc = None
+                if request_conversation_id:
+                    try:
+                        message_doc = cosmos_messages_container.read_item(
+                            item=message_id,
+                            partition_key=request_conversation_id,
+                        )
+                    except CosmosResourceNotFoundError:
+                        message_doc = None
+
+                if message_doc is None:
+                    query = "SELECT TOP 1 * FROM c WHERE c.id = @message_id"
+                    params = [{"name": "@message_id", "value": message_id}]
+                    message_results = list(cosmos_messages_container.query_items(
+                        query=query,
+                        parameters=params,
+                        enable_cross_partition_query=True,
+                    ))
+
+                    if not message_results:
+                        return jsonify({'error': 'Message not found'}), 404
+
+                    message_doc = message_results[0]
+
                 conversation_id = message_doc.get('conversation_id')
                 
                 # Verify ownership - only the message author can mask their message
@@ -16977,52 +16987,16 @@ def register_route_backend_chats(app):
                 message_doc['metadata'] = {}
             
             # Process based on action
-            if action == 'mask_all':
-                # Mask the entire message
-                message_doc['metadata']['masked'] = True
-                message_doc['metadata']['masked_by_user_id'] = user_id
-                message_doc['metadata']['masked_timestamp'] = datetime.now(timezone.utc).isoformat()
-                message_doc['metadata']['masked_by_display_name'] = user_display_name
-                
-            elif action == 'unmask_all':
-                # Unmask the entire message and clear all masked ranges
-                message_doc['metadata']['masked'] = False
-                message_doc['metadata']['masked_ranges'] = []
-                message_doc['metadata']['masked_by_user_id'] = None
-                message_doc['metadata']['masked_timestamp'] = None
-                message_doc['metadata']['masked_by_display_name'] = None
-                
-            elif action == 'mask_selection':
-                # Mask a selection of text
-                start = selection.get('start')
-                end = selection.get('end')
-                text = selection.get('text', '')
-                
-                if start is None or end is None:
-                    return jsonify({'error': 'Selection start and end required'}), 400
-                
-                # Initialize masked_ranges if it doesn't exist
-                if 'masked_ranges' not in message_doc['metadata']:
-                    message_doc['metadata']['masked_ranges'] = []
-                
-                # Create new masked range
-                new_range = {
-                    'id': str(uuid.uuid4()),
-                    'user_id': user_id,
-                    'display_name': user_display_name,
-                    'start': start,
-                    'end': end,
-                    'text': text,
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }
-                
-                # Add the new range
-                message_doc['metadata']['masked_ranges'].append(new_range)
-                
-                # Sort and merge overlapping/adjacent ranges
-                message_doc['metadata']['masked_ranges'] = merge_masked_ranges(
-                    message_doc['metadata']['masked_ranges']
+            try:
+                apply_message_mask_action(
+                    message_doc,
+                    action,
+                    selection,
+                    user_id,
+                    user_display_name,
                 )
+            except ValueError as ex:
+                return jsonify({'error': str(ex)}), 400
             
             # Update the message in Cosmos DB
             try:
@@ -17047,70 +17021,6 @@ def register_route_backend_chats(app):
                 'error': f'Internal server error: {str(e)}',
                 'details': error_traceback if app.debug else None
             }), 500
-
-
-def merge_masked_ranges(ranges):
-    """
-    Merge overlapping and adjacent masked ranges.
-    Preserves the earliest timestamp and user info for merged ranges.
-    """
-    if not ranges:
-        return []
-    
-    # Sort by start position
-    sorted_ranges = sorted(ranges, key=lambda x: x['start'])
-    merged = [sorted_ranges[0]]
-    
-    for current in sorted_ranges[1:]:
-        last_merged = merged[-1]
-        
-        # Check if current range overlaps or is adjacent to the last merged range
-        if current['start'] <= last_merged['end']:
-            # Merge: extend the end if current goes further
-            if current['end'] > last_merged['end']:
-                last_merged['end'] = current['end']
-                # Update text to cover merged range
-                last_merged['text'] = last_merged['text'] + current['text'][last_merged['end'] - current['start']:]
-            # Keep the earliest timestamp
-            if current['timestamp'] < last_merged['timestamp']:
-                last_merged['timestamp'] = current['timestamp']
-        else:
-            # No overlap, add as separate range
-            merged.append(current)
-    
-    return merged
-
-
-def remove_masked_content(content, masked_ranges):
-    """
-    Remove masked portions from message content.
-    Works backwards through sorted ranges to maintain correct offsets.
-    """
-    if not masked_ranges or not content:
-        return content
-    
-    # Sort ranges by start position (descending) to work backwards
-    sorted_ranges = sorted(masked_ranges, key=lambda x: x['start'], reverse=True)
-    
-    # Create a list from content for easier manipulation
-    result = content
-    
-    # Remove masked ranges working backwards to maintain offsets
-    for range_item in sorted_ranges:
-        start = range_item['start']
-        end = range_item['end']
-        
-        # Ensure indices are within bounds
-        if start < 0:
-            start = 0
-        if end > len(result):
-            end = len(result)
-        
-        # Remove the masked portion
-        if start < end:
-            result = result[:start] + result[end:]
-    
-    return result
 
 
 def _format_history_message_ref(message):

@@ -45,6 +45,12 @@ from functions_collaboration import (
 )
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id
 from functions_image_messages import decode_image_content, get_complete_image_content, is_blob_backed_image_message, is_external_image_url
+from functions_message_masking import (
+    SUPPORTED_MESSAGE_MASK_ACTIONS,
+    apply_message_mask_action,
+    copy_message_mask_metadata,
+    resolve_mask_display_name,
+)
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
 from functions_message_artifacts import make_json_serializable
 from functions_settings import get_settings, get_user_settings
@@ -312,6 +318,63 @@ def _build_collaboration_stream_request_payload(data, source_conversation_id, me
         'agent_info': data.get('agent_info'),
         'reasoning_effort': data.get('reasoning_effort'),
     }
+
+
+def _assert_user_can_mask_collaboration_message(current_user_id, message_doc):
+    role = str((message_doc or {}).get('role') or '').strip().lower()
+    metadata = (message_doc or {}).get('metadata', {}) if isinstance((message_doc or {}).get('metadata'), dict) else {}
+    sender = metadata.get('sender', {}) if isinstance(metadata.get('sender'), dict) else {}
+    sender_user_id = str(sender.get('user_id') or '').strip()
+
+    if role in ('assistant', 'safety'):
+        return
+
+    if sender_user_id == 'assistant':
+        return
+
+    if sender_user_id and sender_user_id == current_user_id:
+        return
+
+    raise PermissionError('You can only mask your own shared messages or assistant responses')
+
+
+def _sync_collaboration_mask_metadata_to_source(message_doc):
+    metadata = (message_doc or {}).get('metadata', {}) if isinstance((message_doc or {}).get('metadata'), dict) else {}
+    source_conversation_id = str(metadata.get('source_conversation_id') or '').strip()
+    source_message_id = str(metadata.get('source_message_id') or '').strip()
+    if not source_conversation_id or not source_message_id:
+        return
+
+    source_scope = str(metadata.get('source_conversation_scope') or '').strip().lower()
+    source_container = cosmos_group_messages_container if source_scope == 'group' else cosmos_messages_container
+
+    try:
+        source_message_doc = source_container.read_item(
+            item=source_message_id,
+            partition_key=source_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        log_event(
+            '[Collaboration Masking] Linked source message was not found while syncing mask metadata',
+            extra={
+                'conversation_id': (message_doc or {}).get('conversation_id'),
+                'message_id': (message_doc or {}).get('id'),
+                'source_conversation_id': source_conversation_id,
+                'source_message_id': source_message_id,
+                'source_scope': source_scope or 'personal',
+            },
+            level=logging.WARNING,
+            debug_only=True,
+        )
+        return
+
+    source_metadata = source_message_doc.setdefault('metadata', {})
+    if not isinstance(source_metadata, dict):
+        source_metadata = {}
+        source_message_doc['metadata'] = source_metadata
+
+    copy_message_mask_metadata(metadata, source_metadata)
+    source_container.upsert_item(source_message_doc)
 
 
 def register_route_backend_collaboration(app):
@@ -1087,6 +1150,85 @@ def register_route_backend_collaboration(app):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to load collaborative conversation messages'}), 500
+
+    @app.route('/api/collaboration/conversations/<conversation_id>/messages/<message_id>/mask', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def mask_collaboration_message_api(conversation_id, message_id):
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            action = str(data.get('action') or '').strip()
+            if action not in SUPPORTED_MESSAGE_MASK_ACTIONS:
+                return jsonify({'error': 'Invalid action'}), 400
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_participate_in_collaboration_conversation(
+                current_user['user_id'],
+                conversation_doc,
+            )
+
+            message_doc = get_collaboration_message(message_id)
+            if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+                return jsonify({'error': 'Collaborative message not found'}), 404
+
+            _assert_user_can_mask_collaboration_message(current_user['user_id'], message_doc)
+            user_display_name = resolve_mask_display_name(current_user)
+
+            try:
+                apply_message_mask_action(
+                    message_doc,
+                    action,
+                    data.get('selection', {}),
+                    current_user['user_id'],
+                    user_display_name,
+                )
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            cosmos_collaboration_messages_container.upsert_item(message_doc)
+            _sync_collaboration_mask_metadata_to_source(message_doc)
+
+            serialized_message = serialize_collaboration_message(message_doc)
+            COLLABORATION_EVENT_REGISTRY.publish(
+                conversation_id,
+                _build_collaboration_event(
+                    conversation_id,
+                    'collaboration.message.masked',
+                    {
+                        'message_id': message_id,
+                        'message': serialized_message,
+                        'masked': message_doc.get('metadata', {}).get('masked', False),
+                        'masked_ranges': message_doc.get('metadata', {}).get('masked_ranges', []),
+                        'updated_by_user_id': current_user['user_id'],
+                    },
+                ),
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'masked': message_doc.get('metadata', {}).get('masked', False),
+                'masked_ranges': message_doc.get('metadata', {}).get('masked_ranges', []),
+                'message': serialized_message,
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[Collaboration Masking] Failed to update mask state for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update shared message mask state'}), 500
 
     @app.route('/api/collaboration/conversations/<conversation_id>/images/<message_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())

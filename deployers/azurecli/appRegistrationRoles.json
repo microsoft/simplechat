@@ -78,6 +78,14 @@
     "id": "6faea62e-2595-48b2-92e2-842a56347c9f",
     "isEnabled": true,
     "value": "UrlAccessUser"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Allows chat file uploads when the chat upload app role requirement is enabled.",
+    "displayName": "Chat File Upload User",
+    "id": "3f6ec07d-db95-4c0e-ab03-0645b95736e3",
+    "isEnabled": true,
+    "value": "ChatFileUploadUser"
   }
 
 ]

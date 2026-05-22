@@ -728,6 +728,15 @@ resource "azuread_application_app_role" "app_registration_user" {
   role_id              = "633746c6-3d03-480f-b273-58ece728be52"
 }
 
+resource "azuread_application_app_role" "app_registration_chat_file_upload_user" {
+  application_id       = azuread_application.app_registration.id
+  allowed_member_types = ["User"]
+  description          = "Allows chat file uploads when the chat upload app role requirement is enabled."
+  display_name         = "Chat File Upload User"
+  value                = "ChatFileUploadUser"
+  role_id              = "3f6ec07d-db95-4c0e-ab03-0645b95736e3"
+}
+
 resource "azuread_application_app_role" "app_registration_feedbackadmin" {
   application_id       = azuread_application.app_registration.id
   allowed_member_types = ["User"]

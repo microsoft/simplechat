@@ -4050,6 +4050,7 @@ export function appendMessage(
   const messageDiv = document.createElement("div");
   messageDiv.classList.add("mb-2", "message");
   messageDiv.setAttribute("data-message-id", messageId || `msg-${Date.now()}`);
+  messageDiv.dataset.conversationId = resolveMessageConversationId(fullMessageObject);
 
   let avatarImg = "";
   let avatarAltText = "";
@@ -4111,10 +4112,7 @@ export function appendMessage(
     const feedbackHtml = renderFeedbackIcons(messageId, currentConversationId);
     const hiddenTextId = `copy-md-${messageId || Date.now()}`;
     
-    // Check if message is masked
-    const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
-    const maskIcon = isMasked ? 'bi-front' : 'bi-back';
-    const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
+    const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
     
     // TTS button (only for AI messages)
     const ttsButtonHtml = (sender === 'AI' && typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) ? `
@@ -4135,11 +4133,7 @@ export function appendMessage(
     )}</textarea>
         `;
     
-    const maskButtonHtml = `
-            <button class="mask-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="${maskTitle}">
-                <i class="bi ${maskIcon}"></i>
-            </button>
-        `;
+    const maskButtonHtml = buildMaskControlsHtml(messageId, maskState);
     const exportMenuItemsHtml = renderCompletedAssistantActions ? `
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
@@ -4317,6 +4311,8 @@ export function appendMessage(
       if (window.Prism) Prism.highlightElement(block);
     });
 
+    captureMessageMaskingOriginalContent(messageDiv);
+
     // Apply masked state if message has masking
     if (fullMessageObject?.metadata) {
       applyMaskedState(messageDiv, fullMessageObject.metadata);
@@ -4352,18 +4348,7 @@ export function appendMessage(
     attachMessageExportActionListeners(messageDiv, 'assistant');
     attachThoughtsToggleListener(messageDiv, messageId, currentConversationId);
     
-    const maskBtn = messageDiv.querySelector(".mask-btn");
-    if (maskBtn) {
-      // Update tooltip dynamically on hover
-      maskBtn.addEventListener("mouseenter", () => {
-        updateMaskButtonTooltip(maskBtn, messageDiv);
-      });
-      
-      // Handle mask button click
-      maskBtn.addEventListener("click", () => {
-        handleMaskButtonClick(messageDiv, messageId, messageContent);
-      });
-    }
+    attachMaskButtonEventListeners(messageDiv);
     
     const dropdownDeleteBtn = messageDiv.querySelector(".dropdown-delete-btn");
     if (dropdownDeleteBtn) {
@@ -4620,9 +4605,7 @@ export function appendMessage(
       || Boolean(stripHtmlTags(messageContentHtml || "").replace(/\s+/g, " ").trim());
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
-      const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
-      const maskIcon = isMasked ? 'bi-front' : 'bi-back';
-      const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
+      const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
       
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
@@ -4646,9 +4629,7 @@ export function appendMessage(
             <button class="btn btn-sm btn-link text-muted copy-user-btn" data-message-id="${messageId}" title="Copy message">
               <i class="bi bi-copy"></i>
             </button>
-            <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
-              <i class="bi ${maskIcon}"></i>
-            </button>
+            ${buildMaskControlsHtml(messageId, maskState)}
             <button class="carousel-prev-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Previous attempt" style="display: none;">
               <i class="bi bi-box-arrow-in-left"></i>
             </button>
@@ -4690,10 +4671,7 @@ export function appendMessage(
       // Image and file messages get mask button on left, metadata button on right side
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       
-      // Check if message is masked
-      const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
-      const maskIcon = isMasked ? 'bi-front' : 'bi-back';
-      const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
+      const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
       
       // For images with extracted text or vision analysis, add View Text button like citation button
       let imageInfoToggleHtml = '';
@@ -4715,9 +4693,7 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
               </ul>
             </div>
-            <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
-              <i class="bi ${maskIcon}"></i>
-            </button>
+            ${buildMaskControlsHtml(messageId, maskState)}
           </div>
           <div class="d-flex align-items-center"></div>
           <div class="d-flex align-items-center gap-2">${imageInfoToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
@@ -4771,6 +4747,8 @@ export function appendMessage(
       if (window.Prism) Prism.highlightElement(block);
     });
 
+    captureMessageMaskingOriginalContent(messageDiv);
+
     
     // Add event listeners for user message buttons
     if (sender === "You") {
@@ -4802,18 +4780,7 @@ export function appendMessage(
     
     // Add event listener for mask button (image and file messages)
     if (sender === "image" || sender === "File") {
-      const maskBtn = messageDiv.querySelector('.mask-btn');
-      if (maskBtn) {
-        // Update tooltip dynamically on hover
-        maskBtn.addEventListener("mouseenter", () => {
-          updateMaskButtonTooltip(maskBtn, messageDiv);
-        });
-        
-        // Handle mask button click
-        maskBtn.addEventListener("click", () => {
-          handleMaskButtonClick(messageDiv, messageId, messageContent);
-        });
-      }
+      attachMaskButtonEventListeners(messageDiv);
       
       // Apply masked state if message has masking
       if (fullMessageObject?.metadata) {
@@ -5752,7 +5719,6 @@ export function updateUserMessageId(tempId, realId) {
 function attachUserMessageEventListeners(messageDiv, messageId, messageContent) {
   const copyBtn = messageDiv.querySelector(".copy-user-btn");
   const metadataToggleBtn = messageDiv.querySelector(".metadata-toggle-btn");
-  const maskBtn = messageDiv.querySelector(".mask-btn");
   
   if (copyBtn) {
     copyBtn.addEventListener("click", () => {
@@ -5778,17 +5744,7 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
     });
   }
   
-  if (maskBtn) {
-    // Update tooltip dynamically on hover
-    maskBtn.addEventListener("mouseenter", () => {
-      updateMaskButtonTooltip(maskBtn, messageDiv);
-    });
-    
-    // Handle mask button click
-    maskBtn.addEventListener("click", () => {
-      handleMaskButtonClick(messageDiv, messageId, messageContent);
-    });
-  }
+  attachMaskButtonEventListeners(messageDiv);
   
   const dropdownDeleteBtn = messageDiv.querySelector(".dropdown-delete-btn");
   if (dropdownDeleteBtn) {
@@ -6985,353 +6941,370 @@ export function scrollToMessageSmooth(messageId) {
 
 // ============= Message Masking Functions =============
 
-/**
- * Apply masked state to a message when loading from database
- */
-function applyMaskedState(messageDiv, metadata) {
-  if (!metadata) return;
-  
-  const messageText = messageDiv.querySelector('.message-text');
-  const messageFooter = messageDiv.querySelector('.message-footer');
-  
-  if (!messageText) return;
-  
-  // Check if entire message is masked
-  if (metadata.masked) {
-    messageDiv.classList.add('fully-masked');
-    
-    // Add exclusion badge to footer if not already present
-    if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
-      const badge = document.createElement('div');
-      badge.className = 'message-exclusion-badge text-warning small';
-      badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i>';
-      messageFooter.appendChild(badge);
-    }
-    return;
-  }
-  
-  // Apply masked ranges if they exist
-  if (metadata.masked_ranges && metadata.masked_ranges.length > 0) {
-    const content = messageText.textContent;
-    let lastIndex = 0;
-    const fragment = document.createDocumentFragment();
-    
-    // Sort masked ranges by start position
-    const sortedRanges = [...metadata.masked_ranges].sort((a, b) => a.start - b.start);
-    
-    // Build DOM with masked spans
-    sortedRanges.forEach(range => {
-      // Add text before masked range
-      if (range.start > lastIndex) {
-        fragment.appendChild(document.createTextNode(content.substring(lastIndex, range.start)));
-      }
-      
-      // Add masked span
-      const timestamp = new Date(range.timestamp).toLocaleDateString();
-      const maskedSpan = document.createElement('span');
-      maskedSpan.className = 'masked-content';
-      maskedSpan.setAttribute('data-mask-id', String(range.id ?? ''));
-      maskedSpan.setAttribute('data-user-id', String(range.user_id ?? ''));
-      maskedSpan.setAttribute('data-display-name', String(range.display_name ?? ''));
-      maskedSpan.title = `Masked by ${String(range.display_name ?? 'Unknown User')} on ${timestamp}`;
-      maskedSpan.textContent = content.substring(range.start, range.end);
-      fragment.appendChild(maskedSpan);
-      
-      lastIndex = range.end;
-    });
-    
-    // Add remaining text after last masked range
-    if (lastIndex < content.length) {
-      fragment.appendChild(document.createTextNode(content.substring(lastIndex)));
-    }
-    
-    // Update message text with masked content
-    messageText.replaceChildren(fragment);
-  }
-}
-
-/**
- * Update mask button tooltip based on current selection and mask state
- */
-function updateMaskButtonTooltip(maskBtn, messageDiv) {
-  const messageBubble = messageDiv.querySelector('.message-bubble');
-  if (!messageBubble) return;
-  
-  // Check if there's a text selection within this message
-  const selection = window.getSelection();
-  const hasSelection = selection && selection.toString().trim().length > 0;
-  
-  // Verify selection is within this message bubble
-  let selectionInMessage = false;
-  if (hasSelection && selection.anchorNode) {
-    selectionInMessage = messageBubble.contains(selection.anchorNode);
-  }
-  
-  // Check current mask state
-  const isMasked = messageDiv.querySelector('.masked-content') || messageDiv.classList.contains('fully-masked');
-  
-  // Update tooltip based on state
-  if (isMasked) {
-    maskBtn.title = 'Unmask all masked content';
-  } else if (selectionInMessage) {
-    maskBtn.title = 'Mask selected content';
-  } else {
-    maskBtn.title = 'Mask entire message';
-  }
-}
-
-/**
- * Handle mask button click - masks entire message or selected content
- */
-function handleMaskButtonClick(messageDiv, messageId, messageContent) {
-  const messageBubble = messageDiv.querySelector('.message-bubble');
-  const messageText = messageDiv.querySelector('.message-text');
-  const maskBtn = messageDiv.querySelector('.mask-btn');
-  
-  if (!messageBubble || !messageText || !maskBtn) {
-    console.error('Required elements not found for masking');
-    return;
-  }
-  
-  // Check if message is currently masked
-  const isMasked = messageDiv.querySelector('.masked-content') || messageDiv.classList.contains('fully-masked');
-  
-  if (isMasked) {
-    // Unmask all
-    unmaskMessage(messageDiv, messageId, maskBtn);
-    return;
-  }
-  
-  // Check for text selection within message
-  const selection = window.getSelection();
-  const hasSelection = selection && selection.toString().trim().length > 0;
-  
-  let selectionInMessage = false;
-  if (hasSelection && selection.anchorNode) {
-    selectionInMessage = messageBubble.contains(selection.anchorNode);
-  }
-  
-  if (selectionInMessage) {
-    // Mask selection
-    maskSelection(messageDiv, messageId, selection, messageText, maskBtn);
-  } else {
-    // Mask entire message
-    maskEntireMessage(messageDiv, messageId, maskBtn);
-  }
-}
-
-/**
- * Mask the entire message
- */
-function maskEntireMessage(messageDiv, messageId, maskBtn) {
-  console.log(`Masking entire message: ${messageId}`);
-  
-  // Get user info
-  const userDisplayName = window.currentUser?.display_name || 'Unknown User';
-  const userId = window.currentUser?.id || 'unknown';
-  
-  console.log('Mask entire message - User info:', { userId, userDisplayName, windowCurrentUser: window.currentUser });
-  
-  const payload = {
-    action: 'mask_all',
-    user_id: userId,
-    display_name: userDisplayName
+function getMaskStateFromMetadata(metadata = {}) {
+  const maskedRanges = Array.isArray(metadata?.masked_ranges) ? metadata.masked_ranges : [];
+  const fullyMasked = Boolean(metadata?.masked);
+  return {
+    fullyMasked,
+    hasRanges: maskedRanges.length > 0,
+    hasAnyMask: fullyMasked || maskedRanges.length > 0,
+    maskedRanges,
   };
-  
-  console.log('Mask entire message - Sending payload:', payload);
-  
-  // Call API to mask message
-  fetch(`/api/message/${messageId}/mask`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload)
-  })
-  .then(response => {
-    console.log('Mask entire message - Response status:', response.status);
-    if (!response.ok) {
-      return response.json().then(err => {
-        console.error('Mask entire message - Error response:', err);
-        throw new Error(err.error || 'Failed to mask message');
-      });
-    }
-    return response.json();
-  })
-  .then(data => {
-    console.log('Mask entire message - Success response:', data);
-    if (data.success) {
-      // Add fully-masked class and exclusion badge
-      messageDiv.classList.add('fully-masked');
-      
-      // Update mask button
-      const icon = maskBtn.querySelector('i');
-      icon.className = 'bi bi-front';
-      maskBtn.title = 'Unmask all masked content';
-      
-      // Add exclusion badge to footer if not already present
-      const messageFooter = messageDiv.querySelector('.message-footer');
-      if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
-        const badge = document.createElement('div');
-        badge.className = 'message-exclusion-badge text-warning small';
-        badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i>';
-        messageFooter.appendChild(badge);
-      }
-      
-      showToast('Message masked successfully', 'success');
-    } else {
-      showToast('Failed to mask message', 'error');
-    }
-  })
-  .catch(error => {
-    console.error('Error masking message:', error);
-    showToast('Error masking message', 'error');
-  });
 }
 
-/**
- * Mask selected text content
- */
-function maskSelection(messageDiv, messageId, selection, messageText, maskBtn) {
-  const selectedText = selection.toString().trim();
-  console.log(`Masking selection in message: ${messageId}`);
-  
-  // Get the range and calculate character offsets
+function buildMaskActionIconHtml(action, showModifier = true) {
+  const baseIcon = action === 'remove' ? 'bi-front' : 'bi-back';
+  const modifierIcon = action === 'remove' ? 'bi-dash-lg' : 'bi-plus-lg';
+  const modifierClass = showModifier ? '' : ' d-none';
+  return `
+    <span class="mask-action-icon" aria-hidden="true">
+      <i class="bi ${baseIcon}"></i>
+      <i class="bi ${modifierIcon} mask-action-modifier${modifierClass}"></i>
+    </span>`;
+}
+
+function buildMaskControlsHtml(messageId, maskState = {}) {
+  const safeMessageId = escapeHtml(String(messageId || ''));
+  const removeHiddenClass = maskState.hasAnyMask ? '' : ' d-none';
+  const addTitle = maskState.hasAnyMask ? 'Add another mask' : 'Mask entire message';
+  const removeTitle = maskState.fullyMasked ? 'Remove full-message mask' : 'Clear text masks';
+  return `
+    <span class="message-mask-controls d-inline-flex align-items-center gap-1">
+      <button class="btn btn-sm btn-link text-muted mask-btn mask-add-btn" data-message-id="${safeMessageId}" title="${addTitle}" aria-label="${addTitle}">
+        ${buildMaskActionIconHtml('add', Boolean(maskState.hasAnyMask))}
+      </button>
+      <button class="btn btn-sm btn-link text-muted mask-btn mask-remove-btn${removeHiddenClass}" data-message-id="${safeMessageId}" title="${removeTitle}" aria-label="${removeTitle}">
+        ${buildMaskActionIconHtml('remove', true)}
+      </button>
+    </span>`;
+}
+
+function captureMessageMaskingOriginalContent(messageDiv) {
+  if (!messageDiv || messageDiv._maskingOriginalNodes) {
+    return;
+  }
+
+  const messageText = messageDiv.querySelector('.message-text');
+  if (!messageText) {
+    return;
+  }
+
+  messageDiv._maskingOriginalNodes = Array.from(messageText.childNodes).map(node => node.cloneNode(true));
+}
+
+function restoreMessageMaskingOriginalContent(messageDiv, messageText) {
+  captureMessageMaskingOriginalContent(messageDiv);
+  const originalNodes = Array.isArray(messageDiv._maskingOriginalNodes)
+    ? messageDiv._maskingOriginalNodes.map(node => node.cloneNode(true))
+    : [];
+  if (originalNodes.length > 0) {
+    messageText.replaceChildren(...originalNodes);
+  }
+}
+
+function addMessageExclusionBadge(messageDiv) {
+  const messageFooter = messageDiv.querySelector('.message-footer');
+  if (!messageFooter || messageFooter.querySelector('.message-exclusion-badge')) {
+    return;
+  }
+
+  const badge = document.createElement('div');
+  badge.className = 'message-exclusion-badge text-warning small';
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-exclamation-triangle-fill';
+  badge.appendChild(icon);
+  messageFooter.appendChild(badge);
+}
+
+function removeMessageExclusionBadge(messageDiv) {
+  const badge = messageDiv.querySelector('.message-exclusion-badge');
+  if (badge) {
+    badge.remove();
+  }
+}
+
+function getTextNodeSegments(rootElement) {
+  const segments = [];
+  const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  let node = walker.nextNode();
+  while (node) {
+    const length = node.textContent.length;
+    segments.push({ node, start: offset, end: offset + length });
+    offset += length;
+    node = walker.nextNode();
+  }
+  return segments;
+}
+
+function findTextPosition(segments, offset, preferEnd = false) {
+  for (const segment of segments) {
+    if (preferEnd) {
+      if (offset > segment.start && offset <= segment.end) {
+        return { node: segment.node, offset: offset - segment.start };
+      }
+    } else if (offset >= segment.start && offset < segment.end) {
+      return { node: segment.node, offset: offset - segment.start };
+    }
+  }
+  return null;
+}
+
+function createMaskedContentSpan(range) {
+  const timestampValue = range.timestamp ? new Date(range.timestamp) : null;
+  const timestamp = timestampValue && !Number.isNaN(timestampValue.getTime())
+    ? timestampValue.toLocaleDateString()
+    : 'unknown date';
+  const maskedSpan = document.createElement('span');
+  maskedSpan.className = 'masked-content';
+  maskedSpan.setAttribute('data-mask-id', String(range.id ?? ''));
+  maskedSpan.setAttribute('data-user-id', String(range.user_id ?? ''));
+  maskedSpan.setAttribute('data-display-name', String(range.display_name ?? ''));
+  maskedSpan.title = `Masked by ${String(range.display_name ?? 'Unknown User')} on ${timestamp}`;
+  return maskedSpan;
+}
+
+function wrapMaskedRange(messageText, range) {
+  const contentLength = messageText.textContent.length;
+  const start = Math.max(0, Math.min(Number(range.start), contentLength));
+  const end = Math.max(0, Math.min(Number(range.end), contentLength));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+    return;
+  }
+
+  const segments = getTextNodeSegments(messageText);
+  const startPosition = findTextPosition(segments, start, false);
+  const endPosition = findTextPosition(segments, end, true);
+  if (!startPosition || !endPosition) {
+    return;
+  }
+
+  const domRange = document.createRange();
+  domRange.setStart(startPosition.node, startPosition.offset);
+  domRange.setEnd(endPosition.node, endPosition.offset);
+
+  const maskedSpan = createMaskedContentSpan(range);
+  try {
+    domRange.surroundContents(maskedSpan);
+  } catch (error) {
+    const contents = domRange.extractContents();
+    maskedSpan.appendChild(contents);
+    domRange.insertNode(maskedSpan);
+  }
+}
+
+function applyMaskedRangesToMessageText(messageText, maskedRanges) {
+  const sortedRanges = [...maskedRanges]
+    .filter(range => range && Number.isFinite(Number(range.start)) && Number.isFinite(Number(range.end)))
+    .sort((left, right) => Number(right.start) - Number(left.start));
+  sortedRanges.forEach(range => wrapMaskedRange(messageText, range));
+}
+
+function updateMaskControls(messageDiv, metadata = {}) {
+  const maskState = getMaskStateFromMetadata(metadata);
+  const addButton = messageDiv.querySelector('.mask-add-btn');
+  const removeButton = messageDiv.querySelector('.mask-remove-btn');
+  const addModifier = addButton?.querySelector('.mask-action-modifier');
+
+  if (addButton) {
+    const selectionInfo = getSelectionInfoForMessage(messageDiv);
+    const title = selectionInfo
+      ? 'Mask selected content'
+      : maskState.hasAnyMask
+        ? 'Add full-message mask'
+        : 'Mask entire message';
+    addButton.title = title;
+    addButton.setAttribute('aria-label', title);
+  }
+  if (addModifier) {
+    addModifier.classList.toggle('d-none', !maskState.hasAnyMask);
+  }
+  if (removeButton) {
+    const removeTitle = maskState.fullyMasked
+      ? 'Remove full-message mask'
+      : 'Clear text masks';
+    removeButton.title = removeTitle;
+    removeButton.setAttribute('aria-label', removeTitle);
+    removeButton.classList.toggle('d-none', !maskState.hasAnyMask);
+  }
+}
+
+function applyMaskedState(messageDiv, metadata = {}) {
+  if (!messageDiv) return;
+
+  const messageText = messageDiv.querySelector('.message-text');
+  if (!messageText) return;
+
+  const nextMetadata = {
+    ...(messageDiv._maskingMetadata || {}),
+    ...(metadata || {}),
+  };
+  messageDiv._maskingMetadata = nextMetadata;
+
+  restoreMessageMaskingOriginalContent(messageDiv, messageText);
+
+  if (nextMetadata.masked) {
+    messageDiv.classList.add('fully-masked');
+    addMessageExclusionBadge(messageDiv);
+  } else {
+    messageDiv.classList.remove('fully-masked');
+    removeMessageExclusionBadge(messageDiv);
+  }
+
+  const maskedRanges = Array.isArray(nextMetadata.masked_ranges) ? nextMetadata.masked_ranges : [];
+  if (maskedRanges.length > 0) {
+    applyMaskedRangesToMessageText(messageText, maskedRanges);
+  }
+
+  updateMaskControls(messageDiv, nextMetadata);
+}
+
+function getSelectionInfoForMessage(messageDiv) {
+  const messageText = messageDiv?.querySelector('.message-text');
+  const selection = window.getSelection();
+  if (!messageText || !selection || selection.rangeCount === 0 || !selection.toString().trim()) {
+    return null;
+  }
+
   const range = selection.getRangeAt(0);
+  if (!messageText.contains(range.commonAncestorContainer)) {
+    return null;
+  }
+
   const preSelectionRange = range.cloneRange();
   preSelectionRange.selectNodeContents(messageText);
   preSelectionRange.setEnd(range.startContainer, range.startOffset);
+  const selectedText = selection.toString();
   const start = preSelectionRange.toString().length;
-  const end = start + selectedText.length;
-  
-  // Get user info
-  const userDisplayName = window.currentUser?.display_name || 'Unknown User';
-  const userId = window.currentUser?.id || 'unknown';
-  
-  console.log('Mask selection - User info:', { userId, userDisplayName, windowCurrentUser: window.currentUser });
-  console.log('Mask selection - Range:', { start, end, selectedText });
-  
-  const payload = {
-    action: 'mask_selection',
-    selection: {
-      start: start,
-      end: end,
-      text: selectedText
-    },
-    user_id: userId,
-    display_name: userDisplayName
+  return {
+    selection,
+    start,
+    end: start + selectedText.length,
+    text: selectedText,
   };
-  
-  console.log('Mask selection - Sending payload:', payload);
-  
-  // Call API to mask selection
-  fetch(`/api/message/${messageId}/mask`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload)
-  })
-  .then(response => {
-    console.log('Mask selection - Response status:', response.status);
-    if (!response.ok) {
-      return response.json().then(err => {
-        console.error('Mask selection - Error response:', err);
-        throw new Error(err.error || 'Failed to mask selection');
-      });
-    }
-    return response.json();
-  })
-  .then(data => {
-    console.log('Mask selection - Success response:', data);
-    if (data.success) {
-      // Wrap selected text with masked span
-      const maskId = data.masked_ranges[data.masked_ranges.length - 1].id;
-      const span = document.createElement('span');
-      span.className = 'masked-content';
-      span.setAttribute('data-mask-id', maskId);
-      span.setAttribute('data-user-id', userId);
-      span.setAttribute('data-display-name', userDisplayName);
-      span.title = `Masked by ${userDisplayName}`;
-      
-      // Use extractContents and insertNode to handle complex selections
-      try {
-        const contents = range.extractContents();
-        span.appendChild(contents);
-        range.insertNode(span);
-      } catch (e) {
-        console.error('Error wrapping selection:', e);
-        // Fallback: reload the message to show the masked content
-        location.reload();
-        return;
-      }
-      selection.removeAllRanges();
-      
-      // Update mask button
-      const icon = maskBtn.querySelector('i');
-      icon.className = 'bi bi-front';
-      maskBtn.title = 'Unmask all masked content';
-      
-      showToast('Selection masked successfully', 'success');
-    } else {
-      showToast('Failed to mask selection', 'error');
-    }
-  })
-  .catch(error => {
-    console.error('Error masking selection:', error);
-    showToast('Error masking selection', 'error');
-  });
 }
 
-/**
- * Unmask all masked content in a message
- */
-function unmaskMessage(messageDiv, messageId, maskBtn) {
-  console.log(`Unmasking message: ${messageId}`);
-  
-  // Call API to unmask
-  fetch(`/api/message/${messageId}/mask`, {
+function getMaskConversationId(messageDiv) {
+  return String(
+    messageDiv?.dataset?.conversationId
+      || window.chatConversations?.getCurrentConversationId?.()
+      || window.currentConversationId
+      || ''
+  ).trim();
+}
+
+function getMaskEndpoint(messageDiv, messageId) {
+  const conversationId = getMaskConversationId(messageDiv);
+  const encodedMessageId = encodeURIComponent(messageId);
+  if (conversationId && window.chatCollaboration?.isCollaborationConversation?.(conversationId)) {
+    return `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/messages/${encodedMessageId}/mask`;
+  }
+  return `/api/message/${encodedMessageId}/mask`;
+}
+
+function buildMaskPayload(messageDiv, action, selectionInfo = null) {
+  const payload = {
+    action,
+    conversation_id: getMaskConversationId(messageDiv),
+  };
+  if (selectionInfo) {
+    payload.selection = {
+      start: selectionInfo.start,
+      end: selectionInfo.end,
+      text: selectionInfo.text,
+    };
+  }
+  return payload;
+}
+
+async function sendMaskRequest(messageDiv, action, selectionInfo = null) {
+  const messageId = String(messageDiv?.getAttribute('data-message-id') || '').trim();
+  if (!messageId) {
+    throw new Error('Message id is missing');
+  }
+
+  const response = await fetch(getMaskEndpoint(messageDiv, messageId), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      action: 'unmask_all'
-    })
-  })
-  .then(response => response.json())
-  .then(data => {
-    if (data.success) {
-      // Remove fully-masked class
-      messageDiv.classList.remove('fully-masked');
-      
-      // Remove all masked-content spans
-      const maskedSpans = messageDiv.querySelectorAll('.masked-content');
-      maskedSpans.forEach(span => {
-        const text = document.createTextNode(span.textContent);
-        span.parentNode.replaceChild(text, span);
-      });
-      
-      // Remove exclusion badge
-      const badge = messageDiv.querySelector('.message-exclusion-badge');
-      if (badge) {
-        badge.remove();
-      }
-      
-      // Update mask button
-      const icon = maskBtn.querySelector('i');
-      icon.className = 'bi bi-back';
-      maskBtn.title = 'Mask entire message';
-      
-      showToast('Message unmasked successfully', 'success');
-    } else {
-      showToast('Failed to unmask message', 'error');
-    }
-  })
-  .catch(error => {
-    console.error('Error unmasking message:', error);
-    showToast('Error unmasking message', 'error');
+    body: JSON.stringify(buildMaskPayload(messageDiv, action, selectionInfo)),
   });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to update message mask');
+  }
+  return data;
+}
+
+function getMetadataFromMaskResponse(messageDiv, data) {
+  return {
+    ...(messageDiv._maskingMetadata || {}),
+    ...(data?.message?.metadata || {}),
+    masked: Boolean(data?.masked),
+    masked_ranges: Array.isArray(data?.masked_ranges) ? data.masked_ranges : [],
+  };
+}
+
+async function handleMaskAddButtonClick(messageDiv) {
+  const selectionInfo = getSelectionInfoForMessage(messageDiv);
+  const action = selectionInfo ? 'mask_selection' : 'mask_all';
+
+  try {
+    const data = await sendMaskRequest(messageDiv, action, selectionInfo);
+    applyMaskedState(messageDiv, getMetadataFromMaskResponse(messageDiv, data));
+    selectionInfo?.selection?.removeAllRanges();
+    showToast(selectionInfo ? 'Selection masked successfully' : 'Message masked successfully', 'success');
+  } catch (error) {
+    console.error('Error updating message mask:', error);
+    showToast(error.message || 'Error updating message mask', 'error');
+  }
+}
+
+async function handleMaskRemoveButtonClick(messageDiv) {
+  const maskState = getMaskStateFromMetadata(messageDiv._maskingMetadata || {});
+  if (!maskState.hasAnyMask) {
+    updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
+    return;
+  }
+
+  const action = maskState.fullyMasked ? 'unmask_message' : 'clear_all_masks';
+  try {
+    const data = await sendMaskRequest(messageDiv, action);
+    applyMaskedState(messageDiv, getMetadataFromMaskResponse(messageDiv, data));
+    const toastMessage = maskState.fullyMasked && maskState.hasRanges
+      ? 'Full-message mask removed; text masks remain'
+      : 'Message masks removed successfully';
+    showToast(toastMessage, 'success');
+  } catch (error) {
+    console.error('Error removing message mask:', error);
+    showToast(error.message || 'Error removing message mask', 'error');
+  }
+}
+
+function attachMaskButtonEventListeners(messageDiv) {
+  const addButton = messageDiv.querySelector('.mask-add-btn');
+  const removeButton = messageDiv.querySelector('.mask-remove-btn');
+
+  if (addButton && !addButton.dataset.maskListenerAttached) {
+    addButton.dataset.maskListenerAttached = 'true';
+    addButton.addEventListener('mouseenter', () => {
+      updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
+    });
+    addButton.addEventListener('click', () => {
+      handleMaskAddButtonClick(messageDiv);
+    });
+  }
+
+  if (removeButton && !removeButton.dataset.maskListenerAttached) {
+    removeButton.dataset.maskListenerAttached = 'true';
+    removeButton.addEventListener('mouseenter', () => {
+      updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
+    });
+    removeButton.addEventListener('click', () => {
+      handleMaskRemoveButtonClick(messageDiv);
+    });
+  }
 }
 
 // ============= Message Deletion Functions =============
@@ -7498,6 +7471,7 @@ function executeMessageDeletion(deleteThread = false) {
 
 // Expose functions globally
 window.chatMessages = {
+  applyMaskedState,
   applySearchHighlight,
   clearSearchHighlight,
   extractSuggestedFollowUpPrompts,

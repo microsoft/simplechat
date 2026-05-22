@@ -1,13 +1,22 @@
 # route_backend_conversations.py
 
+import logging
+import math
+import re
+
+from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER_CHAT_TYPE
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import *
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
     assert_user_can_participate_in_collaboration_conversation,
     ensure_collaboration_source_conversation,
     get_collaboration_conversation,
+    list_group_collaboration_conversations_for_user,
     list_collaboration_messages,
+    list_personal_collaboration_conversations_for_user,
+    serialize_collaboration_conversation,
 )
 from functions_settings import *
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
@@ -54,6 +63,307 @@ def normalize_chat_type(conversation_item):
 
     conversation_item['chat_type'] = chat_type
     return chat_type, True
+
+
+SEARCH_MATCH_CONTAINS = 'contains'
+SEARCH_MATCH_ALL_WORDS = 'all_words'
+SEARCH_MATCH_ANY_WORD = 'any_word'
+SEARCH_MATCH_WHOLE_WORD = 'whole_word'
+SEARCH_MATCH_MODES = {
+    SEARCH_MATCH_CONTAINS,
+    SEARCH_MATCH_ALL_WORDS,
+    SEARCH_MATCH_ANY_WORD,
+    SEARCH_MATCH_WHOLE_WORD,
+}
+
+SEARCH_CHAT_TYPE_ALIASES = {
+    'personal': {'personal_single_user', PERSONAL_MULTI_USER_CHAT_TYPE},
+    'personal-single-user': {'personal_single_user'},
+    'personal_single_user': {'personal_single_user'},
+    'personal-multi-user': {PERSONAL_MULTI_USER_CHAT_TYPE},
+    PERSONAL_MULTI_USER_CHAT_TYPE: {PERSONAL_MULTI_USER_CHAT_TYPE},
+    'group': {'group-single-user', GROUP_MULTI_USER_CHAT_TYPE},
+    'group-single-user': {'group-single-user'},
+    'group_single_user': {'group-single-user'},
+    'group-multi-user': {GROUP_MULTI_USER_CHAT_TYPE},
+    GROUP_MULTI_USER_CHAT_TYPE: {GROUP_MULTI_USER_CHAT_TYPE},
+    'public': {'public'},
+}
+
+
+def _normalize_search_match_mode(match_mode):
+    normalized_mode = str(match_mode or SEARCH_MATCH_CONTAINS).strip().lower().replace('-', '_')
+    if normalized_mode in SEARCH_MATCH_MODES:
+        return normalized_mode
+    return SEARCH_MATCH_CONTAINS
+
+
+def _tokenize_search_terms(search_term):
+    return [term for term in re.split(r'\s+', str(search_term or '').strip()) if term]
+
+
+def _get_message_query_terms(search_term, match_mode):
+    normalized_mode = _normalize_search_match_mode(match_mode)
+    if normalized_mode in (SEARCH_MATCH_ALL_WORDS, SEARCH_MATCH_ANY_WORD):
+        return _tokenize_search_terms(search_term)
+    return [str(search_term or '').strip()]
+
+
+def _normalize_search_chat_type_value(chat_type):
+    normalized_type = str(chat_type or '').strip().lower()
+    if not normalized_type:
+        return 'personal_single_user'
+
+    if normalized_type == 'personal':
+        return 'personal_single_user'
+    if normalized_type == 'group':
+        return 'group-single-user'
+    if normalized_type == 'group-multi-user':
+        return GROUP_MULTI_USER_CHAT_TYPE
+    if normalized_type == 'group_single_user':
+        return 'group-single-user'
+    if normalized_type == 'personal-multi-user':
+        return PERSONAL_MULTI_USER_CHAT_TYPE
+    if normalized_type == 'personal-single-user':
+        return 'personal_single_user'
+    return normalized_type
+
+
+def _expand_search_chat_type_filters(chat_types):
+    normalized_filters = set()
+    for chat_type in chat_types or []:
+        normalized_key = str(chat_type or '').strip().lower()
+        if not normalized_key:
+            continue
+        normalized_filters.update(
+            SEARCH_CHAT_TYPE_ALIASES.get(
+                normalized_key,
+                {_normalize_search_chat_type_value(normalized_key)},
+            )
+        )
+    return normalized_filters
+
+
+def _get_search_conversation_chat_type(conversation_item):
+    raw_chat_type = str((conversation_item or {}).get('chat_type') or '').strip()
+    if raw_chat_type:
+        return _normalize_search_chat_type_value(raw_chat_type)
+
+    normalized_item = dict(conversation_item or {})
+    inferred_chat_type, _ = normalize_chat_type(normalized_item)
+    return _normalize_search_chat_type_value(inferred_chat_type)
+
+
+def _conversation_matches_selected_chat_types(conversation_item, selected_chat_types):
+    if not selected_chat_types:
+        return True
+    return _get_search_conversation_chat_type(conversation_item) in selected_chat_types
+
+
+def _conversation_matches_classifications(conversation_item, classifications):
+    if not classifications:
+        return True
+    conversation_classifications = conversation_item.get('classification', []) or []
+    return any(classification in conversation_classifications for classification in classifications)
+
+
+def _conversation_timestamp(conversation_item):
+    return (
+        conversation_item.get('last_updated')
+        or conversation_item.get('updated_at')
+        or conversation_item.get('last_message_at')
+        or conversation_item.get('created_at')
+        or ''
+    )
+
+
+def _conversation_matches_date_range(conversation_item, date_from='', date_to=''):
+    timestamp = _conversation_timestamp(conversation_item)
+    if date_from and (not timestamp or timestamp < date_from):
+        return False
+    if date_to and (not timestamp or timestamp > f'{date_to}T23:59:59'):
+        return False
+    return True
+
+
+def _matches_search_text(text, search_term, match_mode=SEARCH_MATCH_CONTAINS):
+    normalized_mode = _normalize_search_match_mode(match_mode)
+    text_value = str(text or '')
+    text_lower = text_value.lower()
+    normalized_search = str(search_term or '').strip()
+    search_lower = normalized_search.lower()
+
+    if not search_lower:
+        return False
+
+    if normalized_mode == SEARCH_MATCH_ALL_WORDS:
+        terms = [term.lower() for term in _tokenize_search_terms(normalized_search)]
+        return bool(terms) and all(term in text_lower for term in terms)
+
+    if normalized_mode == SEARCH_MATCH_ANY_WORD:
+        terms = [term.lower() for term in _tokenize_search_terms(normalized_search)]
+        return bool(terms) and any(term in text_lower for term in terms)
+
+    if normalized_mode == SEARCH_MATCH_WHOLE_WORD:
+        whole_word_pattern = re.compile(rf'(?<!\w){re.escape(normalized_search)}(?!\w)', re.IGNORECASE)
+        return whole_word_pattern.search(text_value) is not None
+
+    return search_lower in text_lower
+
+
+def _find_search_match(text, search_term, match_mode=SEARCH_MATCH_CONTAINS):
+    normalized_mode = _normalize_search_match_mode(match_mode)
+    text_value = str(text or '')
+    text_lower = text_value.lower()
+    normalized_search = str(search_term or '').strip()
+    search_lower = normalized_search.lower()
+
+    if not search_lower:
+        return -1, 0
+
+    if normalized_mode in (SEARCH_MATCH_ALL_WORDS, SEARCH_MATCH_ANY_WORD):
+        matches = []
+        for term in _tokenize_search_terms(normalized_search):
+            position = text_lower.find(term.lower())
+            if position != -1:
+                matches.append((position, len(term)))
+        if matches:
+            return min(matches, key=lambda item: item[0])
+        return -1, 0
+
+    if normalized_mode == SEARCH_MATCH_WHOLE_WORD:
+        whole_word_pattern = re.compile(rf'(?<!\w){re.escape(normalized_search)}(?!\w)', re.IGNORECASE)
+        match = whole_word_pattern.search(text_value)
+        if match:
+            return match.start(), match.end() - match.start()
+        return -1, 0
+
+    position = text_lower.find(search_lower)
+    return position, len(normalized_search) if position != -1 else 0
+
+
+def _build_message_search_query(search_term, match_mode):
+    query_terms = _get_message_query_terms(search_term, match_mode)
+    query_terms = [term for term in query_terms if term]
+    if not query_terms:
+        return None, []
+
+    operator = ' OR ' if _normalize_search_match_mode(match_mode) == SEARCH_MATCH_ANY_WORD else ' AND '
+    contains_conditions = []
+    parameters = []
+    for index, term in enumerate(query_terms):
+        parameter_name = f'@term{index}'
+        contains_conditions.append(f'CONTAINS(m.content, {parameter_name}, true)')
+        parameters.append({'name': parameter_name, 'value': term})
+
+    query = (
+        'SELECT * FROM m WHERE '
+        f'({operator.join(contains_conditions)}) '
+        "AND (m.role = 'user' OR m.role = 'assistant')"
+    )
+    return query, parameters
+
+
+def _query_matching_messages(container, search_term, match_mode):
+    query, parameters = _build_message_search_query(search_term, match_mode)
+    if not query:
+        return []
+
+    messages = list(container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+        max_item_count=-1,
+    ))
+
+    return [
+        message for message in messages
+        if _matches_search_text(message.get('content', ''), search_term, match_mode)
+    ]
+
+
+def _message_is_in_active_thread(message_item):
+    thread_info = (message_item.get('metadata') or {}).get('thread_info', {})
+    return thread_info.get('active_thread') is not False
+
+
+def _message_matches_attachment_filters(message_item, has_files=False, has_images=False):
+    if not has_files and not has_images:
+        return True
+
+    metadata = message_item.get('metadata') or {}
+    if has_files and metadata.get('uploaded_files'):
+        return True
+    if has_images and metadata.get('generated_images'):
+        return True
+    return False
+
+
+def _build_message_snippets(matching_messages, search_term, match_mode, max_messages=5):
+    message_snippets = []
+    for message_item in matching_messages[:max_messages]:
+        content = str(message_item.get('content', '') or '')
+        match_pos, match_length = _find_search_match(content, search_term, match_mode)
+        if match_pos == -1:
+            continue
+
+        start = max(0, match_pos - 50)
+        end = min(len(content), match_pos + match_length + 50)
+        snippet = content[start:end]
+
+        if start > 0:
+            snippet = f'...{snippet}'
+        if end < len(content):
+            snippet = f'{snippet}...'
+
+        message_snippets.append({
+            'message_id': message_item.get('id'),
+            'content_snippet': snippet,
+            'timestamp': message_item.get('timestamp', ''),
+            'role': message_item.get('role', 'unknown'),
+        })
+    return message_snippets
+
+
+def _build_search_conversation_payload(conversation_item):
+    return {
+        'id': conversation_item.get('id'),
+        'title': conversation_item.get('title', 'Untitled'),
+        'last_updated': _conversation_timestamp(conversation_item),
+        'classification': conversation_item.get('classification', []) or [],
+        'chat_type': _get_search_conversation_chat_type(conversation_item),
+        'is_pinned': bool(conversation_item.get('is_pinned', False)),
+        'is_hidden': bool(conversation_item.get('is_hidden', False)),
+    }
+
+
+def _load_accessible_collaboration_search_conversations(user_id):
+    conversations = []
+    seen_conversation_ids = set()
+
+    for conversation_doc, user_state in list_personal_collaboration_conversations_for_user(user_id):
+        serialized = serialize_collaboration_conversation(
+            conversation_doc,
+            current_user_id=user_id,
+            user_state=user_state,
+        )
+        conversation_id = serialized.get('id')
+        if conversation_id and conversation_id not in seen_conversation_ids:
+            conversations.append(serialized)
+            seen_conversation_ids.add(conversation_id)
+
+    for conversation_doc, user_state in list_group_collaboration_conversations_for_user(user_id):
+        serialized = serialize_collaboration_conversation(
+            conversation_doc,
+            current_user_id=user_id,
+            user_state=user_state,
+        )
+        conversation_id = serialized.get('id')
+        if conversation_id and conversation_id not in seen_conversation_ids:
+            conversations.append(serialized)
+            seen_conversation_ids.add(conversation_id)
+
+    return conversations
 
 
 def _collect_child_message_documents(conversation_id, root_message_ids):
@@ -1122,8 +1432,9 @@ def register_route_backend_conversations(app):
             return jsonify({'error': 'User not authenticated'}), 401
         
         try:
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             search_term = data.get('search_term', '').strip()
+            match_mode = _normalize_search_match_mode(data.get('match_mode'))
             date_from = data.get('date_from', '')
             date_to = data.get('date_to', '')
             chat_types = data.get('chat_types', [])
@@ -1140,97 +1451,106 @@ def register_route_backend_conversations(app):
                     'error': 'Search term must be at least 3 characters'
                 }), 400
             
-            # Build conversation query with filters
-            # Find conversations where user is a participant (supports multi-user conversations)
-            # Check both old schema (user_id at root) and new schema (participant tag)
+            selected_chat_types = _expand_search_chat_type_filters(chat_types)
+
+            # Build conversation query with filters. Find conversations where user is a participant
+            # and keep a Python-side pass for collaboration records that live in separate containers.
             query_parts = [
-                f"(c.user_id = '{user_id}' OR EXISTS(SELECT VALUE t FROM t IN c.tags WHERE t.category = 'participant' AND t.user_id = '{user_id}'))"
+                "(c.user_id = @user_id OR EXISTS(SELECT VALUE t FROM t IN c.tags WHERE t.category = 'participant' AND t.user_id = @user_id))"
+            ]
+            query_parameters = [
+                {'name': '@user_id', 'value': user_id},
             ]
             
-            debug_print(f"🔍 Search parameters:")
+            debug_print("🔍 Search parameters:")
             debug_print(f"  user_id: {user_id}")
             debug_print(f"  search_term: {search_term}")
+            debug_print(f"  match_mode: {match_mode}")
             debug_print(f"  date_from: {date_from}")
             debug_print(f"  date_to: {date_to}")
             debug_print(f"  chat_types: {chat_types}")
             debug_print(f"  classifications: {classifications}")
             
             if date_from:
-                query_parts.append(f"c.last_updated >= '{date_from}'")
+                query_parts.append("c.last_updated >= @date_from")
+                query_parameters.append({'name': '@date_from', 'value': date_from})
             if date_to:
-                query_parts.append(f"c.last_updated <= '{date_to}T23:59:59'")
+                query_parts.append("c.last_updated <= @date_to")
+                query_parameters.append({'name': '@date_to', 'value': f'{date_to}T23:59:59'})
             
             conversation_query = f"SELECT * FROM c WHERE {' AND '.join(query_parts)}"
             debug_print(f"\n📋 Conversation query: {conversation_query}")
             
             conversations = list(cosmos_conversations_container.query_items(
                 query=conversation_query,
+                parameters=query_parameters,
                 enable_cross_partition_query=True,
                 max_item_count=-1  # Get all items, no pagination limit
             ))
-            
-            debug_print(f"Found {len(conversations)} conversations from query")
-            
-            # Check if target conversation is in the results
-            target_conv_id = "2712dbad-560d-4d2e-a354-b8f67fcf9429"
-            target_conv = next((c for c in conversations if c['id'] == target_conv_id), None)
-            if target_conv:
-                debug_print(f"\n🎯 Found target conversation {target_conv_id}")
-                debug_print(f"   chat_type: {target_conv.get('chat_type')}")
-                debug_print(f"   title: {target_conv.get('title', 'N/A')}")
-            else:
-                debug_print(f"\n❌ Target conversation {target_conv_id} NOT in query results")
+
+            collaboration_conversations = _load_accessible_collaboration_search_conversations(user_id)
+            collaboration_conversations = [
+                conversation for conversation in collaboration_conversations
+                if _conversation_matches_date_range(conversation, date_from, date_to)
+            ]
+            conversations.extend(collaboration_conversations)
+
+            debug_print(f"Found {len(conversations)} conversations from legacy and collaboration stores")
             
             # Filter by chat types if specified
-            if chat_types:
+            if selected_chat_types:
                 before_count = len(conversations)
                 filtered_out = []
                 filtered_in = []
                 
-                for c in conversations:
-                    # Default to 'personal_single_user' if chat_type is not defined (legacy conversations)
-                    chat_type = c.get('chat_type', 'personal_single_user')
-                    if chat_type in chat_types:
-                        filtered_in.append(c)
+                for conversation in conversations:
+                    if _conversation_matches_selected_chat_types(conversation, selected_chat_types):
+                        filtered_in.append(conversation)
                     else:
-                        filtered_out.append(c)
+                        filtered_out.append(conversation)
                 
                 conversations = filtered_in
                 debug_print(f"After chat_type filter: {len(conversations)} (removed {before_count - len(conversations)})")
                 
                 # Show some examples of filtered out chat types
                 if filtered_out:
-                    unique_types = set(c.get('chat_type', 'None/personal_single_user') for c in filtered_out[:10])
+                    unique_types = set(_get_search_conversation_chat_type(c) for c in filtered_out[:10])
                     debug_print(f"   Filtered out chat_types (sample): {unique_types}")
             
             # Filter by classifications if specified
             if classifications:
                 before_count = len(conversations)
-                conversations = [c for c in conversations if any(
-                    cls in (c.get('classification', []) or []) for cls in classifications
-                )]
+                conversations = [
+                    conversation for conversation in conversations
+                    if _conversation_matches_classifications(conversation, classifications)
+                ]
                 debug_print(f"After classification filter: {len(conversations)} (removed {before_count - len(conversations)})")
-            
-            # Search messages in each conversation
-            results = []
-            search_lower = search_term.lower()
             
             debug_print(f"🔍 Starting search for term: '{search_term}'")
             debug_print(f"Found {len(conversations)} conversations to search")
             
             # Create a set of conversation IDs for fast lookup
-            conversation_ids = set(c['id'] for c in conversations)
-            conversation_map = {c['id']: c for c in conversations}
+            conversation_ids = {conversation['id'] for conversation in conversations if conversation.get('id')}
+            conversation_map = {
+                conversation['id']: conversation
+                for conversation in conversations
+                if conversation.get('id')
+            }
             
-            # Do a single cross-partition query for all matching messages
-            # This is much faster than querying each conversation individually
-            message_query = f"SELECT * FROM m WHERE CONTAINS(m.content, '{search_term}', true) AND (m.role = 'user' OR m.role = 'assistant')"
+            # Do cross-partition message searches in both legacy and collaboration stores,
+            # then filter to the user's authorized conversation set.
+            message_query, _ = _build_message_search_query(search_term, match_mode)
             debug_print(f"\n📋 Cross-partition message query: {message_query}")
-            
-            all_matching_messages = list(cosmos_messages_container.query_items(
-                query=message_query,
-                enable_cross_partition_query=True,
-                max_item_count=-1
+
+            all_matching_messages = _query_matching_messages(
+                cosmos_messages_container,
+                search_term,
+                match_mode,
+            )
+            all_matching_messages.extend(_query_matching_messages(
+                cosmos_collaboration_messages_container,
+                search_term,
+                match_mode,
             ))
             
             debug_print(f"Found {len(all_matching_messages)} total messages across all conversations")
@@ -1244,80 +1564,37 @@ def register_route_backend_conversations(app):
                 if conv_id not in conversation_ids:
                     continue
                 
-                # Filter out inactive threads
-                thread_info = msg.get('metadata', {}).get('thread_info', {})
-                active = thread_info.get('active_thread')
-                
                 # Include all messages where active_thread is not explicitly False
-                if active is not False:
-                    if conv_id not in messages_by_conversation:
-                        messages_by_conversation[conv_id] = []
-                    messages_by_conversation[conv_id].append(msg)
+                if _message_is_in_active_thread(msg):
+                    messages_by_conversation.setdefault(conv_id, []).append(msg)
             
             debug_print(f"After filtering: {len(messages_by_conversation)} conversations have matching messages")
             
-            # Build results for each conversation with matches
-            for conv_id, matching_messages in messages_by_conversation.items():
+            results = []
+
+            # Build results for conversations with matching titles or messages.
+            for conv_id, conversation in conversation_map.items():
+                matching_messages = messages_by_conversation.get(conv_id, [])
+                title_match = _matches_search_text(conversation.get('title', ''), search_term, match_mode)
                 
                 # Apply file/image filters if specified
                 if has_files or has_images:
-                    filtered_messages = []
-                    for msg in matching_messages:
-                        metadata = msg.get('metadata', {})
-                        if has_files and metadata.get('uploaded_files'):
-                            filtered_messages.append(msg)
-                        elif has_images and metadata.get('generated_images'):
-                            filtered_messages.append(msg)
-                        elif not has_files and not has_images:
-                            filtered_messages.append(msg)
-                    matching_messages = filtered_messages
+                    matching_messages = [
+                        message for message in matching_messages
+                        if _message_matches_attachment_filters(message, has_files, has_images)
+                    ]
                 
-                if matching_messages:
-                    # Get conversation details
-                    conversation = conversation_map.get(conv_id)
-                    if not conversation:
-                        continue
-                    
-                    # Build message snippets
-                    message_snippets = []
-                    for msg in matching_messages[:5]:  # Limit to 5 messages per conversation
-                        content = msg.get('content', '')
-                        content_lower = content.lower()
-                        
-                        # Find match position
-                        match_pos = content_lower.find(search_lower)
-                        if match_pos != -1:
-                            # Extract 50 chars before and after
-                            start = max(0, match_pos - 50)
-                            end = min(len(content), match_pos + len(search_term) + 50)
-                            snippet = content[start:end]
-                            
-                            # Add ellipsis if truncated
-                            if start > 0:
-                                snippet = '...' + snippet
-                            if end < len(content):
-                                snippet = snippet + '...'
-                            
-                            message_snippets.append({
-                                'message_id': msg.get('id'),
-                                'content_snippet': snippet,
-                                'timestamp': msg.get('timestamp', ''),
-                                'role': msg.get('role', 'unknown')
-                            })
-                    
-                    results.append({
-                        'conversation': {
-                            'id': conversation['id'],
-                            'title': conversation.get('title', 'Untitled'),
-                            'last_updated': conversation.get('last_updated', ''),
-                            'classification': conversation.get('classification', []),
-                            'chat_type': conversation.get('chat_type', 'personal_single_user'),
-                            'is_pinned': conversation.get('is_pinned', False),
-                            'is_hidden': conversation.get('is_hidden', False)
-                        },
-                        'messages': message_snippets,
-                        'match_count': len(matching_messages)
-                    })
+                include_title_only_match = title_match and not (has_files or has_images)
+                if not matching_messages and not include_title_only_match:
+                    continue
+
+                results.append({
+                    'conversation': _build_search_conversation_payload(conversation),
+                    'messages': _build_message_snippets(matching_messages, search_term, match_mode),
+                    'match_count': len(matching_messages),
+                    'title_match': title_match,
+                    'match_mode': match_mode,
+                })
             
             # Sort by last_updated (most recent first)
             results.sort(key=lambda x: x['conversation']['last_updated'], reverse=True)
@@ -1339,9 +1616,11 @@ def register_route_backend_conversations(app):
             }), 200
             
         except Exception as e:
-            print(f"Error searching conversations: {e}")
-            import traceback
-            traceback.print_exc()
+            log_event(
+                f'[ConversationSearch] Failed to search conversations: {e}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
             return jsonify({'error': 'Failed to search conversations'}), 500
     
     @app.route('/api/user-settings/search-history', methods=['GET'])

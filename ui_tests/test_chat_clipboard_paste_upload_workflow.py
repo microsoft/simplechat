@@ -141,6 +141,9 @@ def test_chat_paste_uploads_clipboard_image_with_normalized_filename(playwright)
         page.goto(f"{BASE_URL}/chats", wait_until="networkidle")
 
         expect(page.locator("#user-input")).to_be_visible()
+        upload_enabled = page.evaluate("() => window.appSettings?.enable_chat_file_uploads === true")
+        if not upload_enabled:
+            pytest.skip("Chat file uploads are disabled for the authenticated UI test user.")
 
         page.locator("#user-input").evaluate(
             """

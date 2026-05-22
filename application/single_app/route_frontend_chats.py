@@ -279,6 +279,7 @@ def register_route_frontend_chats(app):
         public_settings = sanitize_settings_for_user(settings)
         current_user_info = get_current_user_info() or {}
         current_user_roles = (session.get('user') or {}).get('roles', [])
+        chat_file_upload_enabled_for_user = is_chat_file_upload_enabled_for_user(settings, current_user_roles)
         source_review_enabled_for_user = is_source_review_enabled_for_user(
             settings,
             user_id,
@@ -294,6 +295,7 @@ def register_route_frontend_chats(app):
                 public_settings.pop(source_review_key, None)
         public_settings['enable_source_review'] = source_review_enabled_for_user
         public_settings['enable_url_access'] = url_access_enabled_for_user
+        public_settings['enable_chat_file_uploads'] = chat_file_upload_enabled_for_user
         public_settings['enable_deep_source_review'] = bool(
             source_review_enabled_for_user and settings.get('enable_deep_source_review', False)
         )
@@ -466,6 +468,15 @@ def register_route_frontend_chats(app):
     @file_upload_required
     def upload_file():
         settings = get_settings()
+        current_user_roles = (session.get('user') or {}).get('roles', [])
+        if not settings.get('enable_chat_file_uploads', True):
+            return jsonify({'error': 'Chat file uploads are disabled.'}), 403
+        if (
+            settings.get('require_member_of_chat_file_upload_user', False)
+            and not has_chat_file_upload_app_role(current_user_roles)
+        ):
+            return jsonify({'error': 'Chat file uploads require the ChatFileUploadUser app role.'}), 403
+
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
