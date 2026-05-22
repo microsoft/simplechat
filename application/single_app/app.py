@@ -77,6 +77,7 @@ from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
 from route_backend_file_sync import register_route_backend_file_sync
+from route_backend_workspace_identities import register_route_backend_workspace_identities
 from route_backend_user_agreement import register_route_backend_user_agreement
 from route_backend_conversation_export import register_route_backend_conversation_export
 from route_backend_thoughts import register_route_backend_thoughts
@@ -961,6 +962,9 @@ register_route_backend_public_prompts(app)
 
 # ------------------- API File Sync Routes ---------------
 register_route_backend_file_sync(app)
+
+# ------------------- API Workspace Identity Routes ------
+register_route_backend_workspace_identities(app)
 
 # ------------------- API User Agreement Routes ----------
 register_route_backend_user_agreement(app)

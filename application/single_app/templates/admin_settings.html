@@ -916,6 +916,12 @@
                 </button>
             </li>
             <li class="nav-item" role="presentation">
+                <button class="nav-link" id="workspace-identities-tab" data-bs-toggle="tab" data-bs-target="#workspace-identities" type="button"
+                    role="tab" aria-controls="workspace-identities" aria-selected="false">
+                    Global Identities
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="citation-tab" data-bs-toggle="tab" data-bs-target="#citation"
                     type="button" role="tab" aria-controls="citation" aria-selected="false">
                     Citations
@@ -1040,6 +1046,7 @@
                 <div class="alert alert-info d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3" role="alert">
                     <div>
                         <strong>Agent model lifecycle review lives in AI Models.</strong>
+
                         <div class="small mt-1">
                             Use AI Models to review inherited agents, selectively override explicit agent model choices, and move agents to newer default models as costs or model releases change.
                         </div>
@@ -4124,6 +4131,20 @@
             </div>
 
 
+            <div class="tab-pane fade" id="workspace-identities" role="tabpanel" aria-labelledby="workspace-identities-tab">
+                <div class="card mb-3 p-3" id="workspace-identities-section">
+                    <div
+                        id="global-workspace-identities-root"
+                        data-workspace-identity-root="true"
+                        data-identity-api-base="/api/admin/workspace-identities/global"
+                        data-default-capability="action"
+                        data-capability-options="action"
+                        data-auth-type-options="username_password,api_key,bearer_token,client_secret,connection_string,managed_identity"
+                    ></div>
+                </div>
+            </div>
+
+
             <div class="tab-pane fade" id="file-sync" role="tabpanel" aria-labelledby="file-sync-tab">
                 <p class="text-muted">
                     Configure SMB file synchronization for personal, group, and public workspaces.
@@ -5686,6 +5707,24 @@
                                 </div>
                             </div>
                         </div>
+
+                        <div class="border rounded p-3 mt-3">
+                            <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2">
+                                <div>
+                                    <h6 class="mb-1"><i class="bi bi-chat-square-dots me-2"></i>Web Search Test</h6>
+                                    <div class="text-muted small">Run the configured Foundry agent with the current unsaved settings.</div>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-outline-primary btn-sm"
+                                    id="test_web_search_button"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#webSearchTestModal"
+                                >
+                                    <i class="bi bi-play-circle me-1"></i>Test Web Search
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -5763,6 +5802,24 @@
                                 <div class="list-group mt-2" data-policy-list aria-live="polite"></div>
                             </div>
                             <div class="form-text">Blocked domains apply to URL Access and Deep Research source-page review.</div>
+                        </div>
+                    </div>
+
+                    <div class="border rounded p-3 mt-3">
+                        <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-shield-check me-2"></i>URL Policy Test</h6>
+                                <div class="text-muted small">Check a URL against the current allowed and blocked domain rules before saving.</div>
+                            </div>
+                            <button
+                                type="button"
+                                class="btn btn-outline-primary btn-sm"
+                                id="open_url_access_policy_test_modal_button"
+                                data-bs-toggle="modal"
+                                data-bs-target="#urlAccessPolicyTestModal"
+                            >
+                                <i class="bi bi-play-circle me-1"></i>Test URL Policy
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -5996,6 +6053,50 @@
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-outline-secondary" id="web-search-consent-decline">Disagree</button>
                                 <button type="button" class="btn btn-primary" id="web-search-consent-accept">Agree</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="webSearchTestModal" tabindex="-1" aria-labelledby="web-search-test-title" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="web-search-test-title">Web Search Test</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <label for="web_search_test_query" class="form-label">Test Prompt</label>
+                                <textarea class="form-control" id="web_search_test_query" rows="3">Use the Grounding with Bing Search tool to find the official Microsoft website. Reply with the page title and URL only.</textarea>
+                                <div id="test_web_search_result" class="mt-3" aria-live="polite"></div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                                <button type="button" class="btn btn-primary" id="rerun_web_search_test_button">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Run Again
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="urlAccessPolicyTestModal" tabindex="-1" aria-labelledby="url-access-policy-test-title" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="url-access-policy-test-title">URL Policy Test</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <label for="url_access_policy_test_url" class="form-label">URL</label>
+                                <input type="url" class="form-control" id="url_access_policy_test_url" placeholder="https://www.example.com/page" />
+                                <div id="test_url_access_policy_result" class="mt-3" aria-live="polite"></div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                                <button type="button" class="btn btn-primary" id="test_url_access_policy_button">
+                                    <i class="bi bi-shield-check me-1"></i>Run Policy Test
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -7276,6 +7377,7 @@
     };
 
 </script>
+<script type="module" src="{{ url_for('static', filename='js/workspace/workspace-identities.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>

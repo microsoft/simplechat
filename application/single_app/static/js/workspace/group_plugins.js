@@ -316,6 +316,10 @@ async function openPluginModal(pluginId = null) {
   }
 
   try {
+    window.pluginModalStepper.setActionScope({
+      scope: 'group',
+      apiBase: '/api/workspace-identities/group'
+    });
     const modal = await window.pluginModalStepper.showModal(plugin);
     setupSaveHandler(plugin, modal);
   } catch (error) {

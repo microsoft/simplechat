@@ -13,6 +13,11 @@ from datetime import datetime
 from config import cosmos_global_actions_container
 from functions_authentication import get_current_user_id
 from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
+from functions_workspace_identities import (
+    WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+    hydrate_action_identity_reference,
+    validate_action_identity_reference,
+)
 
 def get_global_actions(return_type=SecretReturnType.TRIGGER, include_disabled=False):
     """
@@ -36,6 +41,15 @@ def get_global_actions(return_type=SecretReturnType.TRIGGER, include_disabled=Fa
         ))
         # Resolve Key Vault references for each action
         actions = [keyvault_plugin_get_helper(a, scope_value=a.get('id'), scope="global", return_type=return_type) for a in actions]
+        actions = [
+            hydrate_action_identity_reference(
+                action,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                return_type=return_type,
+            )
+            for action in actions
+        ]
         for action in actions:
             action.setdefault('is_enabled', True)
         return actions
@@ -63,6 +77,12 @@ def get_global_action(action_id, return_type=SecretReturnType.TRIGGER):
         )
         # Resolve Key Vault references
         action = keyvault_plugin_get_helper(action, scope_value=action_id, scope="global", return_type=return_type)
+        action = hydrate_action_identity_reference(
+            action,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            return_type=return_type,
+        )
         print(f"✅ Found global action: {action_id}")
         return action
         
@@ -120,6 +140,11 @@ def save_global_action(action_data, user_id=None):
         action_data['modified_by'] = user_id
         action_data['modified_at'] = now
         action_data['updated_at'] = now
+        validate_action_identity_reference(
+            action_data,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+        )
         print(f"💾 Saving global action: {action_data.get('name', 'Unknown')}")
         # Store secrets in Key Vault before upsert
         action_data = keyvault_plugin_save_helper(

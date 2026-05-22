@@ -22,12 +22,19 @@ from functions_public_workspaces import (
     get_all_public_workspaces,
     get_user_visible_public_workspace_ids_from_settings,
 )
+from functions_source_review import normalize_review_url
 
 
 ASSIGNED_KNOWLEDGE_SETTINGS_KEY = "assigned_knowledge"
 ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH = "search"
 ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE = "analyze"
 ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE = "compare"
+ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW = "url_review"
+ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH = "deep_research"
+ASSIGNED_KNOWLEDGE_VALID_WEB_SOURCE_MODES = {
+    ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW,
+    ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH,
+}
 ASSIGNED_KNOWLEDGE_VALID_USER_ACTIONS = {
     ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH,
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
@@ -47,12 +54,14 @@ ASSIGNED_KNOWLEDGE_DEFAULT = {
     },
     "document_ids": [],
     "tags": [],
+    "web_sources": [],
     "allow_user_workspace_context": False,
     "allowed_user_workspace_actions": ASSIGNED_KNOWLEDGE_DEFAULT_USER_ACTIONS,
 }
 ASSIGNED_KNOWLEDGE_MAX_DOCUMENT_IDS = 200
 ASSIGNED_KNOWLEDGE_MAX_TAGS = 50
 ASSIGNED_KNOWLEDGE_MAX_SOURCE_IDS = 50
+ASSIGNED_KNOWLEDGE_MAX_WEB_SOURCES = 50
 ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT = 1000
 
 
@@ -108,6 +117,65 @@ def _normalize_user_workspace_actions(raw_actions: Any) -> List[str]:
         normalized_actions.append(normalized_action)
 
     return normalized_actions
+
+
+def _normalize_web_source_mode(raw_mode: Any) -> str:
+    normalized_mode = str(raw_mode or "").strip().lower()
+    if normalized_mode in {"deep", "deep-research", "research", "source_review"}:
+        return ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH
+    if normalized_mode == ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH:
+        return ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH
+    return ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW
+
+
+def _extract_web_source_entries(raw_web_sources: Any) -> List[Any]:
+    if raw_web_sources is None:
+        return []
+    if isinstance(raw_web_sources, str):
+        return raw_web_sources.replace(",", "\n").splitlines()
+    if isinstance(raw_web_sources, list):
+        return raw_web_sources
+    if isinstance(raw_web_sources, dict):
+        entries = raw_web_sources.get("sources") or raw_web_sources.get("urls") or []
+        default_mode = _normalize_web_source_mode(raw_web_sources.get("mode"))
+        if raw_web_sources.get("deep_research") is True:
+            default_mode = ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH
+        extracted_entries = []
+        for entry in _extract_web_source_entries(entries):
+            if isinstance(entry, dict):
+                extracted_entries.append({"url": entry.get("url"), "mode": entry.get("mode") or default_mode})
+            else:
+                extracted_entries.append({"url": entry, "mode": default_mode})
+        return extracted_entries
+    return []
+
+
+def _normalize_web_sources(raw_web_sources: Any) -> List[Dict[str, str]]:
+    web_sources_by_url: Dict[str, Dict[str, str]] = {}
+    ordered_urls = []
+    for entry in _extract_web_source_entries(raw_web_sources):
+        if isinstance(entry, dict):
+            raw_url = entry.get("url") or entry.get("href") or entry.get("link")
+            if entry.get("deep_research") is True:
+                mode = ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH
+            else:
+                mode = _normalize_web_source_mode(entry.get("mode"))
+        else:
+            raw_url = entry
+            mode = ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW
+
+        normalized_url, _ = normalize_review_url(raw_url)
+        if not normalized_url:
+            continue
+        if normalized_url not in web_sources_by_url:
+            ordered_urls.append(normalized_url)
+            web_sources_by_url[normalized_url] = {"url": normalized_url, "mode": mode}
+        elif mode == ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH:
+            web_sources_by_url[normalized_url]["mode"] = mode
+        if len(ordered_urls) >= ASSIGNED_KNOWLEDGE_MAX_WEB_SOURCES:
+            break
+
+    return [web_sources_by_url[url] for url in ordered_urls]
 
 
 def _extract_scope_ids(raw_assigned_knowledge: Dict[str, Any]) -> Dict[str, Any]:
@@ -195,6 +263,7 @@ def normalize_assigned_knowledge(
         limit=ASSIGNED_KNOWLEDGE_MAX_DOCUMENT_IDS,
     )
     tags = sanitize_tags_for_filter(raw_assigned_knowledge.get("tags"))[:ASSIGNED_KNOWLEDGE_MAX_TAGS]
+    web_sources = _normalize_web_sources(raw_assigned_knowledge.get("web_sources"))
     allow_user_workspace_context = bool(raw_assigned_knowledge.get("allow_user_workspace_context"))
     raw_user_workspace_actions = raw_assigned_knowledge.get("allowed_user_workspace_actions")
     if raw_user_workspace_actions is None:
@@ -206,6 +275,7 @@ def normalize_assigned_knowledge(
         "scopes": scopes,
         "document_ids": document_ids,
         "tags": tags,
+        "web_sources": web_sources,
         "allow_user_workspace_context": allow_user_workspace_context,
         "allowed_user_workspace_actions": allowed_user_workspace_actions,
     })
@@ -294,8 +364,9 @@ def validate_assigned_knowledge_for_agent(
         or scopes.get("group_ids")
         or scopes.get("public_workspace_ids")
     )
-    if not has_source_scope:
-        raise AssignedKnowledgeError("Choose at least one knowledge source before enabling assigned knowledge.")
+    has_web_sources = bool(normalized.get("web_sources"))
+    if not has_source_scope and not has_web_sources:
+        raise AssignedKnowledgeError("Choose at least one knowledge source or web source before enabling assigned knowledge.")
 
     missing_document_ids = [
         document_id
@@ -378,6 +449,7 @@ def build_assigned_knowledge_runtime_filters(agent: Dict[str, Any]) -> Optional[
     personal_enabled = bool(scopes.get("personal"))
     group_ids = scopes.get("group_ids", []) or []
     public_workspace_ids = scopes.get("public_workspace_ids", []) or []
+    web_sources = assigned_knowledge.get("web_sources", []) or []
     enabled_scope_count = sum([
         1 if personal_enabled else 0,
         1 if group_ids else 0,
@@ -393,13 +465,21 @@ def build_assigned_knowledge_runtime_filters(agent: Dict[str, Any]) -> Optional[
     elif personal_enabled:
         document_scope = "personal"
     else:
+        document_scope = None
+
+    has_workspace_knowledge = bool(document_scope)
+    has_web_sources = bool(web_sources)
+    if not has_workspace_knowledge and not has_web_sources:
         return None
 
     return {
         "enabled": True,
         "doc_scope": document_scope,
+        "has_workspace_knowledge": has_workspace_knowledge,
+        "has_web_sources": has_web_sources,
         "document_ids": assigned_knowledge.get("document_ids", []) or [],
         "tags_filter": assigned_knowledge.get("tags", []) or [],
+        "web_sources": web_sources,
         "active_group_ids": group_ids,
         "active_public_workspace_ids": public_workspace_ids,
         "document_filter_mode": "union",

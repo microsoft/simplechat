@@ -27,6 +27,7 @@ supported_sources = [
     'action-addset',
     'agent',
     'file-sync',
+    'identity',
     'model-endpoint',
     'other'
 ]

@@ -17,6 +17,11 @@ from functions_keyvault import (
     keyvault_plugin_get_helper,
     keyvault_plugin_save_helper,
 )
+from functions_workspace_identities import (
+    WORKSPACE_IDENTITY_SCOPE_GROUP,
+    hydrate_action_identity_reference,
+    validate_action_identity_reference,
+)
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -129,6 +134,12 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
 
     payload.pop("user_id", None)
 
+    validate_action_identity_reference(
+        payload,
+        WORKSPACE_IDENTITY_SCOPE_GROUP,
+        group_id,
+    )
+
     payload = keyvault_plugin_save_helper(
         payload,
         scope_value=group_id,
@@ -228,6 +239,12 @@ def _clean_action(
         cleaned,
         scope_value=group_id,
         scope="group",
+        return_type=return_type,
+    )
+    cleaned = hydrate_action_identity_reference(
+        cleaned,
+        WORKSPACE_IDENTITY_SCOPE_GROUP,
+        group_id,
         return_type=return_type,
     )
     cleaned.setdefault("is_global", False)

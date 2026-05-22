@@ -1,8 +1,9 @@
 # test_chat_generated_tabular_output_card.py
 """
 UI test for chat generated tabular output cards.
-Version: 0.241.033
+Version: 0.241.096
 Implemented in: 0.241.033
+Updated in: 0.241.096
 
 This test ensures assistant replies with generic generated analysis artifact
 metadata render a reusable export card, preserve untrusted values as text,
@@ -12,7 +13,8 @@ clicks the card buttons without introducing page-level JavaScript errors. It
 also validates Markdown artifact previews render as sanitized Markdown instead
 of raw source text and that generated Markdown files can be viewed in a rendered
 modal from the artifact card. It also ensures generated Markdown artifact cards
-offer direct PowerPoint export.
+offer direct PowerPoint export and that workspace promotion opens a confirmation
+or target-selection modal before submitting.
 """
 
 import json
@@ -120,6 +122,12 @@ def test_chat_generated_tabular_output_card(playwright):
                 currentConversationId = conversationId;
                 window.currentConversationId = conversationId;
 
+                const documentsModule = await import('/static/js/chat/chat-documents.js');
+                await documentsModule.setEffectiveScopes(
+                    { personal: true, groupIds: [], publicWorkspaceIds: [] },
+                    { reload: false, force: true }
+                );
+
                 const messagesModule = await import('/static/js/chat/chat-messages.js');
 
                 messagesModule.appendMessage(
@@ -195,12 +203,136 @@ def test_chat_generated_tabular_output_card(playwright):
         ]
 
         page.get_by_role('button', name='Add to Workspace').click()
+        promotion_modal = page.locator('#generated-artifact-workspace-modal')
+        expect(promotion_modal).to_be_visible()
+        expect(promotion_modal).to_contain_text('Add to Personal workspace?')
+        expect(promotion_modal).to_contain_text('comments<script>alert(1)</script>.json will be saved to Personal workspace.')
+        page.get_by_role('button', name='Add to Personal').click()
         expect(page.get_by_role('button', name='Added to Workspace')).to_be_visible()
 
         assert len(promote_requests) == 1
         assert promote_requests[0]["conversation_id"] == "generated-tabular-output-test"
         assert promote_requests[0]["message_id"] == "generated-export-123"
         assert promote_requests[0]["workspace_scope"] == "personal"
+        assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_generated_artifact_workspace_promotion_modal_target_selection(playwright):
+    """Validate ambiguous workspace promotion opens a chooser and submits the selected target."""
+    _require_ui_env()
+
+    promote_requests = []
+    page_errors = []
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 1440, "height": 900},
+        ignore_https_errors=True,
+    )
+    page = context.new_page()
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    page.route(
+        "**/api/user/settings",
+        lambda route: _fulfill_json(route, {"selected_agent": None, "settings": {"enable_agents": False}}),
+    )
+    page.route("**/api/get_conversations", lambda route: _fulfill_json(route, {"conversations": []}))
+
+    def handle_promote(route):
+        promote_requests.append(json.loads(route.request.post_data or "{}"))
+        _fulfill_json(
+            route,
+            {
+                "approval_required": True,
+                "workspace_scope": "group",
+                "group_id": "research-team",
+                "document": {
+                    "id": "workspace-doc-456",
+                    "file_name": "research-ledger.md",
+                },
+            },
+            status=202,
+        )
+
+    page.route("**/api/chat_artifacts/promote", handle_promote)
+
+    try:
+        page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        _wait_for_chatbox_or_skip(page)
+        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
+
+        page.evaluate(
+            """
+            async () => {
+                const conversationId = 'generated-artifact-target-selection-test';
+                currentConversationId = conversationId;
+                window.currentConversationId = conversationId;
+                window.userGroups = [{ id: 'research-team', name: 'Research Team' }];
+                window.userVisiblePublicWorkspaces = [];
+
+                const documentsModule = await import('/static/js/chat/chat-documents.js');
+                await documentsModule.setEffectiveScopes(
+                    { personal: true, groupIds: ['research-team'], publicWorkspaceIds: [] },
+                    { reload: false, force: true }
+                );
+
+                const messagesModule = await import('/static/js/chat/chat-messages.js');
+                messagesModule.appendMessage(
+                    'AI',
+                    'I saved the research ledger as a Markdown artifact.',
+                    null,
+                    'assistant-generated-md-output',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-generated-md-output',
+                        role: 'assistant',
+                        content: 'I saved the research ledger as a Markdown artifact.',
+                        metadata: {
+                            generated_analysis_artifacts: [
+                                {
+                                    capability: 'deep_research',
+                                    artifact_message_id: 'generated-md-export-456',
+                                    conversation_id: 'generated-artifact-target-selection-test',
+                                    storage_scope: 'chat',
+                                    file_name: 'research-ledger.md',
+                                    output_format: 'md',
+                                    summary: 'Deep Research ledger.',
+                                },
+                            ],
+                        },
+                    },
+                    true
+                );
+            }
+            """
+        )
+
+        page.get_by_role('button', name='Add to Workspace').click()
+        promotion_modal = page.locator('#generated-artifact-workspace-modal')
+        expect(promotion_modal).to_be_visible()
+        expect(promotion_modal).to_contain_text('Choose Workspace')
+        expect(promotion_modal).to_contain_text('Personal workspace')
+        expect(promotion_modal).to_contain_text('Research Team')
+
+        page.locator('input[name="generated-artifact-workspace-target"][value="group:research-team"]').check()
+        page.get_by_role('button', name='Add to Selected Workspace').click()
+        expect(page.get_by_role('button', name='Pending Approval')).to_be_visible()
+
+        assert len(promote_requests) == 1
+        assert promote_requests[0]["conversation_id"] == "generated-artifact-target-selection-test"
+        assert promote_requests[0]["message_id"] == "generated-md-export-456"
+        assert promote_requests[0]["workspace_scope"] == "group"
+        assert promote_requests[0]["group_id"] == "research-team"
         assert page_errors == []
     finally:
         context.close()

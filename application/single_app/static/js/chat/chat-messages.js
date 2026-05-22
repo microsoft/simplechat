@@ -3008,24 +3008,91 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
-  function resolveGeneratedArtifactPromotionTarget() {
+  function getGeneratedArtifactGroupName(groupId) {
+    const normalizedGroupId = String(groupId || '').trim();
+    if (!normalizedGroupId) {
+      return 'Group workspace';
+    }
+
+    const matchingGroup = (window.userGroups || []).find(group => String(group?.id || '').trim() === normalizedGroupId);
+    return String(matchingGroup?.name || window.activeGroupName || 'Group workspace').trim() || 'Group workspace';
+  }
+
+  function getGeneratedArtifactPublicWorkspaceName(publicWorkspaceId) {
+    const normalizedWorkspaceId = String(publicWorkspaceId || '').trim();
+    if (!normalizedWorkspaceId) {
+      return 'Public workspace';
+    }
+
+    const matchingWorkspace = (window.userVisiblePublicWorkspaces || []).find(workspace => String(workspace?.id || '').trim() === normalizedWorkspaceId);
+    return String(matchingWorkspace?.name || 'Public workspace').trim() || 'Public workspace';
+  }
+
+  function createGeneratedArtifactPromotionTarget(workspaceScope, options = {}) {
+    const normalizedScope = String(workspaceScope || 'personal').trim().toLowerCase();
+    if (normalizedScope === 'group') {
+      const groupId = String(options.groupId || '').trim();
+      const groupName = getGeneratedArtifactGroupName(groupId);
+      return {
+        targetId: `group:${groupId}`,
+        workspace_scope: 'group',
+        group_id: groupId,
+        label: groupName,
+        displayName: groupName,
+        detail: 'Group workspace approval request',
+      };
+    }
+
+    if (normalizedScope === 'public') {
+      const publicWorkspaceId = String(options.publicWorkspaceId || '').trim();
+      const publicWorkspaceName = getGeneratedArtifactPublicWorkspaceName(publicWorkspaceId);
+      return {
+        targetId: `public:${publicWorkspaceId}`,
+        workspace_scope: 'public',
+        public_workspace_id: publicWorkspaceId,
+        label: publicWorkspaceName,
+        displayName: publicWorkspaceName,
+        detail: 'Public workspace approval request',
+      };
+    }
+
+    return {
+      targetId: 'personal',
+      workspace_scope: 'personal',
+      label: 'personal workspace',
+      displayName: 'Personal workspace',
+      detail: 'Private to you',
+    };
+  }
+
+  function dedupeGeneratedArtifactPromotionTargets(targets) {
+    const seenTargetIds = new Set();
+    const dedupedTargets = [];
+    targets.forEach(target => {
+      const targetId = String(target?.targetId || '').trim();
+      if (!targetId || seenTargetIds.has(targetId)) {
+        return;
+      }
+      seenTargetIds.add(targetId);
+      dedupedTargets.push(target);
+    });
+    return dedupedTargets;
+  }
+
+  function getGeneratedArtifactPromotionTargets() {
     const activeConversationScope = getActiveConversationScope();
     const activeConversationContext = getActiveConversationContext();
 
     if (activeConversationScope === 'group' && activeConversationContext.groupId) {
-      return {
-        workspace_scope: 'group',
-        group_id: activeConversationContext.groupId,
-        label: 'group workspace',
-      };
+      return [createGeneratedArtifactPromotionTarget('group', { groupId: activeConversationContext.groupId })];
     }
 
     if (activeConversationScope === 'public' && activeConversationContext.publicWorkspaceId) {
-      return {
-        workspace_scope: 'public',
-        public_workspace_id: activeConversationContext.publicWorkspaceId,
-        label: 'public workspace',
-      };
+      return [createGeneratedArtifactPromotionTarget('public', { publicWorkspaceId: activeConversationContext.publicWorkspaceId })];
+    }
+
+    if (activeConversationScope === 'personal') {
+      return [createGeneratedArtifactPromotionTarget('personal')];
     }
 
     const effectiveScopes = getEffectiveScopes();
@@ -3036,34 +3103,225 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const publicWorkspaceIds = Array.isArray(effectiveScopes?.publicWorkspaceIds)
       ? effectiveScopes.publicWorkspaceIds.filter(Boolean)
       : [];
-    const targetCount = (hasPersonalScope ? 1 : 0) + groupIds.length + publicWorkspaceIds.length;
+    const targets = [];
 
-    if (targetCount !== 1) {
-      return {
-        error: 'Select exactly one workspace scope before adding this artifact.',
-      };
+    if (hasPersonalScope) {
+      targets.push(createGeneratedArtifactPromotionTarget('personal'));
+    }
+    groupIds.forEach(groupId => {
+      targets.push(createGeneratedArtifactPromotionTarget('group', { groupId }));
+    });
+    publicWorkspaceIds.forEach(publicWorkspaceId => {
+      targets.push(createGeneratedArtifactPromotionTarget('public', { publicWorkspaceId }));
+    });
+
+    const resolvedTargets = dedupeGeneratedArtifactPromotionTargets(targets);
+    if (!resolvedTargets.length) {
+      resolvedTargets.push(createGeneratedArtifactPromotionTarget('personal'));
     }
 
-    if (groupIds.length === 1) {
-      return {
-        workspace_scope: 'group',
-        group_id: groupIds[0],
-        label: 'group workspace',
-      };
-    }
+    return resolvedTargets;
+  }
 
-    if (publicWorkspaceIds.length === 1) {
-      return {
-        workspace_scope: 'public',
-        public_workspace_id: publicWorkspaceIds[0],
-        label: 'public workspace',
-      };
+  function resolveGeneratedArtifactPromotionTarget() {
+    const targets = getGeneratedArtifactPromotionTargets();
+    if (targets.length === 1) {
+      return targets[0];
     }
 
     return {
-      workspace_scope: 'personal',
-      label: 'personal workspace',
+      requiresSelection: true,
+      targets,
     };
+  }
+
+  function getGeneratedArtifactPromotionModalElements() {
+    let modal = document.getElementById('generated-artifact-workspace-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.className = 'modal fade';
+      modal.id = 'generated-artifact-workspace-modal';
+      modal.tabIndex = -1;
+      modal.setAttribute('aria-labelledby', 'generated-artifact-workspace-modal-label');
+      modal.setAttribute('aria-hidden', 'true');
+
+      const dialog = document.createElement('div');
+      dialog.className = 'modal-dialog modal-dialog-centered';
+      modal.appendChild(dialog);
+
+      const content = document.createElement('div');
+      content.className = 'modal-content';
+      dialog.appendChild(content);
+
+      const header = document.createElement('div');
+      header.className = 'modal-header';
+      content.appendChild(header);
+
+      const title = document.createElement('h5');
+      title.className = 'modal-title';
+      title.id = 'generated-artifact-workspace-modal-label';
+      header.appendChild(title);
+
+      const closeButton = document.createElement('button');
+      closeButton.type = 'button';
+      closeButton.className = 'btn-close';
+      closeButton.setAttribute('data-bs-dismiss', 'modal');
+      closeButton.setAttribute('aria-label', 'Close');
+      header.appendChild(closeButton);
+
+      const body = document.createElement('div');
+      body.className = 'modal-body';
+      content.appendChild(body);
+
+      const description = document.createElement('p');
+      description.className = 'mb-3';
+      description.id = 'generated-artifact-workspace-modal-description';
+      body.appendChild(description);
+
+      const choiceList = document.createElement('div');
+      choiceList.className = 'd-grid gap-2';
+      choiceList.id = 'generated-artifact-workspace-targets';
+      body.appendChild(choiceList);
+
+      const footer = document.createElement('div');
+      footer.className = 'modal-footer';
+      content.appendChild(footer);
+
+      const cancelButton = document.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.className = 'btn btn-outline-secondary';
+      cancelButton.setAttribute('data-bs-dismiss', 'modal');
+      cancelButton.textContent = 'Cancel';
+      footer.appendChild(cancelButton);
+
+      const confirmButton = document.createElement('button');
+      confirmButton.type = 'button';
+      confirmButton.className = 'btn btn-primary';
+      confirmButton.id = 'generated-artifact-workspace-confirm-btn';
+      footer.appendChild(confirmButton);
+
+      document.body.appendChild(modal);
+    }
+
+    return {
+      modal,
+      title: modal.querySelector('#generated-artifact-workspace-modal-label'),
+      description: modal.querySelector('#generated-artifact-workspace-modal-description'),
+      choiceList: modal.querySelector('#generated-artifact-workspace-targets'),
+      confirmButton: modal.querySelector('#generated-artifact-workspace-confirm-btn'),
+    };
+  }
+
+  function getGeneratedArtifactPromotionConfirmText(targets) {
+    if (!Array.isArray(targets) || targets.length !== 1) {
+      return 'Add to Selected Workspace';
+    }
+
+    const targetScope = targets[0]?.workspace_scope;
+    if (targetScope === 'personal') {
+      return 'Add to Personal';
+    }
+    if (targetScope === 'group') {
+      return 'Submit to Group';
+    }
+    if (targetScope === 'public') {
+      return 'Submit to Public';
+    }
+    return 'Add to Workspace';
+  }
+
+  function createGeneratedArtifactPromotionChoice(target, checked) {
+    const targetOption = document.createElement('label');
+    targetOption.className = 'generated-artifact-workspace-target-option border rounded p-3 d-flex gap-2 align-items-start';
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.className = 'form-check-input mt-1';
+    radio.name = 'generated-artifact-workspace-target';
+    radio.value = target.targetId;
+    radio.checked = checked;
+    targetOption.appendChild(radio);
+
+    const textWrapper = document.createElement('span');
+    textWrapper.className = 'd-block';
+    targetOption.appendChild(textWrapper);
+
+    const title = document.createElement('span');
+    title.className = 'd-block fw-semibold';
+    title.textContent = target.displayName;
+    textWrapper.appendChild(title);
+
+    const detail = document.createElement('span');
+    detail.className = 'd-block small text-muted';
+    detail.textContent = target.detail;
+    textWrapper.appendChild(detail);
+
+    return targetOption;
+  }
+
+  function chooseGeneratedArtifactPromotionTarget(outputMetadata) {
+    const targets = getGeneratedArtifactPromotionTargets();
+    const artifactFileName = String(outputMetadata?.file_name || 'this generated artifact').trim() || 'this generated artifact';
+    const modalElements = getGeneratedArtifactPromotionModalElements();
+    if (!modalElements.modal || !modalElements.choiceList || !modalElements.confirmButton) {
+      return Promise.resolve(targets[0] || createGeneratedArtifactPromotionTarget('personal'));
+    }
+
+    const isSingleTarget = targets.length === 1;
+    const targetTitle = isSingleTarget
+      ? `Add to ${targets[0].displayName}?`
+      : 'Choose Workspace';
+    const targetDescription = isSingleTarget
+      ? `${artifactFileName} will be saved to ${targets[0].displayName}.`
+      : `Select where to save ${artifactFileName}.`;
+
+    modalElements.title.textContent = targetTitle;
+    modalElements.description.textContent = targetDescription;
+    modalElements.confirmButton.textContent = getGeneratedArtifactPromotionConfirmText(targets);
+    modalElements.choiceList.replaceChildren();
+    targets.forEach((target, index) => {
+      modalElements.choiceList.appendChild(createGeneratedArtifactPromotionChoice(target, index === 0));
+    });
+
+    return new Promise(resolve => {
+      let hasResolved = false;
+      const modalInstance = window.bootstrap?.Modal?.getOrCreateInstance(modalElements.modal);
+
+      const cleanup = () => {
+        modalElements.confirmButton.removeEventListener('click', handleConfirm);
+        modalElements.modal.removeEventListener('hidden.bs.modal', handleHidden);
+      };
+
+      const resolveOnce = value => {
+        if (hasResolved) {
+          return;
+        }
+        hasResolved = true;
+        cleanup();
+        resolve(value);
+      };
+
+      const handleConfirm = () => {
+        const selectedInput = modalElements.choiceList.querySelector('input[name="generated-artifact-workspace-target"]:checked');
+        const selectedTargetId = String(selectedInput?.value || '').trim();
+        const selectedTarget = targets.find(target => target.targetId === selectedTargetId) || targets[0] || null;
+        resolveOnce(selectedTarget);
+        modalInstance?.hide();
+      };
+
+      const handleHidden = () => {
+        resolveOnce(null);
+      };
+
+      modalElements.confirmButton.addEventListener('click', handleConfirm);
+      modalElements.modal.addEventListener('hidden.bs.modal', handleHidden);
+
+      if (modalInstance) {
+        modalInstance.show();
+      } else {
+        resolveOnce(targets[0] || createGeneratedArtifactPromotionTarget('personal'));
+      }
+    });
   }
 
   async function promoteGeneratedArtifactToWorkspace(outputMetadata, promoteButton) {
@@ -3075,9 +3333,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return;
     }
 
-    const target = resolveGeneratedArtifactPromotionTarget();
-    if (target.error) {
-      showToast(target.error, 'warning');
+    const target = await chooseGeneratedArtifactPromotionTarget(outputMetadata);
+    if (!target) {
       return;
     }
 

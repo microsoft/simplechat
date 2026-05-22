@@ -6,7 +6,7 @@ import json
 from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from azure.identity import DefaultAzureCredential
-from flask import Blueprint, jsonify, request, current_app
+from flask import Blueprint, jsonify, request, current_app, session
 from semantic_kernel_plugins.plugin_loader import get_all_plugin_metadata
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.sql_odbc_utils import (
@@ -63,6 +63,13 @@ from functions_blob_storage_operations import (
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT, CHART_PLUGIN_TYPE
 from functions_msgraph_operations import MSGRAPH_DEFAULT_ENDPOINT, MSGRAPH_PLUGIN_TYPE
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
+from functions_workspace_identities import (
+    WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+    WORKSPACE_IDENTITY_SCOPE_GROUP,
+    WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+    hydrate_action_identity_reference,
+    validate_action_identity_reference,
+)
 
 
 DOCUMENT_SEARCH_INTERNAL_ENDPOINT = 'internal://document-search'
@@ -357,6 +364,73 @@ def _resolve_plugin_secret_context(plugin_manifest, fallback_scope_value, fallba
     return fallback_scope_value, fallback_scope
 
 
+def _resolve_action_identity_context(data, existing_plugin, user_id):
+    """Resolve the authoritative identity scope for an action test or save request."""
+    plugin_scope = ""
+    if isinstance(existing_plugin, dict):
+        plugin_scope = str(existing_plugin.get("scope") or "").strip().lower()
+        if plugin_scope == "group" or existing_plugin.get("is_group"):
+            active_group = require_active_group(user_id)
+            assert_group_role(
+                user_id,
+                active_group,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+            return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
+        if plugin_scope == "global" or existing_plugin.get("is_global"):
+            if "Admin" not in session.get("user", {}).get("roles", []):
+                raise PermissionError("Admin role required for global action identities")
+            return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
+
+    requested_scope = str((data or {}).get("action_scope") or "personal").strip().lower()
+    if requested_scope in {"group", "group_action"}:
+        active_group = require_active_group(user_id)
+        assert_group_role(
+            user_id,
+            active_group,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
+    if requested_scope in {"global", "admin"}:
+        if "Admin" not in session.get("user", {}).get("roles", []):
+            raise PermissionError("Admin role required for global action identities")
+        return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
+    return WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id
+
+
+def _validate_action_identity_for_scope(plugin_manifest, scope_type, scope_id):
+    """Validate a plugin manifest's workspace identity reference for the target action scope."""
+    validate_action_identity_reference(plugin_manifest, scope_type, scope_id)
+
+
+def _hydrate_sql_test_identity(data, existing_plugin, user_id):
+    """Resolve a selected workspace identity into transient SQL test credentials."""
+    identity_id = str((data or {}).get("identity_id") or "").strip()
+    if not identity_id:
+        return None
+
+    scope_type, scope_id = _resolve_action_identity_context(data, existing_plugin, user_id)
+    test_manifest = {
+        "name": "sql_connection_test",
+        "type": "sql_query",
+        "identity_id": identity_id,
+        "auth": {"type": "identity", "identity": identity_id},
+        "additionalFields": {
+            "database_type": data.get("database_type"),
+            "connection_string": data.get("connection_string", ""),
+            "server": data.get("server", ""),
+            "database": data.get("database", ""),
+            "driver": data.get("driver", ""),
+        },
+    }
+    return hydrate_action_identity_reference(
+        test_manifest,
+        scope_type,
+        scope_id,
+        return_type=SecretReturnType.VALUE,
+    )
+
+
 def _resolve_secret_value_for_plugin_test(value, field_name, plugin_label='plugin'):
     """Resolve a Key Vault reference for plugin test-connection flows."""
     if not isinstance(value, str) or not value:
@@ -510,6 +584,14 @@ def set_user_plugins():
         plugin_type = plugin_to_save.get('type', '')
         plugin_to_save.setdefault('endpoint', '')
         _apply_plugin_runtime_defaults(plugin_to_save)
+        try:
+            _validate_action_identity_for_scope(
+                plugin_to_save,
+                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+                user_id,
+            )
+        except (ValueError, LookupError, PermissionError) as exc:
+            return jsonify({'error': str(exc)}), 400
         
         # Ensure auth has default structure
         if 'auth' not in plugin_to_save:
@@ -555,6 +637,9 @@ def set_user_plugins():
         for action in plugins_to_delete:
             delete_personal_action(user_id, action.get('id') or action.get('name'))
             
+    except ValueError as e:
+        debug_print(f"Validation error saving personal actions for user {user_id}: {e}")
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         debug_print(f"Error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': 'Failed to save plugins'}), 500
@@ -698,6 +783,15 @@ def create_group_action_route():
     payload['additionalFields'] = merged.get('additionalFields', payload.get('additionalFields', {}))
 
     try:
+        _validate_action_identity_for_scope(
+            payload,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            active_group,
+        )
+    except (ValueError, LookupError, PermissionError) as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    try:
         saved = save_group_action(active_group, payload, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to save group action: %s', exc)
@@ -760,6 +854,15 @@ def update_group_action_route(action_id):
     schema_merged = get_merged_plugin_settings(merged.get('type'), merged, schema_dir)
     merged['metadata'] = schema_merged.get('metadata', merged.get('metadata', {}))
     merged['additionalFields'] = schema_merged.get('additionalFields', merged.get('additionalFields', {}))
+
+    try:
+        _validate_action_identity_for_scope(
+            merged,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            active_group,
+        )
+    except (ValueError, LookupError, PermissionError) as exc:
+        return jsonify({'error': str(exc)}), 400
 
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
@@ -974,6 +1077,15 @@ def add_plugin():
         merged = get_merged_plugin_settings(new_plugin.get('type'), new_plugin, schema_dir)
         new_plugin['metadata'] = merged.get('metadata', new_plugin.get('metadata', {}))
         new_plugin['additionalFields'] = merged.get('additionalFields', new_plugin.get('additionalFields', {}))
+
+        try:
+            _validate_action_identity_for_scope(
+                new_plugin,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            )
+        except (ValueError, LookupError, PermissionError) as exc:
+            return jsonify({'error': str(exc)}), 400
         
         # Prevent duplicate names (case-insensitive)
         if any(p['name'].lower() == new_plugin['name'].lower() for p in plugins):
@@ -1031,6 +1143,15 @@ def edit_plugin(plugin_name):
         merged = get_merged_plugin_settings(updated_plugin.get('type'), updated_plugin, schema_dir)
         updated_plugin['metadata'] = merged.get('metadata', updated_plugin.get('metadata', {}))
         updated_plugin['additionalFields'] = merged.get('additionalFields', updated_plugin.get('additionalFields', {}))
+
+        try:
+            _validate_action_identity_for_scope(
+                updated_plugin,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            )
+        except (ValueError, LookupError, PermissionError) as exc:
+            return jsonify({'error': str(exc)}), 400
         
         # Find the plugin by name and update it
         found_plugin = None
@@ -1268,6 +1389,30 @@ def test_sql_connection():
         connection_string = existing_additional_fields.get('connection_string', '')
     if password == ui_trigger_word:
         password = existing_additional_fields.get('password', '')
+
+    try:
+        identity_manifest = _hydrate_sql_test_identity(data, existing_plugin, user_id)
+    except PermissionError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    if identity_manifest:
+        identity_additional_fields = identity_manifest.get('additionalFields') or {}
+        identity_auth = identity_manifest.get('auth') or {}
+        auth_type = identity_additional_fields.get('auth_type') or identity_additional_fields.get('identity_auth_type') or auth_type
+        connection_string = identity_additional_fields.get('connection_string') or connection_string
+        username = identity_additional_fields.get('username') or username
+        password = identity_additional_fields.get('password') or password
+        if identity_auth.get('type') == 'connection_string' or auth_type == 'connection_string':
+            auth_type = 'connection_string_only'
+            connection_method = 'connection_string'
+        elif identity_auth.get('type') == 'identity' and identity_auth.get('identity') == 'managed_identity':
+            auth_type = 'managed_identity'
+        elif identity_auth.get('type') == 'user':
+            auth_type = 'username_password'
 
     unresolved_fields = []
     if connection_string == ui_trigger_word:

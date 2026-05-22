@@ -1354,6 +1354,18 @@ def register_route_backend_collaboration(app):
                                 return normalized_event_block + '\n\n'
 
                             source_message_id = str(stream_payload.get('message_id') or '').strip()
+                            if stream_payload.get('cancelled') or stream_payload.get('canceled'):
+                                if not source_message_id:
+                                    transformed_payload = {
+                                        **stream_payload,
+                                        'conversation_id': conversation_id,
+                                        'message_id': None,
+                                        'user_message_id': serialized_user_message.get('id'),
+                                        'message_persisted': False,
+                                        'reload_messages': False,
+                                    }
+                                    return f'data: {json.dumps(make_json_serializable(transformed_payload))}\n\n'
+
                             if not source_message_id:
                                 return _serialize_stream_error(
                                     'AI workflow completed without a source assistant message',
@@ -1508,6 +1520,56 @@ def register_route_backend_collaboration(app):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to start collaborative AI workflow'}), 500
+
+    @app.route('/api/collaboration/conversations/<conversation_id>/stream/cancel', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def cancel_collaboration_message_stream_api(conversation_id):
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], conversation_doc)
+
+            source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or '').strip()
+            if not source_conversation_id:
+                return jsonify({'error': 'No active AI stream is available for this collaboration'}), 404
+
+            data = request.get_json(silent=True) or {}
+            cancel_reason = str(data.get('reason') or 'user_requested').strip() or 'user_requested'
+
+            from route_backend_chats import CHAT_STREAM_REGISTRY
+
+            stream_session = CHAT_STREAM_REGISTRY.get_session(
+                current_user['user_id'],
+                source_conversation_id,
+                active_only=True,
+            )
+            if not stream_session:
+                return jsonify({'error': 'No active AI stream is available for this collaboration'}), 404
+
+            stream_status = stream_session.request_cancel(reason=cancel_reason) or {}
+            return jsonify({
+                'success': True,
+                'cancel_requested': True,
+                'source_conversation_id': source_conversation_id,
+                **stream_status,
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative conversation not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[Collaboration] Failed to cancel AI stream for {conversation_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to cancel collaborative AI stream'}), 500
 
     @app.route('/api/collaboration/conversations/<conversation_id>/messages/<message_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())

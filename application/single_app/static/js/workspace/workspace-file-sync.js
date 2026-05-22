@@ -14,9 +14,14 @@ function initializeFileSyncRoot(root) {
         selectedSourceType: 'smb',
         availableTags: [],
         tagsLoaded: false,
+        identities: [],
+        identitiesLoaded: false,
     };
 
     const apiBase = root.dataset.apiBase;
+    const identityApiBase = root.dataset.identityApiBase || apiBase
+        .replace('/api/admin/file-sync/', '/api/admin/workspace-identities/')
+        .replace('/api/file-sync/', '/api/workspace-identities/');
     const tagApiUrl = root.dataset.tagsApi || '';
     const recursiveAllowed = root.dataset.recursiveAllowed !== 'false';
     const sourceTypes = [
@@ -86,6 +91,19 @@ function initializeFileSyncRoot(root) {
     const isSourceTypeVisible = (sourceTypeValue) => visibleSourceTypeValues.has(sourceTypeValue);
     const isSourceTypeSelectable = (sourceTypeValue) => isSourceTypeVisible(sourceTypeValue) && isSourceTypeEnabled(sourceTypeValue);
     const getVisibleSourceTypes = () => sourceTypes.filter((sourceType) => isSourceTypeVisible(sourceType.value));
+    const identitySupportsFileSync = (identity, sourceTypeValue) => {
+        const usageContexts = Array.isArray(identity.usage_contexts) && identity.usage_contexts.length > 0
+            ? identity.usage_contexts
+            : ['general'];
+        const supportedSourceTypes = Array.isArray(identity.supported_source_types) && identity.supported_source_types.length > 0
+            ? identity.supported_source_types
+            : [identity.source_type || identity.provider || 'generic'];
+        const authType = identity.credentials?.auth_type || '';
+        const sourceType = sourceTypeValue || 'smb';
+        return (usageContexts.includes('file_sync') || usageContexts.includes('general'))
+            && (supportedSourceTypes.includes(sourceType) || supportedSourceTypes.includes('generic') || (identity.source_type || '') === sourceType)
+            && ['username_password', 'anonymous'].includes(authType);
+    };
     const getDefaultSourceTypeValue = () => {
         const visibleEnabledSourceType = getVisibleSourceTypes().find((sourceType) => sourceType.enabled);
         if (visibleEnabledSourceType) {
@@ -158,6 +176,20 @@ function initializeFileSyncRoot(root) {
         }
     };
 
+    const loadIdentities = async (force = false) => {
+        if (state.identitiesLoaded && !force) {
+            return;
+        }
+        try {
+            const payload = await fetchJson(`${identityApiBase}/identities`);
+            state.identities = Array.isArray(payload.identities) ? payload.identities : [];
+        } catch (error) {
+            state.identities = [];
+        } finally {
+            state.identitiesLoaded = true;
+        }
+    };
+
     const buildLabeledInput = (id, labelText, type = 'text', value = '') => {
         const wrapper = createElement('div', { className: 'col-md-6' });
         const label = createElement('label', { className: 'form-label', text: labelText, attributes: { for: id } });
@@ -169,6 +201,35 @@ function initializeFileSyncRoot(root) {
                 value,
             },
         });
+        appendChildren(wrapper, [label, input]);
+        return { wrapper, input };
+    };
+
+    const createInput = (id, labelText, type = 'text', value = '', options = {}) => {
+        const wrapper = createElement('div', { className: 'mb-3' });
+        const label = createElement('label', { className: 'form-label', text: labelText, attributes: { for: id } });
+        let input;
+        if (type === 'select') {
+            input = createElement('select', { className: 'form-select', attributes: { id } });
+            (options.options || []).forEach((optionConfig) => {
+                const option = createElement('option', { text: optionConfig.label, attributes: { value: optionConfig.value } });
+                option.selected = String(optionConfig.value) === String(value);
+                if (optionConfig.disabled) {
+                    option.disabled = true;
+                }
+                input.appendChild(option);
+            });
+        } else {
+            input = createElement('input', {
+                className: 'form-control',
+                attributes: {
+                    id,
+                    type,
+                    value,
+                    placeholder: options.placeholder || '',
+                },
+            });
+        }
         appendChildren(wrapper, [label, input]);
         return { wrapper, input };
     };
@@ -247,88 +308,324 @@ function initializeFileSyncRoot(root) {
         .replace(/^-+|-+$/g, '')
         .slice(0, 50);
 
-    const buildTagSelector = (id, labelText, selectedValues = []) => {
-        const wrapper = createElement('div', { className: 'col-md-6' });
-        const label = createElement('label', { className: 'form-label', text: labelText, attributes: { for: id } });
-        const selectedTags = new Set(parseList(Array.isArray(selectedValues) ? selectedValues.join(',') : selectedValues).map(normalizeTagName).filter(Boolean));
-        const chipContainer = createElement('div', { className: 'd-flex flex-wrap gap-2 mb-2' });
-        const inputGroup = createElement('div', { className: 'input-group' });
-        const input = createElement('input', {
-            className: 'form-control',
+    const getAvailableTag = (tagName) => state.availableTags.find((tag) => normalizeTagName(tag.name || tag) === normalizeTagName(tagName));
+
+    const createTagBadge = (tagName, onRemove) => {
+        const sourceTag = getAvailableTag(tagName) || {};
+        const badge = createElement('span', { className: 'badge border d-inline-flex align-items-center gap-1' });
+        badge.style.backgroundColor = sourceTag.color || '#f8f9fa';
+        badge.style.color = sourceTag.text_color || '#212529';
+        badge.style.borderColor = sourceTag.color || '#dee2e6';
+        const text = createElement('span', { text: tagName });
+        const removeButton = createElement('button', {
+            className: 'btn-close btn-close-sm',
             attributes: {
-                id,
-                type: 'text',
-                placeholder: 'Add tag',
+                type: 'button',
+                'aria-label': `Remove ${tagName}`,
             },
         });
-        const addButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Add', attributes: { type: 'button' } });
+        removeButton.addEventListener('click', onRemove);
+        appendChildren(badge, [text, removeButton]);
+        return badge;
+    };
 
-        const renderChips = () => {
-            chipContainer.replaceChildren();
-            if (selectedTags.size === 0) {
-                chipContainer.appendChild(createElement('span', { className: 'text-muted small', text: 'No fixed tags selected.' }));
-                return;
-            }
-            selectedTags.forEach((tagName) => {
-                const chip = createElement('span', { className: 'badge text-bg-light border d-inline-flex align-items-center gap-1' });
-                const text = createElement('span', { text: tagName });
-                const removeButton = createElement('button', {
-                    className: 'btn-close btn-close-sm',
-                    attributes: {
-                        type: 'button',
-                        'aria-label': `Remove ${tagName}`,
-                    },
-                });
-                removeButton.addEventListener('click', () => {
-                    selectedTags.delete(tagName);
-                    renderChips();
-                });
-                appendChildren(chip, [text, removeButton]);
-                chipContainer.appendChild(chip);
-            });
-        };
+    const getTagModalAdapter = () => {
+        const adapters = window.simpleChatTagModalAdapters || {};
+        if (root.dataset.tagAdapter && adapters[root.dataset.tagAdapter]) {
+            return adapters[root.dataset.tagAdapter];
+        }
+        if (root.dataset.scope && adapters[root.dataset.scope]) {
+            return adapters[root.dataset.scope];
+        }
+        if (apiBase.includes('/personal') && adapters.personal) {
+            return adapters.personal;
+        }
+        if (apiBase.includes('/group') && adapters.group) {
+            return adapters.group;
+        }
+        if (apiBase.includes('/public') && adapters.public) {
+            return adapters.public;
+        }
+        if (typeof window.showTagManagementModal === 'function') {
+            return window.simpleChatPersonalTagModalAdapter || null;
+        }
+        return null;
+    };
 
-        const addTags = (rawValue) => {
-            parseList(rawValue).map(normalizeTagName).filter(Boolean).forEach((tagName) => selectedTags.add(tagName));
-            input.value = '';
-            renderChips();
-        };
+    const showFallbackTagPicker = async (selectedTags, onChange) => {
+        await loadAvailableTags(true);
+        const modal = createElement('div', { className: 'modal fade', attributes: { tabindex: '-1', 'aria-hidden': 'true' } });
+        const dialog = createElement('div', { className: 'modal-dialog modal-dialog-scrollable' });
+        const content = createElement('div', { className: 'modal-content' });
+        const header = createElement('div', { className: 'modal-header' });
+        const title = createElement('h5', { className: 'modal-title', text: 'Choose Existing Tags' });
+        const closeButton = createElement('button', { className: 'btn-close', attributes: { type: 'button', 'data-bs-dismiss': 'modal', 'aria-label': 'Close' } });
+        const body = createElement('div', { className: 'modal-body' });
+        const footer = createElement('div', { className: 'modal-footer' });
+        const doneButton = createElement('button', { className: 'btn btn-primary', text: 'Done', attributes: { type: 'button' } });
+        const choices = new Set(selectedTags);
 
-        addButton.addEventListener('click', () => addTags(input.value));
-        input.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') {
-                event.preventDefault();
-                addTags(input.value);
-            }
-        });
-        appendChildren(inputGroup, [input, addButton]);
-        appendChildren(wrapper, [label, chipContainer, inputGroup]);
-
-        const availableTagNames = state.availableTags
+        const tagNames = state.availableTags
             .map((tag) => normalizeTagName(tag.name || tag))
             .filter(Boolean)
             .filter((tagName, index, allTags) => allTags.indexOf(tagName) === index)
             .sort();
-        if (availableTagNames.length > 0) {
-            const select = createElement('select', { className: 'form-select mb-2', attributes: { 'aria-label': 'Choose existing tag' } });
-            select.appendChild(createElement('option', { text: 'Choose existing tag', attributes: { value: '' } }));
-            availableTagNames.forEach((tagName) => {
-                select.appendChild(createElement('option', { text: tagName, attributes: { value: tagName } }));
+        if (tagNames.length === 0) {
+            body.appendChild(createElement('p', { className: 'text-muted mb-0', text: 'No tags are available yet.' }));
+        } else {
+            const list = createElement('div', { className: 'list-group' });
+            tagNames.forEach((tagName) => {
+                const label = createElement('label', { className: 'list-group-item d-flex align-items-center gap-2' });
+                const checkbox = createElement('input', { className: 'form-check-input m-0', attributes: { type: 'checkbox', value: tagName } });
+                checkbox.checked = choices.has(tagName);
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) {
+                        choices.add(tagName);
+                    } else {
+                        choices.delete(tagName);
+                    }
+                });
+                appendChildren(label, [checkbox, createElement('span', { text: tagName })]);
+                list.appendChild(label);
             });
-            select.addEventListener('change', () => {
-                if (select.value) {
-                    selectedTags.add(select.value);
-                    select.value = '';
-                    renderChips();
-                }
-            });
-            wrapper.insertBefore(select, inputGroup);
+            body.appendChild(list);
         }
 
-        renderChips();
+        doneButton.addEventListener('click', () => {
+            selectedTags.clear();
+            choices.forEach((tagName) => selectedTags.add(tagName));
+            onChange();
+            window.bootstrap.Modal.getOrCreateInstance(modal).hide();
+        });
+        modal.addEventListener('hidden.bs.modal', () => modal.remove());
+        appendChildren(header, [title, closeButton]);
+        appendChildren(footer, [createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button', 'data-bs-dismiss': 'modal' } }), doneButton]);
+        appendChildren(content, [header, body, footer]);
+        dialog.appendChild(content);
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        window.bootstrap.Modal.getOrCreateInstance(modal).show();
+    };
+
+    const buildFixedTagSelector = (selectedValues = []) => {
+        const wrapper = createElement('div');
+        const label = createElement('label', { className: 'form-label', text: 'Fixed tags' });
+        const selectedTags = new Set(parseList(Array.isArray(selectedValues) ? selectedValues.join(',') : selectedValues).map(normalizeTagName).filter(Boolean));
+        const badgeContainer = createElement('div', { className: 'd-flex flex-wrap gap-2 mb-2' });
+        const actionRow = createElement('div', { className: 'd-flex flex-wrap gap-2' });
+        const chooseButton = createElement('button', { className: 'btn btn-outline-primary btn-sm', text: 'Choose Existing Tags', attributes: { type: 'button' } });
+        const createButton = createElement('button', { className: 'btn btn-outline-secondary btn-sm', text: 'Create Tag', attributes: { type: 'button' } });
+
+        const renderBadges = () => {
+            badgeContainer.replaceChildren();
+            if (selectedTags.size === 0) {
+                badgeContainer.appendChild(createElement('span', { className: 'text-muted small', text: 'No fixed tags selected.' }));
+                return;
+            }
+            selectedTags.forEach((tagName) => {
+                badgeContainer.appendChild(createTagBadge(tagName, () => {
+                    selectedTags.delete(tagName);
+                    renderBadges();
+                }));
+            });
+        };
+
+        chooseButton.addEventListener('click', async () => {
+            const adapter = getTagModalAdapter();
+            if (adapter?.openSelector) {
+                adapter.openSelector({
+                    selectedTags: Array.from(selectedTags),
+                    onDone: (tagNames) => {
+                        selectedTags.clear();
+                        (tagNames || []).map(normalizeTagName).filter(Boolean).forEach((tagName) => selectedTags.add(tagName));
+                        renderBadges();
+                    },
+                });
+                return;
+            }
+            await showFallbackTagPicker(selectedTags, renderBadges);
+        });
+        createButton.addEventListener('click', async () => {
+            const adapter = getTagModalAdapter();
+            if (adapter?.openManager) {
+                adapter.openManager({ onTagsChanged: () => loadAvailableTags(true) });
+                return;
+            }
+            if (typeof window.showGroupTagManagementModal === 'function') {
+                window.showGroupTagManagementModal();
+                return;
+            }
+            if (typeof window.showPublicTagManagementModal === 'function') {
+                window.showPublicTagManagementModal();
+                return;
+            }
+            if (typeof window.showTagManagementModal === 'function') {
+                window.showTagManagementModal();
+            }
+        });
+
+        appendChildren(actionRow, [chooseButton, createButton]);
+        appendChildren(wrapper, [label, badgeContainer, actionRow]);
+        renderBadges();
         return {
             wrapper,
             getValues: () => Array.from(selectedTags),
+        };
+    };
+
+    const showPatternEditorModal = (onSave) => {
+        const modal = createElement('div', { className: 'modal fade', attributes: { tabindex: '-1', 'aria-hidden': 'true' } });
+        const dialog = createElement('div', { className: 'modal-dialog' });
+        const content = createElement('div', { className: 'modal-content' });
+        const header = createElement('div', { className: 'modal-header' });
+        const title = createElement('h5', { className: 'modal-title', text: 'Add Path Pattern' });
+        const closeButton = createElement('button', { className: 'btn-close', attributes: { type: 'button', 'data-bs-dismiss': 'modal', 'aria-label': 'Close' } });
+        const body = createElement('div', { className: 'modal-body' });
+        const typeGroup = createInput('file-sync-pattern-type', 'Pattern type', 'select', '', {
+            options: [
+                { value: 'include', label: 'Include' },
+                { value: 'exclude', label: 'Exclude' },
+            ],
+        });
+        const patternGroup = createInput('file-sync-pattern-value', 'Pattern', 'text', '', { placeholder: '*.pdf' });
+        const examples = createElement('div', { className: 'form-text', text: 'Examples: *.pdf, Reports/*, */Archive/*' });
+        const footer = createElement('div', { className: 'modal-footer' });
+        const saveButton = createElement('button', { className: 'btn btn-primary', text: 'Add Pattern', attributes: { type: 'button' } });
+        saveButton.addEventListener('click', () => {
+            const pattern = patternGroup.input.value.trim();
+            if (!pattern) {
+                patternGroup.input.focus();
+                return;
+            }
+            onSave({ type: typeGroup.input.value, pattern });
+            window.bootstrap.Modal.getOrCreateInstance(modal).hide();
+        });
+        modal.addEventListener('hidden.bs.modal', () => modal.remove());
+        appendChildren(header, [title, closeButton]);
+        appendChildren(body, [typeGroup.wrapper, patternGroup.wrapper, examples]);
+        appendChildren(footer, [createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button', 'data-bs-dismiss': 'modal' } }), saveButton]);
+        appendChildren(content, [header, body, footer]);
+        dialog.appendChild(content);
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        window.bootstrap.Modal.getOrCreateInstance(modal).show();
+    };
+
+    const buildPatternListControl = (includePatterns = [], excludePatterns = []) => {
+        const wrapper = createElement('div');
+        const header = createElement('div', { className: 'd-flex align-items-center justify-content-between gap-2 mb-2' });
+        const label = createElement('label', { className: 'form-label mb-0', text: 'Path patterns' });
+        const addButton = createElement('button', { className: 'btn btn-outline-primary btn-sm', text: 'Add Pattern', attributes: { type: 'button' } });
+        const list = createElement('div', { className: 'list-group list-group-flush border rounded' });
+        const patterns = [
+            ...includePatterns.map((pattern) => ({ type: 'include', pattern })),
+            ...excludePatterns.map((pattern) => ({ type: 'exclude', pattern })),
+        ];
+        const renderPatterns = () => {
+            list.replaceChildren();
+            if (patterns.length === 0) {
+                list.appendChild(createElement('div', { className: 'list-group-item text-muted small', text: 'No include or exclude patterns.' }));
+                return;
+            }
+            patterns.forEach((item, index) => {
+                const row = createElement('div', { className: 'list-group-item d-flex align-items-center justify-content-between gap-2' });
+                const textWrap = createElement('div', { className: 'd-flex align-items-center gap-2' });
+                const badgeClass = item.type === 'include' ? 'badge text-bg-success' : 'badge text-bg-secondary';
+                appendChildren(textWrap, [createElement('span', { className: badgeClass, text: item.type }), createElement('code', { text: item.pattern })]);
+                const removeButton = createElement('button', { className: 'btn btn-sm btn-outline-danger', text: 'Remove', attributes: { type: 'button' } });
+                removeButton.addEventListener('click', () => {
+                    patterns.splice(index, 1);
+                    renderPatterns();
+                });
+                appendChildren(row, [textWrap, removeButton]);
+                list.appendChild(row);
+            });
+        };
+        addButton.addEventListener('click', () => showPatternEditorModal((item) => {
+            patterns.push(item);
+            renderPatterns();
+        }));
+        appendChildren(header, [label, addButton]);
+        appendChildren(wrapper, [header, list]);
+        renderPatterns();
+        return {
+            wrapper,
+            getValues: () => ({
+                includePatterns: patterns.filter((item) => item.type === 'include').map((item) => item.pattern),
+                excludePatterns: patterns.filter((item) => item.type === 'exclude').map((item) => item.pattern),
+            }),
+        };
+    };
+
+    const showExtensionEditorModal = (onSave) => {
+        const modal = createElement('div', { className: 'modal fade', attributes: { tabindex: '-1', 'aria-hidden': 'true' } });
+        const dialog = createElement('div', { className: 'modal-dialog' });
+        const content = createElement('div', { className: 'modal-content' });
+        const header = createElement('div', { className: 'modal-header' });
+        const title = createElement('h5', { className: 'modal-title', text: 'Add File Type' });
+        const closeButton = createElement('button', { className: 'btn-close', attributes: { type: 'button', 'data-bs-dismiss': 'modal', 'aria-label': 'Close' } });
+        const body = createElement('div', { className: 'modal-body' });
+        const extensionGroup = createInput('file-sync-extension-value', 'Extension', 'text', '', { placeholder: 'pdf' });
+        const examples = createElement('div', { className: 'form-text', text: 'Examples: pdf, docx, xlsx. Leave the list empty to allow all supported file types.' });
+        const footer = createElement('div', { className: 'modal-footer' });
+        const saveButton = createElement('button', { className: 'btn btn-primary', text: 'Add File Type', attributes: { type: 'button' } });
+        saveButton.addEventListener('click', () => {
+            const extension = extensionGroup.input.value.trim().replace(/^\./, '').toLowerCase();
+            if (!extension) {
+                extensionGroup.input.focus();
+                return;
+            }
+            onSave(extension);
+            window.bootstrap.Modal.getOrCreateInstance(modal).hide();
+        });
+        modal.addEventListener('hidden.bs.modal', () => modal.remove());
+        appendChildren(header, [title, closeButton]);
+        appendChildren(body, [extensionGroup.wrapper, examples]);
+        appendChildren(footer, [createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button', 'data-bs-dismiss': 'modal' } }), saveButton]);
+        appendChildren(content, [header, body, footer]);
+        dialog.appendChild(content);
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        window.bootstrap.Modal.getOrCreateInstance(modal).show();
+    };
+
+    const buildExtensionListControl = (extensions = []) => {
+        const wrapper = createElement('div');
+        const header = createElement('div', { className: 'd-flex align-items-center justify-content-between gap-2 mb-2' });
+        const label = createElement('label', { className: 'form-label mb-0', text: 'File type filters' });
+        const addButton = createElement('button', { className: 'btn btn-outline-primary btn-sm', text: 'Add File Type', attributes: { type: 'button' } });
+        const list = createElement('div', { className: 'd-flex flex-wrap gap-2 border rounded p-2 min-vh-0' });
+        const selectedExtensions = Array.from(new Set(extensions.map((extension) => String(extension || '').replace(/^\./, '').toLowerCase()).filter(Boolean)));
+        const renderExtensions = () => {
+            list.replaceChildren();
+            if (selectedExtensions.length === 0) {
+                list.appendChild(createElement('span', { className: 'text-muted small', text: 'All supported file types are allowed.' }));
+                return;
+            }
+            selectedExtensions.forEach((extension, index) => {
+                const badge = createElement('span', { className: 'badge text-bg-light border d-inline-flex align-items-center gap-1' });
+                const removeButton = createElement('button', { className: 'btn-close btn-close-sm', attributes: { type: 'button', 'aria-label': `Remove ${extension}` } });
+                removeButton.addEventListener('click', () => {
+                    selectedExtensions.splice(index, 1);
+                    renderExtensions();
+                });
+                appendChildren(badge, [createElement('span', { text: `.${extension}` }), removeButton]);
+                list.appendChild(badge);
+            });
+        };
+        addButton.addEventListener('click', () => showExtensionEditorModal((extension) => {
+            if (!selectedExtensions.includes(extension)) {
+                selectedExtensions.push(extension);
+                selectedExtensions.sort();
+                renderExtensions();
+            }
+        }));
+        appendChildren(header, [label, addButton]);
+        appendChildren(wrapper, [header, list]);
+        renderExtensions();
+        return {
+            wrapper,
+            getValues: () => selectedExtensions,
         };
     };
 
@@ -338,14 +635,16 @@ function initializeFileSyncRoot(root) {
         enabled: source.enabled !== false,
         recursive: source.recursive !== false && recursiveAllowed,
         uncPath: source.connection?.unc_path || '',
+        identityId: source.identity_id || '',
+        authType: source.credentials?.auth_type || 'username_password',
         username: source.credentials?.username || '',
         domain: source.credentials?.domain || '',
         password: '',
         scheduleEnabled: source.schedule?.enabled === true,
         intervalMinutes: source.schedule?.interval_minutes || 60,
-        includePatterns: (source.filters?.include_patterns || []).join('\n'),
-        excludePatterns: (source.filters?.exclude_patterns || []).join('\n'),
-        allowedExtensions: (source.filters?.allowed_extensions || []).join(', '),
+        includePatterns: source.filters?.include_patterns || [],
+        excludePatterns: source.filters?.exclude_patterns || [],
+        allowedExtensions: source.filters?.allowed_extensions || [],
         fixedTags: source.filters?.fixed_tags || [],
         folderTagMode: source.filters?.folder_tag_mode || 'parent',
         remoteDeletePolicy: source.remote_delete_policy || 'ignore',
@@ -443,19 +742,19 @@ function initializeFileSyncRoot(root) {
         const typeValue = createElement('span', { text: formatSourceType(selectedSourceType) });
         appendChildren(typeSummary, [typeLabel, typeValue]);
 
-        const row = createElement('div', { className: 'row g-3' });
+        const createConfigCard = (titleText, children) => {
+            const card = createElement('div', { className: 'card border-0 shadow-sm mb-3' });
+            const body = createElement('div', { className: 'card-body' });
+            const title = createElement('h6', { className: 'card-title mb-3', text: titleText });
+            appendChildren(body, [title, ...children]);
+            card.appendChild(body);
+            return card;
+        };
+
+        const formGrid = createElement('div', { className: 'row g-3' });
         const nameField = buildLabeledInput('file-sync-source-name', 'Source name', 'text', values.name);
         const uncField = buildLabeledInput('file-sync-unc-path', 'UNC path', 'text', values.uncPath);
-        const usernameField = buildLabeledInput('file-sync-username', 'Username', 'text', values.username);
-        const domainField = buildLabeledInput('file-sync-domain', 'Domain', 'text', values.domain);
-        const passwordField = buildLabeledInput('file-sync-password', source?.credentials?.password_stored ? 'Password (stored)' : 'Password', 'password', values.password);
-        const intervalField = buildIntervalControl('file-sync-interval', 'Schedule interval minutes', values.intervalMinutes);
-        const includeField = buildLabeledTextarea('file-sync-include-patterns', 'Include patterns', values.includePatterns);
-        const excludeField = buildLabeledTextarea('file-sync-exclude-patterns', 'Exclude patterns', values.excludePatterns);
-        const extensionsField = buildLabeledInput('file-sync-extensions', 'File type filters', 'text', values.allowedExtensions);
-        const tagsField = buildTagSelector('file-sync-tags', 'Fixed tags', values.fixedTags);
         const enabledField = buildCheckbox('file-sync-enabled', 'Enabled', values.enabled);
-        const scheduleField = buildCheckbox('file-sync-schedule-enabled', 'Scheduled sync', values.scheduleEnabled);
         const recursiveField = buildCheckbox(
             'file-sync-recursive',
             recursiveAllowed ? 'Include subfolders' : 'Include subfolders (disabled by admin)',
@@ -463,6 +762,60 @@ function initializeFileSyncRoot(root) {
         );
         recursiveField.input.disabled = !recursiveAllowed;
 
+        appendChildren(formGrid, [nameField.wrapper, uncField.wrapper]);
+
+        const generalSwitches = createElement('div', { className: 'd-flex flex-wrap gap-4 mt-3' });
+        appendChildren(generalSwitches, [enabledField.wrapper, recursiveField.wrapper]);
+
+        const identityWrapper = createElement('div', { className: 'mb-3' });
+        const identityHeader = createElement('div', { className: 'd-flex align-items-center justify-content-between gap-2 mb-2' });
+        const identityLabel = createElement('label', { className: 'form-label mb-0', text: 'Reusable identity', attributes: { for: 'file-sync-identity' } });
+        const identitySelect = createElement('select', { className: 'form-select', attributes: { id: 'file-sync-identity' } });
+        identitySelect.appendChild(createElement('option', { text: 'Source-local credentials', attributes: { value: '' } }));
+        state.identities
+            .filter((identity) => identitySupportsFileSync(identity, selectedSourceType))
+            .forEach((identity) => {
+                const option = createElement('option', { text: identity.name || 'SMB Identity', attributes: { value: identity.id } });
+                option.selected = identity.id === values.identityId;
+                identitySelect.appendChild(option);
+            });
+        identityHeader.appendChild(identityLabel);
+        appendChildren(identityWrapper, [identityHeader, identitySelect]);
+
+        const localCredentialsWrapper = createElement('div', { className: 'row g-3' });
+        const authTypeWrapper = createElement('div', { className: 'col-md-6' });
+        const authTypeLabel = createElement('label', { className: 'form-label', text: 'Authentication', attributes: { for: 'file-sync-auth-type' } });
+        const authTypeSelect = createElement('select', { className: 'form-select', attributes: { id: 'file-sync-auth-type' } });
+        [
+            ['username_password', 'Username and password'],
+            ['anonymous', 'Anonymous'],
+        ].forEach(([value, text]) => {
+            const option = createElement('option', { text, attributes: { value } });
+            option.selected = values.authType === value;
+            authTypeSelect.appendChild(option);
+        });
+        appendChildren(authTypeWrapper, [authTypeLabel, authTypeSelect]);
+        const usernameField = buildLabeledInput('file-sync-username', 'Username', 'text', values.username);
+        const domainField = buildLabeledInput('file-sync-domain', 'Domain', 'text', values.domain);
+        const passwordField = buildLabeledInput('file-sync-password', source?.credentials?.password_stored ? 'Password (stored)' : 'Password', 'password', values.password);
+        appendChildren(localCredentialsWrapper, [authTypeWrapper, usernameField.wrapper, domainField.wrapper, passwordField.wrapper]);
+
+        const updateCredentialVisibility = () => {
+            const usingIdentity = Boolean(identitySelect.value);
+            localCredentialsWrapper.classList.toggle('d-none', usingIdentity);
+            const anonymous = authTypeSelect.value === 'anonymous';
+            usernameField.wrapper.classList.toggle('d-none', anonymous);
+            domainField.wrapper.classList.toggle('d-none', anonymous);
+            passwordField.wrapper.classList.toggle('d-none', anonymous);
+        };
+        identitySelect.addEventListener('change', updateCredentialVisibility);
+        authTypeSelect.addEventListener('change', updateCredentialVisibility);
+        updateCredentialVisibility();
+
+        const patternControl = buildPatternListControl(values.includePatterns, values.excludePatterns);
+        const extensionControl = buildExtensionListControl(values.allowedExtensions);
+
+        const folderGrid = createElement('div', { className: 'row g-3 mt-2' });
         const folderWrapper = createElement('div', { className: 'col-md-6' });
         const folderLabel = createElement('label', { className: 'form-label', text: 'Folder tags', attributes: { for: 'file-sync-folder-tags' } });
         const folderSelect = createElement('select', { className: 'form-select', attributes: { id: 'file-sync-folder-tags' } });
@@ -490,43 +843,45 @@ function initializeFileSyncRoot(root) {
         });
         appendChildren(deleteWrapper, [deleteLabel, deleteSelect]);
 
-        appendChildren(row, [
-            nameField.wrapper,
-            uncField.wrapper,
-            usernameField.wrapper,
-            domainField.wrapper,
-            passwordField.wrapper,
-            intervalField.wrapper,
-            includeField.wrapper,
-            excludeField.wrapper,
-            extensionsField.wrapper,
-            tagsField.wrapper,
-            folderWrapper,
-            deleteWrapper,
-        ]);
+        appendChildren(folderGrid, [folderWrapper, deleteWrapper]);
+        const tagsField = buildFixedTagSelector(values.fixedTags);
 
-        const switches = createElement('div', { className: 'd-flex flex-wrap gap-4 mt-3' });
-        appendChildren(switches, [enabledField.wrapper, scheduleField.wrapper, recursiveField.wrapper]);
-        appendChildren(content, [typeSummary, row, switches]);
+        const scheduleField = buildCheckbox('file-sync-schedule-enabled', 'Scheduled sync', values.scheduleEnabled);
+        const intervalField = buildIntervalControl('file-sync-interval', 'Schedule interval minutes', values.intervalMinutes);
+        intervalField.wrapper.classList.remove('col-md-6');
+        intervalField.wrapper.classList.toggle('d-none', !scheduleField.input.checked);
+        scheduleField.input.addEventListener('change', () => {
+            intervalField.wrapper.classList.toggle('d-none', !scheduleField.input.checked);
+        });
+
+        appendChildren(content, [
+            typeSummary,
+            createConfigCard('General', [formGrid, generalSwitches]),
+            createConfigCard('Identity and Authentication', [identityWrapper, localCredentialsWrapper]),
+            createConfigCard('Folders, Patterns, and Filters', [patternControl.wrapper, extensionControl.wrapper, folderGrid]),
+            createConfigCard('Tags', [tagsField.wrapper]),
+            createConfigCard('Sync Schedule', [scheduleField.wrapper, intervalField.wrapper]),
+        ]);
 
         const buildPayload = () => ({
             name: nameField.input.value.trim(),
             source_type: selectedSourceType,
             enabled: enabledField.input.checked,
             recursive: recursiveAllowed && recursiveField.input.checked,
+            identity_id: identitySelect.value,
             connection: {
                 unc_path: uncField.input.value.trim(),
             },
             credentials: {
-                auth_type: 'username_password',
+                auth_type: authTypeSelect.value,
                 username: usernameField.input.value.trim(),
                 domain: domainField.input.value.trim(),
                 password: passwordField.input.value,
             },
             filters: {
-                include_patterns: parseList(includeField.textarea.value),
-                exclude_patterns: parseList(excludeField.textarea.value),
-                allowed_extensions: parseList(extensionsField.input.value),
+                include_patterns: patternControl.getValues().includePatterns,
+                exclude_patterns: patternControl.getValues().excludePatterns,
+                allowed_extensions: extensionControl.getValues(),
                 fixed_tags: tagsField.getValues(),
                 folder_tag_mode: folderSelect.value,
             },
@@ -655,6 +1010,7 @@ function initializeFileSyncRoot(root) {
         state.selectedSourceType = source?.source_type || getDefaultSourceTypeValue();
         state.sourceModalStep = source ? 'configure' : 'type';
         await loadAvailableTags();
+        await loadIdentities();
         renderSourceModal();
         const modalElement = getSourceModalElement();
         if (!modalElement) {
@@ -666,6 +1022,192 @@ function initializeFileSyncRoot(root) {
         }
         modalElement.classList.add('show', 'd-block');
         modalElement.removeAttribute('aria-hidden');
+    };
+
+    const openIdentitiesModal = async () => {
+        await loadIdentities(true);
+        const modal = createElement('div', { className: 'modal fade', attributes: { tabindex: '-1', 'aria-hidden': 'true' } });
+        const dialog = createElement('div', { className: 'modal-dialog modal-xl modal-dialog-scrollable' });
+        const content = createElement('div', { className: 'modal-content' });
+        const header = createElement('div', { className: 'modal-header' });
+        const title = createElement('h5', { className: 'modal-title', text: 'Workspace Identities' });
+        const closeButton = createElement('button', { className: 'btn-close', attributes: { type: 'button', 'data-bs-dismiss': 'modal', 'aria-label': 'Close' } });
+        const body = createElement('div', { className: 'modal-body' });
+        const status = createElement('div', { className: 'alert d-none', attributes: { role: 'alert' } });
+        const formCard = createElement('div', { className: 'card border-0 shadow-sm mb-3' });
+        const formBody = createElement('div', { className: 'card-body' });
+        const formTitle = createElement('h6', { className: 'card-title', text: 'Add Identity' });
+        const formGrid = createElement('div', { className: 'row g-3' });
+        const nameField = buildLabeledInput('file-sync-identity-name', 'Identity name', 'text', '');
+        const descriptionField = buildLabeledInput('file-sync-identity-description', 'Description', 'text', '');
+        const authWrapper = createElement('div', { className: 'col-md-6' });
+        const authLabel = createElement('label', { className: 'form-label', text: 'Authentication', attributes: { for: 'file-sync-identity-auth-type' } });
+        const authSelect = createElement('select', { className: 'form-select', attributes: { id: 'file-sync-identity-auth-type' } });
+        [
+            ['username_password', 'Username and password', false],
+            ['anonymous', 'Anonymous', false],
+            ['managed_identity', 'Managed identity (planned)', true],
+            ['certificate', 'Certificate / PIV (planned)', true],
+        ].forEach(([value, text, disabled]) => {
+            const option = createElement('option', { text, attributes: { value } });
+            option.disabled = disabled;
+            authSelect.appendChild(option);
+        });
+        appendChildren(authWrapper, [authLabel, authSelect]);
+        const usernameField = buildLabeledInput('file-sync-identity-username', 'Username', 'text', '');
+        const domainField = buildLabeledInput('file-sync-identity-domain', 'Domain', 'text', '');
+        const passwordField = buildLabeledInput('file-sync-identity-password', 'Password', 'password', '');
+        const formActions = createElement('div', { className: 'd-flex gap-2 mt-3' });
+        const saveButton = createElement('button', { className: 'btn btn-success', text: 'Add Identity', attributes: { type: 'button' } });
+        const clearButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Clear', attributes: { type: 'button' } });
+        const tableWrap = createElement('div', { className: 'table-responsive' });
+        const table = createElement('table', { className: 'table table-sm align-middle mb-0' });
+        const editing = { id: null };
+
+        const setIdentityStatus = (message, type = 'info') => {
+            status.textContent = message;
+            status.className = `alert alert-${type}`;
+        };
+        const clearIdentityStatus = () => {
+            status.textContent = '';
+            status.className = 'alert d-none';
+        };
+        const resetForm = () => {
+            editing.id = null;
+            formTitle.textContent = 'Add Identity';
+            saveButton.textContent = 'Add Identity';
+            nameField.input.value = '';
+            descriptionField.input.value = '';
+            authSelect.value = 'username_password';
+            usernameField.input.value = '';
+            domainField.input.value = '';
+            passwordField.input.value = '';
+            passwordField.wrapper.querySelector('label').textContent = 'Password';
+            clearIdentityStatus();
+            updateIdentityCredentialVisibility();
+        };
+        const renderIdentityTable = () => {
+            table.replaceChildren();
+            const thead = createElement('thead');
+            const headRow = createElement('tr');
+            ['Name', 'Type', 'Authentication', 'Username', 'Updated', ''].forEach((heading) => {
+                headRow.appendChild(createElement('th', { text: heading }));
+            });
+            thead.appendChild(headRow);
+            const tbody = createElement('tbody');
+            if (state.identities.length === 0) {
+                const row = createElement('tr');
+                const cell = createElement('td', { className: 'text-muted', text: 'No reusable identities yet.', attributes: { colspan: '6' } });
+                row.appendChild(cell);
+                tbody.appendChild(row);
+            } else {
+                state.identities.forEach((identity) => {
+                    const row = createElement('tr');
+                    const credentials = identity.credentials || {};
+                    const actions = createElement('td', { className: 'text-end text-nowrap' });
+                    const editButton = createElement('button', { className: 'btn btn-sm btn-outline-primary me-2', text: 'Edit', attributes: { type: 'button' } });
+                    const deleteButton = createElement('button', { className: 'btn btn-sm btn-outline-danger', text: 'Delete', attributes: { type: 'button' } });
+                    editButton.addEventListener('click', () => {
+                        editing.id = identity.id;
+                        formTitle.textContent = 'Edit Identity';
+                        saveButton.textContent = 'Save Identity';
+                        nameField.input.value = identity.name || '';
+                        descriptionField.input.value = identity.description || '';
+                        authSelect.value = credentials.auth_type || 'username_password';
+                        usernameField.input.value = credentials.username || '';
+                        domainField.input.value = credentials.domain || '';
+                        passwordField.input.value = '';
+                        passwordField.wrapper.querySelector('label').textContent = credentials.password_stored ? 'Password (stored)' : 'Password';
+                        updateIdentityCredentialVisibility();
+                        clearIdentityStatus();
+                    });
+                    deleteButton.addEventListener('click', async () => {
+                        try {
+                            deleteButton.disabled = true;
+                            await fetchJson(`${identityApiBase}/identities/${identity.id}`, { method: 'DELETE' });
+                            await loadIdentities(true);
+                            renderIdentityTable();
+                            resetForm();
+                            setIdentityStatus('Identity deleted.', 'success');
+                        } catch (error) {
+                            setIdentityStatus(error.message, 'danger');
+                        } finally {
+                            deleteButton.disabled = false;
+                        }
+                    });
+                    appendChildren(actions, [editButton, deleteButton]);
+                    appendChildren(row, [
+                        createElement('td', { text: identity.name || '' }),
+                        createElement('td', { text: formatSourceType(identity.source_type || 'smb') }),
+                        createElement('td', { text: credentials.auth_type === 'anonymous' ? 'Anonymous' : 'Username/password' }),
+                        createElement('td', { text: credentials.username || '' }),
+                        createElement('td', { text: formatDate(identity.updated_at) }),
+                        actions,
+                    ]);
+                    tbody.appendChild(row);
+                });
+            }
+            appendChildren(table, [thead, tbody]);
+        };
+        const updateIdentityCredentialVisibility = () => {
+            const anonymous = authSelect.value === 'anonymous';
+            usernameField.wrapper.classList.toggle('d-none', anonymous);
+            domainField.wrapper.classList.toggle('d-none', anonymous);
+            passwordField.wrapper.classList.toggle('d-none', anonymous);
+        };
+
+        authSelect.addEventListener('change', updateIdentityCredentialVisibility);
+        clearButton.addEventListener('click', resetForm);
+        saveButton.addEventListener('click', async () => {
+            const payload = {
+                name: nameField.input.value.trim(),
+                description: descriptionField.input.value.trim(),
+                provider: 'smb',
+                source_type: 'smb',
+                usage_contexts: ['file_sync'],
+                supported_source_types: ['smb'],
+                credentials: {
+                    auth_type: authSelect.value,
+                    username: usernameField.input.value.trim(),
+                    domain: domainField.input.value.trim(),
+                    password: passwordField.input.value,
+                },
+            };
+            try {
+                saveButton.disabled = true;
+                const url = editing.id ? `${identityApiBase}/identities/${editing.id}` : `${identityApiBase}/identities`;
+                await fetchJson(url, {
+                    method: editing.id ? 'PATCH' : 'POST',
+                    body: JSON.stringify(payload),
+                });
+                await loadIdentities(true);
+                renderIdentityTable();
+                resetForm();
+                setIdentityStatus('Identity saved.', 'success');
+            } catch (error) {
+                setIdentityStatus(error.message, 'danger');
+            } finally {
+                saveButton.disabled = false;
+            }
+        });
+
+        appendChildren(formGrid, [nameField.wrapper, descriptionField.wrapper, authWrapper, usernameField.wrapper, domainField.wrapper, passwordField.wrapper]);
+        appendChildren(formActions, [saveButton, clearButton]);
+        appendChildren(formBody, [formTitle, formGrid, formActions]);
+        formCard.appendChild(formBody);
+        tableWrap.appendChild(table);
+        appendChildren(body, [status, formCard, tableWrap]);
+        appendChildren(header, [title, closeButton]);
+        const footer = createElement('div', { className: 'modal-footer' });
+        footer.appendChild(createElement('button', { className: 'btn btn-outline-secondary', text: 'Close', attributes: { type: 'button', 'data-bs-dismiss': 'modal' } }));
+        appendChildren(content, [header, body, footer]);
+        dialog.appendChild(content);
+        modal.appendChild(dialog);
+        modal.addEventListener('hidden.bs.modal', () => modal.remove());
+        document.body.appendChild(modal);
+        renderIdentityTable();
+        updateIdentityCredentialVisibility();
+        window.bootstrap.Modal.getOrCreateInstance(modal, { backdrop: 'static' }).show();
     };
 
     const formatDate = (value) => {
@@ -978,13 +1520,9 @@ function initializeFileSyncRoot(root) {
 
     const renderLayout = () => {
         root.replaceChildren();
-        const toolbar = createElement('div', { className: 'd-flex flex-wrap gap-2 justify-content-between align-items-center mb-3' });
-        const title = createElement('h5', { className: 'mb-0', text: 'Sync Sources' });
-        const actions = createElement('div', { className: 'd-flex gap-2' });
-        const addButton = createElement('button', { className: 'btn btn-primary btn-sm', text: 'Add Source', attributes: { type: 'button' } });
-        const refreshButton = createElement('button', { className: 'btn btn-outline-secondary btn-sm', text: 'Refresh', attributes: { type: 'button' } });
-        appendChildren(actions, [addButton, refreshButton]);
-        appendChildren(toolbar, [title, actions]);
+        const toolbar = createElement('div', { className: 'd-flex flex-wrap gap-2 justify-content-start align-items-center mb-3' });
+        const addButton = createElement('button', { className: 'btn btn-success btn-sm', text: 'Add Source', attributes: { type: 'button' } });
+        toolbar.appendChild(addButton);
 
         const status = createElement('div', { className: 'alert alert-info py-2 mb-3 d-none', attributes: { 'data-file-sync-status': 'true' } });
         const tableWrapper = createElement('div', { className: 'table-responsive' });
@@ -1004,14 +1542,23 @@ function initializeFileSyncRoot(root) {
         addButton.addEventListener('click', async () => {
             await openSourceModal();
         });
-        refreshButton.addEventListener('click', loadSources);
 
         appendChildren(root, [toolbar, status, tableWrapper, history, sourceModal]);
     };
 
     renderLayout();
     loadAvailableTags();
+    loadIdentities();
     loadSources();
+    const autoRefreshInterval = window.setInterval(() => {
+        if (!root.isConnected) {
+            window.clearInterval(autoRefreshInterval);
+            return;
+        }
+        if (!document.hidden) {
+            loadSources();
+        }
+    }, 30000);
 }
 
 window.initializeFileSyncRoot = initializeFileSyncRoot;

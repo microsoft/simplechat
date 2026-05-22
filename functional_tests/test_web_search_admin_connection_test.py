@@ -1,12 +1,14 @@
 # test_web_search_admin_connection_test.py
 """
 Functional test for Web Search admin connection testing.
-Version: 0.241.069
+Version: 0.241.094
 Implemented in: 0.241.069
+Updated in: 0.241.094
 
 This test ensures the Admin Settings Web Search test validates Foundry settings,
 uses a live-search prompt boundary, returns actionable permission guidance, and
-redacts secret values from browser-facing diagnostics.
+redacts secret values from browser-facing diagnostics. It also validates custom
+admin test prompts from the Web Search test modal.
 """
 
 import importlib.util
@@ -180,6 +182,35 @@ def test_warning_when_agent_returns_no_citations():
     print("No-citation warning checks passed")
 
 
+def test_custom_query_is_sent_to_foundry_agent():
+    """Validate the modal's custom query is used for the Foundry smoke test."""
+
+    print("Testing Web Search custom query handling...")
+    module = load_module_with_stubs()
+    captured = {}
+    payload = valid_payload()
+    payload["query"] = "Find the official Microsoft trust center page and reply with the URL."
+
+    async def fake_execute_agent(**kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(
+            message="Microsoft Trust Center: https://www.microsoft.com/trust-center",
+            citations=[{"url": "https://www.microsoft.com/trust-center"}],
+            model="gpt-test",
+        )
+
+    response, status_code = module.run_web_search_connection_test(
+        payload,
+        global_settings={},
+        execute_agent=fake_execute_agent,
+    )
+
+    assert status_code == 200
+    assert response["success"] is True
+    assert captured["message_history"][0].content == payload["query"]
+    print("Custom query checks passed")
+
+
 def test_permission_error_redacts_secret_and_returns_guidance():
     """Validate permission failures return useful guidance without leaking secrets."""
 
@@ -218,6 +249,7 @@ if __name__ == "__main__":
         test_validation_requires_project_endpoint_and_agent_id,
         test_success_uses_foundry_prompt_and_returns_preview,
         test_warning_when_agent_returns_no_citations,
+        test_custom_query_is_sent_to_foundry_agent,
         test_permission_error_redacts_secret_and_returns_guidance,
     ]
 

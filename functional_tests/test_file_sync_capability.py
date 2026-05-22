@@ -2,7 +2,7 @@
 # test_file_sync_capability.py
 """
 Functional test for File Sync capability wiring.
-Version: 0.241.073
+Version: 0.241.095
 Implemented in: 0.241.042
 
 This test ensures File Sync storage, settings, routes, scheduler hooks, and
@@ -26,12 +26,16 @@ def read_text(relative_path):
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.073"' in config_text
+    assert 'VERSION = "0.241.095"' in config_text
 
     expected_containers = [
         "personal_file_sync_sources",
         "group_file_sync_sources",
         "public_file_sync_sources",
+        "personal_workspace_identities",
+        "group_workspace_identities",
+        "public_workspace_identities",
+        "global_workspace_identities",
         "personal_file_sync_items",
         "group_file_sync_items",
         "public_file_sync_items",
@@ -48,6 +52,7 @@ def test_file_sync_settings_and_routes():
     """Validate settings defaults and route registration."""
     settings_text = read_text("application/single_app/functions_settings.py")
     route_text = read_text("application/single_app/route_backend_file_sync.py")
+    identity_route_text = read_text("application/single_app/route_backend_workspace_identities.py")
     app_text = read_text("application/single_app/app.py")
 
     for key in [
@@ -77,13 +82,19 @@ def test_file_sync_settings_and_routes():
     swagger_count = route_text.count("@swagger_route(security=get_auth_security())")
     assert route_count > 0
     assert route_count == swagger_count
+    identity_route_count = len(re.findall(r"@app\.route\(", identity_route_text))
+    identity_swagger_count = identity_route_text.count("@swagger_route(security=get_auth_security())")
+    assert identity_route_count > 0
+    assert identity_route_count == identity_swagger_count
     assert "register_route_backend_file_sync(app)" in app_text
+    assert "register_route_backend_workspace_identities(app)" in app_text
 
 
 def test_file_sync_service_security_shapes():
     """Validate the service module has authorization and redaction safeguards."""
     file_sync_path = APP_ROOT / "functions_file_sync.py"
     file_sync_text = file_sync_path.read_text(encoding="utf-8")
+    identity_text = read_text("application/single_app/functions_workspace_identities.py")
     parsed = ast.parse(file_sync_text)
     function_names = {node.name for node in ast.walk(parsed) if isinstance(node, ast.FunctionDef)}
 
@@ -107,6 +118,20 @@ def test_file_sync_service_security_shapes():
     assert "get_user_role_in_public_workspace" in file_sync_text
     assert "password_secret_name" in file_sync_text
     assert "sanitized_source.pop(\"auth\", None)" in file_sync_text
+    assert "sanitize_workspace_identity" in identity_text
+    assert "sanitized_identity.pop(\"auth\", None)" in identity_text
+    assert "WORKSPACE_IDENTITY_SCOPE_GLOBAL" in identity_text
+    assert "WORKSPACE_IDENTITY_USAGE_ALIASES" in identity_text
+    assert "WORKSPACE_IDENTITY_USAGE_AUTH_TYPES" in identity_text
+    assert "WORKSPACE_IDENTITY_USAGE_SOURCE_TYPES" in identity_text
+    assert "allowed_auth_types" in identity_text
+    assert "Selected authentication type is not available for the selected identity uses" in identity_text
+    assert "allowed_usage_contexts = {\"action\"}" in identity_text
+    assert "allowed_usage_contexts = {\"file_sync\"}" in identity_text
+    assert "FILE_SYNC_IDENTITY_AUTH_TYPES" in file_sync_text
+    assert "WORKSPACE_IDENTITY_AUTH_TYPES" in identity_text
+    assert "identity_supports_usage" in file_sync_text
+    assert "identity_id" in file_sync_text
     assert "admin_management" in file_sync_text
     assert "_user_info_has_admin_role" in file_sync_text
     assert "_user_info_has_app_role" in file_sync_text
@@ -235,12 +260,22 @@ def test_file_sync_admin_and_sidebar_discovery():
     assert "/api/admin/file-sync/personal/<target_user_id>/sources" in backend_route
     assert "/api/admin/file-sync/group/<group_id>/sources" in backend_route
     assert "/api/admin/file-sync/public/<public_workspace_id>/sources" in backend_route
+    workspace_identity_route = read_text("application/single_app/route_backend_workspace_identities.py")
+    assert "/api/admin/workspace-identities/<scope_type>/<scope_id>/identities" in workspace_identity_route
+    assert "/api/admin/workspace-identities/global/identities" in workspace_identity_route
+    assert "/api/workspace-identities/personal/identities" in workspace_identity_route
+    assert "/api/workspace-identities/group/identities" in workspace_identity_route
+    assert "/api/workspace-identities/public/<public_workspace_id>/identities" in workspace_identity_route
     assert "search_directory_users" in backend_route
     assert "search_all_groups" in backend_route
     assert "search_all_public_workspaces" in backend_route
 
     assert 'id="file-sync-tab"' in admin_template
     assert 'id="file-sync"' in admin_template
+    assert 'id="workspace-identities-tab"' in admin_template
+    assert 'id="workspace-identities"' in admin_template
+    assert 'id="global-workspace-identities-root"' in admin_template
+    assert 'data-identity-api-base="/api/admin/workspace-identities/global"' in admin_template
     assert 'id="file-sync-section"' in admin_template
     assert 'id="file_sync_settings"' in admin_template
     assert "Redis Cache must be enabled" in admin_template
@@ -259,8 +294,11 @@ def test_file_sync_admin_and_sidebar_discovery():
     assert "getSelectedFileSyncVisibleSourceTypes" in admin_js
     assert "root.dataset.visibleSourceTypes" in admin_js
     assert 'data-tab="file-sync"' in sidebar_template
+    assert 'data-tab="workspace-identities"' in sidebar_template
+    assert "Global Identities" in sidebar_template
     assert 'data-tab="workspaces" data-section="file-sync-section"' not in sidebar_template
     assert 'data-tab="sync-tab"' in sidebar_template
+    assert 'data-tab="identities-tab"' in sidebar_template
     assert "file_sync_enabled" in sidebar_template
 
 
@@ -270,6 +308,7 @@ def test_file_sync_recursive_and_connection_test_wiring():
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
     route_text = read_text("application/single_app/route_backend_file_sync.py")
     file_sync_js = read_text("application/single_app/static/js/workspace/workspace-file-sync.js")
+    identities_js = read_text("application/single_app/static/js/workspace/workspace-identities.js")
     workspace_template = read_text("application/single_app/templates/workspace.html")
     group_template = read_text("application/single_app/templates/group_workspaces.html")
     public_template = read_text("application/single_app/templates/manage_public_workspace.html")
@@ -296,6 +335,44 @@ def test_file_sync_recursive_and_connection_test_wiring():
     assert "file-sync-recursive" in file_sync_js
     assert "Include subfolders" in file_sync_js
     assert "data-file-sync-source-modal" in file_sync_js
+    assert "initializeWorkspaceIdentityRoot" in identities_js
+    assert "openIdentityModal" in identities_js
+    assert "getCapabilitiesFromIdentity" in identities_js
+    assert "getCapabilityPayloadValues" in identities_js
+    assert "Identity Details" in identities_js
+    assert "Used For" in identities_js
+    assert "File Sync" in identities_js
+    assert "Actions" in identities_js
+    assert "Model Endpoints" in identities_js
+    assert "type: 'checkbox'" in identities_js
+    assert "usage_contexts: capabilityPayload.usageContexts" in identities_js
+    assert "supported_source_types: capabilityPayload.sourceTypes" in identities_js
+    assert "Client ID" in identities_js
+    assert "Domain (optional)" in identities_js
+    assert "Leave this blank when the account signs in without a domain." in identities_js
+    assert "aria-describedby" in identities_js
+    assert "selectedAuthType === 'client_secret'" in identities_js
+    assert "data-bs-toggle': 'tooltip'" in identities_js
+    assert "View" in identities_js
+    assert "Edit" in identities_js
+    assert "data-workspace-identity-root" in workspace_template
+    assert "data-workspace-identity-root" in group_template
+    assert "data-workspace-identity-root" in public_template
+    assert "data-capability-options" in workspace_template
+    assert "data-capability-options" in group_template
+    assert "data-capability-options=\"file_sync\"" in public_template
+    assert "data-identity-title" not in workspace_template
+    assert "data-usage-context-options" not in workspace_template
+    assert "data-provider-options" not in workspace_template
+    assert "identityApiBase" in file_sync_js
+    assert "/api/workspace-identities/" in file_sync_js
+    assert "Reusable identity" in file_sync_js
+    assert "identitySupportsFileSync" in file_sync_js
+    assert "Path patterns" in file_sync_js
+    assert "Add Pattern" in file_sync_js
+    assert "Add File Type" in file_sync_js
+    assert "Choose Existing Tags" in file_sync_js
+    assert "Create Tag" in file_sync_js
     assert "data-visible-source-types" in workspace_template
     assert "data-visible-source-types" in group_template
     assert "data-visible-source-types" in public_template
@@ -310,9 +387,13 @@ def test_file_sync_recursive_and_connection_test_wiring():
     assert "source_type: selectedSourceType" in file_sync_js
     assert "['Source', 'Type', 'Status', 'Schedule', 'Last run', 'Counts', 'Actions']" in file_sync_js
     assert "Test Connection" in file_sync_js
-    assert "buildTagSelector" in file_sync_js
-    assert "Choose existing tag" in file_sync_js
+    assert "buildFixedTagSelector" in file_sync_js
+    assert "showFallbackTagPicker" in file_sync_js
     assert "Schedule interval minutes" in file_sync_js
+    assert "btn btn-success btn-sm" in file_sync_js
+    assert "Sync Sources" not in file_sync_js
+    assert "text: 'Identities'" not in file_sync_js
+    assert "text: 'Refresh'" not in file_sync_js
 
 
 def test_file_sync_source_delete_options_wiring():
@@ -339,6 +420,7 @@ def test_file_sync_source_delete_options_wiring():
 
 def test_file_sync_document_indicator_wiring():
     """Validate synced documents render a system indicator without using tags."""
+    file_sync_service = read_text("application/single_app/functions_file_sync.py")
     workspace_utils = read_text("application/single_app/static/js/workspace/workspace-utils.js")
     workspace_documents = read_text("application/single_app/static/js/workspace/workspace-documents.js")
     workspace_tags = read_text("application/single_app/static/js/workspace/workspace-tags.js")
@@ -351,13 +433,26 @@ def test_file_sync_document_indicator_wiring():
     assert "getDocumentSyncBadgeHtml" in workspace_utils
     assert "getDocumentSyncDetailsHtml" in workspace_utils
     assert "setDocumentSyncStatusElement" in workspace_utils
+    assert '"source_type": source.get("source_type", FILE_SYNC_SOURCE_TYPE_SMB)' in file_sync_service
 
     for frontend_text in [workspace_documents, group_template, public_js]:
         assert "file_sync" in frontend_text
 
-    for frontend_text in [workspace_documents, group_template, public_js]:
-        assert "Synced" in frontend_text
-        assert "bg-info text-dark" in frontend_text
+    for frontend_text in [workspace_utils, group_template, public_js]:
+        assert "source_type || 'smb'" in frontend_text
+        assert "bi bi-arrow-repeat me-1" in frontend_text
+        assert "SMB" in frontend_text
+        assert "m365sp" in frontend_text
+        assert "M365SP" in frontend_text
+        assert "one_drive" in frontend_text
+        assert "OneDrive" in frontend_text
+        assert "google" in frontend_text
+        assert "Google" in frontend_text
+        assert "spo" in frontend_text
+        assert "SPO" in frontend_text
+        assert "bg-primary text-white" in frontend_text
+        assert "bg-warning text-dark" in frontend_text
+        assert "bg-success text-white" in frontend_text
 
     assert "getDocumentSyncBadgeHtml(doc, true)" in workspace_documents
     assert "getDocumentSyncBadgeHtml(doc, true)" in workspace_tags

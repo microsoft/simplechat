@@ -5,6 +5,9 @@ import { getTypeIcon } from "./workspace/view-utils.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
 const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model'];
+const ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'client_secret', 'connection_string', 'managed_identity', 'username_password'];
+const SQL_ACTION_IDENTITY_AUTH_TYPES = ['connection_string', 'managed_identity', 'username_password'];
+const OPENAPI_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
 const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
 const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
@@ -211,6 +214,12 @@ export class PluginModalStepper {
     this.lastAdditionalFieldsType = null; // Track last type to avoid unnecessary redraws
     this.defaultAuthTypes = ["NoAuth", "key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"];
     this.currentAllowedAuthTypes = null; // Active allowed auth types derived from definition
+    this.actionIdentityScope = {
+      scope: 'personal',
+      apiBase: '/api/workspace-identities/personal'
+    };
+    this.actionIdentities = [];
+    this.actionIdentitiesLoaded = false;
     this.simpleChatCapabilityState = this.getDefaultSimpleChatCapabilities();
     this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
     this.chartCapabilityState = this.getDefaultChartCapabilities();
@@ -294,6 +303,203 @@ export class PluginModalStepper {
     });
   }
 
+  setActionScope(scopeConfig = {}) {
+    const scope = scopeConfig.scope || 'personal';
+    const apiBase = scopeConfig.apiBase || '/api/workspace-identities/personal';
+    if (this.actionIdentityScope.scope === scope && this.actionIdentityScope.apiBase === apiBase) {
+      return;
+    }
+
+    this.actionIdentityScope = { scope, apiBase };
+    this.actionIdentities = [];
+    this.actionIdentitiesLoaded = false;
+  }
+
+  async loadActionIdentities() {
+    if (this.actionIdentitiesLoaded) {
+      this.updateActionIdentitySelectors();
+      return this.actionIdentities;
+    }
+
+    const apiBase = this.actionIdentityScope?.apiBase;
+    if (!apiBase) {
+      this.actionIdentities = [];
+      this.actionIdentitiesLoaded = true;
+      this.updateActionIdentitySelectors();
+      return this.actionIdentities;
+    }
+
+    try {
+      const response = await fetch(`${apiBase}/identities`);
+      if (!response.ok) {
+        throw new Error('Failed to load reusable identities');
+      }
+      const payload = await response.json();
+      const identities = Array.isArray(payload?.identities) ? payload.identities : [];
+      this.actionIdentities = identities.filter(identity => this.isActionIdentityCapable(identity));
+    } catch (error) {
+      console.warn('Unable to load action identities:', error);
+      this.actionIdentities = [];
+    }
+
+    this.actionIdentitiesLoaded = true;
+    this.updateActionIdentitySelectors();
+    return this.actionIdentities;
+  }
+
+  isActionIdentityCapable(identity) {
+    const authType = this.getIdentityAuthType(identity);
+    if (!ACTION_IDENTITY_AUTH_TYPES.includes(authType)) {
+      return false;
+    }
+
+    const contexts = Array.isArray(identity?.usage_contexts) ? identity.usage_contexts : [];
+    const normalizedContexts = contexts.map(context => String(context || '').toLowerCase());
+    const supportsActionContext = normalizedContexts.some(context => ['action', 'agent', 'plugin', 'general'].includes(context));
+    if (!supportsActionContext) {
+      return false;
+    }
+
+    const sourceTypes = Array.isArray(identity?.supported_source_types) ? identity.supported_source_types : [];
+    if (!sourceTypes.length) {
+      return true;
+    }
+    const normalizedSourceTypes = sourceTypes.map(sourceType => String(sourceType || '').toLowerCase());
+    return normalizedSourceTypes.includes('action') || normalizedSourceTypes.includes('generic');
+  }
+
+  getIdentityAuthType(identity) {
+    return String(identity?.credentials?.auth_type || identity?.auth_type || '').toLowerCase();
+  }
+
+  getActionIdentitiesForKind(kind) {
+    if (kind === 'sql') {
+      return this.actionIdentities.filter(identity => SQL_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
+    if (kind === 'openapi') {
+      return this.actionIdentities.filter(identity => OPENAPI_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
+    return this.actionIdentities;
+  }
+
+  updateActionIdentitySelectors() {
+    this.populateActionIdentitySelector('openapi', 'plugin-auth-identity-select', 'openapi-action-identity-group', 'plugin-auth-identity-status');
+    this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
+    this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
+  }
+
+  populateActionIdentitySelector(kind, selectId, groupId, statusId) {
+    const select = document.getElementById(selectId);
+    const group = document.getElementById(groupId);
+    const status = document.getElementById(statusId);
+    if (!select || !group) return;
+
+    const previousValue = select.value || this.originalPlugin?.identity_id || '';
+    const identities = this.getActionIdentitiesForKind(kind);
+    select.replaceChildren();
+
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = 'Use action-specific credentials';
+    select.appendChild(emptyOption);
+
+    identities.forEach(identity => {
+      const option = document.createElement('option');
+      option.value = identity.id || identity.identity_id || '';
+      option.textContent = `${identity.name || 'Workspace identity'} (${this.formatIdentityAuthType(this.getIdentityAuthType(identity))})`;
+      select.appendChild(option);
+    });
+
+    if (previousValue && identities.some(identity => (identity.id || identity.identity_id) === previousValue)) {
+      select.value = previousValue;
+    }
+
+    if (identities.length) {
+      group.classList.remove('d-none');
+      if (status) {
+        status.textContent = '';
+      }
+    } else {
+      group.classList.add('d-none');
+      if (status) {
+        status.textContent = 'No action-capable reusable identities are available for this scope.';
+      }
+    }
+  }
+
+  formatIdentityAuthType(authType) {
+    const labels = {
+      api_key: 'API key',
+      bearer_token: 'Bearer token',
+      client_secret: 'Client secret',
+      connection_string: 'Connection string',
+      managed_identity: 'Managed identity',
+      username_password: 'Username and password'
+    };
+    return labels[authType] || this.formatLabel(authType || 'identity');
+  }
+
+  getSelectedActionIdentity(kind) {
+    const selectIds = {
+      openapi: 'plugin-auth-identity-select',
+      generic: 'plugin-auth-identity-select-generic',
+      sql: 'sql-identity-select'
+    };
+    const selectedId = document.getElementById(selectIds[kind])?.value || '';
+    if (!selectedId) {
+      return null;
+    }
+    return this.actionIdentities.find(identity => (identity.id || identity.identity_id) === selectedId) || null;
+  }
+
+  setSelectedActionIdentity(kind, identityId) {
+    const selectIds = {
+      openapi: 'plugin-auth-identity-select',
+      generic: 'plugin-auth-identity-select-generic',
+      sql: 'sql-identity-select'
+    };
+    const select = document.getElementById(selectIds[kind]);
+    if (!select) return;
+    select.value = identityId || '';
+  }
+
+  getSqlAuthTypeForIdentity(identity) {
+    const authType = this.getIdentityAuthType(identity);
+    if (authType === 'managed_identity') return 'managed_identity';
+    if (authType === 'client_secret') return 'service_principal';
+    if (authType === 'connection_string') return 'connection_string_only';
+    return 'username_password';
+  }
+
+  handleActionIdentityChange(kind) {
+    const selectedIdentity = this.getSelectedActionIdentity(kind);
+    if (kind === 'sql') {
+      const authSelect = document.getElementById('sql-auth-type');
+      if (authSelect) {
+        authSelect.disabled = !!selectedIdentity;
+        if (selectedIdentity) {
+          const sqlAuthType = this.getSqlAuthTypeForIdentity(selectedIdentity);
+          if ([...authSelect.options].some(option => option.value === sqlAuthType)) {
+            authSelect.value = sqlAuthType;
+          }
+        }
+      }
+      this.handleSqlConnectionMethodChange();
+      this.handleSqlAuthTypeChange();
+      return;
+    }
+
+    const authSelect = document.getElementById(kind === 'openapi' ? 'plugin-auth-type' : 'plugin-auth-type-generic');
+    if (authSelect) {
+      authSelect.disabled = !!selectedIdentity;
+    }
+    if (kind === 'openapi') {
+      this.toggleOpenApiAuthFields();
+    } else {
+      this.toggleGenericAuthFields();
+    }
+  }
+
   bindEvents() {
     // Step navigation buttons
     document.getElementById('plugin-modal-next').addEventListener('click', () => this.nextStep());
@@ -306,6 +512,8 @@ export class PluginModalStepper {
     // Auth type change handlers for both sections
     document.getElementById('plugin-auth-type').addEventListener('change', () => this.toggleOpenApiAuthFields());
     document.getElementById('plugin-auth-type-generic').addEventListener('change', () => this.toggleGenericAuthFields());
+    document.getElementById('plugin-auth-identity-select').addEventListener('change', () => this.handleActionIdentityChange('openapi'));
+    document.getElementById('plugin-auth-identity-select-generic').addEventListener('change', () => this.handleActionIdentityChange('generic'));
     
     // File upload handler
     document.getElementById('plugin-openapi-file').addEventListener('change', (e) => this.handleFileUpload(e));
@@ -324,6 +532,7 @@ export class PluginModalStepper {
     });
     
     document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
+    document.getElementById('sql-identity-select').addEventListener('change', () => this.handleActionIdentityChange('sql'));
     document.getElementById('cosmos-auth-type').addEventListener('change', () => this.handleCosmosAuthTypeChange());
     
     // Test SQL connection button
@@ -373,6 +582,7 @@ export class PluginModalStepper {
     // Load available types and populate
     await this.loadAvailableTypes();
     await this.applyDefinitionForSelectedType(this.selectedType);
+    await this.loadActionIdentities();
     
     if (this.isEditMode) {
       this.populateFormFromPlugin(plugin);
@@ -1906,6 +2116,7 @@ export class PluginModalStepper {
 
   toggleOpenApiAuthFields() {
     const authType = document.getElementById('plugin-auth-type').value;
+    const selectedIdentity = this.getSelectedActionIdentity('openapi');
     const groups = {
       apiKeyLocation: document.getElementById('auth-api-key-location-group'),
       apiKeyName: document.getElementById('auth-api-key-name-group'),
@@ -1920,6 +2131,10 @@ export class PluginModalStepper {
     Object.values(groups).forEach(group => {
       if (group) group.style.display = 'none';
     });
+
+    if (selectedIdentity) {
+      return;
+    }
     
     // Show relevant groups based on auth type
     switch (authType) {
@@ -2065,6 +2280,7 @@ export class PluginModalStepper {
     const dropdown = document.getElementById('plugin-auth-type-generic');
     if (!dropdown) return;
     const authType = dropdown.value;
+    const selectedIdentity = this.getSelectedActionIdentity('generic');
 
     // Get required fields for selected auth type from schema
     let requiredFields = [];
@@ -2093,6 +2309,10 @@ export class PluginModalStepper {
 
     // Hide all groups first using d-none
     Object.values(fieldMap).forEach(group => { if (group) group.classList.add('d-none'); });
+
+    if (selectedIdentity) {
+      return;
+    }
 
     // Show only required fields for selected auth type using d-none
     requiredFields.forEach(field => {
@@ -2351,6 +2571,8 @@ export class PluginModalStepper {
     
     // Update port placeholder
     this.updatePortPlaceholder(selectedType);
+    this.updateActionIdentitySelectors();
+    this.handleActionIdentityChange('sql');
     
     // Trigger auth type change to update fields
     this.handleSqlAuthTypeChange();
@@ -2376,9 +2598,17 @@ export class PluginModalStepper {
 
   handleSqlConnectionMethodChange() {
     const selectedMethod = document.querySelector('input[name="sql-connection-method"]:checked')?.value;
+    const selectedIdentity = this.getSelectedActionIdentity('sql');
+    const identityAuthType = this.getIdentityAuthType(selectedIdentity);
     
     const stringSection = document.getElementById('sql-connection-string-section');
     const paramsSection = document.getElementById('sql-connection-params-section');
+
+    if (selectedIdentity && identityAuthType === 'connection_string') {
+      stringSection.classList.add('d-none');
+      paramsSection.classList.add('d-none');
+      return;
+    }
     
     if (selectedMethod === 'connection_string') {
       stringSection.classList.remove('d-none');
@@ -2391,12 +2621,18 @@ export class PluginModalStepper {
 
   handleSqlAuthTypeChange() {
     const authType = document.getElementById('sql-auth-type').value;
+    const selectedIdentity = this.getSelectedActionIdentity('sql');
     const credentialsDiv = document.getElementById('sql-auth-credentials');
     const servicePrincipalDiv = document.getElementById('sql-auth-service-principal');
     
     // Hide all auth sections first
     credentialsDiv.style.display = 'none';
     servicePrincipalDiv.style.display = 'none';
+
+    if (selectedIdentity) {
+      this.updateSqlAuthInfo();
+      return;
+    }
     
     // Show relevant sections
     switch (authType) {
@@ -2452,6 +2688,7 @@ export class PluginModalStepper {
     const databaseType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
     const connectionMethod = document.querySelector('input[name="sql-connection-method"]:checked')?.value || 'parameters';
     const authType = document.getElementById('sql-auth-type')?.value || 'username_password';
+    const selectedIdentity = this.getSelectedActionIdentity('sql');
 
     if (!databaseType) {
       resultDiv.classList.remove('d-none');
@@ -2465,6 +2702,15 @@ export class PluginModalStepper {
       connection_method: connectionMethod,
       auth_type: authType
     };
+
+    if (selectedIdentity) {
+      payload.identity_id = selectedIdentity.id || selectedIdentity.identity_id || '';
+      payload.action_scope = this.actionIdentityScope?.scope || 'personal';
+      payload.auth_type = this.getSqlAuthTypeForIdentity(selectedIdentity);
+      if (this.getIdentityAuthType(selectedIdentity) === 'connection_string') {
+        payload.connection_method = 'connection_string';
+      }
+    }
 
     if (connectionMethod === 'connection_string') {
       payload.connection_string = document.getElementById('sql-connection-string')?.value?.trim() || '';
@@ -2720,6 +2966,8 @@ export class PluginModalStepper {
       }
       
       document.getElementById('plugin-auth-type').value = authType;
+      this.setSelectedActionIdentity('openapi', plugin.identity_id || '');
+      this.handleActionIdentityChange('openapi');
     } else if (this.isSqlType(plugin.type)) {
       // Populate SQL fields
       const additionalFields = plugin.additionalFields || {};
@@ -2772,6 +3020,8 @@ export class PluginModalStepper {
       this.handleSqlDatabaseTypeChange();
       this.handleSqlConnectionMethodChange();
       this.handleSqlAuthTypeChange();
+      this.setSelectedActionIdentity('sql', plugin.identity_id || '');
+      this.handleActionIdentityChange('sql');
     } else if (this.isCosmosType(plugin.type)) {
       const additionalFields = plugin.additionalFields || {};
       const auth = plugin.auth || {};
@@ -2827,6 +3077,8 @@ export class PluginModalStepper {
       document.getElementById('plugin-auth-key').value = auth.key || '';
       document.getElementById('plugin-auth-identity').value = auth.identity || auth.managedIdentity || '';
       document.getElementById('plugin-auth-tenant-id').value = auth.tenantId || '';
+      this.setSelectedActionIdentity('generic', plugin.identity_id || '');
+      this.handleActionIdentityChange('generic');
     }
     
     // Step 4 fields
@@ -2861,6 +3113,7 @@ export class PluginModalStepper {
     let auth = {};
     let endpoint = '';
     let additionalFields = {};
+    let identityId = '';
     
     if (isOpenApiVisible) {
       // Collect OpenAPI-specific data
@@ -2882,9 +3135,16 @@ export class PluginModalStepper {
       additionalFields.openapi_source_type = 'content';  // Changed from 'file'
       additionalFields.base_url = endpoint;
       
+      const selectedIdentity = this.getSelectedActionIdentity('openapi');
       const authType = document.getElementById('plugin-auth-type').value;
-      
-      if (authType === 'api_key') {
+
+      if (selectedIdentity) {
+        identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+        auth.type = 'identity';
+        auth.identity = identityId;
+        additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+        additionalFields.auth_method = 'identity';
+      } else if (authType === 'api_key') {
         // Map api_key to 'key' type for schema compliance
         auth.type = 'key';
         const apiKeyValue = document.getElementById('plugin-auth-api-key-value').value.trim();
@@ -2920,6 +3180,8 @@ export class PluginModalStepper {
       const pluginType = document.querySelector('input[name="sql-plugin-type"]:checked')?.value;
       const connectionMethod = document.querySelector('input[name="sql-connection-method"]:checked')?.value;
       const authType = document.getElementById('sql-auth-type').value;
+      const selectedIdentity = this.getSelectedActionIdentity('sql');
+      const selectedIdentityAuthType = this.getIdentityAuthType(selectedIdentity);
       
       if (!databaseType) {
         throw new Error('Please select a database type');
@@ -2934,7 +3196,9 @@ export class PluginModalStepper {
       // Database configuration
       additionalFields.database_type = databaseType;
       
-      if (connectionMethod === 'connection_string') {
+      if (selectedIdentity && selectedIdentityAuthType === 'connection_string') {
+        additionalFields.identity_uses_connection_string = true;
+      } else if (connectionMethod === 'connection_string') {
         const connectionString = document.getElementById('sql-connection-string').value.trim();
         if (!connectionString) {
           throw new Error('Please enter a connection string');
@@ -2969,52 +3233,61 @@ export class PluginModalStepper {
       // Authentication configuration
       // Map SQL auth types to schema-compliant auth types
       let schemaAuthType;
-      switch (authType) {
-        case 'username_password':
-          schemaAuthType = 'user';
-          break;
-        case 'service_principal':
-          schemaAuthType = 'servicePrincipal';
-          break;
-        case 'managed_identity':
-          schemaAuthType = 'identity';
-          break;
-        case 'integrated':
-        case 'connection_string_only':
-        default:
-          schemaAuthType = 'identity';
-          break;
-      }
-      auth.type = schemaAuthType;
-      
-      switch (authType) {
-        case 'username_password':
-          const username = document.getElementById('sql-username').value.trim();
-          const password = document.getElementById('sql-password').value.trim();
-          if (!username || !password) {
-            throw new Error('Please enter both username and password');
-          }
-          additionalFields.username = username;
-          additionalFields.password = password;
-          break;
-          
-        case 'service_principal':
-          const clientId = document.getElementById('sql-client-id').value.trim();
-          const clientSecret = document.getElementById('sql-client-secret').value.trim();
-          const tenantId = document.getElementById('sql-tenant-id').value.trim();
-          if (!clientId || !clientSecret || !tenantId) {
-            throw new Error('Please enter client ID, client secret, and tenant ID');
-          }
-          auth.identity = clientId;
-          auth.key = clientSecret;
-          auth.tenantId = tenantId;
-          break;
-          
-        case 'integrated':
-        case 'managed_identity':
-        case 'connection_string_only':
-          // No additional fields needed
-          break;
+      if (selectedIdentity) {
+        identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+        auth.type = 'identity';
+        auth.identity = identityId;
+        additionalFields.identity_auth_type = selectedIdentityAuthType;
+        additionalFields.auth_type = selectedIdentityAuthType;
+      } else {
+        switch (authType) {
+          case 'username_password':
+            schemaAuthType = 'user';
+            break;
+          case 'service_principal':
+            schemaAuthType = 'servicePrincipal';
+            break;
+          case 'managed_identity':
+            schemaAuthType = 'identity';
+            break;
+          case 'integrated':
+          case 'connection_string_only':
+          default:
+            schemaAuthType = 'identity';
+            break;
+        }
+        auth.type = schemaAuthType;
+        additionalFields.auth_type = authType;
+
+        switch (authType) {
+          case 'username_password':
+            const username = document.getElementById('sql-username').value.trim();
+            const password = document.getElementById('sql-password').value.trim();
+            if (!username || !password) {
+              throw new Error('Please enter both username and password');
+            }
+            additionalFields.username = username;
+            additionalFields.password = password;
+            break;
+
+          case 'service_principal':
+            const clientId = document.getElementById('sql-client-id').value.trim();
+            const clientSecret = document.getElementById('sql-client-secret').value.trim();
+            const tenantId = document.getElementById('sql-tenant-id').value.trim();
+            if (!clientId || !clientSecret || !tenantId) {
+              throw new Error('Please enter client ID, client secret, and tenant ID');
+            }
+            auth.identity = clientId;
+            auth.key = clientSecret;
+            auth.tenantId = tenantId;
+            break;
+
+          case 'integrated':
+          case 'managed_identity':
+          case 'connection_string_only':
+            // No additional fields needed
+            break;
+        }
       }
       
       // Plugin-specific settings
@@ -3098,18 +3371,26 @@ export class PluginModalStepper {
       // Collect generic plugin data
       console.log("Collecting generic plugin data");
       endpoint = document.getElementById('plugin-endpoint-generic').value.trim();
-      
+
+      const selectedIdentity = this.getSelectedActionIdentity('generic');
       const authType = document.getElementById('plugin-auth-type-generic').value;
-      auth.type = authType;
-      
-      if (authType === 'key') {
-        auth.key = document.getElementById('plugin-auth-key').value.trim();
-      } else if (authType === 'identity') {
-        auth.identity = document.getElementById('plugin-auth-identity').value.trim();
-      } else if (authType === 'servicePrincipal') {
-        auth.identity = document.getElementById('plugin-auth-identity').value.trim();
-        auth.key = document.getElementById('plugin-auth-key').value.trim();
-        auth.tenantId = document.getElementById('plugin-auth-tenant-id').value.trim();
+      if (selectedIdentity) {
+        identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+        auth.type = 'identity';
+        auth.identity = identityId;
+        additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+      } else {
+        auth.type = authType;
+
+        if (authType === 'key') {
+          auth.key = document.getElementById('plugin-auth-key').value.trim();
+        } else if (authType === 'identity') {
+          auth.identity = document.getElementById('plugin-auth-identity').value.trim();
+        } else if (authType === 'servicePrincipal') {
+          auth.identity = document.getElementById('plugin-auth-identity').value.trim();
+          auth.key = document.getElementById('plugin-auth-key').value.trim();
+          auth.tenantId = document.getElementById('plugin-auth-tenant-id').value.trim();
+        }
       }
     }
     
@@ -3135,7 +3416,7 @@ export class PluginModalStepper {
       throw new Error('Invalid metadata JSON');
     }
     
-    return {
+    const formData = {
       name: document.getElementById('plugin-name').value.trim(),
       displayName: document.getElementById('plugin-display-name').value.trim(),
       type: this.selectedType,
@@ -3145,6 +3426,12 @@ export class PluginModalStepper {
       metadata,
       additionalFields
     };
+
+    if (identityId) {
+      formData.identity_id = identityId;
+    }
+
+    return formData;
   }
 
   generateActionName(displayName) {
@@ -3996,6 +4283,7 @@ export class PluginModalStepper {
     
     // Clear OpenAPI auth fields
     safeSetValue('plugin-auth-type', 'none');
+    safeSetValue('plugin-auth-identity-select');
     safeSetValue('plugin-auth-api-key');
     safeSetValue('plugin-auth-bearer-token');
     safeSetValue('plugin-auth-basic-username');
@@ -4018,6 +4306,7 @@ export class PluginModalStepper {
     // Step 3 fields - Generic Plugin
     safeSetValue('plugin-endpoint-generic');
     safeSetValue('plugin-auth-type-generic', 'none');
+    safeSetValue('plugin-auth-identity-select-generic');
     safeSetValue('plugin-auth-api-key-generic');
     safeSetValue('plugin-auth-bearer-token-generic');
     safeSetValue('plugin-auth-basic-username-generic');
@@ -4033,7 +4322,15 @@ export class PluginModalStepper {
     safeSetValue('sql-username');
     safeSetValue('sql-password');
     safeSetValue('sql-auth-type', 'username_password');
+    safeSetValue('sql-identity-select');
     safeSetValue('sql-database-type', 'sql_server');
+
+    ['plugin-auth-type', 'plugin-auth-type-generic', 'sql-auth-type'].forEach(id => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.disabled = false;
+      }
+    });
 
     // Step 3 fields - Cosmos Plugin
     safeSetValue('cosmos-endpoint');

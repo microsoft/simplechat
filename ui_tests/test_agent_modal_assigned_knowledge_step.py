@@ -1,12 +1,12 @@
 # test_agent_modal_assigned_knowledge_step.py
 """
 UI test for the Assigned Knowledge step in the agent modal.
-Version: 0.241.071
+Version: 0.241.087
 Implemented in: 0.241.068
 
 This test ensures the agent wizard renders searchable Assigned Knowledge pickers,
-shows resolved documents, and persists selected knowledge and user-context policy
-values into additional settings.
+shows resolved documents, and persists selected knowledge, assigned URL sources,
+and user-context policy values into additional settings.
 """
 
 import json
@@ -107,6 +107,11 @@ def test_agent_modal_assigned_knowledge_step():
             page.locator("#agent-assigned-knowledge-user-context-enabled").check()
             expect(page.locator("#agent-assigned-knowledge-user-action-controls")).to_be_visible()
             page.locator("#agent-assigned-knowledge-user-action-compare").uncheck()
+            page.locator("#agent-assigned-knowledge-web-source-input").fill("https://example.com/guide#section")
+            page.select_option("#agent-assigned-knowledge-web-source-mode", value="deep_research")
+            page.locator("#agent-assigned-knowledge-web-source-add").click()
+            expect(page.locator("#agent-assigned-knowledge-web-source-list")).to_contain_text("https://example.com/guide")
+            expect(page.locator("#agent-assigned-knowledge-web-source-list")).to_contain_text("Deep Research")
             expect(page.locator("#agent-assigned-knowledge-sources")).to_contain_text("Public One")
             expect(page.locator("#agent-assigned-knowledge-tags")).to_contain_text("Finance")
 
@@ -143,6 +148,9 @@ def test_agent_modal_assigned_knowledge_step():
             assert assigned_knowledge["scopes"]["public_workspace_ids"] == ["public-1"]
             assert assigned_knowledge["document_ids"] == ["public-doc"]
             assert assigned_knowledge["tags"] == ["Finance"]
+            assert assigned_knowledge["web_sources"] == [
+                {"url": "https://example.com/guide", "mode": "deep_research"}
+            ]
             assert assigned_knowledge["allow_user_workspace_context"] is True
             assert assigned_knowledge["allowed_user_workspace_actions"] == ["search", "analyze"]
 
@@ -151,6 +159,8 @@ def test_agent_modal_assigned_knowledge_step():
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 public workspace")
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 explicit document")
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 dynamic tag")
+            expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 assigned URL")
+            expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 Deep Research URL")
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("User context: Search, Analyze")
         finally:
             context.close()

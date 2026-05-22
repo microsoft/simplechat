@@ -5,6 +5,7 @@ from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
 from functions_web_search_test import run_web_search_connection_test
+from functions_url_access_policy_test import run_url_access_policy_test
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_admin_release_notifications_registration,
@@ -410,6 +411,9 @@ def register_route_backend_settings(app):
 
             elif test_type == 'web_search':
                 return _test_web_search_connection(data)
+
+            elif test_type == 'url_access_policy':
+                return _test_url_access_policy(data)
 
             elif test_type == 'azure_ai_search':
                 return _test_azure_ai_search_connection(data)
@@ -1125,6 +1129,15 @@ def _test_safety_connection(payload):
 def _test_web_search_connection(payload):
     """Attempt to run the configured Web Search Foundry agent with ephemeral settings."""
     response_payload, status_code = run_web_search_connection_test(
+        payload,
+        global_settings=get_settings()
+    )
+    return jsonify(response_payload), status_code
+
+
+def _test_url_access_policy(payload):
+    """Evaluate a URL against the current URL Access policy form values."""
+    response_payload, status_code = run_url_access_policy_test(
         payload,
         global_settings=get_settings()
     )

@@ -127,6 +127,95 @@ function createIconButton(iconClass, label, buttonClass = 'btn-outline-secondary
     return button;
 }
 
+function getFieldValue(fieldId) {
+    return document.getElementById(fieldId)?.value || '';
+}
+
+function isFieldChecked(fieldId) {
+    return Boolean(document.getElementById(fieldId)?.checked);
+}
+
+function setButtonBusy(button, isBusy, busyText) {
+    if (!button) {
+        return;
+    }
+
+    if (!button.dataset.originalText) {
+        button.dataset.originalText = button.textContent.trim();
+    }
+
+    button.disabled = isBusy;
+    button.textContent = isBusy ? busyText : button.dataset.originalText;
+}
+
+function createTextElement(tagName, className, text) {
+    const element = document.createElement(tagName);
+    if (className) {
+        element.className = className;
+    }
+    element.textContent = text || '';
+    return element;
+}
+
+function appendTextList(container, title, items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return;
+    }
+
+    container.appendChild(createTextElement('div', 'fw-semibold mt-2', title));
+    const list = document.createElement('ul');
+    list.className = 'mb-0 ps-3';
+    items.forEach(item => {
+        const listItem = document.createElement('li');
+        listItem.textContent = String(item || '');
+        list.appendChild(listItem);
+    });
+    container.appendChild(list);
+}
+
+function renderAdminTestLoading(container, message) {
+    if (!container) {
+        return;
+    }
+
+    container.replaceChildren();
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-info mb-0';
+    alert.textContent = message;
+    container.appendChild(alert);
+}
+
+function renderAdminTestResult(container, resultOptions) {
+    if (!container) {
+        return;
+    }
+
+    const variantMap = {
+        success: 'success',
+        warning: 'warning',
+        danger: 'danger',
+        info: 'info'
+    };
+    const variant = variantMap[resultOptions.variant] || 'info';
+    container.replaceChildren();
+
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${variant} mb-0`;
+    alert.appendChild(createTextElement('div', 'fw-semibold', resultOptions.title));
+
+    if (resultOptions.message) {
+        alert.appendChild(createTextElement('div', 'mt-1', resultOptions.message));
+    }
+    if (resultOptions.preview) {
+        alert.appendChild(createTextElement('div', 'fw-semibold mt-2', 'Response Preview'));
+        alert.appendChild(createTextElement('div', 'small text-break', resultOptions.preview));
+    }
+
+    appendTextList(alert, 'Details', resultOptions.details);
+    appendTextList(alert, 'Guidance', resultOptions.guidance);
+    container.appendChild(alert);
+}
+
 function setupDeepResearchPolicyEditors() {
     document.querySelectorAll('[data-deep-research-policy], [data-url-access-policy]').forEach(editor => {
         const policyName = editor.dataset.urlAccessPolicy || editor.dataset.deepResearchPolicy;
@@ -3455,6 +3544,147 @@ function setupWorkspaceDependencyValidation() {
 }
 
 function setupTestButtons() {
+
+    const buildWebSearchPayload = () => ({
+        test_type: 'web_search',
+        enabled: isFieldChecked('enable_web_search'),
+        consent_accepted: getFieldValue('web_search_consent_accepted') === 'true',
+        query: getFieldValue('web_search_test_query'),
+        foundry: {
+            endpoint: getFieldValue('web_search_foundry_endpoint'),
+            api_version: getFieldValue('web_search_foundry_api_version'),
+            agent_id: getFieldValue('web_search_foundry_agent_id'),
+            authentication_type: getFieldValue('web_search_foundry_auth_type') || 'managed_identity',
+            managed_identity_type: getFieldValue('web_search_foundry_managed_identity_type') || 'system_assigned',
+            managed_identity_client_id: getFieldValue('web_search_foundry_managed_identity_client_id'),
+            tenant_id: getFieldValue('web_search_foundry_tenant_id'),
+            client_id: getFieldValue('web_search_foundry_client_id'),
+            client_secret: getFieldValue('web_search_foundry_client_secret'),
+            cloud: getFieldValue('web_search_foundry_cloud'),
+            authority: getFieldValue('web_search_foundry_authority')
+        }
+    });
+
+    const buildUrlAccessPolicyPayload = () => ({
+        test_type: 'url_access_policy',
+        enabled: isFieldChecked('enable_url_access'),
+        url: getFieldValue('url_access_policy_test_url'),
+        source_review_allow_internal_hosts: isFieldChecked('source_review_allow_internal_hosts'),
+        url_access_allowed_domains: getFieldValue('url_access_allowed_domains'),
+        url_access_blocked_domains: getFieldValue('url_access_blocked_domains')
+    });
+
+    const runAdminTestRequest = async (payload) => {
+        const response = await fetch('/api/admin/settings/test_connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        let data = {};
+        try {
+            data = await response.json();
+        } catch (error) {
+            data = { error: error.message };
+        }
+        return { response, data };
+    };
+
+    const renderWebSearchTestData = (container, response, data) => {
+        if (response.ok && data.success !== false) {
+            const isWarning = data.status === 'warning';
+            renderAdminTestResult(container, {
+                variant: isWarning ? 'warning' : 'success',
+                title: isWarning ? 'Web Search test completed with warnings' : 'Web Search test passed',
+                message: data.message,
+                preview: data.response_preview,
+                details: data.details,
+                guidance: data.guidance
+            });
+            return;
+        }
+
+        renderAdminTestResult(container, {
+            variant: 'danger',
+            title: 'Web Search test failed',
+            message: data.message || data.error || 'Error testing Web Search.',
+            details: data.details,
+            guidance: data.guidance
+        });
+    };
+
+    const renderUrlAccessPolicyTestData = (container, response, data) => {
+        if (response.ok && data.success !== false) {
+            renderAdminTestResult(container, {
+                variant: data.allowed ? 'success' : 'warning',
+                title: data.allowed ? 'URL Access policy allowed this URL' : 'URL Access policy blocked this URL',
+                message: data.message,
+                details: data.details,
+                guidance: data.guidance
+            });
+            return;
+        }
+
+        renderAdminTestResult(container, {
+            variant: 'danger',
+            title: 'URL Access policy test failed',
+            message: data.message || data.error || 'Error testing URL Access policy.',
+            details: data.details,
+            guidance: data.guidance
+        });
+    };
+
+    const runWebSearchTest = async (button) => {
+        const resultDiv = document.getElementById('test_web_search_result');
+        renderAdminTestLoading(resultDiv, 'Running Web Search test...');
+        setButtonBusy(button, true, 'Testing...');
+
+        try {
+            const { response, data } = await runAdminTestRequest(buildWebSearchPayload());
+            renderWebSearchTestData(resultDiv, response, data);
+        } catch (error) {
+            renderAdminTestResult(resultDiv, {
+                variant: 'danger',
+                title: 'Web Search test failed',
+                message: error.message
+            });
+        } finally {
+            setButtonBusy(button, false);
+        }
+    };
+
+    const runUrlAccessPolicyTest = async (button) => {
+        const resultDiv = document.getElementById('test_url_access_policy_result');
+        renderAdminTestLoading(resultDiv, 'Checking URL Access policy...');
+        setButtonBusy(button, true, 'Checking...');
+
+        try {
+            const { response, data } = await runAdminTestRequest(buildUrlAccessPolicyPayload());
+            renderUrlAccessPolicyTestData(resultDiv, response, data);
+        } catch (error) {
+            renderAdminTestResult(resultDiv, {
+                variant: 'danger',
+                title: 'URL Access policy test failed',
+                message: error.message
+            });
+        } finally {
+            setButtonBusy(button, false);
+        }
+    };
+
+    const testWebSearchBtn = document.getElementById('test_web_search_button');
+    if (testWebSearchBtn) {
+        testWebSearchBtn.addEventListener('click', () => runWebSearchTest(testWebSearchBtn));
+    }
+
+    const rerunWebSearchBtn = document.getElementById('rerun_web_search_test_button');
+    if (rerunWebSearchBtn) {
+        rerunWebSearchBtn.addEventListener('click', () => runWebSearchTest(rerunWebSearchBtn));
+    }
+
+    const testUrlAccessPolicyBtn = document.getElementById('test_url_access_policy_button');
+    if (testUrlAccessPolicyBtn) {
+        testUrlAccessPolicyBtn.addEventListener('click', () => runUrlAccessPolicyTest(testUrlAccessPolicyBtn));
+    }
 
     const testGptBtn = document.getElementById('test_gpt_button');
     if (testGptBtn) {

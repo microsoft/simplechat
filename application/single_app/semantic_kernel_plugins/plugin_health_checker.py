@@ -86,10 +86,14 @@ class PluginHealthChecker:
             connection_string = manifest.get('connection_string') or additional_fields.get('connection_string')
             server = manifest.get('server') or additional_fields.get('server')
             database = manifest.get('database') or additional_fields.get('database')
+            identity_uses_connection_string = (
+                bool(manifest.get('identity_id'))
+                and additional_fields.get('identity_auth_type') == 'connection_string'
+            )
 
             if not database_type:
                 errors.append(f"SQL plugin requires 'database_type' field")
-            if not connection_string and not (server and database):
+            if not connection_string and not identity_uses_connection_string and not (server and database):
                 errors.append("SQL plugin requires either 'connection_string' or 'server' and 'database' fields")
 
         elif plugin_type == 'cosmos_query':

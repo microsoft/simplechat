@@ -1,12 +1,12 @@
 # test_assigned_knowledge_agent_policy.py
 """
 Functional test for Assigned Knowledge agent policy.
-Version: 0.241.071
+Version: 0.241.087
 Implemented in: 0.241.068
 
 This test ensures that Assigned Knowledge is normalized, constrained by
 agent scope, converted into trusted runtime search filters, and keeps
-user workspace context opt-in by agent policy.
+user workspace context and assigned web sources governed by agent policy.
 """
 
 import os
@@ -21,6 +21,7 @@ if str(APP_PATH) not in sys.path:
 
 import functions_assigned_knowledge as assigned_knowledge
 import functions_search
+import functions_source_review
 
 
 TEST_USER_ID = "assigned-knowledge-user"
@@ -200,6 +201,59 @@ def test_user_workspace_context_policy_is_normalized_for_runtime():
     assert filters["allowed_user_workspace_actions"] == ["search", "compare"]
 
 
+def test_assigned_web_sources_are_normalized_for_runtime():
+    """Validate Assigned Knowledge can include trusted URL and Deep Research sources."""
+    raw_config = {
+        "enabled": True,
+        "web_sources": [
+            {"url": "https://Example.com/path#fragment", "mode": "url_access"},
+            {"url": "https://example.com/path", "mode": "deep_research"},
+            {"url": "javascript:alert(1)", "mode": "deep_research"},
+        ],
+    }
+
+    with _mock_policy_dependencies():
+        normalized = assigned_knowledge.validate_assigned_knowledge_for_agent(
+            raw_config,
+            user_id=TEST_USER_ID,
+            agent_scope="personal",
+        )
+
+    assert normalized["web_sources"] == [{
+        "url": "https://example.com/path",
+        "mode": "deep_research",
+    }]
+
+    filters = assigned_knowledge.build_assigned_knowledge_runtime_filters({
+        "name": "WebPolicyAgent",
+        "other_settings": {"assigned_knowledge": normalized},
+    })
+    assert filters["enabled"] is True
+    assert filters["doc_scope"] is None
+    assert filters["has_workspace_knowledge"] is False
+    assert filters["has_web_sources"] is True
+    assert filters["web_sources"] == normalized["web_sources"]
+
+
+def test_source_review_collects_assigned_seed_urls():
+    """Validate assigned URL seeds are additive with user-pasted and citation URLs."""
+    seed_urls = functions_source_review.collect_source_review_seed_urls(
+        "Please review https://example.com/user",
+        [{"url": "https://example.com/citation"}],
+        direct_url_limit=10,
+        additional_seed_urls=[
+            "https://example.com/assigned#section",
+            "https://example.com/user",
+        ],
+    )
+
+    assert seed_urls == [
+        "https://example.com/user",
+        "https://example.com/assigned",
+        "https://example.com/citation",
+    ]
+
+
 def test_assigned_knowledge_search_filter_uses_additive_document_semantics():
     """Validate explicit documents are OR'd with dynamic tag matches for Assigned Knowledge."""
     document_filter = "document_id eq 'doc-explicit'"
@@ -238,6 +292,9 @@ def test_apply_assigned_knowledge_writes_canonical_other_settings():
                 ],
                 "selected_document_ids": ["personal-doc", "public-doc"],
                 "tags": ["Finance"],
+                "web_sources": [
+                    {"url": "https://example.com/guide", "mode": "deep_research"},
+                ],
                 "allow_user_workspace_context": True,
                 "allowed_user_workspace_actions": ["analyze"],
             },
@@ -258,6 +315,10 @@ def test_apply_assigned_knowledge_writes_canonical_other_settings():
     assert stored_config["scopes"]["personal"] is True
     assert stored_config["scopes"]["public_workspace_ids"] == ["public-1"]
     assert stored_config["document_ids"] == ["personal-doc", "public-doc"]
+    assert stored_config["web_sources"] == [{
+        "url": "https://example.com/guide",
+        "mode": "deep_research",
+    }]
     assert stored_config["allow_user_workspace_context"] is True
     assert stored_config["allowed_user_workspace_actions"] == ["analyze"]
 
@@ -287,6 +348,8 @@ def run_all_tests():
         test_global_agent_policy_rejects_non_public_knowledge,
         test_runtime_filters_use_agent_assigned_knowledge_only,
         test_user_workspace_context_policy_is_normalized_for_runtime,
+        test_assigned_web_sources_are_normalized_for_runtime,
+        test_source_review_collects_assigned_seed_urls,
         test_assigned_knowledge_search_filter_uses_additive_document_semantics,
         test_apply_assigned_knowledge_writes_canonical_other_settings,
         test_public_workspace_search_filter_respects_user_visibility,

@@ -115,6 +115,12 @@
                     <option value="oauth2">OAuth2</option>
                   </select>
                 </div>
+
+                <div class="mb-3 d-none" id="openapi-action-identity-group">
+                  <label for="plugin-auth-identity-select" class="form-label">Reusable Identity</label>
+                  <select class="form-select" id="plugin-auth-identity-select"></select>
+                  <div class="form-text" id="plugin-auth-identity-status"></div>
+                </div>
                 
                 <!-- API Key fields -->
                 <div class="input-group mb-2" id="auth-api-key-location-group" style="display:none;">
@@ -174,6 +180,11 @@
                   <option value="user">User</option>
                   <option value="servicePrincipal">Service Principal</option>
                 </select>
+              </div>
+              <div class="mb-3 d-none" id="generic-action-identity-group">
+                <label for="plugin-auth-identity-select-generic" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="plugin-auth-identity-select-generic"></select>
+                <div class="form-text" id="plugin-auth-identity-status-generic"></div>
               </div>
               <div class="input-group mb-2 d-none" id="auth-identity-group">
                 <span class="input-group-text" id="auth-identity-label">Identity</span>
@@ -536,6 +547,12 @@
                   <option value="service_principal">Service Principal (Azure)</option>
                   <option value="connection_string_only">Connection String Only</option>
                 </select>
+              </div>
+
+              <div class="mb-3 d-none" id="sql-action-identity-group">
+                <label for="sql-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="sql-identity-select"></select>
+                <div class="form-text" id="sql-identity-status"></div>
               </div>
               
               <!-- Username/Password fields -->

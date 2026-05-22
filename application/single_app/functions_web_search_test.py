@@ -257,6 +257,13 @@ def _preview_text(value: Any, limit: int = 700) -> str:
     return f"{text[:limit]}..."
 
 
+def _resolve_test_query(payload: Dict[str, Any]) -> str:
+    query = _safe_str(payload.get("query"))
+    if not query:
+        return WEB_SEARCH_TEST_QUERY
+    return query[:500]
+
+
 def run_web_search_connection_test(
     payload: Dict[str, Any],
     *,
@@ -291,7 +298,8 @@ def run_web_search_connection_test(
             "guidance": validation_errors,
         }, 400
 
-    message_history = [ChatMessageContent(role="user", content=WEB_SEARCH_TEST_QUERY)]
+    test_query = _resolve_test_query(payload)
+    message_history = [ChatMessageContent(role="user", content=test_query)]
     metadata = {"source": "admin_settings_web_search_test"}
 
     try:

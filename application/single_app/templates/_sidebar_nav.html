@@ -151,6 +151,13 @@
                 </a>
               </li>
               {% endif %}
+              {% if file_sync_enabled or settings.enable_semantic_kernel or settings.enable_multi_model_endpoints %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab">
+                  <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
+                </a>
+              </li>
+              {% endif %}
             </ul>
             {% else %}
             <!-- Regular Personal workspace link when not on workspace page -->
@@ -202,6 +209,13 @@
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="sync-tab">
                     <i class="bi bi-arrow-repeat me-2" style="font-size: 0.8em;"></i><span class="nav-text">Sync</span>
+                  </a>
+                </li>
+              {% endif %}
+              {% if file_sync_enabled or settings.enable_semantic_kernel or settings.enable_multi_model_endpoints %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab">
+                    <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
                   </a>
                 </li>
               {% endif %}
@@ -608,6 +622,11 @@
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="file-sync">
               <i class="bi bi-arrow-repeat me-2"></i><span class="nav-text">File Sync</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspace-identities">
+              <i class="bi bi-person-badge me-2"></i><span class="nav-text">Global Identities</span>
             </a>
           </li>
           <li class="nav-item">

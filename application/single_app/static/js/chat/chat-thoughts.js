@@ -9,6 +9,7 @@ let lastSeenThoughtMessageId = null;
 let activeStreamingThoughtTargetId = null;
 let activeStreamingServerMessageId = null;
 const streamingAgentActivityStates = new Map();
+const streamingSourceReviewStates = new Map();
 const progressDetailsExpandedStates = new Map();
 let progressDetailsToggleListenerAttached = false;
 
@@ -22,6 +23,8 @@ function getThoughtIcon(stepType) {
         'search': 'bi-search',
         'tabular_analysis': 'bi-table',
         'web_search': 'bi-globe',
+        'deep_research': 'bi-binoculars',
+        'url_access': 'bi-link-45deg',
         'document_analysis': 'bi-journal-richtext',
         'agent_tool_call': 'bi-robot',
         'generation': 'bi-lightning',
@@ -264,6 +267,26 @@ function createAgentActivityState() {
     };
 }
 
+function createSourceReviewProgressState() {
+    return {
+        mode: '',
+        stage: 'starting',
+        latestContent: '',
+        latestDetail: '',
+        plannedQueries: 0,
+        discoveredUrls: 0,
+        reviewedPages: 0,
+        seedPages: 0,
+        childPages: 0,
+        skippedPages: 0,
+        loadMoreClicks: 0,
+        plannerStatus: '',
+        noEvidence: false,
+        completed: false,
+        maxPercent: 0,
+    };
+}
+
 function isTabularActivityPayload(activity) {
     if (!activity || typeof activity !== 'object') {
         return false;
@@ -299,12 +322,29 @@ function isTabularThought(thoughtData) {
     return isTabularActivityPayload(thoughtData?.activity);
 }
 
+function isSourceReviewThought(thoughtData, state = null) {
+    const stepType = String(thoughtData?.step_type || '').trim().toLowerCase();
+    if (stepType === 'deep_research' || stepType === 'url_access' || stepType === 'source_review') {
+        return true;
+    }
+
+    return Boolean(state?.mode && stepType === 'generation');
+}
+
 function resetStreamingAgentActivityState(targetMessageId = null) {
     if (!targetMessageId) {
         return;
     }
 
     streamingAgentActivityStates.delete(targetMessageId);
+}
+
+function resetStreamingSourceReviewState(targetMessageId = null) {
+    if (!targetMessageId) {
+        return;
+    }
+
+    streamingSourceReviewStates.delete(targetMessageId);
 }
 
 function getStreamingAgentActivityState(targetMessageId) {
@@ -317,6 +357,18 @@ function getStreamingAgentActivityState(targetMessageId) {
     }
 
     return streamingAgentActivityStates.get(targetMessageId);
+}
+
+function getStreamingSourceReviewState(targetMessageId) {
+    if (!targetMessageId) {
+        return null;
+    }
+
+    if (!streamingSourceReviewStates.has(targetMessageId)) {
+        streamingSourceReviewStates.set(targetMessageId, createSourceReviewProgressState());
+    }
+
+    return streamingSourceReviewStates.get(targetMessageId);
 }
 
 function getNormalizedActivityStatus(activity) {
@@ -423,6 +475,295 @@ function buildAgentActivityStateFromThoughts(thoughts) {
     const state = createAgentActivityState();
     (thoughts || []).forEach(thought => updateAgentActivityState(state, thought, false));
     return state;
+}
+
+function parseIntegerFromText(value, pattern) {
+    const match = String(value || '').match(pattern);
+    if (!match) {
+        return 0;
+    }
+
+    const parsedValue = Number.parseInt(match[1], 10);
+    return Number.isFinite(parsedValue) ? parsedValue : 0;
+}
+
+function parseSourceReviewDetail(detail) {
+    const detailText = String(detail || '');
+    const parsedDetail = {};
+    detailText.split(',').forEach(part => {
+        const [rawKey, rawValue] = part.split('=');
+        const key = String(rawKey || '').trim();
+        const value = String(rawValue || '').trim();
+        if (!key) {
+            return;
+        }
+        parsedDetail[key] = value;
+    });
+    return parsedDetail;
+}
+
+function computeSourceReviewProgressPercent(state) {
+    const stagePercent = {
+        starting: 8,
+        planning_searches: 18,
+        web_search_complete: 42,
+        reviewing_sources: state.mode === 'url_access' ? 55 : 68,
+        evidence_limited: 84,
+        evidence_ready: 86,
+        generating_response: state.completed ? 100 : 94,
+    };
+    const percent = stagePercent[state.stage] || stagePercent.starting;
+    return normalizeProgressPercent(Math.max(percent, state.maxPercent || 0));
+}
+
+function updateSourceReviewProgressState(state, thoughtData, preserveMaxPercent = true) {
+    if (!state || !thoughtData) {
+        return state;
+    }
+
+    const stepType = String(thoughtData.step_type || '').trim().toLowerCase();
+    const content = String(thoughtData.content || '').trim();
+    const normalizedContent = content.toLowerCase();
+    const detail = String(thoughtData.detail || '').trim();
+
+    if (stepType === 'deep_research') {
+        state.mode = 'deep_research';
+    } else if (stepType === 'url_access') {
+        state.mode = 'url_access';
+    } else if (stepType === 'source_review' && !state.mode) {
+        state.mode = 'deep_research';
+    }
+
+    if (content) {
+        state.latestContent = content;
+    }
+    if (detail) {
+        state.latestDetail = detail;
+    }
+
+    if (normalizedContent.includes('planning deep research web searches')) {
+        state.stage = 'planning_searches';
+    } else if (normalizedContent.includes('ran') && normalizedContent.includes('deep research web search')) {
+        state.stage = 'web_search_complete';
+        state.plannedQueries = parseIntegerFromText(content, /ran\s+(\d+)\s+deep research web search/i) || state.plannedQueries;
+        state.discoveredUrls = parseIntegerFromText(detail, /discovered_urls=(\d+)/i) || state.discoveredUrls;
+    } else if (normalizedContent.includes('reviewing source pages')) {
+        state.stage = 'reviewing_sources';
+    } else if (normalizedContent.includes('reviewing pasted urls')) {
+        state.mode = state.mode || 'url_access';
+        state.stage = 'reviewing_sources';
+    } else if (normalizedContent.includes('reviewed') && normalizedContent.includes('url source pages')) {
+        const parsedDetail = parseSourceReviewDetail(detail);
+        state.stage = 'evidence_ready';
+        state.reviewedPages = parseIntegerFromText(content, /reviewed\s+(\d+)\s+url source pages/i) || state.reviewedPages;
+        state.seedPages = Number.parseInt(parsedDetail.seed || '0', 10) || state.seedPages;
+        state.childPages = Number.parseInt(parsedDetail.child || '0', 10) || state.childPages;
+        state.skippedPages = Number.parseInt(parsedDetail.skipped || '0', 10) || state.skippedPages;
+        state.loadMoreClicks = Number.parseInt(parsedDetail.load_more || '0', 10) || state.loadMoreClicks;
+        state.plannerStatus = parsedDetail.planner || state.plannerStatus;
+    } else if (normalizedContent.includes('did not add page evidence')) {
+        state.stage = 'evidence_limited';
+        state.noEvidence = true;
+    } else if (stepType === 'generation' && state.mode) {
+        state.stage = 'generating_response';
+        if (normalizedContent.includes('responded')) {
+            state.completed = true;
+        }
+    }
+
+    if (preserveMaxPercent) {
+        state.maxPercent = Math.max(state.maxPercent, computeSourceReviewProgressPercent(state));
+    }
+
+    return state;
+}
+
+function buildSourceReviewProgressStateFromThoughts(thoughts) {
+    const state = createSourceReviewProgressState();
+    (thoughts || []).forEach(thought => {
+        if (isSourceReviewThought(thought, state)) {
+            updateSourceReviewProgressState(state, thought, false);
+        }
+    });
+    return state;
+}
+
+function hasSourceReviewProgress(state) {
+    return Boolean(state?.mode);
+}
+
+function getSourceReviewStepStatus(state, stepKey) {
+    const stageOrder = state.mode === 'url_access'
+        ? ['reviewing_sources', 'evidence_ready', 'generating_response']
+        : ['planning_searches', 'web_search_complete', 'reviewing_sources', 'evidence_ready', 'generating_response'];
+    const normalizedStage = state.stage === 'evidence_limited' ? 'evidence_ready' : state.stage;
+    const currentIndex = stageOrder.indexOf(normalizedStage);
+    const stepIndex = stageOrder.indexOf(stepKey);
+
+    if (stepIndex < 0) {
+        return 'pending';
+    }
+    if (state.completed || stepIndex < currentIndex) {
+        return 'completed';
+    }
+    if (stepIndex === currentIndex) {
+        return 'running';
+    }
+    return 'pending';
+}
+
+function renderSourceReviewStep(label, detail, status) {
+    const iconClass = status === 'completed'
+        ? 'bi-check-circle-fill text-success'
+        : status === 'running'
+        ? 'bi-arrow-repeat text-info'
+        : 'bi-circle text-muted';
+    const rowClass = status === 'running' ? 'text-body' : 'text-muted';
+
+    return `<div class="d-flex align-items-start gap-2 py-1 ${rowClass}">
+        <i class="bi ${iconClass} mt-1" aria-hidden="true"></i>
+        <div class="flex-grow-1">
+            <div class="small fw-semibold">${escapeHtml(label)}</div>
+            <div class="small">${escapeHtml(detail)}</div>
+        </div>
+    </div>`;
+}
+
+function buildSourceReviewSteps(state) {
+    const reviewedDetail = state.reviewedPages > 0 || state.skippedPages > 0
+        ? `${state.reviewedPages} reviewed | ${state.seedPages} seed | ${state.childPages} linked | ${state.skippedPages} skipped`
+        : 'Fetching, validating, and extracting source pages';
+    const evidenceDetail = state.noEvidence
+        ? (state.latestDetail || 'No supporting page evidence was added')
+        : state.reviewedPages > 0
+        ? `Evidence ready from ${state.reviewedPages} reviewed page${state.reviewedPages === 1 ? '' : 's'}`
+        : 'Preparing evidence for the answer';
+
+    if (state.mode === 'url_access') {
+        return [
+            {
+                key: 'reviewing_sources',
+                label: 'Review pasted URLs',
+                detail: reviewedDetail,
+            },
+            {
+                key: 'evidence_ready',
+                label: 'Extract supporting evidence',
+                detail: evidenceDetail,
+            },
+            {
+                key: 'generating_response',
+                label: 'Prepare response',
+                detail: 'Using the reviewed URL evidence in the answer',
+            },
+        ];
+    }
+
+    return [
+        {
+            key: 'planning_searches',
+            label: 'Plan search queries',
+            detail: state.plannedQueries > 0
+                ? `${state.plannedQueries} planned search quer${state.plannedQueries === 1 ? 'y' : 'ies'}`
+                : 'Choosing focused web searches',
+        },
+        {
+            key: 'web_search_complete',
+            label: 'Run web searches',
+            detail: state.discoveredUrls > 0
+                ? `${state.discoveredUrls} discovered URL${state.discoveredUrls === 1 ? '' : 's'}`
+                : 'Finding candidate sources',
+        },
+        {
+            key: 'reviewing_sources',
+            label: 'Review source pages',
+            detail: reviewedDetail,
+        },
+        {
+            key: 'evidence_ready',
+            label: 'Assemble evidence',
+            detail: evidenceDetail,
+        },
+        {
+            key: 'generating_response',
+            label: 'Prepare response',
+            detail: 'Grounding the answer in reviewed sources',
+        },
+    ];
+}
+
+function renderSourceReviewProgress(state, options = {}) {
+    const isLive = options.live === true;
+    const isUrlAccess = state.mode === 'url_access';
+    const percent = computeSourceReviewProgressPercent(state);
+    const hasIssue = state.noEvidence || (state.skippedPages > 0 && state.reviewedPages === 0);
+    const status = state.completed
+        ? (hasIssue ? 'completed_with_failures' : 'completed')
+        : 'running';
+    const title = isUrlAccess ? 'URL Access' : 'Deep Research';
+    const progressLabel = isUrlAccess ? 'URL Access evidence review progress' : 'Deep Research evidence review progress';
+    const iconClass = isUrlAccess ? 'bi-link-45deg text-info' : 'bi-binoculars text-info';
+    const plannerDetail = state.plannerStatus
+        ? `Planner: ${state.plannerStatus}`
+        : (isUrlAccess ? 'Server-side URL policy checks' : 'Bounded source-page review');
+    const summaryParts = [];
+
+    if (state.plannedQueries > 0) {
+        summaryParts.push(`${state.plannedQueries} search quer${state.plannedQueries === 1 ? 'y' : 'ies'}`);
+    }
+    if (state.discoveredUrls > 0) {
+        summaryParts.push(`${state.discoveredUrls} URL${state.discoveredUrls === 1 ? '' : 's'} found`);
+    }
+    if (state.reviewedPages > 0 || state.skippedPages > 0) {
+        summaryParts.push(`${state.reviewedPages} reviewed`);
+        summaryParts.push(`${state.skippedPages} skipped`);
+    }
+    if (state.loadMoreClicks > 0) {
+        summaryParts.push(`${state.loadMoreClicks} load-more click${state.loadMoreClicks === 1 ? '' : 's'}`);
+    }
+    if (state.completed) {
+        summaryParts.push(hasIssue ? 'Evidence limited' : 'Evidence ready');
+    }
+
+    const summaryText = summaryParts.join(' | ') || (isUrlAccess ? 'Checking pasted URLs for usable evidence' : 'Planning, searching, and reviewing source pages');
+    const currentText = state.latestContent || (isUrlAccess ? 'Reviewing pasted URLs' : 'Planning Deep Research');
+    const stepsHtml = buildSourceReviewSteps(state)
+        .map(step => renderSourceReviewStep(step.label, step.detail, getSourceReviewStepStatus(state, step.key)))
+        .join('');
+    const cardBorderClass = status === 'completed'
+        ? 'border-success-subtle'
+        : hasIssue && state.completed
+        ? 'border-warning-subtle'
+        : 'border-info-subtle';
+    const badgeClass = state.completed
+        ? (hasIssue ? 'text-bg-warning text-dark' : 'text-bg-success')
+        : 'text-bg-light border';
+    const badgeText = state.completed ? (hasIssue ? 'Limited' : 'Ready') : `${percent}%`;
+
+    return `<div class="streaming-thought-display source-review-progress-card" data-source-review-progress-mode="${escapeHtml(state.mode)}" data-source-review-progress-state="${escapeHtml(status)}" data-source-review-progress-percent="${percent}">
+        <div class="card ${cardBorderClass} shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="d-flex align-items-start gap-2 flex-grow-1">
+                        <i class="bi ${iconClass} mt-1"></i>
+                        <div>
+                            <div class="small fw-semibold text-body">${escapeHtml(title)}</div>
+                            <div class="text-muted small">${escapeHtml(currentText)}</div>
+                        </div>
+                    </div>
+                    <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+                </div>
+                <div class="text-muted small mb-2">${escapeHtml(summaryText)}</div>
+                <div class="mb-3">
+                    ${renderProgressBar(percent, status, hasIssue ? 1 : 0, progressLabel)}
+                </div>
+                <div class="border rounded-3 bg-body-tertiary px-2 py-1 mb-2">
+                    ${stepsHtml}
+                </div>
+                <div class="small text-muted">${escapeHtml(isLive && !state.completed ? plannerDetail : (state.latestDetail || plannerDetail))}</div>
+            </div>
+        </div>
+    </div>`;
 }
 
 function computeAgentActivityPercent(state, counters, forceCompleted = false) {
@@ -653,6 +994,7 @@ export function beginStreamingThoughtSession(targetMessageId) {
     activeStreamingServerMessageId = null;
 
     resetStreamingAgentActivityState(activeStreamingThoughtTargetId);
+    resetStreamingSourceReviewState(activeStreamingThoughtTargetId);
     resetStreamingPlaceholderState(getStreamingMessageElement(activeStreamingThoughtTargetId));
 }
 
@@ -663,6 +1005,7 @@ export function clearStreamingThoughtSession(targetMessageId = null) {
 
     const messageIdToReset = targetMessageId || activeStreamingThoughtTargetId;
     resetStreamingAgentActivityState(messageIdToReset);
+    resetStreamingSourceReviewState(messageIdToReset);
     resetStreamingPlaceholderState(getStreamingMessageElement(messageIdToReset));
 
     activeStreamingThoughtTargetId = null;
@@ -676,6 +1019,7 @@ export function markStreamingThoughtContentStarted(targetMessageId) {
     }
 
     resetStreamingAgentActivityState(targetMessageId);
+    resetStreamingSourceReviewState(targetMessageId);
     messageElement.dataset.streamingHasContent = 'true';
     delete messageElement.dataset.streamingThoughtIndex;
     delete messageElement.dataset.streamingThoughtSignature;
@@ -769,6 +1113,15 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
     if (thoughtData.progress && typeof thoughtData.progress === 'object') {
         contentElement.innerHTML = renderDocumentAnalysisProgress(thoughtData);
         return;
+    }
+
+    const sourceReviewState = getStreamingSourceReviewState(activeStreamingThoughtTargetId);
+    if (isSourceReviewThought(thoughtData, sourceReviewState)) {
+        updateSourceReviewProgressState(sourceReviewState, thoughtData);
+        if (hasSourceReviewProgress(sourceReviewState)) {
+            contentElement.innerHTML = renderSourceReviewProgress(sourceReviewState, { live: true });
+            return;
+        }
     }
 
     const activityState = getStreamingAgentActivityState(activeStreamingThoughtTargetId);
@@ -897,7 +1250,12 @@ function renderThoughtsList(thoughts) {
     let html = '<div class="thoughts-list">';
     const summaryCards = [];
     const latestProgressThought = [...thoughts].reverse().find(thought => thought.progress && typeof thought.progress === 'object');
+    const sourceReviewState = buildSourceReviewProgressStateFromThoughts(thoughts);
     const agentActivityState = buildAgentActivityStateFromThoughts(thoughts);
+
+    if (hasSourceReviewProgress(sourceReviewState)) {
+        summaryCards.push(renderSourceReviewProgress(sourceReviewState));
+    }
 
     if (hasAgentActivity(agentActivityState)) {
         summaryCards.push(renderAgentActivityProgress(agentActivityState));

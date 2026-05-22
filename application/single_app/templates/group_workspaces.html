@@ -374,6 +374,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     <!-- Content populated by JavaScript -->
   </div>
 
+  {% set group_workspace_identities_enabled = file_sync_enabled or settings.enable_semantic_kernel %}
   <div class="workspace-section-switcher mb-3{% if nav_layout == 'left' %} workspace-section-switcher--persistent{% endif %}" data-workspace-switcher data-tab-list="#groupWorkspaceTab">
     <div class="w-100">
       <label class="form-label" for="group-workspace-section-select">Section</label>
@@ -381,6 +382,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <option value="documents-tab-btn">Group Documents</option>
         {% if file_sync_enabled %}
           <option value="sync-tab-btn">Sync</option>
+        {% endif %}
+        {% if group_workspace_identities_enabled %}
+          <option value="identities-tab-btn">Identities</option>
         {% endif %}
         <option value="prompts-tab-btn">Group Prompts</option>
         {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
@@ -427,6 +431,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
         aria-selected="false"
       >
         Sync
+      </button>
+    </li>
+    {% endif %}
+    {% if group_workspace_identities_enabled %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="identities-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#identities-tab"
+        type="button"
+        role="tab"
+        aria-controls="identities-tab"
+        aria-selected="false"
+      >
+        Identities
       </button>
     </li>
     {% endif %}
@@ -834,6 +854,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
           data-tags-api="/api/group_documents/tags"
           data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
           data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb'])|join(',') }}"
+        ></div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if group_workspace_identities_enabled %}
+    <!-- ============= GROUP IDENTITIES TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="identities-tab"
+      role="tabpanel"
+      aria-labelledby="identities-tab-btn"
+    >
+      <div class="card p-3 my-3">
+        <div
+          id="group-workspace-identities-root"
+          data-workspace-identity-root="true"
+          data-identity-api-base="/api/workspace-identities/group"
+          data-default-capability="{% if file_sync_enabled %}file_sync{% else %}action{% endif %}"
+          data-capability-options="{% if file_sync_enabled %}file_sync{% endif %}{% if settings.enable_semantic_kernel %}{% if file_sync_enabled %},{% endif %}action{% endif %}"
+          data-auth-type-options="username_password,anonymous,api_key,bearer_token,client_secret,connection_string,managed_identity"
         ></div>
       </div>
     </div>
@@ -1735,6 +1776,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script src="/static/js/workspace_sidebar_nav.js"></script>
 <script src="{{ url_for('static', filename='js/workspace_section_switcher.js') }}"></script>
 {% if file_sync_enabled %}
+<script type="module" src="{{ url_for('static', filename='js/workspace/workspace-identities.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
 {% endif %}
 
@@ -1944,6 +1986,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let groupBulkSelectedTags = new Set();
   let groupDocSelectedTags = new Set();
   let groupEditingTag = null;
+  let groupFileSyncTagSelectionDone = null;
 
   // --- Modals ---
   const loadingModal = new bootstrap.Modal(
@@ -2652,21 +2695,43 @@ app_settings.app_title }} {% endblock %} {% block head %}
       || 'File Sync';
   }
 
+  function getGroupDocumentSyncTypeConfig(doc) {
+    const sourceType = String(doc?.file_sync?.source_type || 'smb').trim().toLowerCase();
+    const sourceTypeMap = {
+      smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Synced from SMB source' },
+      m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+      m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+      m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+      sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+      one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
+      onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
+      google: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
+      google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
+      spo: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+      sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+    };
+    return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Synced file' };
+  }
+
+  function getGroupDocumentSyncTypeBadgeHtml(doc, compact = false) {
+    const syncType = getGroupDocumentSyncTypeConfig(doc);
+    const spacingClass = compact ? 'me-2 align-middle' : '';
+    return `<span class="badge ${syncType.className} ${spacingClass}" title="${escapeGroupHtml(syncType.title)}"><i class="bi bi-arrow-repeat me-1"></i>${escapeGroupHtml(syncType.label)}</span>`;
+  }
+
   function getGroupDocumentSyncBadgeHtml(doc, compact = false) {
     if (!isGroupSyncedDocument(doc)) {
       return '';
     }
 
-    const spacingClass = compact ? 'me-2 align-middle' : '';
-
-    return `<span class="badge bg-info text-dark ${spacingClass}" title="Synced file"><i class="bi bi-arrow-repeat me-1"></i>Synced</span>`;
+    return getGroupDocumentSyncTypeBadgeHtml(doc, compact);
   }
 
   function getGroupDocumentSyncDetailsHtml(doc) {
     const synced = isGroupSyncedDocument(doc);
-    const badgeClass = synced ? 'bg-info text-dark' : 'bg-secondary';
-    const badgeText = synced ? 'Yes' : 'No';
-    let details = `<p class="mb-1"><strong>Synced:</strong> <span class="badge ${badgeClass}">${badgeText}</span></p>`;
+    let details = synced
+      ? `<p class="mb-1"><strong>Synced:</strong> ${getGroupDocumentSyncTypeBadgeHtml(doc)}</p>`
+      : '<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary">No</span></p>';
 
     if (synced) {
       const syncMetadata = doc.file_sync;
@@ -2697,12 +2762,23 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     const label = document.createElement('strong');
     label.textContent = 'Synced:';
+    statusLine.appendChild(label);
 
     const badge = document.createElement('span');
-    badge.className = synced ? 'badge bg-info text-dark' : 'badge bg-secondary';
-    badge.textContent = synced ? 'Yes' : 'No';
+    if (synced) {
+      const syncType = getGroupDocumentSyncTypeConfig(doc);
+      badge.className = `badge ${syncType.className}`;
+      badge.title = syncType.title;
+      const icon = document.createElement('i');
+      icon.className = 'bi bi-arrow-repeat me-1';
+      badge.appendChild(icon);
+      badge.appendChild(document.createTextNode(syncType.label));
+    } else {
+      badge.className = 'badge bg-secondary';
+      badge.textContent = 'No';
+    }
 
-    statusLine.append(label, badge);
+    statusLine.appendChild(badge);
     syncStatusElement.appendChild(statusLine);
 
     if (!synced) {
@@ -7177,6 +7253,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
     });
   }
 
+  function showGroupFileSyncTagSelectionModal(initialTags, onDone) {
+    groupDocSelectedTags = new Set(initialTags || []);
+    groupFileSyncTagSelectionDone = onDone;
+    showGroupTagSelectionModal();
+  }
+
   function renderGroupTagSelectionList() {
     const listContainer = document.getElementById('group-tag-selection-list');
     if (!listContainer) return;
@@ -7256,10 +7338,21 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const tagSelectDoneBtn = document.getElementById('group-tag-selection-done-btn');
     if (tagSelectDoneBtn) {
       tagSelectDoneBtn.addEventListener('click', () => {
-        updateGroupDocTagsDisplay();
+        if (groupFileSyncTagSelectionDone) {
+          groupFileSyncTagSelectionDone(Array.from(groupDocSelectedTags));
+          groupFileSyncTagSelectionDone = null;
+        } else {
+          updateGroupDocTagsDisplay();
+        }
         groupTagSelectionModal.hide();
       });
     }
+
+    window.simpleChatTagModalAdapters = window.simpleChatTagModalAdapters || {};
+    window.simpleChatTagModalAdapters.group = {
+      openSelector: ({ selectedTags = [], onDone } = {}) => showGroupFileSyncTagSelectionModal(selectedTags, onDone),
+      openManager: () => showGroupTagManagementModal(),
+    };
 
     // Open Manage Tags from within Selection modal
     const openMgmtBtn = document.getElementById('group-open-tag-mgmt-btn');

@@ -460,6 +460,33 @@
                 </div>
               </section>
 
+              <section class="agent-assigned-knowledge-section" aria-labelledby="agent-assigned-knowledge-web-sources-heading">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h6 class="mb-0" id="agent-assigned-knowledge-web-sources-heading">Web Sources</h6>
+                  <span class="badge text-bg-secondary" id="agent-assigned-knowledge-web-source-count">0 selected</span>
+                </div>
+                <div class="row g-2 align-items-end mb-2">
+                  <div class="col-lg-7">
+                    <label class="form-label small text-muted" for="agent-assigned-knowledge-web-source-input">Assigned URLs</label>
+                    <textarea class="form-control form-control-sm" id="agent-assigned-knowledge-web-source-input" rows="3" placeholder="Paste one or more URLs"></textarea>
+                  </div>
+                  <div class="col-lg-3">
+                    <label class="form-label small text-muted" for="agent-assigned-knowledge-web-source-mode">Review Mode</label>
+                    <select class="form-select form-select-sm" id="agent-assigned-knowledge-web-source-mode">
+                      <option value="url_review">Review URL</option>
+                      <option value="deep_research">Deep Research</option>
+                    </select>
+                  </div>
+                  <div class="col-lg-2 d-grid">
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="agent-assigned-knowledge-web-source-add">
+                      <i class="bi bi-plus-lg me-1"></i>Add
+                    </button>
+                  </div>
+                </div>
+                <div class="text-muted small mb-2">Assigned URLs are reviewed from the trusted agent record at chat time and still follow admin URL and Deep Research policy.</div>
+                <div id="agent-assigned-knowledge-web-source-list" class="agent-assigned-knowledge-web-source-list border rounded p-2" aria-label="Selected assigned web sources"></div>
+              </section>
+
               <section class="agent-assigned-knowledge-section" aria-labelledby="agent-assigned-knowledge-sources-heading">
                 <div class="d-flex justify-content-between align-items-center mb-2">
                   <h6 class="mb-0" id="agent-assigned-knowledge-sources-heading">Sources</h6>
@@ -881,7 +908,8 @@
 }
 
 .agent-assigned-knowledge-transfer-list,
-.agent-assigned-knowledge-resolved-list {
+.agent-assigned-knowledge-resolved-list,
+.agent-assigned-knowledge-web-source-list {
   min-height: 10rem;
   max-height: 14rem;
   overflow-y: auto;
@@ -894,7 +922,8 @@
 }
 
 .agent-assigned-knowledge-transfer-item,
-.agent-assigned-knowledge-resolved-item {
+.agent-assigned-knowledge-resolved-item,
+.agent-assigned-knowledge-web-source-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -904,7 +933,8 @@
 }
 
 .agent-assigned-knowledge-transfer-item:last-child,
-.agent-assigned-knowledge-resolved-item:last-child {
+.agent-assigned-knowledge-resolved-item:last-child,
+.agent-assigned-knowledge-web-source-item:last-child {
   border-bottom: 0;
 }
 

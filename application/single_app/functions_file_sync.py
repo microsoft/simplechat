@@ -44,6 +44,11 @@ from functions_keyvault import (
 )
 from functions_public_workspaces import find_public_workspace_by_id, get_user_role_in_public_workspace
 from functions_settings import get_settings
+from functions_workspace_identities import (
+    get_workspace_identity,
+    get_workspace_identity_auth,
+    identity_supports_usage,
+)
 from utils_cache import (
     invalidate_group_search_cache,
     invalidate_personal_search_cache,
@@ -93,6 +98,7 @@ FILE_SYNC_DEFAULTS = {
 FILE_SYNC_REMOTE_DELETE_POLICIES = {"ignore", "hard_delete"}
 FILE_SYNC_FOLDER_TAG_MODES = {"none", "parent", "full_path"}
 FILE_SYNC_DELETE_ACTIONS = {"delete_only", "ignore_remote"}
+FILE_SYNC_IDENTITY_AUTH_TYPES = {"username_password", "anonymous"}
 
 
 def _now() -> datetime:
@@ -397,6 +403,26 @@ def get_authorized_sync_source(
     return source
 
 
+def _get_file_sync_identity(scope_type: str, scope_id: str, identity_id: str) -> Dict[str, Any]:
+    identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    if not identity_supports_usage(
+        identity,
+        "file_sync",
+        source_type=FILE_SYNC_SOURCE_TYPE_SMB,
+        auth_types=FILE_SYNC_IDENTITY_AUTH_TYPES,
+    ):
+        raise ValueError("Selected workspace identity cannot be used for SMB File Sync")
+    return identity
+
+
+def _get_identity_auth_for_source(source: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    identity_id = str(source.get("identity_id") or "").strip()
+    if not identity_id:
+        return None
+    _get_file_sync_identity(source.get("scope_type"), _source_scope_id(source), identity_id)
+    return get_workspace_identity_auth(source.get("scope_type"), _source_scope_id(source), identity_id)
+
+
 def list_file_sync_sources(scope_type: str, scope_id: str) -> List[Dict[str, Any]]:
     scope_type = _validate_scope(scope_type)
     scope_field = _scope_field(scope_type)
@@ -414,7 +440,17 @@ def list_file_sync_sources(scope_type: str, scope_id: str) -> List[Dict[str, Any
 def sanitize_file_sync_source(source: Dict[str, Any]) -> Dict[str, Any]:
     sanitized_source = dict(source or {})
     auth = dict(sanitized_source.get("auth") or {})
+    identity_id = str(sanitized_source.get("identity_id") or "").strip()
+    if identity_id:
+        try:
+            identity = _get_file_sync_identity(sanitized_source.get("scope_type"), _source_scope_id(sanitized_source), identity_id)
+            sanitized_source["identity_name"] = identity.get("name", "")
+            auth = dict(identity.get("auth") or {})
+        except Exception:
+            sanitized_source["identity_name"] = "Unavailable identity"
+            auth = {"auth_type": "identity_missing"}
     password_stored = bool(auth.get("password") or auth.get("password_secret_name"))
+    sanitized_source["identity_id"] = identity_id
     sanitized_source["credentials"] = {
         "auth_type": auth.get("auth_type", "username_password"),
         "username": auth.get("username", ""),
@@ -570,6 +606,7 @@ def _normalize_source_payload(
     existing_filters = existing_source.get("filters") or {}
     schedule = payload.get("schedule") or {}
     existing_schedule = existing_source.get("schedule") or {}
+    identity_id = _normalize_text(payload.get("identity_id", existing_source.get("identity_id", "")), 255)
     raw_delete_policy = _normalize_text(
         payload.get("remote_delete_policy", existing_source.get("remote_delete_policy", config["file_sync_default_remote_delete_policy"])),
         50,
@@ -599,14 +636,19 @@ def _normalize_source_payload(
         },
         "schedule": _normalize_schedule(schedule, config, existing_schedule),
         "remote_delete_policy": raw_delete_policy if raw_delete_policy in FILE_SYNC_REMOTE_DELETE_POLICIES else "ignore",
+        "identity_id": identity_id,
     }
-    normalized_source["auth"] = _prepare_auth_payload(
-        scope_type=scope_type,
-        scope_id=scope_id,
-        source_id=source_id,
-        raw_credentials=payload.get("credentials") or payload.get("auth") or {},
-        existing_auth=existing_source.get("auth") or {},
-    )
+    if identity_id:
+        _get_file_sync_identity(scope_type, scope_id, identity_id)
+        normalized_source["auth"] = {}
+    else:
+        normalized_source["auth"] = _prepare_auth_payload(
+            scope_type=scope_type,
+            scope_id=scope_id,
+            source_id=source_id,
+            raw_credentials=payload.get("credentials") or payload.get("auth") or {},
+            existing_auth=existing_source.get("auth") or {},
+        )
     return normalized_source
 
 
@@ -699,6 +741,16 @@ def _build_connection_test_source(
     existing_connection = existing_source.get("connection") or {}
     config = get_file_sync_config()
     test_source_id = source_id or "connection-test"
+    identity_id = _normalize_text(payload.get("identity_id", existing_source.get("identity_id", "")), 255)
+    auth = {}
+    if identity_id:
+        _get_file_sync_identity(scope_type, scope_id, identity_id)
+        auth = get_workspace_identity_auth(scope_type, scope_id, identity_id)
+    else:
+        auth = _prepare_connection_test_auth(
+            payload.get("credentials") or payload.get("auth") or {},
+            existing_source.get("auth") or {},
+        )
     return {
         "id": test_source_id,
         "source_id": test_source_id,
@@ -706,14 +758,12 @@ def _build_connection_test_source(
         _scope_field(scope_type): scope_id,
         "source_type": source_type,
         "name": _normalize_text(payload.get("name", existing_source.get("name", "SMB File Sync Source")), 120),
+        "identity_id": identity_id,
         "recursive": _as_bool(payload.get("recursive", existing_source.get("recursive", True))) and config["file_sync_allow_recursive_sources"],
         "connection": {
             "unc_path": _normalize_unc_path(connection.get("unc_path", existing_connection.get("unc_path", ""))),
         },
-        "auth": _prepare_connection_test_auth(
-            payload.get("credentials") or payload.get("auth") or {},
-            existing_source.get("auth") or {},
-        ),
+        "auth": auth,
     }
 
 
@@ -1131,7 +1181,7 @@ def _source_has_active_run(source: Dict[str, Any]) -> bool:
 
 
 def _get_smb_credentials(source: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    auth = source.get("auth") or {}
+    auth = _get_identity_auth_for_source(source) or source.get("auth") or {}
     if auth.get("auth_type") == "anonymous":
         return None, None
 
@@ -1308,6 +1358,7 @@ def _create_document_from_remote_file(source: Dict[str, Any], remote_file: Dict[
         file_sync={
             "source_id": source["id"],
             "source_name": source.get("name"),
+            "source_type": source.get("source_type", FILE_SYNC_SOURCE_TYPE_SMB),
             "scope_type": scope_type,
             "remote_path": remote_file.get("remote_path"),
             "relative_path": remote_file.get("relative_path"),

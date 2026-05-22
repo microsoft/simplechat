@@ -1,14 +1,14 @@
 # test_admin_source_review_settings.py
 """
 UI test for Deep Research admin settings.
-Version: 0.241.082
+Version: 0.241.094
 Implemented in: 0.241.055
-Updated in: 0.241.072; 0.241.079; 0.241.081; 0.241.082
+Updated in: 0.241.072; 0.241.079; 0.241.081; 0.241.082; 0.241.094
 
 This test ensures the Search & Extract admin tab exposes Deep Research controls,
 shared URL Access controls, bounded review settings, query planning, ledger
-artifacts, editable domain rules, app-role policy controls, setup guidance, and
-the Web Search test workflow.
+artifacts, editable domain rules, app-role policy controls, setup guidance, the
+Web Search test workflow, and the URL Access policy test workflow.
 """
 
 import json
@@ -66,9 +66,30 @@ def test_admin_source_review_settings():
         deep_research_info_modal.locator(".btn-close").click()
         expect(deep_research_info_modal).to_be_hidden()
 
-        page.route(
-            "**/api/admin/settings/test_connection",
-            lambda route: route.fulfill(
+        def fulfill_test_connection(route):
+            request_payload = json.loads(route.request.post_data or "{}")
+            if request_payload.get("test_type") == "url_access_policy":
+                test_url = request_payload.get("url", "")
+                is_allowed = "blocked.example.com" not in test_url
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps({
+                        "success": True,
+                        "allowed": is_allowed,
+                        "status": "allowed" if is_allowed else "domain_blocked",
+                        "message": "URL Access would allow this URL." if is_allowed else "URL Access would block this URL because its domain matches the blocked list.",
+                        "details": [
+                            f"Normalized URL: {test_url}.",
+                            "Allowed Domains: any public domain.",
+                            "Blocked Domains: blocked.example.com.",
+                        ],
+                        "guidance": [] if is_allowed else ["Remove or narrow the matching Blocked Domains entry if this site should be available."],
+                    }),
+                )
+                return
+
+            route.fulfill(
                 status=200,
                 content_type="application/json",
                 body=json.dumps({
@@ -79,8 +100,9 @@ def test_admin_source_review_settings():
                     "guidance": [],
                     "response_preview": "Microsoft official site: https://www.microsoft.com",
                 }),
-            ),
-        )
+            )
+
+        page.route("**/api/admin/settings/test_connection", fulfill_test_connection)
 
         page.evaluate("""
             () => {
@@ -174,6 +196,26 @@ def test_admin_source_review_settings():
 
         allowed_domains_editor.locator('[aria-label="Delete policy entry"]').first.click()
         expect(page.locator("#url_access_allowed_domains")).to_have_value("")
+
+        blocked_domains_editor = page.locator('[data-url-access-policy="url_access_blocked_domains"]')
+        blocked_domains_editor.locator('[data-policy-new-input]').fill("blocked.example.com")
+        blocked_domains_editor.locator('[data-policy-add-button]').click()
+        expect(page.locator("#url_access_blocked_domains")).to_have_value("blocked.example.com")
+
+        page.locator("#open_url_access_policy_test_modal_button").click()
+        url_policy_modal = page.locator("#urlAccessPolicyTestModal")
+        expect(url_policy_modal).to_be_visible()
+        page.locator("#url_access_policy_test_url").fill("https://learn.microsoft.com/")
+        page.locator("#test_url_access_policy_button").click()
+        expect(page.locator("#test_url_access_policy_result")).to_contain_text("URL Access policy allowed this URL")
+        expect(page.locator("#test_url_access_policy_result")).to_contain_text("https://learn.microsoft.com/")
+
+        page.locator("#url_access_policy_test_url").fill("https://blocked.example.com/page")
+        page.locator("#test_url_access_policy_button").click()
+        expect(page.locator("#test_url_access_policy_result")).to_contain_text("URL Access policy blocked this URL")
+        expect(page.locator("#test_url_access_policy_result")).to_contain_text("Blocked Domains: blocked.example.com")
+        url_policy_modal.locator(".btn-close").click()
+        expect(url_policy_modal).to_be_hidden()
 
         expect(page.locator('[data-deep-research-policy="source_review_blocked_users"]')).to_have_count(0)
         expect(page.locator("#source_review_blocked_users")).to_have_count(0)

@@ -1240,6 +1240,7 @@ async function sendCollaborativeAiMessage(messageText, tempMessageId = null, mes
         conversationId,
         {
             endpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream`,
+            cancelEndpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream/cancel`,
             allowRecovery: false,
             onError: (errorMessage, errorData = null) => {
                 if (errorData?.user_message_id && tempMessageId) {

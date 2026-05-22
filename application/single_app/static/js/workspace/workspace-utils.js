@@ -26,22 +26,56 @@ export function getDocumentSyncSourceLabel(doc) {
         || 'File Sync';
 }
 
+function getDocumentSyncTypeConfig(doc) {
+    const sourceType = String(doc?.file_sync?.source_type || 'smb').trim().toLowerCase();
+    const sourceTypeMap = {
+        smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Synced from SMB source' },
+        m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+        m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+        m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+        sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+        one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
+        onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
+        google: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
+        google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
+        spo: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+        sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+    };
+    return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Synced file' };
+}
+
+function getDocumentSyncTypeBadgeHtml(doc, compact = false) {
+    const syncType = getDocumentSyncTypeConfig(doc);
+    const spacingClass = compact ? 'me-2 align-middle' : '';
+    return `<span class="badge ${syncType.className} ${spacingClass}" title="${escapeHtml(syncType.title)}"><i class="bi bi-arrow-repeat me-1"></i>${escapeHtml(syncType.label)}</span>`;
+}
+
+function appendDocumentSyncTypeBadge(container, doc) {
+    const syncType = getDocumentSyncTypeConfig(doc);
+    const badge = document.createElement('span');
+    badge.className = `badge ${syncType.className}`;
+    badge.title = syncType.title;
+
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-arrow-repeat me-1';
+    badge.appendChild(icon);
+    badge.appendChild(document.createTextNode(syncType.label));
+    container.appendChild(badge);
+}
+
 export function getDocumentSyncBadgeHtml(doc, compact = false) {
     if (!isSyncedDocument(doc)) {
         return '';
     }
 
-    const spacingClass = compact ? 'me-2 align-middle' : '';
-
-    return `<span class="badge bg-info text-dark ${spacingClass}" title="Synced file"><i class="bi bi-arrow-repeat me-1"></i></span>`;
+    return getDocumentSyncTypeBadgeHtml(doc, compact);
 }
 
 export function getDocumentSyncDetailsHtml(doc) {
     const synced = isSyncedDocument(doc);
-    const badgeClass = synced ? 'bg-info text-dark' : 'bg-secondary';
-    const badgeText = synced ? 'Yes' : 'No';
-
-    let details = `<p class="mb-1"><strong>Synced:</strong> <span class="badge ${badgeClass}">${badgeText}</span></p>`;
+    let details = synced
+        ? `<p class="mb-1"><strong>Synced:</strong> ${getDocumentSyncTypeBadgeHtml(doc)}</p>`
+        : '<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary">No</span></p>';
 
     if (synced) {
         const syncMetadata = doc.file_sync;
@@ -71,12 +105,17 @@ export function setDocumentSyncStatusElement(element, doc) {
 
     const label = document.createElement('strong');
     label.textContent = 'Synced:';
+    statusLine.appendChild(label);
 
-    const badge = document.createElement('span');
-    badge.className = synced ? 'badge bg-info text-dark' : 'badge bg-secondary';
-    badge.textContent = synced ? 'Yes' : 'No';
+    if (synced) {
+        appendDocumentSyncTypeBadge(statusLine, doc);
+    } else {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-secondary';
+        badge.textContent = 'No';
+        statusLine.appendChild(badge);
+    }
 
-    statusLine.append(label, badge);
     element.appendChild(statusLine);
 
     if (!synced) {

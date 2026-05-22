@@ -43,6 +43,7 @@ let publicDocsTagsFilter = '';
 let publicBulkSelectedTags = new Set();
 let publicDocSelectedTags = new Set();
 let publicEditingTag = null;
+let publicFileSyncTagSelectionDone = null;
 window.currentPublicStatus = window.currentPublicStatus || 'active';
 
 // Modals
@@ -1002,14 +1003,36 @@ function getPublicDocumentSyncSourceLabel(doc) {
     || 'File Sync';
 }
 
+function getPublicDocumentSyncTypeConfig(doc) {
+  const sourceType = String(doc?.file_sync?.source_type || 'smb').trim().toLowerCase();
+  const sourceTypeMap = {
+    smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Synced from SMB source' },
+    m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+    m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+    m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+    sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
+    one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
+    onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
+    google: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
+    google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
+    spo: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+    sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+  };
+  return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Synced file' };
+}
+
+function getPublicDocumentSyncTypeBadgeHtml(doc, compact = false) {
+  const syncType = getPublicDocumentSyncTypeConfig(doc);
+  const spacingClass = compact ? 'me-2 align-middle' : '';
+  return `<span class="badge ${syncType.className} ${spacingClass}" title="${escapeHtml(syncType.title)}"><i class="bi bi-arrow-repeat me-1"></i>${escapeHtml(syncType.label)}</span>`;
+}
+
 function getPublicDocumentSyncBadgeHtml(doc, compact = false) {
   if (!isPublicSyncedDocument(doc)) {
     return '';
   }
 
-  const spacingClass = compact ? 'me-2 align-middle' : '';
-
-  return `<span class="badge bg-info text-dark ${spacingClass}" title="Synced file"><i class="bi bi-arrow-repeat me-1"></i></span>`;
+  return getPublicDocumentSyncTypeBadgeHtml(doc, compact);
 }
 
 function appendPublicDocumentSyncBadge(container, doc, compact = false) {
@@ -1018,23 +1041,24 @@ function appendPublicDocumentSyncBadge(container, doc, compact = false) {
   }
 
   const sourceLabel = getPublicDocumentSyncSourceLabel(doc);
+  const syncType = getPublicDocumentSyncTypeConfig(doc);
   const badge = document.createElement('span');
-  badge.className = compact ? 'badge bg-info text-dark me-2 align-middle' : 'badge bg-info text-dark';
-  badge.title = sourceLabel && sourceLabel !== 'File Sync' ? `Synced from ${sourceLabel}` : 'Synced file';
+  badge.className = compact ? `badge ${syncType.className} me-2 align-middle` : `badge ${syncType.className}`;
+  badge.title = sourceLabel && sourceLabel !== 'File Sync' ? `${syncType.title}: ${sourceLabel}` : syncType.title;
 
   const icon = document.createElement('i');
   icon.className = 'bi bi-arrow-repeat me-1';
   badge.appendChild(icon);
-  badge.appendChild(document.createTextNode('Synced'));
+  badge.appendChild(document.createTextNode(syncType.label));
   container.appendChild(badge);
   return badge;
 }
 
 function getPublicDocumentSyncDetailsHtml(doc) {
   const synced = isPublicSyncedDocument(doc);
-  const badgeClass = synced ? 'bg-info text-dark' : 'bg-secondary';
-  const badgeText = synced ? 'Yes' : 'No';
-  let details = `<p class="mb-1"><strong>Synced:</strong> <span class="badge ${badgeClass}">${badgeText}</span></p>`;
+  let details = synced
+    ? `<p class="mb-1"><strong>Synced:</strong> ${getPublicDocumentSyncTypeBadgeHtml(doc)}</p>`
+    : '<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary">No</span></p>';
 
   if (synced) {
     const syncMetadata = doc.file_sync;
@@ -1065,12 +1089,23 @@ function setPublicDocumentSyncStatusElement(doc) {
 
   const label = document.createElement('strong');
   label.textContent = 'Synced:';
+  statusLine.appendChild(label);
 
   const badge = document.createElement('span');
-  badge.className = synced ? 'badge bg-info text-dark' : 'badge bg-secondary';
-  badge.textContent = synced ? 'Yes' : 'No';
+  if (synced) {
+    const syncType = getPublicDocumentSyncTypeConfig(doc);
+    badge.className = `badge ${syncType.className}`;
+    badge.title = syncType.title;
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-arrow-repeat me-1';
+    badge.appendChild(icon);
+    badge.appendChild(document.createTextNode(syncType.label));
+  } else {
+    badge.className = 'badge bg-secondary';
+    badge.textContent = 'No';
+  }
 
-  statusLine.append(label, badge);
+  statusLine.appendChild(badge);
   syncStatusElement.appendChild(statusLine);
 
   if (!synced) {
@@ -3814,6 +3849,12 @@ function showPublicTagSelectionModal() {
   });
 }
 
+function showPublicFileSyncTagSelectionModal(initialTags, onDone) {
+  publicDocSelectedTags = new Set(initialTags || []);
+  publicFileSyncTagSelectionDone = onDone;
+  showPublicTagSelectionModal();
+}
+
 function renderPublicTagSelectionList() {
   const listContainer = document.getElementById('public-tag-selection-list');
   if (!listContainer) return;
@@ -3919,10 +3960,21 @@ window.removePublicDocSelectedTag = function(tagName) {
   const tagSelectDoneBtn = document.getElementById('public-tag-selection-done-btn');
   if (tagSelectDoneBtn) {
     tagSelectDoneBtn.addEventListener('click', () => {
-      updatePublicDocTagsDisplay();
+      if (publicFileSyncTagSelectionDone) {
+        publicFileSyncTagSelectionDone(Array.from(publicDocSelectedTags));
+        publicFileSyncTagSelectionDone = null;
+      } else {
+        updatePublicDocTagsDisplay();
+      }
       publicTagSelectionModal.hide();
     });
   }
+
+  window.simpleChatTagModalAdapters = window.simpleChatTagModalAdapters || {};
+  window.simpleChatTagModalAdapters.public = {
+    openSelector: ({ selectedTags = [], onDone } = {}) => showPublicFileSyncTagSelectionModal(selectedTags, onDone),
+    openManager: () => showPublicTagManagementModal(),
+  };
 
   // Open Manage Tags from within Selection modal
   const openMgmtBtn = document.getElementById('public-open-tag-mgmt-btn');

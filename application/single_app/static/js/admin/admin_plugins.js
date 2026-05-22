@@ -41,6 +41,10 @@ async function loadPlugins() {
 function openPluginModal(plugin = null) {
     // Use the new multi-step modal
     if (window.pluginModalStepper) {
+        window.pluginModalStepper.setActionScope({
+            scope: 'global',
+            apiBase: '/api/admin/workspace-identities/global'
+        });
         const modal = window.pluginModalStepper.showModal(plugin);
         
         // Set up save handler

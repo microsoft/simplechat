@@ -13,6 +13,11 @@ from azure.cosmos import exceptions
 from flask import current_app
 from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
 from functions_settings import get_user_settings, update_user_settings
+from functions_workspace_identities import (
+    WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+    hydrate_action_identity_reference,
+    validate_action_identity_reference,
+)
 from functions_debug import debug_print
 from config import cosmos_personal_actions_container
 import logging
@@ -42,6 +47,12 @@ def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
         for action in actions:
             cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
             cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
+            cleaned_action = hydrate_action_identity_reference(
+                cleaned_action,
+                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+                user_id,
+                return_type=return_type,
+            )
             cleaned_actions.append(cleaned_action)
         return cleaned_actions
         
@@ -89,6 +100,12 @@ def get_personal_action(user_id, action_id, return_type=SecretReturnType.TRIGGER
         # Remove Cosmos metadata and resolve Key Vault references
         cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
         cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
+        cleaned_action = hydrate_action_identity_reference(
+            cleaned_action,
+            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+            user_id,
+            return_type=return_type,
+        )
         return cleaned_action
         
     except Exception as e:
@@ -143,6 +160,12 @@ def save_personal_action(user_id, action_data):
 
         action_data['user_id'] = user_id
         action_data['last_updated'] = now
+
+        validate_action_identity_reference(
+            action_data,
+            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+            user_id,
+        )
         
         # Validate required fields
         required_fields = ['name', 'displayName', 'type', 'description']

@@ -44,6 +44,8 @@ from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
     ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
     ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH,
+    ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH,
+    ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW,
     build_assigned_knowledge_runtime_filters,
 )
 from functions_global_agents import get_global_agents
@@ -162,6 +164,25 @@ def _build_assigned_knowledge_search_args(assigned_knowledge_filters, *, query, 
     }
 
 
+def _get_assigned_knowledge_web_source_urls(assigned_knowledge_filters, mode=None):
+    if not isinstance(assigned_knowledge_filters, dict):
+        return []
+    urls = []
+    seen_urls = set()
+    for source in assigned_knowledge_filters.get('web_sources') or []:
+        if not isinstance(source, dict):
+            continue
+        source_url = str(source.get('url') or '').strip()
+        source_mode = str(source.get('mode') or ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW).strip()
+        if not source_url or source_url in seen_urls:
+            continue
+        if mode and source_mode != mode:
+            continue
+        seen_urls.add(source_url)
+        urls.append(source_url)
+    return urls
+
+
 def _merge_search_results_by_identity(*result_sets):
     merged_results = []
     seen_keys = set()
@@ -237,11 +258,14 @@ STREAM_STATUS_NOT_FOUND = 'not_found'
 STREAM_STATUS_STARTED = 'started'
 STREAM_STATUS_STREAMING = 'streaming'
 STREAM_STATUS_DETACHED_RUNNING = 'detached_running'
+STREAM_STATUS_CANCEL_REQUESTED = 'cancel_requested'
 STREAM_STATUS_COMPLETED = 'completed'
 STREAM_STATUS_ERROR = 'error'
-TERMINAL_STREAM_STATUSES = {STREAM_STATUS_COMPLETED, STREAM_STATUS_ERROR}
+STREAM_STATUS_CANCELED = 'canceled'
+TERMINAL_STREAM_STATUSES = {STREAM_STATUS_COMPLETED, STREAM_STATUS_ERROR, STREAM_STATUS_CANCELED}
 ALLOWED_STREAM_CLIENT_EVENTS = {
     'stream_aborted',
+    'stream_cancel_requested',
     'stream_premature_end',
     'stream_read_error',
     'stream_request_error',
@@ -607,6 +631,33 @@ def _build_stream_status_payload(metadata):
         snapshot['seconds_since_update'] = round(max((datetime.utcnow() - updated_at).total_seconds(), 0.0), 1)
 
     return snapshot
+
+
+def _build_stream_cancel_event(
+    conversation_id,
+    user_message_id=None,
+    message_id=None,
+    partial_content='',
+    reason='user_requested',
+    message_persisted=False,
+    extra_payload=None,
+):
+    normalized_content = str(partial_content or '')
+    payload = make_json_serializable({
+        'type': 'cancelled',
+        'done': True,
+        'cancelled': True,
+        'canceled': True,
+        'conversation_id': conversation_id,
+        'user_message_id': user_message_id,
+        'message_id': message_id,
+        'partial_content': normalized_content,
+        'full_content': normalized_content,
+        'cancel_reason': _truncate_log_text(reason, max_length=120) or 'user_requested',
+        'message_persisted': bool(message_persisted),
+        **dict(extra_payload or {}),
+    })
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 def _normalize_inline_chart_markdown(chart_markdown):
@@ -4207,6 +4258,10 @@ class ActiveConversationStreamSession:
         metadata.setdefault('consumer_detached', False)
         metadata.setdefault('detach_count', 0)
         metadata.setdefault('reattach_count', 0)
+        metadata.setdefault('cancel_requested', False)
+        metadata.setdefault('cancel_reason', None)
+        metadata.setdefault('cancel_requested_at', None)
+        metadata.setdefault('canceled_at', None)
         metadata.setdefault('queue_backpressure_count', 0)
         metadata.setdefault('last_error', None)
         return metadata
@@ -4289,6 +4344,45 @@ class ActiveConversationStreamSession:
         self._persist_metadata(metadata)
         return self.get_status_snapshot()
 
+    def request_cancel(self, reason='user_requested'):
+        metadata = self._build_metadata(active=self.is_active(), existing=self._get_metadata())
+        if metadata.get('status') in TERMINAL_STREAM_STATUSES:
+            return self.get_status_snapshot()
+
+        normalized_reason = _truncate_log_text(reason, max_length=120) or 'user_requested'
+        metadata['cancel_requested'] = True
+        metadata['cancel_reason'] = normalized_reason
+        metadata['cancel_requested_at'] = metadata.get('cancel_requested_at') or _utcnow_iso()
+        metadata['status'] = STREAM_STATUS_CANCEL_REQUESTED
+        self._persist_metadata(metadata)
+
+        with self._condition:
+            self._condition.notify_all()
+
+        log_event(
+            '[Streaming] Stream cancellation requested',
+            extra={
+                'conversation_id': self.conversation_id,
+                'user_id': self.user_id,
+                'status': metadata.get('status'),
+                'cancel_reason': normalized_reason,
+                'event_count': metadata.get('event_count'),
+                'content_event_count': metadata.get('content_event_count'),
+            },
+            level=logging.INFO,
+        )
+        return self.get_status_snapshot()
+
+    def is_cancel_requested(self):
+        metadata = self._get_metadata()
+        if not metadata or metadata.get('status') in TERMINAL_STREAM_STATUSES:
+            return False
+        return bool(metadata.get('cancel_requested'))
+
+    def get_cancel_reason(self):
+        metadata = self._get_metadata()
+        return str(metadata.get('cancel_reason') or 'user_requested')
+
     def publish(self, event_text):
         """Append an SSE event to the replay history and notify listeners."""
         if event_text is None:
@@ -4299,7 +4393,12 @@ class ActiveConversationStreamSession:
                 return False
 
         payload = _extract_sse_event_payload(event_text)
-        is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error'))
+        is_cancel_event = isinstance(payload, dict) and (
+            payload.get('cancelled')
+            or payload.get('canceled')
+            or str(payload.get('type') or '').strip().lower() in {'cancelled', 'canceled'}
+        )
+        is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error') or is_cancel_event)
 
         metadata = self._build_metadata(active=not is_terminal_event, existing=self._get_metadata())
         metadata['event_count'] = _safe_int(metadata.get('event_count')) + 1
@@ -4316,11 +4415,18 @@ class ActiveConversationStreamSession:
 
         if is_terminal_event:
             metadata['completed_at'] = metadata['last_event_at']
-            metadata['status'] = STREAM_STATUS_ERROR if payload.get('error') else STREAM_STATUS_COMPLETED
+            if is_cancel_event:
+                metadata['status'] = STREAM_STATUS_CANCELED
+                metadata['canceled_at'] = metadata['last_event_at']
+                metadata['cancel_requested'] = True
+            else:
+                metadata['status'] = STREAM_STATUS_ERROR if payload.get('error') else STREAM_STATUS_COMPLETED
             if payload.get('error'):
                 metadata['last_error'] = str(payload.get('error'))
         elif metadata.get('consumer_detached'):
             metadata['status'] = STREAM_STATUS_DETACHED_RUNNING
+        elif metadata.get('cancel_requested'):
+            metadata['status'] = STREAM_STATUS_CANCEL_REQUESTED
         elif metadata.get('first_content_at'):
             metadata['status'] = STREAM_STATUS_STREAMING
         else:
@@ -4377,8 +4483,10 @@ class ActiveConversationStreamSession:
 
         metadata = self._build_metadata(active=False, existing=self._get_metadata())
         if metadata.get('status') not in TERMINAL_STREAM_STATUSES:
-            metadata['status'] = STREAM_STATUS_COMPLETED
+            metadata['status'] = STREAM_STATUS_CANCELED if metadata.get('cancel_requested') else STREAM_STATUS_COMPLETED
             metadata['completed_at'] = metadata.get('completed_at') or _utcnow_iso()
+            if metadata['status'] == STREAM_STATUS_CANCELED:
+                metadata['canceled_at'] = metadata.get('canceled_at') or metadata['completed_at']
             self._persist_metadata(metadata)
             log_event(
                 '[Streaming] Stream session closed without explicit terminal event',
@@ -10531,10 +10639,27 @@ def register_route_backend_chats(app):
 
         def generate_document_action_response(publish_background_event=None):
             try:
+                if stream_session and stream_session.is_cancel_requested():
+                    yield _build_stream_cancel_event(
+                        conversation_id,
+                        reason=stream_session.get_cancel_reason(),
+                    )
+                    return
+
                 payload, status_code = execute_document_action_chat_request(
                     data=data,
                     publish_background_event=publish_background_event,
                 )
+                if stream_session and stream_session.is_cancel_requested():
+                    yield _build_stream_cancel_event(
+                        payload.get('conversation_id') or conversation_id,
+                        user_message_id=payload.get('user_message_id'),
+                        message_id=payload.get('message_id'),
+                        partial_content=payload.get('reply') or payload.get('full_content') or '',
+                        reason=stream_session.get_cancel_reason(),
+                        message_persisted=bool(payload.get('message_id')),
+                    )
+                    return
                 if status_code >= 400:
                     error_message = payload.get('error') or f'Document action failed ({status_code})'
                     yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
@@ -10575,10 +10700,27 @@ def register_route_backend_chats(app):
 
         def generate_analyze_response(publish_background_event=None):
             try:
+                if stream_session and stream_session.is_cancel_requested():
+                    yield _build_stream_cancel_event(
+                        conversation_id,
+                        reason=stream_session.get_cancel_reason(),
+                    )
+                    return
+
                 payload, status_code = execute_analyze_chat_request(
                     data=data,
                     publish_background_event=publish_background_event,
                 )
+                if stream_session and stream_session.is_cancel_requested():
+                    yield _build_stream_cancel_event(
+                        payload.get('conversation_id') or conversation_id,
+                        user_message_id=payload.get('user_message_id'),
+                        message_id=payload.get('message_id'),
+                        partial_content=payload.get('reply') or payload.get('full_content') or '',
+                        reason=stream_session.get_cancel_reason(),
+                        message_persisted=bool(payload.get('message_id')),
+                    )
+                    return
                 if status_code >= 400:
                     error_message = payload.get('error') or f'Document analysis failed ({status_code})'
                     yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
@@ -10820,8 +10962,9 @@ def register_route_backend_chats(app):
                 assigned_knowledge_filters = build_assigned_knowledge_runtime_filters(canonical_request_agent)
 
             assigned_knowledge_user_context_active = False
+            assigned_knowledge_url_review_urls = []
+            assigned_knowledge_deep_research_urls = []
             if assigned_knowledge_filters:
-                hybrid_search_enabled = True
                 assigned_knowledge_user_context_active = (
                     user_workspace_context_requested
                     and _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters)
@@ -10830,28 +10973,56 @@ def register_route_backend_chats(app):
                         DOCUMENT_ACTION_TYPE_NONE,
                     )
                 )
-                if not assigned_knowledge_user_context_active:
-                    effective_document_scope = assigned_knowledge_filters.get('doc_scope') or 'all'
-                    effective_selected_document_ids = list(assigned_knowledge_filters.get('document_ids') or [])
-                    effective_selected_document_id = None
-                    effective_active_group_ids = list(assigned_knowledge_filters.get('active_group_ids') or [])
-                    effective_active_group_id = effective_active_group_ids[0] if effective_active_group_ids else None
-                    effective_active_public_workspace_ids = list(
-                        assigned_knowledge_filters.get('active_public_workspace_ids') or []
-                    )
-                    effective_active_public_workspace_id = (
-                        effective_active_public_workspace_ids[0]
-                        if effective_active_public_workspace_ids
-                        else None
-                    )
-                    tags_filter = list(assigned_knowledge_filters.get('tags_filter') or [])
-                    document_scope = effective_document_scope
-                    selected_document_ids = list(effective_selected_document_ids)
-                    selected_document_id = None
-                    active_group_ids = list(effective_active_group_ids)
-                    active_group_id = effective_active_group_id
-                    active_public_workspace_ids = list(effective_active_public_workspace_ids)
-                    active_public_workspace_id = effective_active_public_workspace_id
+                if assigned_knowledge_filters.get('has_workspace_knowledge'):
+                    hybrid_search_enabled = True
+                    if not assigned_knowledge_user_context_active:
+                        effective_document_scope = assigned_knowledge_filters.get('doc_scope') or 'all'
+                        effective_selected_document_ids = list(assigned_knowledge_filters.get('document_ids') or [])
+                        effective_selected_document_id = None
+                        effective_active_group_ids = list(assigned_knowledge_filters.get('active_group_ids') or [])
+                        effective_active_group_id = effective_active_group_ids[0] if effective_active_group_ids else None
+                        effective_active_public_workspace_ids = list(
+                            assigned_knowledge_filters.get('active_public_workspace_ids') or []
+                        )
+                        effective_active_public_workspace_id = (
+                            effective_active_public_workspace_ids[0]
+                            if effective_active_public_workspace_ids
+                            else None
+                        )
+                        tags_filter = list(assigned_knowledge_filters.get('tags_filter') or [])
+                        document_scope = effective_document_scope
+                        selected_document_ids = list(effective_selected_document_ids)
+                        selected_document_id = None
+                        active_group_ids = list(effective_active_group_ids)
+                        active_group_id = effective_active_group_id
+                        active_public_workspace_ids = list(effective_active_public_workspace_ids)
+                        active_public_workspace_id = effective_active_public_workspace_id
+                elif assigned_knowledge_user_context_active:
+                    hybrid_search_enabled = True
+
+                assigned_knowledge_url_review_urls = _get_assigned_knowledge_web_source_urls(
+                    assigned_knowledge_filters,
+                    ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW,
+                )
+                assigned_knowledge_deep_research_urls = _get_assigned_knowledge_web_source_urls(
+                    assigned_knowledge_filters,
+                    ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH,
+                )
+                if assigned_knowledge_url_review_urls and not is_url_access_enabled_for_user(
+                    settings,
+                    user_roles=current_user_roles,
+                ):
+                    return jsonify({
+                        'error': 'This agent has assigned URL sources, but URL Access is not available for your account.'
+                    }), 403
+                if assigned_knowledge_deep_research_urls and not source_review_allowed_for_user:
+                    return jsonify({
+                        'error': 'This agent has assigned Deep Research sources, but Deep Research is not available for your account.'
+                    }), 403
+                if assigned_knowledge_url_review_urls or assigned_knowledge_deep_research_urls:
+                    source_review_enabled = True
+                    if assigned_knowledge_deep_research_urls:
+                        deep_research_enabled = True
                 g.assigned_knowledge_context = assigned_knowledge_filters
                 g.assigned_knowledge_user_context_active = assigned_knowledge_user_context_active
 
@@ -11708,7 +11879,7 @@ def register_route_backend_chats(app):
                     if top_n != default_top_n:
                         debug_print(f"Using custom top_n value: {top_n} (requested: {top_n_results})")
                     
-                    if assigned_knowledge_filters:
+                    if assigned_knowledge_filters and assigned_knowledge_filters.get('has_workspace_knowledge'):
                         assigned_search_args = _build_assigned_knowledge_search_args(
                             assigned_knowledge_filters,
                             query=search_query,
@@ -12441,6 +12612,10 @@ def register_route_backend_chats(app):
                     url_access_only=not deep_research_enabled,
                     url_access_context=URL_ACCESS_CONTEXT_CHAT,
                     include_direct_user_urls=bool(url_access_enabled),
+                    additional_seed_urls=(
+                        assigned_knowledge_url_review_urls
+                        + assigned_knowledge_deep_research_urls
+                    ),
                 )
                 source_review_message = source_review_result.get('system_message') if isinstance(source_review_result, dict) else None
                 if source_review_message:
@@ -13921,6 +14096,9 @@ def register_route_backend_chats(app):
             try:
                 # Import debug_print for use in generator
                 from functions_debug import debug_print
+
+                def stream_cancel_requested():
+                    return bool(stream_session and stream_session.is_cancel_requested())
                 
                 if not user_id:
                     yield f"data: {json.dumps({'error': 'User not authenticated'})}\n\n"
@@ -14156,8 +14334,9 @@ def register_route_backend_chats(app):
                     assigned_knowledge_filters = build_assigned_knowledge_runtime_filters(canonical_request_agent)
 
                 assigned_knowledge_user_context_active = False
+                assigned_knowledge_url_review_urls = []
+                assigned_knowledge_deep_research_urls = []
                 if assigned_knowledge_filters:
-                    hybrid_search_enabled = True
                     assigned_knowledge_user_context_active = (
                         user_workspace_context_requested
                         and _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters)
@@ -14166,28 +14345,54 @@ def register_route_backend_chats(app):
                             DOCUMENT_ACTION_TYPE_NONE,
                         )
                     )
-                    if not assigned_knowledge_user_context_active:
-                        effective_document_scope = assigned_knowledge_filters.get('doc_scope') or 'all'
-                        effective_selected_document_ids = list(assigned_knowledge_filters.get('document_ids') or [])
-                        effective_selected_document_id = effective_selected_document_ids[0] if len(effective_selected_document_ids) == 1 else None
-                        effective_active_group_ids = list(assigned_knowledge_filters.get('active_group_ids') or [])
-                        effective_active_group_id = effective_active_group_ids[0] if len(effective_active_group_ids) == 1 else None
-                        effective_active_public_workspace_ids = list(
-                            assigned_knowledge_filters.get('active_public_workspace_ids') or []
-                        )
-                        effective_active_public_workspace_id = (
-                            effective_active_public_workspace_ids[0]
-                            if len(effective_active_public_workspace_ids) == 1
-                            else None
-                        )
-                        tags_filter = list(assigned_knowledge_filters.get('tags_filter') or [])
-                        document_scope = effective_document_scope
-                        selected_document_ids = effective_selected_document_ids
-                        selected_document_id = effective_selected_document_id
-                        active_group_ids = effective_active_group_ids
-                        active_group_id = effective_active_group_id
-                        active_public_workspace_ids = effective_active_public_workspace_ids
-                        active_public_workspace_id = effective_active_public_workspace_id
+                    if assigned_knowledge_filters.get('has_workspace_knowledge'):
+                        hybrid_search_enabled = True
+                        if not assigned_knowledge_user_context_active:
+                            effective_document_scope = assigned_knowledge_filters.get('doc_scope') or 'all'
+                            effective_selected_document_ids = list(assigned_knowledge_filters.get('document_ids') or [])
+                            effective_selected_document_id = effective_selected_document_ids[0] if len(effective_selected_document_ids) == 1 else None
+                            effective_active_group_ids = list(assigned_knowledge_filters.get('active_group_ids') or [])
+                            effective_active_group_id = effective_active_group_ids[0] if len(effective_active_group_ids) == 1 else None
+                            effective_active_public_workspace_ids = list(
+                                assigned_knowledge_filters.get('active_public_workspace_ids') or []
+                            )
+                            effective_active_public_workspace_id = (
+                                effective_active_public_workspace_ids[0]
+                                if len(effective_active_public_workspace_ids) == 1
+                                else None
+                            )
+                            tags_filter = list(assigned_knowledge_filters.get('tags_filter') or [])
+                            document_scope = effective_document_scope
+                            selected_document_ids = effective_selected_document_ids
+                            selected_document_id = effective_selected_document_id
+                            active_group_ids = effective_active_group_ids
+                            active_group_id = effective_active_group_id
+                            active_public_workspace_ids = effective_active_public_workspace_ids
+                            active_public_workspace_id = effective_active_public_workspace_id
+                    elif assigned_knowledge_user_context_active:
+                        hybrid_search_enabled = True
+
+                    assigned_knowledge_url_review_urls = _get_assigned_knowledge_web_source_urls(
+                        assigned_knowledge_filters,
+                        ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW,
+                    )
+                    assigned_knowledge_deep_research_urls = _get_assigned_knowledge_web_source_urls(
+                        assigned_knowledge_filters,
+                        ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH,
+                    )
+                    if assigned_knowledge_url_review_urls and not is_url_access_enabled_for_user(
+                        settings,
+                        user_roles=current_user_roles,
+                    ):
+                        yield f"data: {json.dumps({'error': 'This agent has assigned URL sources, but URL Access is not available for your account.'})}\n\n"
+                        return
+                    if assigned_knowledge_deep_research_urls and not source_review_allowed_for_user:
+                        yield f"data: {json.dumps({'error': 'This agent has assigned Deep Research sources, but Deep Research is not available for your account.'})}\n\n"
+                        return
+                    if assigned_knowledge_url_review_urls or assigned_knowledge_deep_research_urls:
+                        source_review_enabled = True
+                        if assigned_knowledge_deep_research_urls:
+                            deep_research_enabled = True
                     g.assigned_knowledge_context = assigned_knowledge_filters
                     g.assigned_knowledge_user_context_active = assigned_knowledge_user_context_active
                     debug_print(
@@ -14899,7 +15104,7 @@ def register_route_backend_chats(app):
                         if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
                             search_args['tags_filter'] = tags_filter
                         
-                        if assigned_knowledge_filters:
+                        if assigned_knowledge_filters and assigned_knowledge_filters.get('has_workspace_knowledge'):
                             assigned_search_args = _build_assigned_knowledge_search_args(
                                 assigned_knowledge_filters,
                                 query=search_query,
@@ -15353,6 +15558,10 @@ def register_route_backend_chats(app):
                         url_access_only=not deep_research_enabled,
                         url_access_context=URL_ACCESS_CONTEXT_CHAT,
                         include_direct_user_urls=bool(url_access_enabled),
+                        additional_seed_urls=(
+                            assigned_knowledge_url_review_urls
+                            + assigned_knowledge_deep_research_urls
+                        ),
                     )
                     source_review_message = source_review_result.get('system_message') if isinstance(source_review_result, dict) else None
                     if source_review_message:
@@ -15792,6 +16001,99 @@ def register_route_backend_chats(app):
                 token_usage_data = None  # Will be populated from final stream chunk
                 # assistant_message_id was generated earlier for thought tracking
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
+
+                def finalize_cancelled_stream_response():
+                    cancel_reason = stream_session.get_cancel_reason() if stream_session else 'user_requested'
+                    partial_content = accumulated_content.strip()
+                    message_persisted = False
+                    cancel_metadata = {
+                        'incomplete': True,
+                        'canceled': True,
+                        'cancel_reason': cancel_reason,
+                    }
+
+                    if partial_content:
+                        assistant_timestamp = datetime.utcnow().isoformat()
+                        prepared_agent_citations = persist_agent_citation_artifacts(
+                            conversation_id=conversation_id,
+                            assistant_message_id=assistant_message_id,
+                            agent_citations=agent_citations_list,
+                            created_timestamp=assistant_timestamp,
+                            user_info=user_info_for_assistant,
+                        )
+                        generated_analysis_metadata = _build_generated_analysis_metadata(
+                            generated_analysis_artifacts=generated_analysis_artifacts_list,
+                            generated_tabular_outputs=generated_tabular_outputs_list,
+                        )
+                        assistant_doc = make_json_serializable({
+                            'id': assistant_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'assistant',
+                            'content': partial_content,
+                            'timestamp': assistant_timestamp,
+                            'augmented': bool(system_messages_for_augmentation),
+                            'hybrid_citations': hybrid_citations_list,
+                            'web_search_citations': web_search_citations_list,
+                            'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
+                            'agent_citations': prepared_agent_citations,
+                            'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                            'agent_display_name': agent_display_name_used if use_agent_streaming else None,
+                            'agent_name': agent_name_used if use_agent_streaming else None,
+                            'metadata': {
+                                **cancel_metadata,
+                                'reasoning_effort': reasoning_effort,
+                                'history_context': history_debug_info,
+                                'source_review': compact_source_review_result_for_metadata(source_review_result),
+                                'deep_research': deep_research_result,
+                                **generated_analysis_metadata,
+                                'thread_info': {
+                                    'thread_id': response_message_context.get('thread_id'),
+                                    'previous_thread_id': response_message_context.get('previous_thread_id'),
+                                    'active_thread': True,
+                                    'thread_attempt': assistant_thread_attempt,
+                                },
+                            },
+                        })
+                        cosmos_messages_container.upsert_item(assistant_doc)
+                        conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                        cosmos_conversations_container.upsert_item(conversation_item)
+                        message_persisted = True
+
+                    log_event(
+                        '[Streaming] Stream generation stopped by user request',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'user_id': user_id,
+                            'message_id': assistant_message_id if message_persisted else None,
+                            'partial_content_length': len(partial_content),
+                            'cancel_reason': cancel_reason,
+                        },
+                        level=logging.INFO,
+                    )
+
+                    return _build_stream_cancel_event(
+                        conversation_id,
+                        user_message_id=user_message_id,
+                        message_id=assistant_message_id if message_persisted else None,
+                        partial_content=partial_content,
+                        reason=cancel_reason,
+                        message_persisted=message_persisted,
+                        extra_payload={
+                            'augmented': bool(system_messages_for_augmentation),
+                            'hybrid_citations': hybrid_citations_list,
+                            'web_search_citations': web_search_citations_list,
+                            'agent_citations': agent_citations_list,
+                            'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                            'agent_display_name': agent_display_name_used if use_agent_streaming else None,
+                            'agent_name': agent_name_used if use_agent_streaming else None,
+                            'metadata': cancel_metadata,
+                            'thoughts_enabled': thought_tracker.enabled,
+                        },
+                    )
+
+                if stream_cancel_requested():
+                    yield finalize_cancelled_stream_response()
+                    return
                 
                 # DEBUG: Check agent streaming decision
                 debug_print(f"[DEBUG] use_agent_streaming={use_agent_streaming}, selected_agent={selected_agent is not None}")
@@ -15828,6 +16130,13 @@ def register_route_backend_chats(app):
                         debug_print(
                             f"[Streaming][Plugin Callback] Registering callback for key={callback_key}"
                         )
+
+                        def finalize_cancelled_agent_stream_response():
+                            plugin_logger_cb.deregister_callbacks(callback_key)
+                            debug_print(
+                                f"[Streaming][Plugin Callback] Deregistered callback after stream cancellation for key={callback_key}"
+                            )
+                            return finalize_cancelled_stream_response()
 
                         # Convert conversation history to ChatMessageContent (same as non-streaming)
                         agent_message_history = [
@@ -15867,8 +16176,15 @@ def register_route_backend_chats(app):
                                             f"reason={agent_retry_plan['reason']}"
                                         )
 
+                                    if stream_cancel_requested():
+                                        yield finalize_cancelled_agent_stream_response()
+                                        return
+
                                     agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
                                     while True:
+                                        if stream_cancel_requested():
+                                            yield finalize_cancelled_agent_stream_response()
+                                            return
                                         try:
                                             response = loop.run_until_complete(agent_stream.__anext__())
                                         except StopAsyncIteration:
@@ -15892,6 +16208,10 @@ def register_route_backend_chats(app):
                                         if chunk_content:
                                             accumulated_content += chunk_content
                                             yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+
+                                        if stream_cancel_requested():
+                                            yield finalize_cancelled_agent_stream_response()
+                                            return
 
                                     if agent_retry_plan:
                                         debug_print(
@@ -16071,6 +16391,10 @@ def register_route_backend_chats(app):
                         # Stream from regular GPT model (non-agent)
                         yield emit_thought('generation', f"Sending to '{gpt_model}'")
                         debug_print(f"--- Streaming from GPT ({gpt_model}) ---")
+
+                        if stream_cancel_requested():
+                            yield finalize_cancelled_stream_response()
+                            return
                         
                         # Prepare stream parameters
                         stream_params = {
@@ -16105,11 +16429,19 @@ def register_route_backend_chats(app):
                                 raise
                         
                         for chunk in stream:
+                            if stream_cancel_requested():
+                                yield finalize_cancelled_stream_response()
+                                return
+
                             if chunk.choices and len(chunk.choices) > 0:
                                 delta = chunk.choices[0].delta
                                 if delta.content:
                                     accumulated_content += delta.content
                                     yield f"data: {json.dumps({'content': delta.content})}\n\n"
+
+                            if stream_cancel_requested():
+                                yield finalize_cancelled_stream_response()
+                                return
                             
                             # Capture token usage from final chunk with stream_options
                             if hasattr(chunk, 'usage') and chunk.usage:
@@ -16124,6 +16456,10 @@ def register_route_backend_chats(app):
                         # Emit responded thought for regular LLM streaming
                         gpt_stream_total_duration_s = round(time.time() - request_start_time, 1)
                         yield emit_thought('generation', f"'{gpt_model}' responded ({gpt_stream_total_duration_s}s from initial message)")
+
+                    if stream_cancel_requested():
+                        yield finalize_cancelled_stream_response()
+                        return
                     
                     # Stream complete - save message and send final metadata
                     accumulated_content = _append_inline_chart_blocks_to_message(accumulated_content, agent_citations_list)
@@ -16381,6 +16717,29 @@ def register_route_backend_chats(app):
                 yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
         
         return build_background_stream_response(generate, stream_session=stream_session)
+
+    @app.route('/api/chat/stream/cancel/<conversation_id>', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_stream_cancel_api(conversation_id):
+        """Request best-effort cancellation for the current user's active chat stream."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True) or {}
+        cancel_reason = str(data.get('reason') or 'user_requested').strip() or 'user_requested'
+        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
+        if not stream_session:
+            return jsonify({'error': 'No active stream is available for this conversation'}), 404
+
+        stream_status = stream_session.request_cancel(reason=cancel_reason) or {}
+        return jsonify({
+            'success': True,
+            'cancel_requested': True,
+            **stream_status,
+        })
 
     @app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())

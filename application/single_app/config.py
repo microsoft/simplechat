@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.086"
+VERSION = "0.241.096"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -420,6 +420,30 @@ cosmos_public_file_sync_sources_container_name = "public_file_sync_sources"
 cosmos_public_file_sync_sources_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_public_file_sync_sources_container_name,
     partition_key=PartitionKey(path="/public_workspace_id")
+)
+
+cosmos_personal_workspace_identities_container_name = "personal_workspace_identities"
+cosmos_personal_workspace_identities_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_workspace_identities_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_group_workspace_identities_container_name = "group_workspace_identities"
+cosmos_group_workspace_identities_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_workspace_identities_container_name,
+    partition_key=PartitionKey(path="/group_id")
+)
+
+cosmos_public_workspace_identities_container_name = "public_workspace_identities"
+cosmos_public_workspace_identities_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_workspace_identities_container_name,
+    partition_key=PartitionKey(path="/public_workspace_id")
+)
+
+cosmos_global_workspace_identities_container_name = "global_workspace_identities"
+cosmos_global_workspace_identities_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_global_workspace_identities_container_name,
+    partition_key=PartitionKey(path="/global_id")
 )
 
 cosmos_personal_file_sync_items_container_name = "personal_file_sync_items"

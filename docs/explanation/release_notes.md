@@ -4,6 +4,26 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.092)**
+
+#### User Interface Enhancements
+
+*   **Workspace Identity Modal Workflow**
+    *   Simplified workspace and global identity management around real consumers: File Sync, Actions, and Model Endpoints.
+    *   Replaced the inline identity form with Add, View, and Edit modals that group identity details, used-for selection, and authentication.
+    *   Removed the workspace identity page heading and refresh button so the tab starts with a left-aligned Add Identity action and a focused identity table.
+    *   (Ref: workspace identities, identity modal workflow, `workspace-identities.js`, `functions_workspace_identities.py`)
+
+### **(v0.241.091)**
+
+#### New Features
+
+*   **Workspace and Global Identities**
+    *   Promoted reusable identities into first-class personal, group, and public workspace tabs instead of managing them from the File Sync source list.
+    *   Added an admin-managed Global Identities tab for credentials shared by global agents, actions/plugins, model endpoints, and future global integrations.
+    *   Added a dedicated global identity Cosmos DB container while keeping public workspace identities limited to File Sync usage and excluding File Sync from global identities.
+    *   (Ref: workspace identities, global identities, `functions_workspace_identities.py`, `route_backend_workspace_identities.py`, `workspace-identities.js`, `_sidebar_nav.html`)
+
 ### **(v0.241.078)**
 
 #### Bug Fixes

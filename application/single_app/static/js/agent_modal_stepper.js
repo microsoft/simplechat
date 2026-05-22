@@ -7,6 +7,7 @@ import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 const ACTION_CAPABILITIES_KEY = 'action_capabilities';
 const ASSIGNED_KNOWLEDGE_KEY = 'assigned_knowledge';
 const ASSIGNED_KNOWLEDGE_USER_ACTIONS = Object.freeze(['search', 'analyze', 'compare']);
+const ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODES = Object.freeze(['url_review', 'deep_research']);
 const EMPTY_ASSIGNED_KNOWLEDGE = Object.freeze({
   enabled: false,
   scopes: {
@@ -16,6 +17,7 @@ const EMPTY_ASSIGNED_KNOWLEDGE = Object.freeze({
   },
   document_ids: [],
   tags: [],
+  web_sources: [],
   allow_user_workspace_context: false,
   allowed_user_workspace_actions: ASSIGNED_KNOWLEDGE_USER_ACTIONS
 });
@@ -260,6 +262,8 @@ export class AgentModalStepper {
     const assignedKnowledgeToggle = document.getElementById('agent-assigned-knowledge-enabled');
     const assignedKnowledgeRefresh = document.getElementById('agent-assigned-knowledge-refresh');
     const assignedKnowledgeUserContextToggle = document.getElementById('agent-assigned-knowledge-user-context-enabled');
+    const assignedKnowledgeWebSourceAdd = document.getElementById('agent-assigned-knowledge-web-source-add');
+    const assignedKnowledgeWebSourceInput = document.getElementById('agent-assigned-knowledge-web-source-input');
     if (assignedKnowledgeToggle) {
       assignedKnowledgeToggle.addEventListener('change', () => this.handleAssignedKnowledgeToggle());
     }
@@ -272,6 +276,17 @@ export class AgentModalStepper {
     document.querySelectorAll('.agent-assigned-knowledge-user-action').forEach(actionCheckbox => {
       actionCheckbox.addEventListener('change', () => this.handleAssignedKnowledgeUserActionChange());
     });
+    if (assignedKnowledgeWebSourceAdd) {
+      assignedKnowledgeWebSourceAdd.addEventListener('click', () => this.handleAssignedKnowledgeWebSourceAdd());
+    }
+    if (assignedKnowledgeWebSourceInput) {
+      assignedKnowledgeWebSourceInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          this.handleAssignedKnowledgeWebSourceAdd();
+        }
+      });
+    }
 
     [
       'agent-assigned-knowledge-source-available-search',
@@ -327,11 +342,77 @@ export class AgentModalStepper {
       },
       document_ids: this.normalizeStringArray(value.document_ids || value.selected_document_ids),
       tags: this.normalizeStringArray(value.tags),
+      web_sources: this.normalizeAssignedKnowledgeWebSources(value.web_sources),
       allow_user_workspace_context: Boolean(value.allow_user_workspace_context),
       allowed_user_workspace_actions: this.normalizeAssignedKnowledgeUserActions(
         value.allowed_user_workspace_actions ?? value.allowed_user_context_actions
       )
     };
+  }
+
+  normalizeAssignedKnowledgeWebSourceMode(value) {
+    const mode = String(value || '').trim().toLowerCase();
+    if (mode === 'deep' || mode === 'deep-research' || mode === 'research') {
+      return 'deep_research';
+    }
+    return ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODES.includes(mode) ? mode : 'url_review';
+  }
+
+  normalizeAssignedKnowledgeUrl(value) {
+    const rawUrl = String(value || '').trim();
+    if (!rawUrl) {
+      return '';
+    }
+    try {
+      const parsedUrl = new URL(rawUrl);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
+        return '';
+      }
+      parsedUrl.hash = '';
+      if (!parsedUrl.pathname) {
+        parsedUrl.pathname = '/';
+      }
+      return parsedUrl.toString();
+    } catch (error) {
+      return '';
+    }
+  }
+
+  normalizeAssignedKnowledgeWebSources(value) {
+    let entries = [];
+    let defaultMode = 'url_review';
+    if (typeof value === 'string') {
+      entries = value.replaceAll(',', '\n').split(/\s+/);
+    } else if (Array.isArray(value)) {
+      entries = value;
+    } else if (value && typeof value === 'object') {
+      entries = Array.isArray(value.sources) ? value.sources : value.urls;
+      defaultMode = this.normalizeAssignedKnowledgeWebSourceMode(value.mode || (value.deep_research ? 'deep_research' : 'url_review'));
+    }
+
+    if (typeof entries === 'string') {
+      entries = entries.replaceAll(',', '\n').split(/\s+/);
+    }
+
+    const webSourcesByUrl = new Map();
+    (Array.isArray(entries) ? entries : []).forEach(entry => {
+      let rawUrl = entry;
+      let mode = defaultMode;
+      if (entry && typeof entry === 'object') {
+        rawUrl = entry.url || entry.href || entry.link;
+        mode = entry.deep_research ? 'deep_research' : this.normalizeAssignedKnowledgeWebSourceMode(entry.mode || defaultMode);
+      }
+      const normalizedUrl = this.normalizeAssignedKnowledgeUrl(rawUrl);
+      if (!normalizedUrl) {
+        return;
+      }
+      const existing = webSourcesByUrl.get(normalizedUrl);
+      if (!existing || mode === 'deep_research') {
+        webSourcesByUrl.set(normalizedUrl, { url: normalizedUrl, mode });
+      }
+    });
+
+    return Array.from(webSourcesByUrl.values());
   }
 
   normalizeAssignedKnowledgeUserActions(value) {
@@ -418,6 +499,7 @@ export class AgentModalStepper {
       toggle.checked = Boolean(this.pendingAssignedKnowledge.enabled);
     }
     this.syncAssignedKnowledgeUserContextControls();
+    this.renderAssignedKnowledgeWebSources();
     this.toggleAssignedKnowledgeControls(Boolean(this.pendingAssignedKnowledge.enabled));
     if (this.assignedKnowledgeCatalogLoaded) {
       this.renderAssignedKnowledgeCatalog();
@@ -448,6 +530,10 @@ export class AgentModalStepper {
         element.textContent = '';
       }
     });
+    const webSourceInput = document.getElementById('agent-assigned-knowledge-web-source-input');
+    if (webSourceInput) {
+      webSourceInput.value = '';
+    }
     [
       'agent-assigned-knowledge-source-available-search',
       'agent-assigned-knowledge-source-selected-search',
@@ -465,6 +551,7 @@ export class AgentModalStepper {
     if (documentsSelect) {
       documentsSelect.textContent = '';
     }
+    this.renderAssignedKnowledgeWebSources();
     this.updateAssignedKnowledgeCounts();
   }
 
@@ -514,6 +601,141 @@ export class AgentModalStepper {
     this.syncAssignedKnowledgeToAdditionalSettings();
   }
 
+  getAssignedKnowledgeWebSourceModeLabel(mode) {
+    return this.normalizeAssignedKnowledgeWebSourceMode(mode) === 'deep_research'
+      ? 'Deep Research'
+      : 'Review URL';
+  }
+
+  getAssignedKnowledgeWebSourceInputUrls() {
+    const input = document.getElementById('agent-assigned-knowledge-web-source-input');
+    const text = String(input?.value || '').trim();
+    if (!text) {
+      return [];
+    }
+    return text
+      .replaceAll(',', '\n')
+      .split(/\s+/)
+      .map(candidate => this.normalizeAssignedKnowledgeUrl(candidate))
+      .filter(Boolean);
+  }
+
+  handleAssignedKnowledgeWebSourceAdd() {
+    const urls = this.getAssignedKnowledgeWebSourceInputUrls();
+    if (!urls.length) {
+      showToast('Enter at least one valid http or https URL.', 'warning');
+      return;
+    }
+    const mode = this.normalizeAssignedKnowledgeWebSourceMode(
+      document.getElementById('agent-assigned-knowledge-web-source-mode')?.value
+    );
+    const webSources = this.normalizeAssignedKnowledgeWebSources([
+      ...(this.pendingAssignedKnowledge.web_sources || []),
+      ...urls.map(url => ({ url, mode }))
+    ]);
+    this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge({
+      ...this.pendingAssignedKnowledge,
+      web_sources: webSources
+    });
+    const input = document.getElementById('agent-assigned-knowledge-web-source-input');
+    if (input) {
+      input.value = '';
+    }
+    this.renderAssignedKnowledgeWebSources();
+    this.syncAssignedKnowledgeToAdditionalSettings();
+  }
+
+  removeAssignedKnowledgeWebSource(url) {
+    const normalizedUrl = this.normalizeAssignedKnowledgeUrl(url);
+    const webSources = (this.pendingAssignedKnowledge.web_sources || [])
+      .filter(source => source.url !== normalizedUrl);
+    this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge({
+      ...this.pendingAssignedKnowledge,
+      web_sources: webSources
+    });
+    this.renderAssignedKnowledgeWebSources();
+    this.syncAssignedKnowledgeToAdditionalSettings();
+  }
+
+  updateAssignedKnowledgeWebSourceMode(url, mode) {
+    const normalizedUrl = this.normalizeAssignedKnowledgeUrl(url);
+    const normalizedMode = this.normalizeAssignedKnowledgeWebSourceMode(mode);
+    const webSources = (this.pendingAssignedKnowledge.web_sources || []).map(source => ({
+      ...source,
+      mode: source.url === normalizedUrl ? normalizedMode : source.mode
+    }));
+    this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge({
+      ...this.pendingAssignedKnowledge,
+      web_sources: webSources
+    });
+    this.renderAssignedKnowledgeWebSources();
+    this.syncAssignedKnowledgeToAdditionalSettings();
+  }
+
+  renderAssignedKnowledgeWebSources() {
+    const container = document.getElementById('agent-assigned-knowledge-web-source-list');
+    if (!container) {
+      return;
+    }
+    container.textContent = '';
+    const webSources = this.pendingAssignedKnowledge.web_sources || [];
+    if (!webSources.length) {
+      const empty = document.createElement('div');
+      empty.className = 'agent-assigned-knowledge-empty-list';
+      empty.textContent = 'No assigned URLs selected';
+      container.appendChild(empty);
+      this.updateAssignedKnowledgeCounts();
+      return;
+    }
+
+    webSources.forEach(source => {
+      const row = document.createElement('div');
+      row.className = 'agent-assigned-knowledge-web-source-item';
+
+      const content = document.createElement('div');
+      content.className = 'agent-assigned-knowledge-item-content flex-grow-1';
+      const title = document.createElement('div');
+      title.className = 'agent-assigned-knowledge-item-title fw-semibold';
+      title.textContent = source.url;
+      const meta = document.createElement('div');
+      meta.className = 'agent-assigned-knowledge-item-meta';
+      meta.textContent = this.getAssignedKnowledgeWebSourceModeLabel(source.mode);
+      content.appendChild(title);
+      content.appendChild(meta);
+
+      const controls = document.createElement('div');
+      controls.className = 'd-flex align-items-center gap-2 flex-shrink-0';
+      const modeSelect = document.createElement('select');
+      modeSelect.className = 'form-select form-select-sm';
+      modeSelect.setAttribute('aria-label', 'Assigned web source review mode');
+      ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODES.forEach(mode => {
+        const option = document.createElement('option');
+        option.value = mode;
+        option.textContent = this.getAssignedKnowledgeWebSourceModeLabel(mode);
+        option.selected = this.normalizeAssignedKnowledgeWebSourceMode(source.mode) === mode;
+        modeSelect.appendChild(option);
+      });
+      modeSelect.addEventListener('change', () => this.updateAssignedKnowledgeWebSourceMode(source.url, modeSelect.value));
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'btn btn-outline-danger btn-sm';
+      removeButton.title = 'Remove assigned URL';
+      removeButton.setAttribute('aria-label', 'Remove assigned URL');
+      const removeIcon = document.createElement('i');
+      removeIcon.className = 'bi bi-x-lg';
+      removeButton.appendChild(removeIcon);
+      removeButton.addEventListener('click', () => this.removeAssignedKnowledgeWebSource(source.url));
+
+      controls.appendChild(modeSelect);
+      controls.appendChild(removeButton);
+      row.appendChild(content);
+      row.appendChild(controls);
+      container.appendChild(row);
+    });
+    this.updateAssignedKnowledgeCounts();
+  }
+
   handleAssignedKnowledgeToggle() {
     const enabled = Boolean(document.getElementById('agent-assigned-knowledge-enabled')?.checked);
     this.pendingAssignedKnowledge = this.normalizeAssignedKnowledge({
@@ -527,6 +749,7 @@ export class AgentModalStepper {
       this.renderAssignedKnowledgeCatalog();
     }
     this.syncAssignedKnowledgeUserContextControls();
+    this.renderAssignedKnowledgeWebSources();
     this.syncAssignedKnowledgeToAdditionalSettings();
   }
 
@@ -579,6 +802,7 @@ export class AgentModalStepper {
     this.renderAssignedKnowledgeSources();
     this.renderAssignedKnowledgeDocuments();
     this.renderAssignedKnowledgeTags();
+    this.renderAssignedKnowledgeWebSources();
     this.renderAssignedKnowledgeResolvedDocuments();
     this.updateAssignedKnowledgeCounts();
     const empty = document.getElementById('agent-assigned-knowledge-empty');
@@ -1105,11 +1329,13 @@ export class AgentModalStepper {
     const sourceCount = this.getAssignedKnowledgeSelectedSourceKeys(config).size;
     const tagCount = (config.tags || []).length;
     const documentCount = (config.document_ids || []).length;
+    const webSourceCount = (config.web_sources || []).length;
     const resolvedCount = this.getResolvedAssignedKnowledgeDocuments(config).length;
     const counts = [
       ['agent-assigned-knowledge-source-count', `${sourceCount} selected`],
       ['agent-assigned-knowledge-tag-count', `${tagCount} selected`],
       ['agent-assigned-knowledge-document-count', `${documentCount} selected`],
+      ['agent-assigned-knowledge-web-source-count', `${webSourceCount} selected`],
       ['agent-assigned-knowledge-resolved-count', `${resolvedCount} current match${resolvedCount === 1 ? '' : 'es'}`]
     ];
     counts.forEach(([elementId, text]) => {
@@ -1135,6 +1361,7 @@ export class AgentModalStepper {
       scopes: this.pendingAssignedKnowledge.scopes,
       document_ids: this.pendingAssignedKnowledge.document_ids,
       tags: this.pendingAssignedKnowledge.tags,
+      web_sources: this.pendingAssignedKnowledge.web_sources,
       allow_user_workspace_context: Boolean(document.getElementById('agent-assigned-knowledge-user-context-enabled')?.checked),
       allowed_user_workspace_actions: this.getAssignedKnowledgeSelectedUserActions()
     });
@@ -1155,8 +1382,9 @@ export class AgentModalStepper {
     }
     const scopes = assignedKnowledge.scopes || {};
     const hasSource = Boolean(scopes.personal || scopes.group_ids?.length || scopes.public_workspace_ids?.length);
-    if (!hasSource) {
-      this.showError('Choose at least one source for Assigned Knowledge.');
+    const hasWebSource = Boolean(assignedKnowledge.web_sources?.length);
+    if (!hasSource && !hasWebSource) {
+      this.showError('Choose at least one source or web source for Assigned Knowledge.');
       return false;
     }
     this.syncAssignedKnowledgeToAdditionalSettings();
@@ -2611,6 +2839,15 @@ export class AgentModalStepper {
     }
     if (assignedKnowledge.tags?.length) {
       summaryItems.push(`${assignedKnowledge.tags.length} dynamic tag${assignedKnowledge.tags.length === 1 ? '' : 's'}`);
+    }
+    if (assignedKnowledge.web_sources?.length) {
+      const deepResearchCount = assignedKnowledge.web_sources
+        .filter(source => this.normalizeAssignedKnowledgeWebSourceMode(source.mode) === 'deep_research')
+        .length;
+      summaryItems.push(`${assignedKnowledge.web_sources.length} assigned URL${assignedKnowledge.web_sources.length === 1 ? '' : 's'}`);
+      if (deepResearchCount) {
+        summaryItems.push(`${deepResearchCount} Deep Research URL${deepResearchCount === 1 ? '' : 's'}`);
+      }
     }
     if (this.assignedKnowledgeCatalogLoaded) {
       const resolvedCount = this.getResolvedAssignedKnowledgeDocuments(assignedKnowledge).length;

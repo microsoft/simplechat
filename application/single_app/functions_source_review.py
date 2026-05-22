@@ -628,6 +628,7 @@ def collect_source_review_seed_urls(
     source_settings: Optional[Dict[str, Any]] = None,
     direct_url_limit: Optional[int] = None,
     include_direct_user_urls: bool = True,
+    additional_seed_urls: Optional[List[str]] = None,
 ) -> List[str]:
     """Collect source URLs from direct user URLs first, then web-search citations."""
     seed_urls = []
@@ -641,6 +642,13 @@ def collect_source_review_seed_urls(
             if candidate_url not in seen_urls:
                 seed_urls.append(candidate_url)
                 seen_urls.add(candidate_url)
+
+    for candidate_url in additional_seed_urls or []:
+        normalized_url, _ = normalize_review_url(candidate_url)
+        if not normalized_url or normalized_url in seen_urls:
+            continue
+        seed_urls.append(normalized_url)
+        seen_urls.add(normalized_url)
 
     for citation in web_search_citations or []:
         if not isinstance(citation, dict):
@@ -716,6 +724,50 @@ def validate_source_review_url(url: str, source_settings: Optional[Dict[str, Any
         return False, ip_validation[1], normalized_url
 
     return True, "allowed", normalized_url
+
+
+def evaluate_source_review_url_policy(url: str, source_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return URL Access domain-policy and safety-validation details without fetching content."""
+    normalized_source_settings = get_source_review_config(source_settings or {})
+    normalized_url, reason = normalize_review_url(url)
+    if not normalized_url:
+        validation_reason = reason or "invalid_url"
+        return {
+            "normalized_url": None,
+            "hostname": "",
+            "domain_policy_allowed": False,
+            "domain_policy_reason": validation_reason,
+            "url_access_allowed": False,
+            "url_access_reason": validation_reason,
+        }
+
+    parsed_url = urlparse(normalized_url)
+    hostname = (parsed_url.hostname or "").lower().rstrip(".")
+    domain_policy_allowed = True
+    domain_policy_reason = "domain_allowed"
+
+    if _is_blocked_hostname(hostname, normalized_source_settings):
+        domain_policy_allowed = False
+        domain_policy_reason = "blocked_hostname"
+    elif not _is_domain_allowed(hostname, normalized_source_settings):
+        domain_policy_allowed = False
+        domain_policy_reason = "domain_not_allowed"
+    elif not _is_domain_unblocked(hostname, normalized_source_settings):
+        domain_policy_allowed = False
+        domain_policy_reason = "domain_blocked"
+
+    url_access_allowed, url_access_reason, _validated_url = validate_source_review_url(
+        normalized_url,
+        normalized_source_settings,
+    )
+    return {
+        "normalized_url": normalized_url,
+        "hostname": hostname,
+        "domain_policy_allowed": domain_policy_allowed,
+        "domain_policy_reason": domain_policy_reason,
+        "url_access_allowed": url_access_allowed,
+        "url_access_reason": url_access_reason,
+    }
 
 
 def build_source_review_system_message(source_review_result: Dict[str, Any]) -> Optional[Dict[str, str]]:
@@ -1055,6 +1107,7 @@ def perform_source_review(
     url_access_context: str = URL_ACCESS_CONTEXT_CHAT,
     include_direct_user_urls: bool = True,
     url_access_authorization_prechecked: bool = False,
+    additional_seed_urls: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Synchronously run bounded Source Review for chat routes."""
     try:
@@ -1072,6 +1125,7 @@ def perform_source_review(
             url_access_context=url_access_context,
             include_direct_user_urls=include_direct_user_urls,
             url_access_authorization_prechecked=url_access_authorization_prechecked,
+            additional_seed_urls=additional_seed_urls,
         ))
     except RuntimeError as runtime_error:
         log_event(
@@ -1097,6 +1151,7 @@ async def perform_source_review_async(
     url_access_context: str = URL_ACCESS_CONTEXT_CHAT,
     include_direct_user_urls: bool = True,
     url_access_authorization_prechecked: bool = False,
+    additional_seed_urls: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Fetch, parse, and package bounded web evidence for a chat request."""
     source_settings = get_source_review_config(settings)
@@ -1134,12 +1189,18 @@ async def perform_source_review_async(
         return result
 
     direct_user_urls = extract_urls_from_text(user_message)
+    assigned_seed_urls = []
+    for candidate_url in additional_seed_urls or []:
+        normalized_url, _ = normalize_review_url(candidate_url)
+        if normalized_url and normalized_url not in assigned_seed_urls:
+            assigned_seed_urls.append(normalized_url)
     seed_urls = collect_source_review_seed_urls(
         user_message,
         web_search_citations,
         source_settings,
         direct_url_limit=direct_user_url_limit,
         include_direct_user_urls=include_direct_user_urls,
+        additional_seed_urls=assigned_seed_urls,
     )
     if not seed_urls:
         result["skipped_reason"] = "no_source_urls_available"
@@ -1239,6 +1300,7 @@ async def perform_source_review_async(
         "child_pages_skipped": child_pages_skipped,
         "max_depth_reviewed": max_depth_reviewed,
         "seed_url_count": len(seed_urls),
+        "assigned_seed_url_count": len(assigned_seed_urls),
         "direct_user_url_count": len(direct_user_urls),
         "direct_user_url_limit": direct_user_url_limit,
         "direct_user_urls_omitted": max(0, len(direct_user_urls) - direct_user_url_limit),

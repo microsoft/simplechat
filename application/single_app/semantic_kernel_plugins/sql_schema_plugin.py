@@ -40,7 +40,11 @@ class SQLSchemaPlugin(BasePlugin):
         raw_db_type = (manifest.get('database_type') or additional_fields.get('database_type', 'sqlserver')).lower()
         # Map azure_sql to sqlserver for compatibility
         self.database_type = 'sqlserver' if raw_db_type in ['azure_sql', 'azuresql'] else raw_db_type
-        self.auth_type = manifest.get('auth', {}).get('type', 'connection_string')
+        manifest_auth_type = manifest.get('auth', {}).get('type', 'connection_string')
+        additional_auth_type = additional_fields.get('auth_type') or additional_fields.get('identity_auth_type')
+        self.auth_type = additional_auth_type or manifest_auth_type
+        if self.auth_type == 'identity' and raw_db_type in ['azure_sql', 'azuresql']:
+            self.auth_type = 'managed_identity'
         self.server = manifest.get('server') or additional_fields.get('server')
         self.database = manifest.get('database') or additional_fields.get('database')
         self.username = manifest.get('username') or additional_fields.get('username')
@@ -126,6 +130,7 @@ class SQLSchemaPlugin(BasePlugin):
                         driver=self.driver or self.supported_databases['sqlserver']['default_driver'],
                         username=self.username,
                         password=self.password,
+                        auth_type=self.auth_type,
                     )
                     return connect_with_sql_server_odbc_fallback(
                         pyodbc.connect,

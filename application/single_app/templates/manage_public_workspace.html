@@ -227,6 +227,12 @@
     </li>
     {% if file_sync_enabled %}
     <li class="nav-item" role="presentation">
+      <button class="nav-link" id="identities-tab" data-bs-toggle="tab" data-bs-target="#identities"
+        type="button" role="tab" aria-controls="identities" aria-selected="false">
+        <i class="bi bi-person-badge me-2"></i>Identities
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
       <button class="nav-link" id="sync-tab" data-bs-toggle="tab" data-bs-target="#sync"
         type="button" role="tab" aria-controls="sync" aria-selected="false">
         <i class="bi bi-arrow-repeat me-2"></i>Sync
@@ -559,6 +565,20 @@
     {% endif %}
 
     {% if file_sync_enabled %}
+    <!-- Identities Tab -->
+    <div class="tab-pane fade" id="identities" role="tabpanel" aria-labelledby="identities-tab">
+      <div class="section-card">
+        <div
+          id="public-workspace-identities-root"
+          data-workspace-identity-root="true"
+          data-identity-api-base="/api/workspace-identities/public/{{ workspace_id }}"
+          data-default-capability="file_sync"
+          data-capability-options="file_sync"
+          data-auth-type-options="username_password,anonymous"
+        ></div>
+      </div>
+    </div>
+
     <!-- Sync Tab -->
     <div class="tab-pane fade" id="sync" role="tabpanel">
       <div class="section-card">
@@ -1016,6 +1036,7 @@
   <script src="{{ url_for('static', filename='js/public/public_workspace_utility.js') }}"></script>
   <script src="{{ url_for('static', filename='js/public/manage_public_workspace.js') }}"></script>
   {% if file_sync_enabled %}
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-identities.js') }}?v={{ config['VERSION'] }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
   {% endif %}
 {% endblock %}

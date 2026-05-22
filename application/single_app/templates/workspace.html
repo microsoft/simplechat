@@ -599,6 +599,7 @@
       </div>
     </div>
 
+    {% set workspace_identities_enabled = file_sync_enabled or settings.enable_semantic_kernel %}
     <div class="workspace-section-switcher mb-3{% if nav_layout == 'left' %} workspace-section-switcher--persistent{% endif %}" data-workspace-switcher data-tab-list="#workspaceTab">
       <div class="w-100">
         <label class="form-label" for="workspace-section-select">Section</label>
@@ -606,6 +607,9 @@
           <option value="documents-tab-btn">Your Documents</option>
           {% if file_sync_enabled %}
             <option value="sync-tab-btn">Sync</option>
+          {% endif %}
+          {% if workspace_identities_enabled %}
+            <option value="identities-tab-btn">Identities</option>
           {% endif %}
           <option value="prompts-tab-btn">Your Prompts</option>
           {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
@@ -652,6 +656,22 @@
           aria-selected="false"
         >
           Sync
+        </button>
+      </li>
+      {% endif %}
+      {% if workspace_identities_enabled %}
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="identities-tab-btn"
+          data-bs-toggle="tab"
+          data-bs-target="#identities-tab"
+          type="button"
+          role="tab"
+          aria-controls="identities-tab"
+          aria-selected="false"
+        >
+          Identities
         </button>
       </li>
       {% endif %}
@@ -1017,6 +1037,27 @@
             data-tags-api="/api/documents/tags"
             data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
             data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb'])|join(',') }}"
+          ></div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if workspace_identities_enabled %}
+      <!-- ============= IDENTITIES TAB ============= -->
+      <div
+        class="tab-pane fade"
+        id="identities-tab"
+        role="tabpanel"
+        aria-labelledby="identities-tab-btn"
+      >
+        <div class="card p-3 my-3">
+          <div
+            id="workspace-identities-root"
+            data-workspace-identity-root="true"
+            data-identity-api-base="/api/workspace-identities/personal"
+            data-default-capability="{% if file_sync_enabled %}file_sync{% else %}action{% endif %}"
+            data-capability-options="{% if file_sync_enabled %}file_sync{% endif %}{% if settings.enable_semantic_kernel %}{% if file_sync_enabled %},{% endif %}action{% endif %}"
+            data-auth-type-options="username_password,anonymous,api_key,bearer_token,client_secret,connection_string,managed_identity"
           ></div>
         </div>
       </div>
@@ -2360,6 +2401,7 @@
   <script src="{{ url_for('static', filename='js/workspace/workspace-documents-sharing.js') }}?v={{ config['VERSION'] }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-prompts.js') }}?v={{ config['VERSION'] }}"></script>
   {% if file_sync_enabled %}
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-identities.js') }}?v={{ config['VERSION'] }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
   {% endif %}
   <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}?v={{ config['VERSION'] }}"></script>

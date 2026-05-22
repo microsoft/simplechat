@@ -18,6 +18,7 @@ let allWorkspaceTags = [];
 let selectedTags = new Set();
 let managementContext = null; // 'document' or 'bulk'
 let editingTag = null; // Track if we're in edit mode: { originalName, originalColor }
+let selectionDoneCallback = null;
 
 // ============= Initialize Tag Management System =============
 
@@ -27,6 +28,14 @@ export function initializeTagManagement() {
     setupDocumentTagButton();
     setupBulkTagButton();
     setupWorkspaceManageTagsButton();
+    window.simpleChatTagModalAdapters = window.simpleChatTagModalAdapters || {};
+    window.simpleChatTagModalAdapters.personal = {
+        openSelector: ({ selectedTags: initialTags = [], onDone } = {}) => {
+            showReusableTagSelectionModal(initialTags, onDone);
+        },
+        openManager: () => showTagManagementModal(),
+    };
+    window.simpleChatPersonalTagModalAdapter = window.simpleChatTagModalAdapters.personal;
 }
 
 // ============= Setup Modal Event Listeners =============
@@ -131,6 +140,13 @@ function showTagSelectionModal() {
         const modal = new bootstrap.Modal(document.getElementById('tagSelectionModal'));
         modal.show();
     });
+}
+
+export function showReusableTagSelectionModal(initialTags = [], onDone = null) {
+    selectedTags = new Set(initialTags || []);
+    managementContext = 'file-sync';
+    selectionDoneCallback = onDone;
+    showTagSelectionModal();
 }
 
 function renderTagSelectionList() {
@@ -601,7 +617,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function handleTagSelectionDone() {
     // Update the display based on context
-    if (managementContext === 'document') {
+    if (managementContext === 'file-sync') {
+        if (selectionDoneCallback) {
+            selectionDoneCallback(Array.from(selectedTags));
+        }
+        selectionDoneCallback = null;
+    } else if (managementContext === 'document') {
         updateDocumentTagsDisplay();
     } else if (managementContext === 'bulk') {
         updateBulkTagsDisplay();
