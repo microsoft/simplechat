@@ -494,6 +494,7 @@
 
 <div class="container">
     <h2>Admin Settings</h2>
+    {% include "_semantic_search_health_warning.html" %}
     <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;" novalidate autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         <input type="hidden" id="release_notifications_registered" name="release_notifications_registered" value="{{ 'true' if settings.release_notifications_registered else 'false' }}">
         <input type="hidden" id="release_notifications_name" name="release_notifications_name" value="{{ settings.release_notifications_name or '' }}">

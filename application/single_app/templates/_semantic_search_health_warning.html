@@ -1,0 +1,20 @@
+<!-- templates/_semantic_search_health_warning.html -->
+{% set service_health = (settings.get('service_health', {}) if settings else {}) %}
+{% set semantic_search_health = (service_health.get('semantic_search', {}) if service_health else {}) %}
+{% if semantic_search_health.get('status') == 'quota_exceeded' %}
+<div class="alert alert-warning border-warning-subtle shadow-sm mb-3" id="semantic-search-health-warning" role="alert" data-testid="semantic-search-health-warning">
+    <div class="d-flex align-items-start gap-3">
+        <i class="bi bi-exclamation-triangle-fill fs-4 text-warning flex-shrink-0" aria-hidden="true"></i>
+        <div class="flex-grow-1">
+            <div class="fw-semibold">Workspace search warning</div>
+            <div>{{ semantic_search_health.get('user_message') or 'Azure AI Search Semantic Ranker free query usage has been exceeded for the month.' }}</div>
+            {% if semantic_search_health.get('admin_resolution') %}
+                <div class="small mt-2"><span class="fw-semibold">Admin action:</span> {{ semantic_search_health.get('admin_resolution') }}</div>
+            {% endif %}
+            {% if semantic_search_health.get('last_seen_at') %}
+                <div class="small text-muted mt-1">Last detected: {{ semantic_search_health.get('last_seen_at') }}</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}

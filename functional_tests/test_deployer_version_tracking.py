@@ -2,7 +2,7 @@
 # test_deployer_version_tracking.py
 """
 Functional test for deployer version tracking.
-Version: 0.241.085
+Version: 0.241.086
 Implemented in: 0.241.083
 
 This test ensures the deployers folder includes a standalone version marker

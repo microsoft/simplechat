@@ -311,6 +311,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <p class="workspace-page-subtitle">Review shared documents, prompts, agents, actions, and endpoints for the active group.</p>
     </div>
   </div>
+
+  {% include "_semantic_search_health_warning.html" %}
+
   <div class="workspace-hero-card d-none" id="active-group-hero">
     <div class="row align-items-center g-3">
       <div class="col-auto">

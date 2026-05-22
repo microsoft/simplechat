@@ -2,7 +2,7 @@
 # test_deployer_capacity_defaults.py
 """
 Functional test for deployer capacity defaults.
-Version: 0.241.085
+Version: 0.241.086
 Implemented in: 0.241.085
 
 This test ensures deployer defaults use Azure AI Search Standard S1 with
@@ -46,8 +46,8 @@ def test_deployer_capacity_defaults() -> bool:
         "docs/explanation/features/v0.241.085/DEPLOYER_CAPACITY_DEFAULTS.md"
     )
 
-    assert 'VERSION = "0.241.085"' in config_content, (
-        "Expected config.py version 0.241.085 for the deployer capacity defaults feature."
+    assert 'VERSION = "0.241.086"' in config_content, (
+        "Expected config.py version 0.241.086 after the semantic quota warning fix."
     )
     assert deployer_version == "1.0.6", "Expected deployers/version.txt to be bumped to 1.0.6."
     assert re.fullmatch(r"\d+\.\d+\.\d+", deployer_version), (

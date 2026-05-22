@@ -35,6 +35,10 @@ from config import *
 from flask import Response, copy_current_request_context, g, has_request_context, stream_with_context
 from functions_authentication import *
 from functions_search import *
+from functions_service_health import (
+    SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
+    SemanticSearchQuotaExceededError,
+)
 from functions_settings import *
 from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
@@ -11723,6 +11727,13 @@ def register_route_backend_chats(app):
                     else:
                         # Public scope now automatically searches all visible public workspaces
                         search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
+                except SemanticSearchQuotaExceededError as e:
+                    debug_print(f"Semantic search quota exceeded during hybrid search: {e}")
+                    return jsonify({
+                        'error': e.user_message,
+                        'warning_type': SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
+                        'service_health_warning': True,
+                    }), 503
                 except Exception as e:
                     debug_print(f"Error during hybrid search: {e}")
                     # Only treat as error if the exception is from embedding failure
@@ -14909,6 +14920,15 @@ def register_route_backend_chats(app):
                         debug_print(
                             f"[Streaming] Hybrid search completed | results={len(search_results) if search_results else 0}"
                         )
+                    except SemanticSearchQuotaExceededError as e:
+                        debug_print(f"Semantic search quota exceeded during streaming hybrid search: {e}")
+                        yield emit_thought(
+                            'search',
+                            'Workspace search warning: Semantic Ranker quota has been exceeded.',
+                            detail=e.user_message,
+                        )
+                        yield f"data: {json.dumps({'error': e.user_message, 'warning_type': SEMANTIC_SEARCH_QUOTA_WARNING_TYPE, 'service_health_warning': True})}\n\n"
+                        return
                     except Exception as e:
                         debug_print(f"Error during hybrid search: {e}")
 

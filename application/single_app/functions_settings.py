@@ -5,6 +5,7 @@ from flask import has_request_context
 from config import *
 from functions_appinsights import log_event
 from functions_document_actions import get_default_document_action_capabilities
+from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
 import copy
@@ -368,6 +369,9 @@ def get_settings(use_cosmos=False, include_source=False):
         # Search Result Caching
         'enable_search_result_caching': True,
         'search_cache_ttl_seconds': 300,
+
+        # Service health warnings surfaced to admins and workspace users
+        'service_health': get_default_service_health(),
 
         'azure_document_intelligence_endpoint': '',
         'azure_document_intelligence_key': '',
