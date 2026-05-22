@@ -4,6 +4,26 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.098)**
+
+#### New Features
+
+*   **Layered Message Masking**
+    *   Added mask-plus and mask-minus controls so users can add multiple selected-text masks to the same chat message.
+    *   Full-message masks now layer independently from selected-text masks, allowing users to remove the full-message mask while preserving prior selected ranges.
+    *   Extended masking support to collaborative personal and group conversations, including shared event updates and source-message metadata sync.
+    *   (Ref: message masking, collaborative conversations, `functions_message_masking.py`, `route_backend_chats.py`, `route_backend_collaboration.py`, `chat-messages.js`, `chat-collaboration.js`)
+
+### **(v0.241.097)**
+
+#### Bug Fixes
+
+*   **Advanced Conversation Search Matching**
+    *   Fixed the Advanced Search modal so it searches conversation titles and message content across both legacy and collaborative conversation stores.
+    *   Added explicit match modes for partial text, all words, any word, and whole word searches, with partial matching as the default so terms such as `Chase` can match larger tokens like `JPMorganChase`.
+    *   Normalized chat type filters so personal and multi-user conversation types are not silently excluded from advanced search results.
+    *   (Ref: advanced conversation search, chat search modal, `route_backend_conversations.py`, `chat-search-modal.js`, `ADVANCED_CONVERSATION_SEARCH_FIX.md`)
+
 ### **(v0.241.092)**
 
 #### User Interface Enhancements
