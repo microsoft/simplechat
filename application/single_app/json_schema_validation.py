@@ -7,6 +7,7 @@ from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validat
 
 from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE, derive_blob_endpoint_from_connection_string
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT
+from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
 PLUGIN_ENDPOINT_DEFAULTS = {
@@ -61,6 +62,9 @@ def validate_agent(agent):
 def apply_plugin_validation_defaults(plugin):
     plugin_copy = plugin.copy() if isinstance(plugin, dict) else {}
     plugin_type = str(plugin_copy.get('type', '') or '').strip().lower()
+    if plugin_type == DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE:
+        plugin_type = DATABRICKS_PLUGIN_TYPE
+        plugin_copy['type'] = DATABRICKS_PLUGIN_TYPE
 
     # Remove storage-managed fields that appear on persisted plugin documents but are not part of the schema.
     for field in PLUGIN_STORAGE_MANAGED_FIELDS:

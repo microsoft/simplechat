@@ -39,6 +39,7 @@ from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
 from config import cognitive_services_scope
+from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 from functions_keyvault import (
     SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
     SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
@@ -57,6 +58,13 @@ from functions_group import assert_group_role, get_group_model_endpoints, requir
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
+from functions_workspace_identities import (
+    WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+    WORKSPACE_IDENTITY_SCOPE_GROUP,
+    WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+    get_action_identity_reference_id,
+    hydrate_action_identity_reference,
+)
 from functions_chart_operations import (
     CHART_PLUGIN_TYPE,
     CORE_CHART_PLUGIN_NAME,
@@ -79,6 +87,9 @@ from functions_simplechat_operations import (
     resolve_simplechat_action_capabilities,
 )
 from semantic_kernel_plugins.plugin_loader import discover_plugins
+from functions_mcp_operations import MCP_PLUGIN_TYPE
+from semantic_kernel_plugins.databricks_plugin_factory import DatabricksPluginFactory
+from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
 import app_settings_cache
@@ -1048,6 +1059,8 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             except Exception as e:
                 log_event(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
                 print(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}")
+
+        plugin_manifests = [hydrate_workspace_identity_in_plugin(p) for p in plugin_manifests]
         
         if not plugin_manifests:
             print(f"[SK Loader] Warning: No plugin manifests found for names/IDs: {plugin_names}")
@@ -1252,6 +1265,12 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                     if normalized_type == normalize('openapi') or 'openapi' in normalized_type:
                         plugin = OpenApiPluginFactory.create_from_config(manifest)
                         print(f"[SK Loader] Created OpenAPI plugin: {name}")
+                    elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
+                        plugin = DatabricksPluginFactory.create_from_config(manifest)
+                        print(f"[SK Loader] Created Databricks plugin: {name}")
+                    elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
+                        plugin = McpPluginFactory.create_from_config(manifest)
+                        print(f"[SK Loader] Created MCP plugin: {name}")
                     else:
                         # Standard plugin instantiation
                         
@@ -1843,6 +1862,53 @@ def _get_plugin_secret_context(plugin_manifest):
     return plugin_manifest.get("id"), "global"
 
 
+def _get_plugin_identity_context(plugin_manifest):
+    """Infer the workspace identity scope for a plugin manifest."""
+    if not isinstance(plugin_manifest, dict):
+        return None, None
+
+    plugin_scope = str(plugin_manifest.get("scope") or "").strip().lower()
+    if plugin_scope == "group" or plugin_manifest.get("is_group"):
+        return WORKSPACE_IDENTITY_SCOPE_GROUP, plugin_manifest.get("group_id")
+    if plugin_scope == "global" or plugin_manifest.get("is_global"):
+        return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
+    if plugin_scope == "user" or plugin_manifest.get("user_id"):
+        return WORKSPACE_IDENTITY_SCOPE_PERSONAL, plugin_manifest.get("user_id")
+    return None, None
+
+
+def hydrate_workspace_identity_in_plugin(plugin_manifest):
+    """Resolve a reusable workspace identity reference before runtime plugin loading."""
+    if not isinstance(plugin_manifest, dict):
+        return plugin_manifest
+    if not get_action_identity_reference_id(plugin_manifest):
+        return plugin_manifest
+
+    scope_type, scope_id = _get_plugin_identity_context(plugin_manifest)
+    if not scope_type or not scope_id:
+        return plugin_manifest
+
+    try:
+        return hydrate_action_identity_reference(
+            plugin_manifest,
+            scope_type,
+            scope_id,
+            return_type=SecretReturnType.VALUE,
+        )
+    except Exception as exc:
+        log_event(
+            f"[SK Loader] Failed to hydrate workspace identity for plugin '{plugin_manifest.get('name')}': {exc}",
+            extra={
+                "plugin_name": plugin_manifest.get("name"),
+                "plugin_id": plugin_manifest.get("id"),
+                "scope_type": scope_type,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return plugin_manifest
+
+
 def _is_sql_sensitive_plugin_field(plugin_manifest, field_name):
     """Return True when an additional field should resolve as a SQL secret."""
     plugin_type = str((plugin_manifest or {}).get("type") or "").strip().lower()
@@ -1931,6 +1997,7 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
         except Exception as e:
             log_event(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
+    plugin_manifests = [hydrate_workspace_identity_in_plugin(p) for p in plugin_manifests]
     # Create logged plugin loader for enhanced logging
     logged_loader = create_logged_plugin_loader(kernel)
     
@@ -2085,6 +2152,10 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                     if normalized_type == normalize('openapi') or 'openapi' in normalized_type:
                         # Use the factory to create OpenAPI plugins from configuration
                         plugin = OpenApiPluginFactory.create_from_config(manifest)
+                    elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
+                        plugin = DatabricksPluginFactory.create_from_config(manifest)
+                    elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
+                        plugin = McpPluginFactory.create_from_config(manifest)
                     else:
                         # Standard plugin instantiation with health checking and robust error handling
                         plugin_instance, instantiation_errors = PluginHealthChecker.create_plugin_safely(
@@ -2113,7 +2184,10 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                             log_event(f"[SK Loader] Warning: Plugin {name} get_functions() failed: {e}", 
                                     {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.WARNING)
                     
-                    kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
+                    if hasattr(plugin, 'get_kernel_plugin'):
+                        kernel.add_plugin(plugin.get_kernel_plugin(name))
+                    else:
+                        kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
                     log_event(f"[SK Loader] Successfully loaded plugin: {name} (type: {plugin_type}) [{mode_label}]", 
                             {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
                 except Exception as e:

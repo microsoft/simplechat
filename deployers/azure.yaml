@@ -251,6 +251,55 @@ hooks:
       run: |
         $ErrorActionPreference = 'Stop'
 
+        function Import-AzdHookEnvironment {
+            param(
+                [string[]]$Names
+            )
+
+            foreach ($name in $Names) {
+                $currentValue = [Environment]::GetEnvironmentVariable($name, 'Process')
+                if (-not [string]::IsNullOrWhiteSpace($currentValue)) {
+                    continue
+                }
+
+                $resolvedValue = azd env get-value $name 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $resolvedText = ($resolvedValue | Out-String).Trim()
+                    [Environment]::SetEnvironmentVariable($name, $resolvedText, 'Process')
+                }
+            }
+        }
+
+        Import-AzdHookEnvironment -Names @(
+            'AZURE_SUBSCRIPTION_ID',
+            'var_acrName',
+            'var_authenticationType',
+            'var_blobStorageEndpoint',
+            'var_configureApplication',
+            'var_contentSafetyEndpoint',
+            'var_cosmosDb_accountName',
+            'var_cosmosDb_uri',
+            'var_deploymentLocation',
+            'var_documentIntelligenceServiceEndpoint',
+            'var_keyVaultName',
+            'var_keyVaultUri',
+            'var_openAIEmbeddingModels',
+            'var_openAIEndpoint',
+            'var_openAIGPTModels',
+            'var_openAIResourceGroup',
+            'var_openAISubscriptionId',
+            'var_redisCacheHostName',
+            'var_rgName',
+            'var_searchServiceEndpoint',
+            'var_speechServiceEndpoint',
+            'var_subscriptionId',
+            'var_videoIndexerAccountId',
+            'var_videoIndexerArmApiVersion',
+            'var_videoIndexerEndpoint',
+            'var_videoIndexerName',
+            'var_webService'
+        )
+
         function Get-TargetSubscriptionId {
             if (-not [string]::IsNullOrWhiteSpace($env:AZURE_SUBSCRIPTION_ID)) {
                 return $env:AZURE_SUBSCRIPTION_ID
@@ -268,12 +317,48 @@ hooks:
             return $resolvedSubscriptionId
         }
 
+        function Test-AzureCliAuthRequired {
+            param(
+                [string]$Output
+            )
+
+            return $Output -match 'InteractionRequired|Need user interaction|AADSTS50076|multi-factor authentication|claims challenge'
+        }
+
+        function Get-AzureCliLoginCommand {
+            $tenantId = az account show --query tenantId -o tsv 2>$null
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tenantId)) {
+                return "az login --tenant `"$($tenantId.Trim())`" --scope `"https://management.core.windows.net//.default`""
+            }
+
+            return 'az login --scope "https://management.core.windows.net//.default"'
+        }
+
+        function Assert-ResourceLookupSucceeded {
+            param(
+                [string]$Operation,
+                [int]$ExitCode,
+                [string]$Output
+            )
+
+            if ($ExitCode -eq 0) {
+                return
+            }
+
+            if (Test-AzureCliAuthRequired -Output $Output) {
+                $loginCommand = Get-AzureCliLoginCommand
+                throw "Azure CLI requires interactive authentication while $Operation. Run $loginCommand, then rerun 'azd deploy'.`n$Output"
+            }
+        }
+
         function Resolve-ResourceGroupName {
             $subscriptionId = Get-TargetSubscriptionId
 
             if (-not [string]::IsNullOrWhiteSpace($env:var_rgName)) {
-                $groupExists = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>$null
-                if ($LASTEXITCODE -eq 0 -and $groupExists -eq 'true') {
+                $groupExistsOutput = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>&1 | Out-String
+                $groupExistsExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "checking resource group '$($env:var_rgName)'" -ExitCode $groupExistsExitCode -Output $groupExistsOutput
+                if ($groupExistsExitCode -eq 0 -and $groupExistsOutput.Trim() -eq 'true') {
                     return $env:var_rgName
                 }
             }
@@ -285,11 +370,21 @@ hooks:
 
             $resolvedResourceGroup = $null
             if (-not [string]::IsNullOrWhiteSpace($cosmosAccountName)) {
-                $resolvedResourceGroup = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>$null
+                $cosmosLookupOutput = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>&1 | Out-String
+                $cosmosLookupExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "resolving Cosmos DB account '$cosmosAccountName'" -ExitCode $cosmosLookupExitCode -Output $cosmosLookupOutput
+                if ($cosmosLookupExitCode -eq 0) {
+                    $resolvedResourceGroup = $cosmosLookupOutput.Trim()
+                }
             }
 
             if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup) -and -not [string]::IsNullOrWhiteSpace($env:var_webService)) {
-                $resolvedResourceGroup = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>$null
+                $webAppLookupOutput = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>&1 | Out-String
+                $webAppLookupExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "resolving Web App '$($env:var_webService)'" -ExitCode $webAppLookupExitCode -Output $webAppLookupOutput
+                if ($webAppLookupExitCode -eq 0) {
+                    $resolvedResourceGroup = $webAppLookupOutput.Trim()
+                }
             }
 
             if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup)) {
@@ -612,6 +707,39 @@ hooks:
       run: |
         $ErrorActionPreference = 'Stop'
 
+        function Import-AzdHookEnvironment {
+            param(
+                [string[]]$Names
+            )
+
+            foreach ($name in $Names) {
+                $currentValue = [Environment]::GetEnvironmentVariable($name, 'Process')
+                if (-not [string]::IsNullOrWhiteSpace($currentValue)) {
+                    continue
+                }
+
+                $resolvedValue = azd env get-value $name 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $resolvedText = ($resolvedValue | Out-String).Trim()
+                    [Environment]::SetEnvironmentVariable($name, $resolvedText, 'Process')
+                }
+            }
+        }
+
+        Import-AzdHookEnvironment -Names @(
+            'AZURE_SUBSCRIPTION_ID',
+            'SIMPLECHAT_INSTALL_CHROMIUM',
+            'var_acrName',
+            'var_containerRegistry',
+            'var_cosmosDb_accountName',
+            'var_cosmosDb_uri',
+            'var_enablePrivateNetworking',
+            'var_imageName',
+            'var_rgName',
+            'var_subscriptionId',
+            'var_webService'
+        )
+
         function Get-TargetSubscriptionId {
             if (-not [string]::IsNullOrWhiteSpace($env:AZURE_SUBSCRIPTION_ID)) {
                 return $env:AZURE_SUBSCRIPTION_ID
@@ -629,12 +757,48 @@ hooks:
             return $resolvedSubscriptionId
         }
 
+        function Test-AzureCliAuthRequired {
+            param(
+                [string]$Output
+            )
+
+            return $Output -match 'InteractionRequired|Need user interaction|AADSTS50076|multi-factor authentication|claims challenge'
+        }
+
+        function Get-AzureCliLoginCommand {
+            $tenantId = az account show --query tenantId -o tsv 2>$null
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tenantId)) {
+                return "az login --tenant `"$($tenantId.Trim())`" --scope `"https://management.core.windows.net//.default`""
+            }
+
+            return 'az login --scope "https://management.core.windows.net//.default"'
+        }
+
+        function Assert-ResourceLookupSucceeded {
+            param(
+                [string]$Operation,
+                [int]$ExitCode,
+                [string]$Output
+            )
+
+            if ($ExitCode -eq 0) {
+                return
+            }
+
+            if (Test-AzureCliAuthRequired -Output $Output) {
+                $loginCommand = Get-AzureCliLoginCommand
+                throw "Azure CLI requires interactive authentication while $Operation. Run $loginCommand, then rerun 'azd deploy'.`n$Output"
+            }
+        }
+
         function Resolve-ResourceGroupName {
             $subscriptionId = Get-TargetSubscriptionId
 
             if (-not [string]::IsNullOrWhiteSpace($env:var_rgName)) {
-                $groupExists = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>$null
-                if ($LASTEXITCODE -eq 0 -and $groupExists -eq 'true') {
+                $groupExistsOutput = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>&1 | Out-String
+                $groupExistsExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "checking resource group '$($env:var_rgName)'" -ExitCode $groupExistsExitCode -Output $groupExistsOutput
+                if ($groupExistsExitCode -eq 0 -and $groupExistsOutput.Trim() -eq 'true') {
                     return $env:var_rgName
                 }
             }
@@ -646,11 +810,21 @@ hooks:
 
             $resolvedResourceGroup = $null
             if (-not [string]::IsNullOrWhiteSpace($cosmosAccountName)) {
-                $resolvedResourceGroup = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>$null
+                $cosmosLookupOutput = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>&1 | Out-String
+                $cosmosLookupExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "resolving Cosmos DB account '$cosmosAccountName'" -ExitCode $cosmosLookupExitCode -Output $cosmosLookupOutput
+                if ($cosmosLookupExitCode -eq 0) {
+                    $resolvedResourceGroup = $cosmosLookupOutput.Trim()
+                }
             }
 
             if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup) -and -not [string]::IsNullOrWhiteSpace($env:var_webService)) {
-                $resolvedResourceGroup = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>$null
+                $webAppLookupOutput = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>&1 | Out-String
+                $webAppLookupExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "resolving Web App '$($env:var_webService)'" -ExitCode $webAppLookupExitCode -Output $webAppLookupOutput
+                if ($webAppLookupExitCode -eq 0) {
+                    $resolvedResourceGroup = $webAppLookupOutput.Trim()
+                }
             }
 
             if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup)) {
@@ -860,6 +1034,37 @@ hooks:
       run: |
         $ErrorActionPreference = 'Stop'
 
+        function Import-AzdHookEnvironment {
+            param(
+                [string[]]$Names
+            )
+
+            foreach ($name in $Names) {
+                $currentValue = [Environment]::GetEnvironmentVariable($name, 'Process')
+                if (-not [string]::IsNullOrWhiteSpace($currentValue)) {
+                    continue
+                }
+
+                $resolvedValue = azd env get-value $name 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $resolvedText = ($resolvedValue | Out-String).Trim()
+                    [Environment]::SetEnvironmentVariable($name, $resolvedText, 'Process')
+                }
+            }
+        }
+
+        Import-AzdHookEnvironment -Names @(
+            'AZURE_SUBSCRIPTION_ID',
+            'var_acrName',
+            'var_cosmosDb_accountName',
+            'var_cosmosDb_uri',
+            'var_enablePrivateNetworking',
+            'var_keyVaultName',
+            'var_rgName',
+            'var_subscriptionId',
+            'var_webService'
+        )
+
         function Get-TargetSubscriptionId {
             if (-not [string]::IsNullOrWhiteSpace($env:AZURE_SUBSCRIPTION_ID)) {
                 return $env:AZURE_SUBSCRIPTION_ID
@@ -877,12 +1082,48 @@ hooks:
             return $resolvedSubscriptionId
         }
 
+        function Test-AzureCliAuthRequired {
+            param(
+                [string]$Output
+            )
+
+            return $Output -match 'InteractionRequired|Need user interaction|AADSTS50076|multi-factor authentication|claims challenge'
+        }
+
+        function Get-AzureCliLoginCommand {
+            $tenantId = az account show --query tenantId -o tsv 2>$null
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tenantId)) {
+                return "az login --tenant `"$($tenantId.Trim())`" --scope `"https://management.core.windows.net//.default`""
+            }
+
+            return 'az login --scope "https://management.core.windows.net//.default"'
+        }
+
+        function Assert-ResourceLookupSucceeded {
+            param(
+                [string]$Operation,
+                [int]$ExitCode,
+                [string]$Output
+            )
+
+            if ($ExitCode -eq 0) {
+                return
+            }
+
+            if (Test-AzureCliAuthRequired -Output $Output) {
+                $loginCommand = Get-AzureCliLoginCommand
+                throw "Azure CLI requires interactive authentication while $Operation. Run $loginCommand, then rerun 'azd deploy'.`n$Output"
+            }
+        }
+
         function Resolve-ResourceGroupName {
             $subscriptionId = Get-TargetSubscriptionId
 
             if (-not [string]::IsNullOrWhiteSpace($env:var_rgName)) {
-                $groupExists = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>$null
-                if ($LASTEXITCODE -eq 0 -and $groupExists -eq 'true') {
+                $groupExistsOutput = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>&1 | Out-String
+                $groupExistsExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "checking resource group '$($env:var_rgName)'" -ExitCode $groupExistsExitCode -Output $groupExistsOutput
+                if ($groupExistsExitCode -eq 0 -and $groupExistsOutput.Trim() -eq 'true') {
                     return $env:var_rgName
                 }
             }
@@ -894,11 +1135,21 @@ hooks:
 
             $resolvedResourceGroup = $null
             if (-not [string]::IsNullOrWhiteSpace($cosmosAccountName)) {
-                $resolvedResourceGroup = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>$null
+                $cosmosLookupOutput = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>&1 | Out-String
+                $cosmosLookupExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "resolving Cosmos DB account '$cosmosAccountName'" -ExitCode $cosmosLookupExitCode -Output $cosmosLookupOutput
+                if ($cosmosLookupExitCode -eq 0) {
+                    $resolvedResourceGroup = $cosmosLookupOutput.Trim()
+                }
             }
 
             if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup) -and -not [string]::IsNullOrWhiteSpace($env:var_webService)) {
-                $resolvedResourceGroup = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>$null
+                $webAppLookupOutput = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>&1 | Out-String
+                $webAppLookupExitCode = $LASTEXITCODE
+                Assert-ResourceLookupSucceeded -Operation "resolving Web App '$($env:var_webService)'" -ExitCode $webAppLookupExitCode -Output $webAppLookupOutput
+                if ($webAppLookupExitCode -eq 0) {
+                    $resolvedResourceGroup = $webAppLookupOutput.Trim()
+                }
             }
 
             if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup)) {

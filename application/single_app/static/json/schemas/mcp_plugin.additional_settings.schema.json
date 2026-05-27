@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "transport": {
+      "type": "string",
+      "enum": ["streamable_http", "sse", "websocket", "stdio"],
+      "default": "streamable_http",
+      "description": "MCP transport used to connect to the server."
+    },
+    "auth_method": {
+      "type": "string",
+      "enum": ["none", "bearer", "api_key", "basic", "identity"],
+      "default": "none",
+      "description": "Authentication method layered over the selected transport."
+    },
+    "api_key_header_name": {
+      "type": "string",
+      "default": "X-API-Key",
+      "description": "Header name used when auth_method is api_key."
+    },
+    "load_tools": {
+      "type": "boolean",
+      "default": true,
+      "description": "Load tools from the MCP server."
+    },
+    "load_prompts": {
+      "type": "boolean",
+      "default": false,
+      "description": "Load prompts from the MCP server."
+    },
+    "request_timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "Default MCP request timeout in seconds."
+    },
+    "connect_timeout": {
+      "type": "integer",
+      "default": 10,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "Transport connection timeout in seconds."
+    },
+    "sse_read_timeout": {
+      "type": "integer",
+      "default": 300,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "SSE read timeout in seconds for HTTP-based MCP transports."
+    },
+    "command": {
+      "type": "string",
+      "description": "Command used when transport is stdio."
+    },
+    "args": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Command arguments used when transport is stdio."
+    },
+    "env": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": {"type": "string"},
+      "description": "Environment variables used when transport is stdio."
+    },
+    "allowed_tool_names": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Optional allowlist of MCP tool names exposed to Semantic Kernel."
+    },
+    "mcp_tools": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "properties": {
+          "original_name": {"type": "string"},
+          "function_name": {"type": "string"},
+          "description": {"type": "string"},
+          "input_schema": {"type": "object"}
+        },
+        "required": ["original_name", "function_name"],
+        "additionalProperties": true
+      },
+      "description": "Cached MCP tool metadata from discovery."
+    }
+  },
+  "required": ["transport", "auth_method"],
+  "additionalProperties": true
+}

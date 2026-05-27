@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Databricks Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "cloud": {
+      "type": "string",
+      "enum": ["azure_commercial"],
+      "default": "azure_commercial",
+      "description": "Databricks cloud target. Azure Commercial is supported in this version."
+    },
+    "workspace_url": {
+      "type": "string",
+      "description": "Azure Databricks workspace URL, such as https://adb-...azuredatabricks.net."
+    },
+    "auth_method": {
+      "type": "string",
+      "enum": ["pat", "bearer", "service_principal", "managed_identity"],
+      "default": "pat",
+      "description": "Authentication method used by the action."
+    },
+    "warehouse_id": {
+      "type": "string",
+      "description": "Databricks SQL Warehouse ID."
+    },
+    "catalog": {
+      "type": "string",
+      "description": "Optional default Unity Catalog catalog."
+    },
+    "schema": {
+      "type": "string",
+      "description": "Optional default schema/database."
+    },
+    "read_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Restrict SQL execution to read-only statements."
+    },
+    "max_rows": {
+      "type": "integer",
+      "default": 1000,
+      "minimum": 1,
+      "maximum": 10000,
+      "description": "Maximum rows returned by generated SELECT/WITH queries when no LIMIT is supplied."
+    },
+    "timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "HTTP request timeout in seconds."
+    },
+    "wait_timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 50,
+      "description": "Databricks Statement Execution wait timeout in seconds."
+    },
+    "byte_limit": {
+      "type": "integer",
+      "default": 250000,
+      "minimum": 1000,
+      "maximum": 2000000,
+      "description": "Approximate serialized result size limit before truncating returned rows."
+    }
+  },
+  "required": ["cloud", "warehouse_id"],
+  "additionalProperties": true
+}

@@ -7,10 +7,26 @@ Provides comprehensive validation and error reporting for plugin instances.
 import logging
 import traceback
 from typing import Dict, Any, List, Optional, Tuple
+from urllib.parse import urlparse
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from functions_appinsights import log_event
 from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
 from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE
+from functions_databricks_operations import (
+    DATABRICKS_CLOUD_AZURE_COMMERCIAL,
+    DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
+    DATABRICKS_PLUGIN_TYPE,
+    normalize_databricks_additional_fields,
+)
+from functions_mcp_operations import (
+    MCP_MAX_TIMEOUT_SECONDS,
+    MCP_PLUGIN_TYPE,
+    MCP_REMOTE_TRANSPORTS,
+    MCP_SUPPORTED_AUTH_METHODS,
+    MCP_SUPPORTED_TRANSPORTS,
+    normalize_mcp_additional_fields,
+    normalize_mcp_auth_method,
+)
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
 
 
@@ -76,6 +92,33 @@ class PluginHealthChecker:
                     errors.append("Blob storage plugin requires auth.key when auth.type='key'")
             if auth_type == 'identity' and not endpoint:
                 errors.append("Blob storage plugin requires an 'endpoint' field when auth.type='identity'")
+
+        elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = str(auth.get('type') or 'key').strip()
+            additional_fields = normalize_databricks_additional_fields(
+                manifest.get('additionalFields', {}),
+                auth_type=auth_type,
+            )
+            endpoint = str(manifest.get('endpoint') or additional_fields.get('workspace_url') or '').strip()
+            parsed_endpoint = urlparse(endpoint)
+            identity_id = str(manifest.get('identity_id') or '').strip()
+
+            if additional_fields.get('cloud') != DATABRICKS_CLOUD_AZURE_COMMERCIAL:
+                errors.append("Databricks plugin currently supports only additionalFields.cloud='azure_commercial'")
+            if parsed_endpoint.scheme != 'https' or not parsed_endpoint.netloc:
+                errors.append("Databricks plugin requires an HTTPS workspace endpoint")
+            if not additional_fields.get('warehouse_id'):
+                errors.append("Databricks plugin requires additionalFields.warehouse_id")
+            if auth_type not in {'key', 'identity', 'servicePrincipal'}:
+                errors.append("Databricks plugin supports auth.type values 'key', 'identity', or 'servicePrincipal'")
+            if auth_type == 'key' and not auth.get('key'):
+                errors.append("Databricks plugin requires auth.key for PAT or bearer-token authentication")
+            if auth_type == 'identity' and not auth.get('identity') and not identity_id:
+                errors.append("Databricks plugin requires auth.identity for managed identity or reusable identity authentication")
+            if auth_type == 'servicePrincipal':
+                if not auth.get('identity') or not auth.get('key') or not auth.get('tenantId'):
+                    errors.append("Databricks service principal auth requires auth.identity, auth.key, and auth.tenantId")
         
         elif plugin_type in ['sql_query', 'sql_schema']:
             additional_fields = manifest.get('additionalFields', {})
@@ -133,6 +176,65 @@ class PluginHealthChecker:
                 errors.append(f"SimpleChat plugin requires an 'endpoint' field (use {SIMPLECHAT_DEFAULT_ENDPOINT})")
             if auth.get('type') != 'user':
                 errors.append("SimpleChat plugin requires auth.type='user'")
+
+        elif plugin_type == MCP_PLUGIN_TYPE:
+            additional_fields = normalize_mcp_additional_fields(manifest.get('additionalFields', {}))
+            transport = additional_fields.get('transport')
+            endpoint = str(manifest.get('endpoint') or '').strip()
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = str(auth.get('type') or 'NoAuth').strip()
+            auth_method = normalize_mcp_auth_method(additional_fields.get('auth_method'))
+
+            if transport not in MCP_SUPPORTED_TRANSPORTS:
+                errors.append("MCP plugin requires additionalFields.transport to be streamable_http, sse, websocket, or stdio")
+
+            if transport in MCP_REMOTE_TRANSPORTS:
+                if not endpoint:
+                    errors.append("MCP plugin requires an endpoint for remote transports")
+                else:
+                    parsed_endpoint = urlparse(endpoint)
+                    allowed_schemes = {'ws', 'wss'} if transport == 'websocket' else {'http', 'https'}
+                    if parsed_endpoint.scheme not in allowed_schemes or not parsed_endpoint.netloc:
+                        errors.append(f"MCP {transport} transport requires a valid {'/'.join(sorted(allowed_schemes))} endpoint")
+            elif transport == 'stdio':
+                command = str(additional_fields.get('command') or '').strip()
+                if not command:
+                    errors.append("MCP stdio transport requires additionalFields.command")
+
+            if auth_type not in {'NoAuth', 'key', 'identity'}:
+                errors.append("MCP plugin supports auth.type values 'NoAuth', 'key', or 'identity'")
+            if auth_method not in MCP_SUPPORTED_AUTH_METHODS:
+                errors.append("MCP plugin requires a supported additionalFields.auth_method")
+            if auth_method in {'bearer', 'api_key', 'basic'} and auth_type != 'key':
+                errors.append("MCP bearer, api_key, and basic auth methods require auth.type='key'")
+            if auth_method in {'bearer', 'api_key', 'basic'} and not auth.get('key'):
+                errors.append("MCP credential-based auth methods require auth.key")
+            if auth_method == 'api_key' and not str(additional_fields.get('api_key_header_name') or '').strip():
+                errors.append("MCP api_key auth requires additionalFields.api_key_header_name")
+            if auth_method == 'basic' and not auth.get('identity'):
+                errors.append("MCP basic auth requires auth.identity for the username")
+
+            for timeout_field in ('request_timeout', 'connect_timeout', 'sse_read_timeout'):
+                timeout_value = additional_fields.get(timeout_field)
+                if not isinstance(timeout_value, int) or timeout_value < 1 or timeout_value > MCP_MAX_TIMEOUT_SECONDS:
+                    errors.append(f"MCP {timeout_field} must be between 1 and {MCP_MAX_TIMEOUT_SECONDS} seconds")
+
+            allowed_tool_names = additional_fields.get('allowed_tool_names')
+            if not isinstance(allowed_tool_names, list):
+                errors.append("MCP allowed_tool_names must be an array when provided")
+
+            mcp_tools = additional_fields.get('mcp_tools')
+            if not isinstance(mcp_tools, list):
+                errors.append("MCP mcp_tools must be an array when provided")
+            else:
+                for tool in mcp_tools:
+                    if not isinstance(tool, dict):
+                        errors.append("Each MCP tool metadata entry must be an object")
+                        continue
+                    if not str(tool.get('original_name') or '').strip():
+                        errors.append("Each MCP tool metadata entry requires original_name")
+                    if not str(tool.get('function_name') or '').strip():
+                        errors.append("Each MCP tool metadata entry requires function_name")
 
         elif plugin_type == AZURE_MAPS_PLUGIN_TYPE:
             endpoint = manifest.get('endpoint')

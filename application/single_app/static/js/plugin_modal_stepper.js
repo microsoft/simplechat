@@ -4,16 +4,22 @@ import { showToast } from "./chat/chat-toast.js";
 import { getTypeIcon } from "./workspace/view-utils.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
-const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model'];
+const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model', 'databricks_table'];
 const ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'client_secret', 'connection_string', 'managed_identity', 'username_password'];
 const SQL_ACTION_IDENTITY_AUTH_TYPES = ['connection_string', 'managed_identity', 'username_password'];
 const OPENAPI_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
+const MCP_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_identity', 'username_password'];
+const DATABRICKS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_identity'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
+const DATABRICKS_PLUGIN_TYPE = 'databricks';
+const DATABRICKS_DEFAULT_CLOUD = 'azure_commercial';
+const MCP_PLUGIN_TYPE = 'mcp';
 const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
 const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
 const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
+const MCP_STDIO_ENDPOINT = 'stdio://local';
 const BLOB_STORAGE_CAPABILITY_DEFINITIONS = [
   {
     key: 'list_container_contents',
@@ -379,11 +385,19 @@ export class PluginModalStepper {
     if (kind === 'openapi') {
       return this.actionIdentities.filter(identity => OPENAPI_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'mcp') {
+      return this.actionIdentities.filter(identity => MCP_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
+    if (kind === 'databricks') {
+      return this.actionIdentities.filter(identity => DATABRICKS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
     return this.actionIdentities;
   }
 
   updateActionIdentitySelectors() {
     this.populateActionIdentitySelector('openapi', 'plugin-auth-identity-select', 'openapi-action-identity-group', 'plugin-auth-identity-status');
+    this.populateActionIdentitySelector('mcp', 'mcp-identity-select', 'mcp-action-identity-group', 'mcp-identity-status');
+    this.populateActionIdentitySelector('databricks', 'databricks-identity-select', 'databricks-action-identity-group', 'databricks-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
   }
@@ -442,6 +456,8 @@ export class PluginModalStepper {
   getSelectedActionIdentity(kind) {
     const selectIds = {
       openapi: 'plugin-auth-identity-select',
+      mcp: 'mcp-identity-select',
+      databricks: 'databricks-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -455,6 +471,8 @@ export class PluginModalStepper {
   setSelectedActionIdentity(kind, identityId) {
     const selectIds = {
       openapi: 'plugin-auth-identity-select',
+      mcp: 'mcp-identity-select',
+      databricks: 'databricks-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -489,12 +507,18 @@ export class PluginModalStepper {
       return;
     }
 
-    const authSelect = document.getElementById(kind === 'openapi' ? 'plugin-auth-type' : 'plugin-auth-type-generic');
+    const authSelect = document.getElementById(kind === 'openapi'
+      ? 'plugin-auth-type'
+      : (kind === 'mcp' ? 'mcp-auth-method' : (kind === 'databricks' ? 'databricks-auth-method' : 'plugin-auth-type-generic')));
     if (authSelect) {
       authSelect.disabled = !!selectedIdentity;
     }
     if (kind === 'openapi') {
       this.toggleOpenApiAuthFields();
+    } else if (kind === 'mcp') {
+      this.toggleMcpAuthFields();
+    } else if (kind === 'databricks') {
+      this.toggleDatabricksAuthFields();
     } else {
       this.toggleGenericAuthFields();
     }
@@ -513,6 +537,12 @@ export class PluginModalStepper {
     document.getElementById('plugin-auth-type').addEventListener('change', () => this.toggleOpenApiAuthFields());
     document.getElementById('plugin-auth-type-generic').addEventListener('change', () => this.toggleGenericAuthFields());
     document.getElementById('plugin-auth-identity-select').addEventListener('change', () => this.handleActionIdentityChange('openapi'));
+    document.getElementById('mcp-transport').addEventListener('change', () => this.toggleMcpTransportFields());
+    document.getElementById('mcp-auth-method').addEventListener('change', () => this.toggleMcpAuthFields());
+    document.getElementById('mcp-identity-select').addEventListener('change', () => this.handleActionIdentityChange('mcp'));
+    document.getElementById('mcp-discover-tools-btn').addEventListener('click', () => this.discoverMcpTools());
+    document.getElementById('databricks-auth-method').addEventListener('change', () => this.toggleDatabricksAuthFields());
+    document.getElementById('databricks-identity-select').addEventListener('change', () => this.handleActionIdentityChange('databricks'));
     document.getElementById('plugin-auth-identity-select-generic').addEventListener('change', () => this.handleActionIdentityChange('generic'));
     
     // File upload handler
@@ -888,6 +918,9 @@ export class PluginModalStepper {
     if (stepNumber === 3) {
       this.showConfigSectionForType();
       this.toggleOpenApiAuthFields();
+      this.toggleMcpTransportFields();
+      this.toggleMcpAuthFields();
+      this.toggleDatabricksAuthFields();
       this.toggleGenericAuthFields();
     } else if (stepNumber === 5) {
       // Populate summary when reaching the summary step
@@ -919,6 +952,14 @@ export class PluginModalStepper {
 
   isBlobStorageType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === BLOB_STORAGE_PLUGIN_TYPE);
+  }
+
+  isDatabricksType(type = this.selectedType) {
+    return !!(type && [DATABRICKS_PLUGIN_TYPE, 'databricks_table'].includes(type.toLowerCase()));
+  }
+
+  isMcpType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === MCP_PLUGIN_TYPE);
   }
 
   isSimpleChatType(type = this.selectedType) {
@@ -1385,6 +1426,131 @@ export class PluginModalStepper {
     return `${protocol}://${parsed.AccountName}.blob.${suffix}`.replace(/\/+$/, '');
   }
 
+  normalizeDatabricksWorkspaceUrl(workspaceUrl = '') {
+    return String(workspaceUrl || '').trim().replace(/\/+$/, '').replace(/\/api\/2\.0\/sql\/statements$/i, '');
+  }
+
+  getDatabricksIdentityAuthMethod(identity) {
+    const authType = this.getIdentityAuthType(identity);
+    if (authType === 'managed_identity') {
+      return 'managed_identity';
+    }
+    if (authType === 'bearer_token') {
+      return 'bearer';
+    }
+    return 'pat';
+  }
+
+  toggleDatabricksAuthFields() {
+    const selectedIdentity = this.getSelectedActionIdentity('databricks');
+    const authMethodSelect = document.getElementById('databricks-auth-method');
+    const groups = {
+      token: document.getElementById('databricks-token-group'),
+      servicePrincipal: document.getElementById('databricks-service-principal-group'),
+      managedIdentity: document.getElementById('databricks-managed-identity-info')
+    };
+
+    if (authMethodSelect) {
+      authMethodSelect.disabled = Boolean(selectedIdentity);
+    }
+
+    Object.values(groups).forEach(group => {
+      if (group) {
+        group.classList.add('d-none');
+      }
+    });
+
+    if (selectedIdentity) {
+      return;
+    }
+
+    const authMethod = authMethodSelect?.value || 'pat';
+    if (authMethod === 'pat' || authMethod === 'bearer') {
+      groups.token?.classList.remove('d-none');
+    } else if (authMethod === 'service_principal') {
+      groups.servicePrincipal?.classList.remove('d-none');
+    } else if (authMethod === 'managed_identity') {
+      groups.managedIdentity?.classList.remove('d-none');
+    }
+  }
+
+  populateDatabricksForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+    const workspaceUrl = this.normalizeDatabricksWorkspaceUrl(plugin.endpoint || additionalFields.workspace_url || '');
+
+    document.getElementById('databricks-workspace-url').value = workspaceUrl;
+    document.getElementById('databricks-cloud').value = additionalFields.cloud || DATABRICKS_DEFAULT_CLOUD;
+    document.getElementById('databricks-warehouse-id').value = additionalFields.warehouse_id || '';
+    document.getElementById('databricks-catalog').value = additionalFields.catalog || '';
+    document.getElementById('databricks-schema').value = additionalFields.schema || additionalFields.database || '';
+    document.getElementById('databricks-max-rows').value = additionalFields.max_rows || 1000;
+    document.getElementById('databricks-timeout').value = additionalFields.timeout || 30;
+    document.getElementById('databricks-wait-timeout').value = additionalFields.wait_timeout || 30;
+
+    let authMethod = additionalFields.auth_method || 'pat';
+    if (auth.type === 'servicePrincipal') {
+      authMethod = 'service_principal';
+      document.getElementById('databricks-client-id').value = auth.identity || '';
+      document.getElementById('databricks-client-secret').value = auth.key || '';
+      document.getElementById('databricks-tenant-id').value = auth.tenantId || '';
+    } else if (auth.type === 'identity' && auth.identity === 'managed_identity') {
+      authMethod = 'managed_identity';
+    } else if (auth.type === 'key') {
+      document.getElementById('databricks-token').value = auth.key || '';
+    }
+
+    document.getElementById('databricks-auth-method').value = authMethod;
+    this.setSelectedActionIdentity('databricks', plugin.identity_id || '');
+    this.handleActionIdentityChange('databricks');
+  }
+
+  getDatabricksConfiguration() {
+    const workspaceUrl = this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url')?.value || '');
+    const warehouseId = document.getElementById('databricks-warehouse-id')?.value.trim() || '';
+    const selectedIdentity = this.getSelectedActionIdentity('databricks');
+    const authMethod = document.getElementById('databricks-auth-method')?.value || 'pat';
+    const additionalFields = {
+      cloud: DATABRICKS_DEFAULT_CLOUD,
+      workspace_url: workspaceUrl,
+      auth_method: selectedIdentity ? this.getDatabricksIdentityAuthMethod(selectedIdentity) : authMethod,
+      warehouse_id: warehouseId,
+      catalog: document.getElementById('databricks-catalog')?.value.trim() || '',
+      schema: document.getElementById('databricks-schema')?.value.trim() || '',
+      read_only: true,
+      max_rows: parseInt(document.getElementById('databricks-max-rows')?.value, 10) || 1000,
+      timeout: parseInt(document.getElementById('databricks-timeout')?.value, 10) || 30,
+      wait_timeout: parseInt(document.getElementById('databricks-wait-timeout')?.value, 10) || 30
+    };
+    const auth = {};
+    let identityId = '';
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+    } else if (authMethod === 'service_principal') {
+      auth.type = 'servicePrincipal';
+      auth.identity = document.getElementById('databricks-client-id')?.value.trim() || '';
+      auth.key = document.getElementById('databricks-client-secret')?.value.trim() || '';
+      auth.tenantId = document.getElementById('databricks-tenant-id')?.value.trim() || '';
+    } else if (authMethod === 'managed_identity') {
+      auth.type = 'identity';
+      auth.identity = 'managed_identity';
+    } else {
+      auth.type = 'key';
+      auth.key = document.getElementById('databricks-token')?.value.trim() || '';
+    }
+
+    return {
+      endpoint: workspaceUrl,
+      auth,
+      additionalFields,
+      identityId
+    };
+  }
+
   initializeDocumentSearchConfiguration() {
     const defaults = {
       'document-search-scope': 'all',
@@ -1464,149 +1630,379 @@ export class PluginModalStepper {
     return `${unit} (automatic sizing)`;
   }
 
+  parseTextareaLines(fieldId) {
+    const value = document.getElementById(fieldId)?.value || '';
+    return value
+      .replace(/,/g, '\n')
+      .split('\n')
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+
+  parseJsonObjectField(fieldId, fieldName, defaultValue = {}) {
+    const value = document.getElementById(fieldId)?.value.trim() || '';
+    if (!value) {
+      return defaultValue;
+    }
+
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${fieldName} must be a JSON object.`);
+    }
+    return parsed;
+  }
+
+  parseJsonArrayField(fieldId, fieldName, defaultValue = []) {
+    const value = document.getElementById(fieldId)?.value.trim() || '';
+    if (!value) {
+      return defaultValue;
+    }
+
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      throw new Error(`${fieldName} must be a JSON array.`);
+    }
+    return parsed;
+  }
+
+  getIntegerFieldValue(fieldId, defaultValue) {
+    const value = parseInt(document.getElementById(fieldId)?.value, 10);
+    return Number.isNaN(value) ? defaultValue : value;
+  }
+
+  formatMcpTransport(transport) {
+    const labels = {
+      streamable_http: 'Streamable HTTP',
+      sse: 'Server-Sent Events',
+      websocket: 'WebSocket',
+      stdio: 'Stdio'
+    };
+    return labels[transport] || transport || '-';
+  }
+
+  initializeMcpConfiguration() {
+    const defaults = {
+      'mcp-transport': 'streamable_http',
+      'mcp-auth-method': 'none',
+      'mcp-api-key-header-name': 'X-API-Key',
+      'mcp-request-timeout': '30',
+      'mcp-connect-timeout': '10',
+      'mcp-sse-read-timeout': '300',
+      'mcp-tool-metadata': '[]',
+      'mcp-env': '{}'
+    };
+
+    Object.entries(defaults).forEach(([id, value]) => {
+      const element = document.getElementById(id);
+      if (element && !String(element.value || '').trim()) {
+        element.value = value;
+      }
+    });
+
+    this.updateMcpTransportOptions();
+    this.toggleMcpTransportFields();
+    this.toggleMcpAuthFields();
+  }
+
+  isAdminActionScope() {
+    return window.location.pathname.includes('/admin') || this.actionIdentityScope?.scope === 'global';
+  }
+
+  updateMcpTransportOptions() {
+    const transportSelect = document.getElementById('mcp-transport');
+    if (!transportSelect) {
+      return;
+    }
+
+    const stdioOption = Array.from(transportSelect.options).find(option => option.value === 'stdio');
+    if (!stdioOption) {
+      return;
+    }
+
+    const allowStdio = this.isAdminActionScope();
+    stdioOption.disabled = !allowStdio;
+    if (!allowStdio && transportSelect.value === 'stdio') {
+      transportSelect.value = 'streamable_http';
+      this.setMcpDiscoveryStatus('Stdio transport is only available for admin-managed global actions.', 'warning');
+    }
+  }
+
+  toggleMcpTransportFields() {
+    this.updateMcpTransportOptions();
+    const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const endpointGroup = document.getElementById('mcp-endpoint-group');
+    const stdioGroup = document.getElementById('mcp-stdio-group');
+    const endpointInput = document.getElementById('mcp-endpoint');
+
+    const isStdio = transport === 'stdio';
+    if (endpointGroup) {
+      endpointGroup.classList.toggle('d-none', isStdio);
+    }
+    if (stdioGroup) {
+      stdioGroup.classList.toggle('d-none', !isStdio);
+    }
+    if (!isStdio && endpointInput && !endpointInput.value.trim()) {
+      endpointInput.placeholder = transport === 'websocket' ? 'wss://example.com/mcp' : 'https://example.com/mcp';
+    }
+  }
+
+  toggleMcpAuthFields() {
+    const authMethod = document.getElementById('mcp-auth-method')?.value || 'none';
+    const selectedIdentity = this.getSelectedActionIdentity('mcp');
+    const groups = {
+      bearer: document.getElementById('mcp-bearer-token-group'),
+      apiKey: document.getElementById('mcp-api-key-group'),
+      basic: document.getElementById('mcp-basic-auth-group')
+    };
+
+    Object.values(groups).forEach(group => {
+      if (group) {
+        group.classList.add('d-none');
+      }
+    });
+
+    if (selectedIdentity) {
+      return;
+    }
+
+    if (authMethod === 'bearer' && groups.bearer) {
+      groups.bearer.classList.remove('d-none');
+    } else if (authMethod === 'api_key' && groups.apiKey) {
+      groups.apiKey.classList.remove('d-none');
+    } else if (authMethod === 'basic' && groups.basic) {
+      groups.basic.classList.remove('d-none');
+    }
+  }
+
+  populateMcpForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+    const transport = additionalFields.transport || 'streamable_http';
+
+    document.getElementById('mcp-transport').value = transport;
+    document.getElementById('mcp-endpoint').value = transport === 'stdio' ? '' : (plugin.endpoint || '');
+    document.getElementById('mcp-command').value = additionalFields.command || '';
+    document.getElementById('mcp-args').value = Array.isArray(additionalFields.args) ? additionalFields.args.join('\n') : '';
+    document.getElementById('mcp-env').value = JSON.stringify(additionalFields.env || {}, null, 2);
+    document.getElementById('mcp-load-tools').checked = additionalFields.load_tools !== false;
+    document.getElementById('mcp-load-prompts').checked = Boolean(additionalFields.load_prompts);
+    document.getElementById('mcp-request-timeout').value = additionalFields.request_timeout || 30;
+    document.getElementById('mcp-connect-timeout').value = additionalFields.connect_timeout || 10;
+    document.getElementById('mcp-sse-read-timeout').value = additionalFields.sse_read_timeout || 300;
+    document.getElementById('mcp-tool-names').value = Array.isArray(additionalFields.allowed_tool_names)
+      ? additionalFields.allowed_tool_names.join('\n')
+      : '';
+    document.getElementById('mcp-tool-metadata').value = JSON.stringify(additionalFields.mcp_tools || [], null, 2);
+
+    let authMethod = additionalFields.auth_method || 'none';
+    if (auth.type === 'key' && !additionalFields.auth_method) {
+      authMethod = 'bearer';
+    }
+    document.getElementById('mcp-auth-method').value = authMethod === 'identity' ? 'none' : authMethod;
+
+    if (authMethod === 'bearer') {
+      document.getElementById('mcp-bearer-token').value = auth.key || '';
+    } else if (authMethod === 'api_key') {
+      document.getElementById('mcp-api-key-header-name').value = additionalFields.api_key_header_name || 'X-API-Key';
+      document.getElementById('mcp-api-key-value').value = auth.key || '';
+    } else if (authMethod === 'basic') {
+      document.getElementById('mcp-basic-username').value = auth.identity || '';
+      document.getElementById('mcp-basic-password').value = auth.key || '';
+    }
+
+    this.setSelectedActionIdentity('mcp', plugin.identity_id || '');
+    this.handleActionIdentityChange('mcp');
+    this.toggleMcpTransportFields();
+    this.toggleMcpAuthFields();
+  }
+
+  getMcpConfiguration() {
+    const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const selectedIdentity = this.getSelectedActionIdentity('mcp');
+    const authMethod = selectedIdentity ? 'identity' : (document.getElementById('mcp-auth-method')?.value || 'none');
+    const additionalFields = {
+      transport,
+      auth_method: authMethod,
+      load_tools: document.getElementById('mcp-load-tools')?.checked !== false,
+      load_prompts: Boolean(document.getElementById('mcp-load-prompts')?.checked),
+      request_timeout: this.getIntegerFieldValue('mcp-request-timeout', 30),
+      connect_timeout: this.getIntegerFieldValue('mcp-connect-timeout', 10),
+      sse_read_timeout: this.getIntegerFieldValue('mcp-sse-read-timeout', 300),
+      allowed_tool_names: this.parseTextareaLines('mcp-tool-names'),
+      mcp_tools: this.parseJsonArrayField('mcp-tool-metadata', 'Discovered Tool Metadata', [])
+    };
+
+    let endpoint = document.getElementById('mcp-endpoint')?.value.trim() || '';
+    if (transport === 'stdio') {
+      endpoint = MCP_STDIO_ENDPOINT;
+      additionalFields.command = document.getElementById('mcp-command')?.value.trim() || '';
+      additionalFields.args = this.parseTextareaLines('mcp-args');
+      additionalFields.env = this.parseJsonObjectField('mcp-env', 'Environment', {});
+    }
+
+    const auth = {};
+    let identityId = '';
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+    } else if (authMethod === 'none') {
+      auth.type = 'NoAuth';
+    } else if (authMethod === 'bearer') {
+      auth.type = 'key';
+      auth.key = document.getElementById('mcp-bearer-token')?.value.trim() || '';
+    } else if (authMethod === 'api_key') {
+      auth.type = 'key';
+      auth.key = document.getElementById('mcp-api-key-value')?.value.trim() || '';
+      additionalFields.api_key_header_name = document.getElementById('mcp-api-key-header-name')?.value.trim() || 'X-API-Key';
+    } else if (authMethod === 'basic') {
+      auth.type = 'key';
+      auth.identity = document.getElementById('mcp-basic-username')?.value.trim() || '';
+      auth.key = document.getElementById('mcp-basic-password')?.value.trim() || '';
+    }
+
+    return {
+      endpoint,
+      auth,
+      additionalFields,
+      identityId
+    };
+  }
+
+  setMcpDiscoveryStatus(message, variant = 'muted') {
+    const status = document.getElementById('mcp-discover-status');
+    if (!status) {
+      return;
+    }
+    status.textContent = message || '';
+    status.className = `small text-${variant}`;
+  }
+
+  async discoverMcpTools() {
+    const button = document.getElementById('mcp-discover-tools-btn');
+    const spinner = document.getElementById('mcp-discover-spinner');
+    if (!button) {
+      return;
+    }
+
+    try {
+      const mcpConfig = this.getMcpConfiguration();
+      const payload = {
+        name: document.getElementById('plugin-name')?.value.trim() || 'mcp_discovery',
+        displayName: document.getElementById('plugin-display-name')?.value.trim() || 'MCP Discovery',
+        type: MCP_PLUGIN_TYPE,
+        description: document.getElementById('plugin-description')?.value.trim() || 'MCP discovery request',
+        endpoint: mcpConfig.endpoint,
+        auth: mcpConfig.auth,
+        metadata: {},
+        additionalFields: mcpConfig.additionalFields,
+        action_scope: this.actionIdentityScope?.scope || 'personal'
+      };
+
+      if (mcpConfig.identityId) {
+        payload.identity_id = mcpConfig.identityId;
+      }
+      if (this.originalPlugin) {
+        payload.plugin_context = {
+          scope: this.originalPlugin.scope || this.actionIdentityScope?.scope || 'personal',
+          id: this.originalPlugin.id || '',
+          name: this.originalPlugin.name || ''
+        };
+      }
+
+      button.disabled = true;
+      if (spinner) {
+        spinner.classList.remove('d-none');
+      }
+      this.setMcpDiscoveryStatus('Discovering tools...', 'muted');
+
+      const response = await fetch('/api/plugins/mcp/discover', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (!response.ok || result.success === false) {
+        const message = result.error || (Array.isArray(result.errors) ? result.errors.join('; ') : 'Tool discovery failed.');
+        throw new Error(message);
+      }
+
+      const tools = Array.isArray(result.tools) ? result.tools : [];
+      document.getElementById('mcp-tool-metadata').value = JSON.stringify(tools, null, 2);
+      this.setMcpDiscoveryStatus(`Discovered ${tools.length} tool${tools.length === 1 ? '' : 's'}.`, 'success');
+    } catch (error) {
+      this.setMcpDiscoveryStatus(error.message || 'Tool discovery failed.', 'danger');
+    } finally {
+      button.disabled = false;
+      if (spinner) {
+        spinner.classList.add('d-none');
+      }
+    }
+  }
+
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
   }
 
   showConfigSectionForType() {
-    const openApiSection = document.getElementById('openapi-config-section');
-    const genericSection = document.getElementById('generic-config-section');
-    const sqlSection = document.getElementById('sql-config-section');
-    const cosmosSection = document.getElementById('cosmos-config-section');
-    const documentSearchSection = document.getElementById('document-search-config-section');
-    const blobStorageSection = document.getElementById('blob-storage-config-section');
-    const simpleChatSection = document.getElementById('simplechat-config-section');
-    const msGraphSection = document.getElementById('msgraph-config-section');
-    const azureMapsSection = document.getElementById('azure-maps-config-section');
-    const chartSection = document.getElementById('chart-config-section');
-    const isOpenApiType = this.isOpenApiType();
-    const isSqlType = this.isSqlType();
-    const isCosmosType = this.isCosmosType();
-    const isDocumentSearchType = this.isDocumentSearchType();
-    const isBlobStorageType = this.isBlobStorageType();
-    const isSimpleChatType = this.isSimpleChatType();
-    const isMsGraphType = this.isMsGraphType();
-    const isAzureMapsType = this.isAzureMapsType();
-    const isChartType = this.isChartType();
-    
-    if (isOpenApiType) {
-      openApiSection.classList.remove('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.add('d-none');
-    } else if (isSqlType) {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.remove('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.add('d-none');
-      // Initialize SQL plugin configuration
+    const sections = {
+      openapi: document.getElementById('openapi-config-section'),
+      generic: document.getElementById('generic-config-section'),
+      sql: document.getElementById('sql-config-section'),
+      cosmos: document.getElementById('cosmos-config-section'),
+      documentSearch: document.getElementById('document-search-config-section'),
+      blobStorage: document.getElementById('blob-storage-config-section'),
+      databricks: document.getElementById('databricks-config-section'),
+      simpleChat: document.getElementById('simplechat-config-section'),
+      msGraph: document.getElementById('msgraph-config-section'),
+      mcp: document.getElementById('mcp-config-section'),
+      azureMaps: document.getElementById('azure-maps-config-section'),
+      chart: document.getElementById('chart-config-section')
+    };
+
+    const showOnly = (sectionKey) => {
+      Object.entries(sections).forEach(([key, section]) => {
+        if (!section) {
+          return;
+        }
+        section.classList.toggle('d-none', key !== sectionKey);
+      });
+    };
+
+    if (this.isOpenApiType()) {
+      showOnly('openapi');
+    } else if (this.isSqlType()) {
+      showOnly('sql');
       this.initializeSqlConfiguration();
-    } else if (isCosmosType) {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.remove('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.add('d-none');
+    } else if (this.isCosmosType()) {
+      showOnly('cosmos');
       this.initializeCosmosConfiguration();
-    } else if (isDocumentSearchType) {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.remove('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.add('d-none');
+    } else if (this.isDocumentSearchType()) {
+      showOnly('documentSearch');
       this.initializeDocumentSearchConfiguration();
-    } else if (isBlobStorageType) {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.remove('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.add('d-none');
+    } else if (this.isBlobStorageType()) {
+      showOnly('blobStorage');
       this.renderBlobStorageConfiguration();
-    } else if (isSimpleChatType) {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.remove('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.add('d-none');
+    } else if (this.isDatabricksType()) {
+      showOnly('databricks');
+      this.toggleDatabricksAuthFields();
+    } else if (this.isMcpType()) {
+      showOnly('mcp');
+      this.initializeMcpConfiguration();
+    } else if (this.isSimpleChatType()) {
+      showOnly('simpleChat');
       this.renderSimpleChatConfiguration();
-    } else if (isMsGraphType) {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.remove('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.add('d-none');
+    } else if (this.isMsGraphType()) {
+      showOnly('msGraph');
       this.renderMsGraphConfiguration();
-    } else if (isAzureMapsType) {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.remove('d-none');
-      chartSection.classList.add('d-none');
-    } else if (isChartType) {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.add('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.remove('d-none');
+    } else if (this.isAzureMapsType()) {
+      showOnly('azureMaps');
+    } else if (this.isChartType()) {
+      showOnly('chart');
       this.renderChartConfiguration();
     } else {
-      openApiSection.classList.add('d-none');
-      genericSection.classList.remove('d-none');
-      sqlSection.classList.add('d-none');
-      cosmosSection.classList.add('d-none');
-      documentSearchSection.classList.add('d-none');
-      blobStorageSection.classList.add('d-none');
-      simpleChatSection.classList.add('d-none');
-      msGraphSection.classList.add('d-none');
-      azureMapsSection.classList.add('d-none');
-      chartSection.classList.add('d-none');
+      showOnly('generic');
     }
   }
 
@@ -1635,6 +2031,8 @@ export class PluginModalStepper {
         const isCosmosType = this.isCosmosType();
         const isDocumentSearchType = this.isDocumentSearchType();
         const isBlobStorageType = this.isBlobStorageType();
+        const isDatabricksType = this.isDatabricksType();
+        const isMcpType = this.isMcpType();
         const isAzureMapsType = this.isAzureMapsType();
         const isChartType = this.isChartType();
         
@@ -1648,6 +2046,10 @@ export class PluginModalStepper {
           titleEl.textContent = 'Document Search Configuration';
         } else if (isBlobStorageType) {
           titleEl.textContent = 'Blob Storage Configuration';
+        } else if (isDatabricksType) {
+          titleEl.textContent = 'Databricks Configuration';
+        } else if (isMcpType) {
+          titleEl.textContent = 'MCP Server Configuration';
         } else if (this.isSimpleChatType()) {
           titleEl.textContent = 'SimpleChat Configuration';
         } else if (this.isMsGraphType()) {
@@ -1833,6 +2235,8 @@ export class PluginModalStepper {
         const cosmosSection = document.getElementById('cosmos-config-section');
         const documentSearchSection = document.getElementById('document-search-config-section');
         const blobStorageSection = document.getElementById('blob-storage-config-section');
+        const databricksSection = document.getElementById('databricks-config-section');
+        const mcpSection = document.getElementById('mcp-config-section');
         const simpleChatSection = document.getElementById('simplechat-config-section');
         const msGraphSection = document.getElementById('msgraph-config-section');
         const azureMapsSection = document.getElementById('azure-maps-config-section');
@@ -1842,6 +2246,8 @@ export class PluginModalStepper {
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
         const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
         const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
+        const isDatabricksVisible = !databricksSection.classList.contains('d-none');
+        const isMcpVisible = !mcpSection.classList.contains('d-none');
         const isSimpleChatVisible = !simpleChatSection.classList.contains('d-none');
         const isMsGraphVisible = !msGraphSection.classList.contains('d-none');
         const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
@@ -2020,6 +2426,110 @@ export class PluginModalStepper {
           }
           if (this.getSelectedBlobStorageCapabilities().upload_file_to_container && !uploadTypeValues.some(Boolean)) {
             this.showError('Enable at least one supported file type for blob uploads before continuing.');
+            return false;
+          }
+        } else if (isDatabricksVisible) {
+          const workspaceUrl = this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url').value);
+          const warehouseId = document.getElementById('databricks-warehouse-id').value.trim();
+          const authMethod = document.getElementById('databricks-auth-method').value;
+          const selectedIdentity = this.getSelectedActionIdentity('databricks');
+          const maxRows = parseInt(document.getElementById('databricks-max-rows').value, 10);
+          const timeout = parseInt(document.getElementById('databricks-timeout').value, 10);
+          const waitTimeout = parseInt(document.getElementById('databricks-wait-timeout').value, 10);
+
+          if (!workspaceUrl || !workspaceUrl.startsWith('https://')) {
+            this.showError('Databricks workspace URL must be an HTTPS URL.');
+            return false;
+          }
+          if (!warehouseId) {
+            this.showError('Databricks SQL Warehouse ID is required.');
+            return false;
+          }
+          if (!['pat', 'bearer', 'service_principal', 'managed_identity'].includes(authMethod)) {
+            this.showError('Select a supported Databricks authentication method.');
+            return false;
+          }
+          if (!selectedIdentity && (authMethod === 'pat' || authMethod === 'bearer') && !document.getElementById('databricks-token').value.trim()) {
+            this.showError('Databricks token is required for token authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === 'service_principal') {
+            if (!document.getElementById('databricks-client-id').value.trim() || !document.getElementById('databricks-client-secret').value.trim() || !document.getElementById('databricks-tenant-id').value.trim()) {
+              this.showError('Client ID, client secret, and tenant ID are required for Databricks service principal authentication.');
+              return false;
+            }
+          }
+          if (Number.isNaN(maxRows) || maxRows < 1 || maxRows > 10000) {
+            this.showError('Databricks max rows must be between 1 and 10000.');
+            return false;
+          }
+          if (Number.isNaN(timeout) || timeout < 1 || timeout > 300) {
+            this.showError('Databricks timeout must be between 1 and 300 seconds.');
+            return false;
+          }
+          if (Number.isNaN(waitTimeout) || waitTimeout < 1 || waitTimeout > 50) {
+            this.showError('Databricks wait timeout must be between 1 and 50 seconds.');
+            return false;
+          }
+        } else if (isMcpVisible) {
+          const transport = document.getElementById('mcp-transport').value;
+          const endpoint = document.getElementById('mcp-endpoint').value.trim();
+          const command = document.getElementById('mcp-command').value.trim();
+          const authMethod = document.getElementById('mcp-auth-method').value;
+          const selectedIdentity = this.getSelectedActionIdentity('mcp');
+          const requestTimeout = parseInt(document.getElementById('mcp-request-timeout').value, 10);
+          const connectTimeout = parseInt(document.getElementById('mcp-connect-timeout').value, 10);
+          const sseReadTimeout = parseInt(document.getElementById('mcp-sse-read-timeout').value, 10);
+
+          if (!['streamable_http', 'sse', 'websocket', 'stdio'].includes(transport)) {
+            this.showError('Select a supported MCP transport.');
+            return false;
+          }
+          if (transport === 'stdio') {
+            if (!command) {
+              this.showError('Command is required for MCP stdio transport.');
+              return false;
+            }
+            try {
+              this.parseJsonObjectField('mcp-env', 'Environment', {});
+            } catch (error) {
+              this.showError(error.message);
+              return false;
+            }
+          } else if (!endpoint) {
+            this.showError('Endpoint is required for MCP remote transports.');
+            return false;
+          }
+
+          if (!document.getElementById('mcp-load-tools').checked && !document.getElementById('mcp-load-prompts').checked) {
+            this.showError('Enable tools or prompts before continuing.');
+            return false;
+          }
+
+          if (!selectedIdentity && authMethod === 'bearer' && !document.getElementById('mcp-bearer-token').value.trim()) {
+            this.showError('Bearer token is required for MCP bearer authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === 'api_key') {
+            if (!document.getElementById('mcp-api-key-header-name').value.trim() || !document.getElementById('mcp-api-key-value').value.trim()) {
+              this.showError('API key header name and value are required for MCP API key authentication.');
+              return false;
+            }
+          }
+          if (!selectedIdentity && authMethod === 'basic') {
+            if (!document.getElementById('mcp-basic-username').value.trim() || !document.getElementById('mcp-basic-password').value.trim()) {
+              this.showError('Username and password are required for MCP basic authentication.');
+              return false;
+            }
+          }
+          if ([requestTimeout, connectTimeout, sseReadTimeout].some(value => Number.isNaN(value) || value < 1 || value > 300)) {
+            this.showError('MCP timeout values must be between 1 and 300 seconds.');
+            return false;
+          }
+          try {
+            this.parseJsonArrayField('mcp-tool-metadata', 'Discovered Tool Metadata', []);
+          } catch (error) {
+            this.showError(error.message);
             return false;
           }
         } else if (isSimpleChatVisible) {
@@ -3053,6 +3563,10 @@ export class PluginModalStepper {
         blob_storage_read_file_types: additionalFields.blob_storage_read_file_types || plugin.blob_storage_read_file_types || null,
         blob_storage_upload_file_types: additionalFields.blob_storage_upload_file_types || plugin.blob_storage_upload_file_types || null
       });
+    } else if (this.isDatabricksType(plugin.type)) {
+      this.populateDatabricksForm(plugin);
+    } else if (this.isMcpType(plugin.type)) {
+      this.populateMcpForm(plugin);
     } else if (this.isSimpleChatType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setSimpleChatCapabilities(additionalFields.simplechat_capabilities || plugin.simplechat_capabilities || null);
@@ -3102,12 +3616,16 @@ export class PluginModalStepper {
     const cosmosSection = document.getElementById('cosmos-config-section');
     const documentSearchSection = document.getElementById('document-search-config-section');
     const blobStorageSection = document.getElementById('blob-storage-config-section');
+    const databricksSection = document.getElementById('databricks-config-section');
+    const mcpSection = document.getElementById('mcp-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
     const isCosmosVisible = !cosmosSection.classList.contains('d-none');
     const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
     const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
+    const isDatabricksVisible = !databricksSection.classList.contains('d-none');
+    const isMcpVisible = !mcpSection.classList.contains('d-none');
     const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
     
     let auth = {};
@@ -3351,6 +3869,18 @@ export class PluginModalStepper {
       additionalFields.blob_storage_capabilities = this.getSelectedBlobStorageCapabilities();
       additionalFields.blob_storage_read_file_types = this.getSelectedBlobStorageReadFileTypes();
       additionalFields.blob_storage_upload_file_types = this.getSelectedBlobStorageUploadFileTypes();
+    } else if (isDatabricksVisible) {
+      const databricksConfig = this.getDatabricksConfiguration();
+      endpoint = databricksConfig.endpoint;
+      auth = databricksConfig.auth;
+      additionalFields = databricksConfig.additionalFields;
+      identityId = databricksConfig.identityId;
+    } else if (isMcpVisible) {
+      const mcpConfig = this.getMcpConfiguration();
+      endpoint = mcpConfig.endpoint;
+      auth = mcpConfig.auth;
+      additionalFields = mcpConfig.additionalFields;
+      identityId = mcpConfig.identityId;
     } else if (this.isSimpleChatType()) {
       endpoint = '';
       auth.type = 'user';
@@ -3462,6 +3992,8 @@ export class PluginModalStepper {
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
+    const isDatabricksType = this.isDatabricksType();
+    const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
@@ -3490,6 +4022,18 @@ export class PluginModalStepper {
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
       endpointRow.style.display = '';
       document.getElementById('summary-plugin-database-type').textContent = 'Azure Blob Storage container';
+      databaseTypeRow.style.display = '';
+    } else if (isDatabricksType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Azure Commercial Databricks SQL Warehouse';
+      databaseTypeRow.style.display = '';
+    } else if (isMcpType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Model Context Protocol server';
       databaseTypeRow.style.display = '';
     } else if (isSimpleChatType) {
       endpointRow.style.display = 'none';
@@ -3529,10 +4073,10 @@ export class PluginModalStepper {
     }
     
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
+    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
       databaseTypeRow.style.display = 'none';
     }
     
@@ -3542,6 +4086,8 @@ export class PluginModalStepper {
     this.populateCosmosSummary();
     this.populateDocumentSearchSummary();
     this.populateBlobStorageSummary();
+    this.populateDatabricksSummary();
+    this.populateMcpSummary();
     this.populateSimpleChatSummary();
     this.populateMsGraphSummary();
     this.populateChartSummary();
@@ -3556,6 +4102,8 @@ export class PluginModalStepper {
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
+    const isDatabricksType = this.isDatabricksType();
+    const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
@@ -3572,6 +4120,11 @@ export class PluginModalStepper {
     } else if (isBlobStorageType) {
       const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
       return this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
+    } else if (isDatabricksType) {
+      return this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url')?.value || '');
+    } else if (isMcpType) {
+      const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+      return transport === 'stdio' ? MCP_STDIO_ENDPOINT : document.getElementById('mcp-endpoint').value.trim();
     } else if (isAzureMapsType) {
       return AZURE_MAPS_DEFAULT_ENDPOINT;
     } else if (isMsGraphType) {
@@ -3590,6 +4143,8 @@ export class PluginModalStepper {
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
+    const isDatabricksType = this.isDatabricksType();
+    const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
@@ -3608,6 +4163,16 @@ export class PluginModalStepper {
       return 'Internal user context';
     } else if (isBlobStorageType) {
       return 'Connection String';
+    } else if (isDatabricksType) {
+      if (this.getSelectedActionIdentity('databricks')) {
+        return 'Reusable Identity';
+      }
+      return this.formatAuthType(document.getElementById('databricks-auth-method')?.value || 'pat');
+    } else if (isMcpType) {
+      if (this.getSelectedActionIdentity('mcp')) {
+        return 'Reusable Identity';
+      }
+      return this.formatAuthType(document.getElementById('mcp-auth-method')?.value || 'none');
     } else if (isSimpleChatType) {
       return 'User';
     } else if (isMsGraphType) {
@@ -3640,7 +4205,10 @@ export class PluginModalStepper {
       'managed_identity': 'Managed Identity',
       'integrated': 'Integrated Authentication',
       'basic': 'Basic',
-      'NoAuth': 'No Authentication'
+      'NoAuth': 'No Authentication',
+      'pat': 'Personal Access Token',
+      'bearer': 'Bearer Token',
+      'service_principal': 'Service Principal'
     };
     return authTypeMap[authType] || authType;
   }
@@ -3807,6 +4375,69 @@ export class PluginModalStepper {
     blobSection.style.display = '';
   }
 
+  populateDatabricksSummary() {
+    const databricksSection = document.getElementById('summary-databricks-section');
+    if (!databricksSection) {
+      return;
+    }
+
+    if (!this.isDatabricksType()) {
+      databricksSection.classList.add('d-none');
+      return;
+    }
+
+    const catalog = document.getElementById('databricks-catalog')?.value.trim() || '';
+    const schema = document.getElementById('databricks-schema')?.value.trim() || '';
+    const namespace = [catalog, schema].filter(Boolean).join('.') || 'No default catalog/schema';
+
+    document.getElementById('summary-databricks-cloud').textContent = 'Azure Commercial';
+    document.getElementById('summary-databricks-warehouse-id').textContent = document.getElementById('databricks-warehouse-id')?.value.trim() || '-';
+    document.getElementById('summary-databricks-namespace').textContent = namespace;
+    document.getElementById('summary-databricks-max-rows').textContent = document.getElementById('databricks-max-rows')?.value.trim() || '1000';
+    document.getElementById('summary-databricks-timeout').textContent = `${document.getElementById('databricks-timeout')?.value || '30'} seconds`;
+    document.getElementById('summary-databricks-wait-timeout').textContent = `${document.getElementById('databricks-wait-timeout')?.value || '30'} seconds`;
+    databricksSection.classList.remove('d-none');
+  }
+
+  populateMcpSummary() {
+    const mcpSection = document.getElementById('summary-mcp-section');
+    if (!mcpSection) {
+      return;
+    }
+
+    if (!this.isMcpType()) {
+      mcpSection.classList.add('d-none');
+      return;
+    }
+
+    const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const loadTools = Boolean(document.getElementById('mcp-load-tools')?.checked);
+    const loadPrompts = Boolean(document.getElementById('mcp-load-prompts')?.checked);
+    const loadModes = [];
+    if (loadTools) {
+      loadModes.push('Tools');
+    }
+    if (loadPrompts) {
+      loadModes.push('Prompts');
+    }
+
+    const allowedToolNames = this.parseTextareaLines('mcp-tool-names');
+    let toolMetadataCount = 0;
+    try {
+      toolMetadataCount = this.parseJsonArrayField('mcp-tool-metadata', 'Discovered Tool Metadata', []).length;
+    } catch (error) {
+      toolMetadataCount = 0;
+    }
+
+    document.getElementById('summary-mcp-transport').textContent = this.formatMcpTransport(transport);
+    document.getElementById('summary-mcp-load-mode').textContent = loadModes.length ? loadModes.join(', ') : 'None';
+    document.getElementById('summary-mcp-request-timeout').textContent = `${document.getElementById('mcp-request-timeout')?.value || '30'} seconds`;
+    document.getElementById('summary-mcp-connect-timeout').textContent = `${document.getElementById('mcp-connect-timeout')?.value || '10'} seconds`;
+    document.getElementById('summary-mcp-tool-names').textContent = allowedToolNames.length ? allowedToolNames.join(', ') : 'All discovered tools';
+    document.getElementById('summary-mcp-tool-metadata').textContent = `${toolMetadataCount} cached tool${toolMetadataCount === 1 ? '' : 's'}`;
+    mcpSection.classList.remove('d-none');
+  }
+
   populateSimpleChatSummary() {
     const simpleChatSection = document.getElementById('summary-simplechat-section');
     const enabledList = document.getElementById('summary-simplechat-enabled-list');
@@ -3944,6 +4575,8 @@ export class PluginModalStepper {
       const isSqlType = this.isSqlType();
       const isCosmosType = this.isCosmosType();
       const isDocumentSearchType = this.isDocumentSearchType();
+      const isDatabricksType = this.isDatabricksType();
+      const isMcpType = this.isMcpType();
       const isSimpleChatType = this.isSimpleChatType();
       const isMsGraphType = this.isMsGraphType();
       const isAzureMapsType = this.isAzureMapsType();
@@ -3957,6 +4590,10 @@ export class PluginModalStepper {
         currentEndpoint = document.getElementById('cosmos-endpoint')?.value || '';
       } else if (isDocumentSearchType) {
         currentEndpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
+      } else if (isDatabricksType) {
+        currentEndpoint = this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url')?.value || '');
+      } else if (isMcpType) {
+        currentEndpoint = this.getEndpointValue();
       } else if (isSimpleChatType) {
         currentEndpoint = '';
       } else if (isMsGraphType) {
@@ -3993,6 +4630,16 @@ export class PluginModalStepper {
         }
       } else if (isDocumentSearchType) {
         currentAuthType = 'NoAuth';
+      } else if (isMcpType) {
+        const selectedIdentity = this.getSelectedActionIdentity('mcp');
+        currentAuthType = selectedIdentity ? 'identity' : (document.getElementById('mcp-auth-method')?.value || 'none');
+        if (!selectedIdentity && currentAuthType === 'bearer') {
+          currentAuthKey = document.getElementById('mcp-bearer-token')?.value || '';
+        } else if (!selectedIdentity && currentAuthType === 'api_key') {
+          currentAuthKey = document.getElementById('mcp-api-key-value')?.value || '';
+        } else if (!selectedIdentity && currentAuthType === 'basic') {
+          currentAuthKey = document.getElementById('mcp-basic-password')?.value || '';
+        }
       } else if (isSimpleChatType) {
         currentAuthType = 'user';
       } else if (isMsGraphType) {
@@ -4022,6 +4669,8 @@ export class PluginModalStepper {
         }, null, 2);
       } else if (isDocumentSearchType) {
         currentAdditionalFields = JSON.stringify(this.getDocumentSearchAdditionalFields(), null, 2);
+      } else if (isMcpType) {
+        currentAdditionalFields = JSON.stringify(this.getMcpConfiguration().additionalFields, null, 2);
       } else if (isSimpleChatType) {
         currentAdditionalFields = JSON.stringify({
           simplechat_capabilities: this.getSelectedSimpleChatCapabilities()
@@ -4313,6 +4962,49 @@ export class PluginModalStepper {
     safeSetValue('plugin-auth-basic-password-generic');
     safeSetValue('plugin-auth-oauth2-token-generic');
     safeSetValue('azure-maps-key');
+
+    // Step 3 fields - MCP Plugin
+    safeSetValue('mcp-transport', 'streamable_http');
+    safeSetValue('mcp-endpoint');
+    safeSetValue('mcp-command');
+    safeSetValue('mcp-args');
+    safeSetValue('mcp-env', '{}');
+    safeSetValue('mcp-auth-method', 'none');
+    safeSetValue('mcp-identity-select');
+    safeSetValue('mcp-bearer-token');
+    safeSetValue('mcp-api-key-header-name', 'X-API-Key');
+    safeSetValue('mcp-api-key-value');
+    safeSetValue('mcp-basic-username');
+    safeSetValue('mcp-basic-password');
+    safeSetValue('mcp-tool-names');
+    safeSetValue('mcp-tool-metadata', '[]');
+    safeSetValue('mcp-request-timeout', '30');
+    safeSetValue('mcp-connect-timeout', '10');
+    safeSetValue('mcp-sse-read-timeout', '300');
+    const loadTools = document.getElementById('mcp-load-tools');
+    if (loadTools) {
+      loadTools.checked = true;
+    }
+    const loadPrompts = document.getElementById('mcp-load-prompts');
+    if (loadPrompts) {
+      loadPrompts.checked = false;
+    }
+
+    // Step 3 fields - Databricks Plugin
+    safeSetValue('databricks-workspace-url');
+    safeSetValue('databricks-cloud', DATABRICKS_DEFAULT_CLOUD);
+    safeSetValue('databricks-warehouse-id');
+    safeSetValue('databricks-catalog');
+    safeSetValue('databricks-schema');
+    safeSetValue('databricks-auth-method', 'pat');
+    safeSetValue('databricks-identity-select');
+    safeSetValue('databricks-token');
+    safeSetValue('databricks-client-id');
+    safeSetValue('databricks-client-secret');
+    safeSetValue('databricks-tenant-id');
+    safeSetValue('databricks-max-rows', '1000');
+    safeSetValue('databricks-timeout', '30');
+    safeSetValue('databricks-wait-timeout', '30');
     
     // Step 3 fields - SQL Plugin
     safeSetValue('sql-connection-method', 'connection_string');
@@ -4325,7 +5017,7 @@ export class PluginModalStepper {
     safeSetValue('sql-identity-select');
     safeSetValue('sql-database-type', 'sql_server');
 
-    ['plugin-auth-type', 'plugin-auth-type-generic', 'sql-auth-type'].forEach(id => {
+    ['plugin-auth-type', 'plugin-auth-type-generic', 'mcp-auth-method', 'databricks-auth-method', 'sql-auth-type'].forEach(id => {
       const element = document.getElementById(id);
       if (element) {
         element.disabled = false;
@@ -4376,6 +5068,9 @@ export class PluginModalStepper {
     // Hide all auth field sections (with safe calls)
     try {
       this.toggleOpenApiAuthFields();
+      this.toggleMcpTransportFields();
+      this.toggleMcpAuthFields();
+      this.toggleDatabricksAuthFields();
       this.toggleGenericAuthFields();
       this.handleSqlAuthTypeChange();
       this.handleCosmosAuthTypeChange();

@@ -17,6 +17,10 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, 
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
+from functions_mcp_operations import MCP_PLUGIN_TYPE
+from semantic_kernel_plugins.databricks_plugin_factory import DatabricksPluginFactory
+from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
 from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
@@ -111,6 +115,10 @@ class LoggedPluginLoader:
         # Handle different plugin types
         if plugin_type == 'openapi':
             return self._create_openapi_plugin(manifest)
+        elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
+            return self._create_databricks_plugin(manifest)
+        elif plugin_type == MCP_PLUGIN_TYPE:
+            return self._create_mcp_plugin(manifest)
         elif plugin_type == 'python':
             return self._create_python_plugin(manifest)
         elif plugin_type in ['sql_schema', 'sql_query']:
@@ -182,6 +190,48 @@ class LoggedPluginLoader:
                      extra={"plugin_name": plugin_name, "error": str(e)}, 
                      level=logging.ERROR)
             self.logger.error(f"Failed to create OpenAPI plugin: {e}")
+            return None
+
+    def _create_databricks_plugin(self, manifest: Dict[str, Any]):
+        """Create a Databricks plugin instance."""
+        plugin_name = manifest.get('name')
+        try:
+            plugin_instance = DatabricksPluginFactory.create_from_config(manifest)
+            log_event(
+                "[Logged Plugin Loader] Successfully created Databricks plugin instance using factory",
+                extra={"plugin_name": plugin_name},
+                level=logging.INFO,
+            )
+            return plugin_instance
+        except Exception as e:
+            log_event(
+                "[Logged Plugin Loader] General error creating Databricks plugin",
+                extra={"plugin_name": plugin_name, "error": str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            self.logger.error(f"Failed to create Databricks plugin: {e}")
+            return None
+
+    def _create_mcp_plugin(self, manifest: Dict[str, Any]):
+        """Create an MCP plugin instance."""
+        plugin_name = manifest.get('name')
+        try:
+            plugin_instance = McpPluginFactory.create_from_config(manifest)
+            log_event(
+                "[Logged Plugin Loader] Successfully created MCP plugin instance using factory",
+                extra={"plugin_name": plugin_name},
+                level=logging.INFO,
+            )
+            return plugin_instance
+        except Exception as e:
+            log_event(
+                "[Logged Plugin Loader] General error creating MCP plugin",
+                extra={"plugin_name": plugin_name, "error": str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            self.logger.error(f"Failed to create MCP plugin: {e}")
             return None
     
     def _create_python_plugin(self, manifest: Dict[str, Any]):

@@ -65,6 +65,8 @@ ACTION_IDENTITY_SQL_TYPES = {"sql_query", "sql_schema"}
 ACTION_IDENTITY_SQL_AUTH_TYPES = {"connection_string", "managed_identity", "username_password"}
 ACTION_IDENTITY_OPENAPI_TYPES = {"openapi"}
 ACTION_IDENTITY_OPENAPI_AUTH_TYPES = {"api_key", "bearer_token", "username_password"}
+ACTION_IDENTITY_DATABRICKS_TYPES = {"databricks", "databricks_table"}
+ACTION_IDENTITY_DATABRICKS_AUTH_TYPES = {"api_key", "bearer_token", "managed_identity"}
 
 
 def _now_iso() -> str:
@@ -449,6 +451,8 @@ def _get_action_identity_auth_types_for_plugin(action_data: Dict[str, Any]) -> S
         return ACTION_IDENTITY_SQL_AUTH_TYPES
     if plugin_type in ACTION_IDENTITY_OPENAPI_TYPES:
         return ACTION_IDENTITY_OPENAPI_AUTH_TYPES
+    if plugin_type in ACTION_IDENTITY_DATABRICKS_TYPES:
+        return ACTION_IDENTITY_DATABRICKS_AUTH_TYPES
     return ACTION_IDENTITY_AUTH_TYPES
 
 

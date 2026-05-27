@@ -1,5 +1,6 @@
 # route_backend_plugins.py
 
+import asyncio
 import re
 import builtins
 import json
@@ -61,6 +62,17 @@ from functions_blob_storage_operations import (
     get_default_blob_storage_upload_file_types,
 )
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT, CHART_PLUGIN_TYPE
+from functions_databricks_operations import (
+    DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
+    DATABRICKS_PLUGIN_TYPE,
+    normalize_databricks_additional_fields,
+)
+from functions_mcp_operations import (
+    MCP_PLUGIN_TYPE,
+    MCP_STDIO_ENDPOINT,
+    normalize_mcp_additional_fields,
+)
+from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from functions_msgraph_operations import MSGRAPH_DEFAULT_ENDPOINT, MSGRAPH_PLUGIN_TYPE
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
 from functions_workspace_identities import (
@@ -95,6 +107,25 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
+    elif plugin_type == MCP_PLUGIN_TYPE:
+        additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
+        additional_fields = normalize_mcp_additional_fields(additional_fields)
+        plugin_payload['additionalFields'] = additional_fields
+
+        if additional_fields.get('transport') == 'stdio' and not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = MCP_STDIO_ENDPOINT
+
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth_method = additional_fields.get('auth_method') or 'none'
+        if auth_method == 'none':
+            auth['type'] = 'NoAuth'
+            auth.pop('key', None)
+            auth.pop('identity', None)
+        elif auth_method == 'identity':
+            auth['type'] = auth.get('type') or 'identity'
+        elif auth.get('type') in ['', None, 'NoAuth']:
+            auth['type'] = 'key'
+        plugin_payload['auth'] = auth
     elif plugin_type in ['search', 'document_search']:
         if not str(plugin_payload.get('endpoint') or '').strip():
             plugin_payload['endpoint'] = DOCUMENT_SEARCH_INTERNAL_ENDPOINT
@@ -117,6 +148,19 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         additional_fields.setdefault('blob_storage_capabilities', get_default_blob_storage_capabilities())
         additional_fields.setdefault('blob_storage_read_file_types', get_default_blob_storage_read_file_types())
         additional_fields.setdefault('blob_storage_upload_file_types', get_default_blob_storage_upload_file_types())
+        plugin_payload['additionalFields'] = additional_fields
+    elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth_type = str(auth.get('type') or 'key').strip() or 'key'
+        auth['type'] = auth_type
+        additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
+        additional_fields = normalize_databricks_additional_fields(additional_fields, auth_type=auth_type)
+        if auth_type == 'servicePrincipal':
+            additional_fields['auth_method'] = 'service_principal'
+        elif auth_type == 'identity' and auth.get('identity') == 'managed_identity':
+            additional_fields['auth_method'] = 'managed_identity'
+        plugin_payload['type'] = DATABRICKS_PLUGIN_TYPE
+        plugin_payload['auth'] = auth
         plugin_payload['additionalFields'] = additional_fields
     elif plugin_type == SIMPLECHAT_PLUGIN_TYPE:
         if not str(plugin_payload.get('endpoint') or '').strip():
@@ -217,10 +261,16 @@ def get_plugin_types():
                         #TODO: This can be improved by ensuring we have additional fields from the schemas we have not created if needed. 
                         if 'databricks' in module_name.lower():
                             safe_manifest = {
-                                'endpoint': 'https://example.databricks.com',
+                                'endpoint': 'https://adb-1234567890123456.7.azuredatabricks.net',
                                 'auth': {'type': 'key', 'key': 'dummy'},
-                                'additionalFields': {'table': 'example', 'columns': [], 'warehouse_id': 'dummy'},
-                                'metadata': {'description': 'Example Databricks plugin'}
+                                'additionalFields': {
+                                    'cloud': 'azure_commercial',
+                                    'workspace_url': 'https://adb-1234567890123456.7.azuredatabricks.net',
+                                    'warehouse_id': 'dummy',
+                                    'catalog': 'main',
+                                    'schema': 'default',
+                                },
+                                'metadata': {'description': 'Example Databricks plugin'},
                             }
                         elif 'sql' in module_name.lower():
                             safe_manifest = {
@@ -268,6 +318,23 @@ def get_plugin_types():
                             safe_manifest = {
                                 'auth': {'type': 'user'},
                                 'metadata': {'description': 'Microsoft Graph plugin'}
+                            }
+                        elif 'mcp' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': 'https://example.com/mcp',
+                                'auth': {'type': 'NoAuth'},
+                                'additionalFields': {
+                                    'transport': 'streamable_http',
+                                    'auth_method': 'none',
+                                    'load_tools': True,
+                                    'load_prompts': False,
+                                    'request_timeout': 30,
+                                    'connect_timeout': 10,
+                                    'sse_read_timeout': 300,
+                                    'allowed_tool_names': [],
+                                    'mcp_tools': []
+                                },
+                                'metadata': {'description': 'Example MCP action'}
                             }
                         elif 'azure_maps' in module_name.lower():
                             safe_manifest = {
@@ -401,6 +468,19 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
 def _validate_action_identity_for_scope(plugin_manifest, scope_type, scope_id):
     """Validate a plugin manifest's workspace identity reference for the target action scope."""
     validate_action_identity_reference(plugin_manifest, scope_type, scope_id)
+
+
+def _reject_non_admin_mcp_stdio(plugin_manifest, scope_label="personal"):
+    """Block stdio MCP actions outside admin/global action management."""
+    if not isinstance(plugin_manifest, dict):
+        return None
+    if plugin_manifest.get('type') != MCP_PLUGIN_TYPE:
+        return None
+
+    additional_fields = normalize_mcp_additional_fields(plugin_manifest.get('additionalFields', {}))
+    if additional_fields.get('transport') == 'stdio':
+        return f"MCP stdio transport is only available for admin-managed global actions, not {scope_label} actions."
+    return None
 
 
 def _hydrate_sql_test_identity(data, existing_plugin, user_id):
@@ -584,6 +664,9 @@ def set_user_plugins():
         plugin_type = plugin_to_save.get('type', '')
         plugin_to_save.setdefault('endpoint', '')
         _apply_plugin_runtime_defaults(plugin_to_save)
+        mcp_stdio_error = _reject_non_admin_mcp_stdio(plugin_to_save, scope_label='personal')
+        if mcp_stdio_error:
+            return jsonify({'error': mcp_stdio_error}), 400
         try:
             _validate_action_identity_for_scope(
                 plugin_to_save,
@@ -775,6 +858,9 @@ def create_group_action_route():
         payload.pop(key, None)
 
     _apply_plugin_runtime_defaults(payload)
+    mcp_stdio_error = _reject_non_admin_mcp_stdio(payload, scope_label='group')
+    if mcp_stdio_error:
+        return jsonify({'error': mcp_stdio_error}), 400
 
     # Merge with schema to ensure all required fields are present (same as global actions)
     schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -843,6 +929,9 @@ def update_group_action_route(action_id):
     merged['id'] = existing.get('id', action_id)
 
     _apply_plugin_runtime_defaults(merged)
+    mcp_stdio_error = _reject_non_admin_mcp_stdio(merged, scope_label='group')
+    if mcp_stdio_error:
+        return jsonify({'error': mcp_stdio_error}), 400
 
     try:
         validate_group_action_payload(merged, partial=False)
@@ -1296,6 +1385,89 @@ def get_plugin_auth_types(plugin_type):
         "allowedAuthTypes": allowed_auth_types,
         "source": source
     })
+
+
+@bpap.route('/api/plugins/mcp/discover', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def discover_mcp_tools():
+    """Discover tools from an MCP server using a transient action manifest."""
+    user_id = get_current_user_id()
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'Invalid MCP discovery payload.'}), 400
+
+    try:
+        existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id)
+        scope_type, scope_id = _resolve_action_identity_context(payload, existing_plugin, user_id)
+
+        discovery_manifest = dict(payload)
+        discovery_manifest['type'] = MCP_PLUGIN_TYPE
+        discovery_manifest.setdefault('name', 'mcp_discovery')
+        discovery_manifest.setdefault('displayName', 'MCP Discovery')
+        discovery_manifest.setdefault('description', 'Transient MCP discovery manifest')
+        discovery_manifest.setdefault('metadata', {})
+        discovery_manifest.setdefault('additionalFields', {})
+        _apply_plugin_runtime_defaults(discovery_manifest)
+        if discovery_manifest.get('additionalFields', {}).get('transport') == 'stdio' and scope_type != WORKSPACE_IDENTITY_SCOPE_GLOBAL:
+            return jsonify({'error': 'MCP stdio discovery is only available for admin-managed global actions.'}), 403
+
+        auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
+        existing_auth = existing_plugin.get('auth') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict) else {}
+        if auth.get('key') in ('', None, ui_trigger_word) and existing_auth.get('key'):
+            auth['key'] = existing_auth.get('key')
+        if auth.get('identity') in ('', None) and existing_auth.get('identity'):
+            auth['identity'] = existing_auth.get('identity')
+        discovery_manifest['auth'] = auth
+
+        if discovery_manifest.get('identity_id'):
+            discovery_manifest = hydrate_action_identity_reference(
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                return_type=SecretReturnType.VALUE,
+            )
+        else:
+            auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
+            if auth.get('key'):
+                auth['key'] = _resolve_secret_value_for_plugin_test(auth.get('key'), 'auth.key', plugin_label='MCP')
+            discovery_manifest['auth'] = auth
+
+        is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(discovery_manifest, MCP_PLUGIN_TYPE)
+        if not is_valid:
+            return jsonify({
+                'success': False,
+                'error': 'MCP discovery manifest is invalid.',
+                'errors': validation_errors,
+            }), 400
+
+        tools = asyncio.run(McpPluginFactory.discover_tools_from_config(discovery_manifest))
+        log_event(
+            "[MCP Discovery] Discovered MCP tools",
+            extra={
+                "user_id": user_id,
+                "tool_count": len(tools),
+                "transport": discovery_manifest.get('additionalFields', {}).get('transport'),
+            },
+            level=logging.INFO,
+        )
+        return jsonify({
+            'success': True,
+            'tool_count': len(tools),
+            'tools': tools,
+        })
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+    except (LookupError, ValueError) as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        log_event(
+            f"[MCP Discovery] Failed to discover MCP tools: {exc}",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({'error': 'Failed to discover MCP tools.'}), 500
 
 ##########################################################################################################
 # Dynamic Plugin Metadata Endpoint

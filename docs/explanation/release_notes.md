@@ -4,6 +4,22 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.104)**
+
+#### New Features
+
+*   **Azure Commercial Databricks Action**
+    *   Added a first-class Databricks action type for Azure Commercial workspaces, using the Databricks SQL Statement Execution API rather than an ODBC driver.
+    *   Added action modal configuration for workspace URL, SQL Warehouse ID, catalog/schema defaults, token/service-principal/managed-identity auth, execution limits, and reusable identity selection.
+    *   Added read-only SQL enforcement, factory-based Semantic Kernel loading, manifest validation, schemas, feature documentation, and functional/UI coverage.
+    *   (Ref: `DatabricksPlugin`, `DatabricksPluginFactory`, Databricks action modal, `DATABRICKS_ACTION_CONFIGURATION.md`)
+
+*   **Model Context Protocol Actions**
+    *   Added first-class MCP action support with transport, authentication, timeout, tool allowlist, and cached tool metadata configuration in the shared action modal.
+    *   Added server-side MCP tool discovery plus runtime tool invocation through Semantic Kernel's MCP connector, including dynamic tool function registration for agents.
+    *   Restricted stdio MCP transport to admin-managed global actions because it launches server-side commands, while remote transports support streamable HTTP, SSE, and WebSocket.
+    *   (Ref: MCP actions, Semantic Kernel MCP connector, `functions_mcp_operations.py`, `mcp_plugin.py`, `mcp_plugin_factory.py`, `route_backend_plugins.py`, `plugin_modal_stepper.js`, `MCP_ACTION_CONFIGURATION.md`)
+
 ### **(v0.241.098)**
 
 #### New Features

@@ -201,6 +201,104 @@
             </div>
           </div>
 
+          <div id="databricks-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Azure Commercial Databricks action:</strong> Configure one Databricks SQL Warehouse and expose read-only SQL tools through the Statement Execution API.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-bricks me-2"></i>Workspace and Warehouse
+              </div>
+              <div class="mb-3">
+                <label for="databricks-workspace-url" class="form-label">Workspace URL <span class="text-danger">*</span></label>
+                <input type="url" class="form-control" id="databricks-workspace-url" placeholder="https://adb-1234567890123456.7.azuredatabricks.net" />
+                <div class="form-text">Use the Azure Commercial Databricks workspace URL, not the SQL statement API path.</div>
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="databricks-cloud" class="form-label">Cloud</label>
+                  <select class="form-select" id="databricks-cloud" disabled>
+                    <option value="azure_commercial" selected>Azure Commercial</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label for="databricks-warehouse-id" class="form-label">SQL Warehouse ID <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="databricks-warehouse-id" placeholder="0123-456789-abcd123" />
+                </div>
+                <div class="col-md-6">
+                  <label for="databricks-catalog" class="form-label">Default Catalog</label>
+                  <input type="text" class="form-control" id="databricks-catalog" placeholder="main" />
+                </div>
+                <div class="col-md-6">
+                  <label for="databricks-schema" class="form-label">Default Schema</label>
+                  <input type="text" class="form-control" id="databricks-schema" placeholder="default" />
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+              <div class="mb-3 d-none" id="databricks-action-identity-group">
+                <label for="databricks-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="databricks-identity-select"></select>
+                <div class="form-text" id="databricks-identity-status"></div>
+              </div>
+              <div class="mb-3">
+                <label for="databricks-auth-method" class="form-label">Authentication Method</label>
+                <select class="form-select" id="databricks-auth-method">
+                  <option value="pat">Personal Access Token</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="service_principal">Service Principal</option>
+                  <option value="managed_identity">Managed Identity</option>
+                </select>
+              </div>
+              <div class="mb-3" id="databricks-token-group">
+                <label for="databricks-token" class="form-label">Token <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="databricks-token" placeholder="Databricks token" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+              <div class="row g-3 d-none" id="databricks-service-principal-group">
+                <div class="col-md-4">
+                  <label for="databricks-client-id" class="form-label">Client ID <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="databricks-client-id" placeholder="client-id" />
+                </div>
+                <div class="col-md-4">
+                  <label for="databricks-client-secret" class="form-label">Client Secret <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="databricks-client-secret" placeholder="client-secret" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                </div>
+                <div class="col-md-4">
+                  <label for="databricks-tenant-id" class="form-label">Tenant ID <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="databricks-tenant-id" placeholder="tenant-id" />
+                </div>
+              </div>
+              <div class="alert alert-info mb-0 d-none" id="databricks-managed-identity-info">
+                <small>Managed Identity uses the app identity to request an Azure Databricks token in Azure Commercial.</small>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-sliders me-2"></i>Execution Limits
+              </div>
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label for="databricks-max-rows" class="form-label">Max Rows</label>
+                  <input type="number" class="form-control" id="databricks-max-rows" value="1000" min="1" max="10000" />
+                </div>
+                <div class="col-md-4">
+                  <label for="databricks-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="databricks-timeout" value="30" min="1" max="300" />
+                </div>
+                <div class="col-md-4">
+                  <label for="databricks-wait-timeout" class="form-label">Wait Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="databricks-wait-timeout" value="30" min="1" max="50" />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div id="simplechat-config-section" class="d-none">
             <div class="alert alert-primary mb-0">
               <strong>Built-in action:</strong> SimpleChat does not require a URL or external credentials.
@@ -226,6 +324,155 @@
                 <i class="bi bi-calendar3 me-2"></i>Default Microsoft Graph Capabilities
               </div>
               <div id="msgraph-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+          </div>
+
+          <div id="mcp-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>MCP action:</strong> Connect to a Model Context Protocol server and expose selected server tools to agents through Semantic Kernel.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-diagram-3 me-2"></i>MCP Server
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="mcp-transport" class="form-label">Transport <span class="text-danger">*</span></label>
+                  <select class="form-select" id="mcp-transport">
+                    <option value="streamable_http">Streamable HTTP</option>
+                    <option value="sse">Server-Sent Events</option>
+                    <option value="websocket">WebSocket</option>
+                    <option value="stdio">Stdio</option>
+                  </select>
+                </div>
+                <div class="col-md-6" id="mcp-endpoint-group">
+                  <label for="mcp-endpoint" class="form-label">Endpoint <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="mcp-endpoint" placeholder="https://example.com/mcp" />
+                </div>
+              </div>
+
+              <div id="mcp-stdio-group" class="d-none mt-3">
+                <div class="mb-3">
+                  <label for="mcp-command" class="form-label">Command <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="mcp-command" placeholder="python" />
+                </div>
+                <div class="mb-3">
+                  <label for="mcp-args" class="form-label">Arguments</label>
+                  <textarea class="form-control" id="mcp-args" rows="3" placeholder="-m&#10;my_mcp_server"></textarea>
+                  <div class="form-text">One argument per line.</div>
+                </div>
+                <div>
+                  <label for="mcp-env" class="form-label">Environment (JSON)</label>
+                  <textarea class="form-control" id="mcp-env" rows="3" placeholder="{}"></textarea>
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+              <div class="mb-3">
+                <label for="mcp-auth-method" class="form-label">Authentication Method</label>
+                <select class="form-select" id="mcp-auth-method">
+                  <option value="none">No Authentication</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="api_key">API Key Header</option>
+                  <option value="basic">Basic Auth</option>
+                </select>
+              </div>
+
+              <div class="mb-3 d-none" id="mcp-action-identity-group">
+                <label for="mcp-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="mcp-identity-select"></select>
+                <div class="form-text" id="mcp-identity-status"></div>
+              </div>
+
+              <div id="mcp-bearer-token-group" class="d-none mb-3">
+                <label for="mcp-bearer-token" class="form-label">Bearer Token <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="mcp-bearer-token" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+
+              <div id="mcp-api-key-group" class="d-none row g-3 mb-3">
+                <div class="col-md-6">
+                  <label for="mcp-api-key-header-name" class="form-label">Header Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="mcp-api-key-header-name" value="X-API-Key" />
+                </div>
+                <div class="col-md-6">
+                  <label for="mcp-api-key-value" class="form-label">API Key <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="mcp-api-key-value" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                </div>
+              </div>
+
+              <div id="mcp-basic-auth-group" class="d-none row g-3">
+                <div class="col-md-6">
+                  <label for="mcp-basic-username" class="form-label">Username <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="mcp-basic-username" />
+                </div>
+                <div class="col-md-6">
+                  <label for="mcp-basic-password" class="form-label">Password <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="mcp-basic-password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-tools me-2"></i>Tool Exposure
+              </div>
+              <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="mcp-load-tools" checked />
+                    <label class="form-check-label" for="mcp-load-tools">Load tools</label>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="mcp-load-prompts" />
+                    <label class="form-check-label" for="mcp-load-prompts">Load prompts</label>
+                  </div>
+                </div>
+              </div>
+              <div class="mb-3">
+                <label for="mcp-tool-names" class="form-label">Allowed Tool Names</label>
+                <textarea class="form-control" id="mcp-tool-names" rows="4" placeholder="search_repositories&#10;get_issue"></textarea>
+                <div class="form-text">Optional. Leave empty to expose all discovered tools.</div>
+              </div>
+              <div>
+                <label for="mcp-tool-metadata" class="form-label">Discovered Tool Metadata (JSON)</label>
+                <textarea class="form-control" id="mcp-tool-metadata" rows="5" placeholder="[]"></textarea>
+              </div>
+              <div class="mt-3 pt-3 border-top">
+                <div class="d-flex align-items-center gap-3">
+                  <button type="button" class="btn btn-outline-primary" id="mcp-discover-tools-btn">
+                    <i class="bi bi-search me-2"></i>Discover Tools
+                  </button>
+                  <span id="mcp-discover-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                  <span id="mcp-discover-status" class="small text-muted"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-speedometer2 me-2"></i>Timeouts
+              </div>
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label for="mcp-request-timeout" class="form-label">Request Timeout</label>
+                  <input type="number" class="form-control" id="mcp-request-timeout" value="30" min="1" max="300" />
+                </div>
+                <div class="col-md-4">
+                  <label for="mcp-connect-timeout" class="form-label">Connect Timeout</label>
+                  <input type="number" class="form-control" id="mcp-connect-timeout" value="10" min="1" max="300" />
+                </div>
+                <div class="col-md-4">
+                  <label for="mcp-sse-read-timeout" class="form-label">SSE Read Timeout</label>
+                  <input type="number" class="form-control" id="mcp-sse-read-timeout" value="300" min="1" max="300" />
+                </div>
+              </div>
             </div>
           </div>
 
@@ -884,6 +1131,54 @@
             </div>
           </div>
 
+          <div class="card mb-3 border-0 shadow-sm d-none" id="summary-mcp-section">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0f766e 0%, #115e59 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-diagram-3 me-2"></i>MCP Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Transport</label>
+                    <span class="fw-medium" id="summary-mcp-transport">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Load Mode</label>
+                    <span class="fw-medium" id="summary-mcp-load-mode">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Request Timeout</label>
+                    <span class="fw-medium" id="summary-mcp-request-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Connect Timeout</label>
+                    <span class="fw-medium" id="summary-mcp-connect-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Allowed Tools</label>
+                    <span class="fw-medium" id="summary-mcp-tool-names">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Cached Tool Metadata</label>
+                    <span class="fw-medium" id="summary-mcp-tool-metadata">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- SQL Database Configuration Section -->
           <div class="card mb-3 border-0 shadow-sm" id="summary-sql-section" style="display: none;">
             <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);">
@@ -1024,6 +1319,54 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Uploadable File Types</label>
                     <span class="fw-medium" id="summary-blob-storage-upload-file-types">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm d-none" id="summary-databricks-section">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #6c757d 0%, #343a40 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-bricks me-2"></i>Databricks Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Cloud</label>
+                    <span class="fw-medium" id="summary-databricks-cloud">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">SQL Warehouse ID</label>
+                    <span class="fw-medium font-monospace" id="summary-databricks-warehouse-id">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Default Namespace</label>
+                    <span class="fw-medium font-monospace" id="summary-databricks-namespace">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Rows</label>
+                    <span class="fw-medium" id="summary-databricks-max-rows">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Timeout</label>
+                    <span class="fw-medium" id="summary-databricks-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Wait Timeout</label>
+                    <span class="fw-medium" id="summary-databricks-wait-timeout">-</span>
                   </div>
                 </div>
               </div>

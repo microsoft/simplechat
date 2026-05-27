@@ -31,4 +31,6 @@ category: Version History
 - [Document Actions And Comparison](v0.241.072/DOCUMENT_ACTIONS_AND_COMPARISON.md)
 - [Document Version Comparison](v0.241.097/DOCUMENT_VERSION_COMPARISON.md)
 - [Chat Comparison Source/Target And Uploads](v0.241.103/CHAT_COMPARISON_SOURCE_TARGET_AND_UPLOADS.md)
+- [MCP Action Configuration](v0.241.103/MCP_ACTION_CONFIGURATION.md)
 - [Chat Comparison Modal Summary](v0.241.104/CHAT_COMPARISON_MODAL_SUMMARY.md)
+- [Databricks Action Configuration](v0.241.104/DATABRICKS_ACTION_CONFIGURATION.md)
