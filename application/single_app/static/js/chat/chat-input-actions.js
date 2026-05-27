@@ -12,6 +12,7 @@ import {
   hideLoadingIndicator,
 } from "./chat-loading-indicator.js";
 import { loadMessages } from "./chat-messages.js";
+import { loadUserSettings, saveUserSetting } from "./chat-layout.js";
 
 const imageGenBtn = document.getElementById("image-generate-btn");
 const webSearchBtn = document.getElementById("search-web-btn");
@@ -23,7 +24,15 @@ const uploadBtn = document.getElementById("upload-btn");
 const cancelFileSelection = document.getElementById("cancel-file-selection");
 const userInputEl = document.getElementById("user-input");
 const chatDropZoneEl = document.querySelector(".chat-input-container");
+const webSearchNoticeContainer = document.getElementById("web-search-notice-container");
+const webSearchNoticeDismiss = document.getElementById("web-search-notice-dismiss");
 const httpUrlPattern = /https?:\/\/[^\s<>'"]+/gi;
+const DEEP_RESEARCH_DEFAULT_SETTING_KEY = "deepResearchDefaultEnabled";
+const DEEP_RESEARCH_DEFAULT_STORAGE_KEY = "simplechat.deepResearchDefaultEnabled";
+const WEB_SEARCH_NOTICE_SESSION_KEY = "webSearchNoticeDismissed";
+
+let deepResearchDefaultEnabled = false;
+let deepResearchDefaultPreferenceDirty = false;
 
 function getPromptUrls() {
   if (!userInputEl) {
@@ -56,34 +65,139 @@ function showChatFileUploadDisabledToast() {
   showToast("Chat file uploads are not enabled for your account.", "warning");
 }
 
-export function resetContextualSourceActionState() {
-  setToggleButtonActive(urlAccessBtn, false);
-  setToggleButtonActive(sourceReviewBtn, false);
-  updateUrlAccessAvailability();
+function parseBooleanPreference(value) {
+  return value === true || String(value).toLowerCase() === "true";
 }
 
-function updateDeepResearchAvailability() {
+function readDeepResearchDefaultFromStorage() {
+  try {
+    const storedValue = window.localStorage?.getItem(DEEP_RESEARCH_DEFAULT_STORAGE_KEY);
+    if (storedValue === null || storedValue === undefined) {
+      return null;
+    }
+    return parseBooleanPreference(storedValue);
+  } catch (error) {
+    return null;
+  }
+}
+
+function storeDeepResearchDefaultLocally(isEnabled) {
+  try {
+    window.localStorage?.setItem(DEEP_RESEARCH_DEFAULT_STORAGE_KEY, isEnabled ? "true" : "false");
+  } catch (error) {
+    // Ignore storage failures; server-side user settings remain the source of truth.
+  }
+}
+
+function setDeepResearchDefaultPreference(isEnabled, options = {}) {
+  const { persist = true, syncVisibleButton = false } = options;
+  deepResearchDefaultEnabled = Boolean(isEnabled);
+  storeDeepResearchDefaultLocally(deepResearchDefaultEnabled);
+
+  if (persist) {
+    deepResearchDefaultPreferenceDirty = true;
+    saveUserSetting({ [DEEP_RESEARCH_DEFAULT_SETTING_KEY]: deepResearchDefaultEnabled });
+  }
+
+  if (syncVisibleButton) {
+    updateDeepResearchAvailability();
+    if (!deepResearchDefaultEnabled) {
+      setToggleButtonActive(sourceReviewBtn, false);
+    }
+  }
+}
+
+function initializeDeepResearchDefaultPreference() {
+  const storedPreference = readDeepResearchDefaultFromStorage();
+  if (storedPreference !== null) {
+    setDeepResearchDefaultPreference(storedPreference, { persist: false });
+  }
+
+  loadUserSettings()
+    .then((settings) => {
+      if (deepResearchDefaultPreferenceDirty) {
+        return;
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(settings || {}, DEEP_RESEARCH_DEFAULT_SETTING_KEY)) {
+        return;
+      }
+
+      setDeepResearchDefaultPreference(
+        parseBooleanPreference(settings[DEEP_RESEARCH_DEFAULT_SETTING_KEY]),
+        { persist: false, syncVisibleButton: true }
+      );
+    })
+    .catch((error) => {
+      console.warn("Unable to load Deep Research default preference:", error);
+    });
+}
+
+function isWebSearchNoticeDismissed() {
+  return sessionStorage.getItem(WEB_SEARCH_NOTICE_SESSION_KEY) === "true";
+}
+
+function updateWebSearchNotice(isActive) {
+  if (!webSearchNoticeContainer || !window.appSettings?.enable_web_search_user_notice) {
+    return;
+  }
+
+  const shouldShowNotice = Boolean(isActive) && !isWebSearchNoticeDismissed();
+  webSearchNoticeContainer.classList.toggle("d-none", !shouldShowNotice);
+}
+
+export function resetContextualSourceActionState(event = null) {
+  const detail = event?.detail || {};
+  if (detail.preserveSelections) {
+    return;
+  }
+
+  resetImageGenerationActionState();
+  setToggleButtonActive(webSearchBtn, false);
+  setToggleButtonActive(urlAccessBtn, false);
+  setToggleButtonActive(sourceReviewBtn, false);
+  resetFileButton();
+  updateWebSearchNotice(false);
+  updateUrlAccessAvailability({
+    includeDefaultUrlPrompt: false,
+    restoreDeepResearchDefault: false,
+  });
+}
+
+function updateDeepResearchAvailability(options = {}) {
   if (!sourceReviewBtn) {
     return;
   }
 
+  const {
+    includeDefaultUrlPrompt = true,
+    restoreDeepResearchDefault = true,
+  } = options;
+
   const webSearchActive = isToggleButtonActive(webSearchBtn);
   const urlAccessActive = isToggleButtonActive(urlAccessBtn);
   const promptUrls = getPromptUrls();
-  const shouldShow = webSearchActive || (urlAccessActive && promptUrls.length > 0);
+  const shouldShow = webSearchActive
+    || (urlAccessActive && promptUrls.length > 0)
+    || (includeDefaultUrlPrompt && deepResearchDefaultEnabled && promptUrls.length > 0);
 
   sourceReviewBtn.classList.toggle("d-none", !shouldShow);
   sourceReviewBtn.setAttribute("aria-hidden", shouldShow ? "false" : "true");
   sourceReviewBtn.disabled = !shouldShow || sourceReviewBtn.dataset.disabledByImageGeneration === "true";
 
-  if (!shouldShow) {
+  if (!shouldShow || sourceReviewBtn.disabled) {
     setToggleButtonActive(sourceReviewBtn, false);
+    return;
+  }
+
+  if (restoreDeepResearchDefault && deepResearchDefaultEnabled) {
+    setToggleButtonActive(sourceReviewBtn, true);
   }
 }
 
-function updateUrlAccessAvailability() {
+function updateUrlAccessAvailability(options = {}) {
   if (!urlAccessBtn) {
-    updateDeepResearchAvailability();
+    updateDeepResearchAvailability(options);
     return;
   }
 
@@ -96,7 +210,7 @@ function updateUrlAccessAvailability() {
   if (!shouldShow) {
     setToggleButtonActive(urlAccessBtn, false);
   }
-  updateDeepResearchAvailability();
+  updateDeepResearchAvailability(options);
 }
 
 window.addEventListener("chat:conversation-context-changed", resetContextualSourceActionState);
@@ -631,98 +745,91 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 
+function syncImageGenerationDependentControls(isImageGenEnabled) {
+  const docBtn = document.getElementById("search-documents-btn");
+  const webBtn = document.getElementById("search-web-btn");
+  const urlBtn = document.getElementById("url-access-btn");
+  const sourcesBtn = document.getElementById("source-review-btn");
+  const fileBtn = document.getElementById("choose-file-btn");
+  const modelSelectContainer = document.getElementById("model-select-container");
+
+  if (isImageGenEnabled) {
+    if (docBtn) {
+      docBtn.disabled = true;
+      docBtn.classList.remove("active");
+    }
+    if (webBtn) {
+      webBtn.disabled = true;
+      setToggleButtonActive(webBtn, false);
+    }
+    if (urlBtn) {
+      urlBtn.dataset.disabledByImageGeneration = "true";
+      urlBtn.disabled = true;
+      setToggleButtonActive(urlBtn, false);
+    }
+    if (sourcesBtn) {
+      sourcesBtn.dataset.disabledByImageGeneration = "true";
+      sourcesBtn.disabled = true;
+      setToggleButtonActive(sourcesBtn, false);
+    }
+    if (fileBtn) {
+      fileBtn.disabled = true;
+      fileBtn.classList.remove("active");
+    }
+    if (modelSelectContainer) {
+      modelSelectContainer.classList.add("d-none");
+    }
+  } else {
+    if (docBtn) docBtn.disabled = false;
+    if (webBtn) webBtn.disabled = false;
+    if (urlBtn) {
+      urlBtn.dataset.disabledByImageGeneration = "false";
+      updateUrlAccessAvailability();
+    }
+    if (sourcesBtn) {
+      sourcesBtn.dataset.disabledByImageGeneration = "false";
+      updateDeepResearchAvailability();
+    }
+    if (fileBtn) fileBtn.disabled = false;
+    if (modelSelectContainer) {
+      modelSelectContainer.classList.remove("d-none");
+    }
+  }
+}
+
+function resetImageGenerationActionState() {
+  if (!imageGenBtn) {
+    return;
+  }
+
+  imageGenBtn.classList.remove("active");
+  syncImageGenerationDependentControls(false);
+}
+
 if (imageGenBtn) {
   imageGenBtn.addEventListener("click", function () {
     this.classList.toggle("active");
+    syncImageGenerationDependentControls(this.classList.contains("active"));
+  });
+}
 
-    const isImageGenEnabled = this.classList.contains("active");
-    const docBtn = document.getElementById("search-documents-btn");
-    const webBtn = document.getElementById("search-web-btn");
-    const urlBtn = document.getElementById("url-access-btn");
-    const sourcesBtn = document.getElementById("source-review-btn");
-    const fileBtn = document.getElementById("choose-file-btn");
-    const modelSelectContainer = document.getElementById("model-select-container");
-
-    if (isImageGenEnabled) {
-      if (docBtn) {
-        docBtn.disabled = true;
-        docBtn.classList.remove("active");
-      }
-      if (webBtn) {
-        webBtn.disabled = true;
-        setToggleButtonActive(webBtn, false);
-      }
-      if (urlBtn) {
-        urlBtn.dataset.disabledByImageGeneration = "true";
-        urlBtn.disabled = true;
-        setToggleButtonActive(urlBtn, false);
-      }
-      if (sourcesBtn) {
-        sourcesBtn.dataset.disabledByImageGeneration = "true";
-        sourcesBtn.disabled = true;
-        setToggleButtonActive(sourcesBtn, false);
-      }
-      if (fileBtn) {
-        fileBtn.disabled = true;
-        fileBtn.classList.remove("active");
-      }
-      if (modelSelectContainer) {
-        modelSelectContainer.style.display = "none";
-      }
-    } else {
-      if (docBtn) docBtn.disabled = false;
-      if (webBtn) webBtn.disabled = false;
-      if (urlBtn) {
-        urlBtn.dataset.disabledByImageGeneration = "false";
-        updateUrlAccessAvailability();
-      }
-      if (sourcesBtn) {
-        sourcesBtn.dataset.disabledByImageGeneration = "false";
-        updateDeepResearchAvailability();
-      }
-      if (fileBtn) fileBtn.disabled = false;
-      if (modelSelectContainer) {
-        modelSelectContainer.style.display = "block";
-      }
-    }
+if (webSearchNoticeDismiss) {
+  webSearchNoticeDismiss.addEventListener("click", function() {
+    sessionStorage.setItem(WEB_SEARCH_NOTICE_SESSION_KEY, "true");
+    updateWebSearchNotice(false);
   });
 }
 
 if (webSearchBtn) {
-  const webSearchNoticeContainer = document.getElementById("web-search-notice-container");
-  const webSearchNoticeDismiss = document.getElementById("web-search-notice-dismiss");
-  const webSearchNoticeSessionKey = "webSearchNoticeDismissed";
-  
-  // Check if notice was dismissed this session
-  const isNoticeDismissed = () => sessionStorage.getItem(webSearchNoticeSessionKey) === "true";
-  
-  // Show/hide notice based on web search state
-  const updateWebSearchNotice = (isActive) => {
-    if (webSearchNoticeContainer && window.appSettings?.enable_web_search_user_notice) {
-      if (isActive && !isNoticeDismissed()) {
-        webSearchNoticeContainer.style.display = "block";
-      } else {
-        webSearchNoticeContainer.style.display = "none";
-      }
-    }
-  };
-  
-  // Dismiss button handler
-  if (webSearchNoticeDismiss) {
-    webSearchNoticeDismiss.addEventListener("click", function() {
-      sessionStorage.setItem(webSearchNoticeSessionKey, "true");
-      if (webSearchNoticeContainer) {
-        webSearchNoticeContainer.style.display = "none";
-      }
-    });
+  if (webSearchNoticeContainer) {
+    updateWebSearchNotice(false);
   }
-  
+
   webSearchBtn.addEventListener("click", function () {
     setToggleButtonActive(this, !isToggleButtonActive(this));
     const isActive = isToggleButtonActive(this);
     updateWebSearchNotice(isActive);
     updateUrlAccessAvailability();
-    updateDeepResearchAvailability();
   });
 }
 
@@ -743,11 +850,14 @@ if (urlAccessBtn) {
 }
 
 if (sourceReviewBtn) {
+  initializeDeepResearchDefaultPreference();
+
   sourceReviewBtn.addEventListener("click", function () {
     if (this.classList.contains("d-none") || this.disabled) {
       return;
     }
     setToggleButtonActive(this, !isToggleButtonActive(this));
+    setDeepResearchDefaultPreference(isToggleButtonActive(this));
     const maxUserUrls = Number.parseInt(window.appSettings?.url_access_max_chat_urls_per_turn || window.appSettings?.deep_research_max_user_urls_per_turn || "10", 10);
     const promptUrlCount = getPromptUrls().length;
     if (isToggleButtonActive(this) && promptUrlCount > maxUserUrls) {

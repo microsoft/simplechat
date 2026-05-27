@@ -1,12 +1,13 @@
 # test_chat_stream_stop_button.py
 """
 UI test for chat stream stop button.
-Version: 0.241.098
-Implemented in: 0.241.097
+Version: 0.241.105
+Implemented in: 0.241.105
 
 This test ensures the message-local Stop button posts to the cancellation
-endpoint and renders the server's cancelled terminal stream event as a
-stopped partial response.
+endpoint, uses the muted stop styling with enough live-message space, and
+renders the server's cancelled terminal stream event as a stopped partial
+response.
 """
 
 from contextlib import contextmanager
@@ -142,6 +143,10 @@ def test_chat_stream_stop_button_posts_cancel_and_renders_stopped_state():
                         width: stopButton?.style.width || '',
                         height: stopButton?.style.height || '',
                         disabled: Boolean(stopButton?.disabled),
+                        backgroundColor: stopButton ? getComputedStyle(stopButton).backgroundColor : '',
+                        messageHasStreamingClass: Boolean(stopButton?.closest('.message')?.classList.contains('streaming-message')),
+                        bubbleMinWidth: stopButton ? getComputedStyle(stopButton.closest('.message')?.querySelector('.message-bubble')).minWidth : '',
+                        bubblePadding: stopButton ? getComputedStyle(stopButton.closest('.message')?.querySelector('.message-bubble')).paddingTop : '',
                     };
 
                     stopButton?.click();
@@ -164,9 +169,11 @@ def test_chat_stream_stop_button_posts_cancel_and_renders_stopped_state():
             assert result["beforeClick"]["ariaLabel"] == "Stop generating response"
             assert result["beforeClick"]["title"] == "Stop generating"
             assert "rounded-circle" in result["beforeClick"]["className"]
-            assert "btn-danger" in result["beforeClick"]["className"]
-            assert result["beforeClick"]["width"] == "1.65rem"
-            assert result["beforeClick"]["height"] == "1.65rem"
+            assert "btn-danger" not in result["beforeClick"]["className"]
+            assert result["beforeClick"]["backgroundColor"] == "rgb(164, 90, 90)"
+            assert result["beforeClick"]["messageHasStreamingClass"] is True
+            assert result["beforeClick"]["bubbleMinWidth"] == "min(360px, 95%)"
+            assert result["beforeClick"]["bubblePadding"] == "12px"
             assert result["beforeClick"]["disabled"] is False
             assert result["cancelCall"] is not None
             assert result["cancelCall"]["method"] == "POST"

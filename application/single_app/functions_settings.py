@@ -1,6 +1,8 @@
 # functions_settings.py
 
-from flask import has_request_context
+from functools import wraps
+
+from flask import has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
@@ -22,6 +24,7 @@ def is_tabular_processing_enabled(settings):
 
 
 CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
+WORKFLOW_USER_APP_ROLE = "WorkflowUser"
 
 
 def normalize_app_role_claims(user_roles):
@@ -41,6 +44,12 @@ def has_chat_file_upload_app_role(user_roles):
     return CHAT_FILE_UPLOAD_APP_ROLE.lower() in normalized_roles
 
 
+def has_workflow_user_app_role(user_roles):
+    """Return True when authenticated claims include the workflow user app role."""
+    normalized_roles = {role.lower() for role in normalize_app_role_claims(user_roles)}
+    return WORKFLOW_USER_APP_ROLE.lower() in normalized_roles
+
+
 def is_chat_file_upload_enabled_for_user(settings, user_roles=None, authorization_prechecked=False):
     """Return True when app settings and optional app role policy allow chat file uploads."""
     source_settings = settings or {}
@@ -50,6 +59,20 @@ def is_chat_file_upload_enabled_for_user(settings, user_roles=None, authorizatio
         source_settings.get('require_member_of_chat_file_upload_user', False)
         and not authorization_prechecked
         and not has_chat_file_upload_app_role(user_roles)
+    ):
+        return False
+    return True
+
+
+def is_user_workflows_enabled_for_user(settings, user_roles=None, authorization_prechecked=False):
+    """Return True when app settings and optional app role policy allow personal workflows."""
+    source_settings = settings or {}
+    if not source_settings.get('allow_user_workflows', False):
+        return False
+    if (
+        source_settings.get('require_member_of_workflow_user', False)
+        and not authorization_prechecked
+        and not has_workflow_user_app_role(user_roles)
     ):
         return False
     return True
@@ -138,7 +161,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_custom_endpoints': False,
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
-        'allow_user_workflows': True,
+        'allow_user_workflows': False,
+        'require_member_of_workflow_user': False,
         'allow_group_agents': False,
         'allow_group_custom_endpoints': False,
         'allow_group_custom_agent_endpoints': False,
@@ -1470,6 +1494,34 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         )
 
         return False
+
+def _is_api_request():
+    return (
+        request.accept_mimetypes.accept_json
+        and not request.accept_mimetypes.accept_html
+    ) or request.path.startswith('/api/')
+
+
+def workflow_user_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        settings = get_settings()
+        user_roles = (session.get('user') or {}).get('roles', [])
+        if is_user_workflows_enabled_for_user(settings, user_roles=user_roles):
+            return f(*args, **kwargs)
+
+        if not settings.get('allow_user_workflows', False):
+            message = 'Personal workflows are disabled.'
+            if _is_api_request():
+                return jsonify({'error': message}), 400
+            return message, 400
+
+        message = 'Personal workflows require the WorkflowUser app role.'
+        if _is_api_request():
+            return jsonify({'error': 'Forbidden', 'message': message}), 403
+        return f'Forbidden: {message}', 403
+    return wrapper
+
 
 def enabled_required(setting_key):
     def decorator(f):

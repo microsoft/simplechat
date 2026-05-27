@@ -272,9 +272,11 @@
                         <h5 id="current-conversation-title" class="mb-0 flex-grow-1 text-truncate">
                         </h5>
                         <div class="chat-shell-title-actions ms-2">
+                            {% if settings.allow_user_workflows %}
                             <a id="workflow-activity-btn" class="btn btn-sm chat-shell-icon-button d-none" href="#" target="_blank" rel="noopener" title="Open workflow activity view" aria-label="Open workflow activity view">
                                 <i class="bi bi-diagram-3"></i>
                             </a>
+                            {% endif %}
                             <button id="conversation-info-btn" class="btn btn-sm chat-shell-icon-button d-none" data-bs-toggle="tooltip" data-bs-placement="top" title="View conversation details" aria-label="View conversation details">
                                 <i class="bi bi-info-circle"></i>
                             </button>
@@ -722,7 +724,7 @@
 
                 <!-- Web Search User Notice (shown when web search is active and notice is enabled) -->
                 {% if settings.enable_web_search and settings.web_search_consent_accepted and settings.enable_web_search_user_notice %}
-                <div id="web-search-notice-container" class="mb-2" style="display: none;">
+                <div id="web-search-notice-container" class="mb-2 d-none">
                     <div class="d-flex align-items-center px-3 py-2 rounded-top border border-bottom-0" style="background-color: var(--bs-tertiary-bg); border-color: var(--bs-border-color) !important;">
                         <i class="bi bi-info-circle text-primary me-2"></i>
                         <span class="small" id="web-search-notice-text">{{ settings.web_search_user_notice_text or 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.' }}</span>

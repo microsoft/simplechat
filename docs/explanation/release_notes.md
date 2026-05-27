@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.106)**
+
+#### New Features
+
+*   **Personal Workflow Access Governance**
+    *   Added a dedicated Admin Settings Workflow section so personal workflows can be explicitly enabled or disabled.
+    *   Added optional `WorkflowUser` Enterprise App role enforcement for workflow UI access, API routes, manual runs, activity views, and SimpleChat workflow creation operations.
+    *   Added `WorkflowUser` app role definitions to Azure CLI and Terraform deployer assets, with deployer version tracking updated.
+    *   (Ref: workflow access control, `functions_settings.py`, `route_backend_workflows.py`, `route_frontend_admin_settings.py`, `PERSONAL_WORKFLOWS.md`, `WORKFLOW_ACCESS_CONTROL_FIX.md`)
+
 ### **(v0.241.104)**
 
 #### New Features

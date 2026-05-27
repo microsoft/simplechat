@@ -161,6 +161,8 @@ def _route_agent_api(page):
 
 
 def _open_workflows_tab(page):
+    if page.locator("#workflows-tab-btn").count() == 0:
+        pytest.skip("Personal workflows are disabled or unavailable for this authenticated user.")
     expect(page.locator("#personal-workspace-submenu [data-tab='workflows-tab']")).to_have_count(1)
     page.locator("#workflows-tab-btn").evaluate("button => button.click()")
     expect(page.locator("#workflows-tab")).to_be_visible()

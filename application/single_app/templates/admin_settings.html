@@ -4455,17 +4455,40 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own private workspaces for document storage, knowledge bases, and personal AI interactions."></i>
                     </div>
-                    <div class="form-group form-check form-switch mb-0">
+                </div>
+
+                <div class="card mb-3 p-3" id="workflow-settings-section">
+                    <h5>
+                        <i class="bi bi-diagram-3 me-2"></i>Workflow
+                    </h5>
+                    <p class="text-muted">
+                        Control personal workflow authoring and execution for users. Group workflows are not enabled in this release.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
                         <input type="checkbox"
                             class="form-check-input"
                             id="allow_user_workflows"
                             name="allow_user_workflows"
                             {% if settings.allow_user_workflows %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="allow_user_workflows">
-                            Allow User Workflows
+                            Enable Personal Workflows
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create personal workflows that run a selected agent or model manually or on an interval schedule."></i>
                     </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_member_of_workflow_user"
+                            name="require_member_of_workflow_user"
+                            {% if settings.require_member_of_workflow_user %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_member_of_workflow_user">
+                            Require WorkflowUser App Role
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Require the WorkflowUser Enterprise App role before users can open, create, edit, run, or inspect personal workflows."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Required app role value: <code>WorkflowUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement.
+                    </p>
                 </div>
 
                

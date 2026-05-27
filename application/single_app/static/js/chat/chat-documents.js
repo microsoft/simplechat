@@ -770,6 +770,39 @@ export function resetScopeLock(options = {}) {
   refreshDocumentsAndTags();
 }
 
+function resetWorkspaceSearchActionState(event = null) {
+  const detail = event?.detail || {};
+  if (detail.preserveSelections) {
+    return;
+  }
+
+  userWorkspaceContextActive = false;
+
+  if (documentActionSelect) {
+    documentActionSelect.value = DOCUMENT_ACTION_NONE;
+  }
+
+  if (docSelectEl) {
+    Array.from(docSelectEl.options).forEach(option => {
+      option.selected = false;
+    });
+  }
+
+  if (docDropdownItems) {
+    docDropdownItems.querySelectorAll('.doc-checkbox').forEach(checkbox => {
+      checkbox.checked = false;
+    });
+  }
+
+  resetTagSelectionState();
+  hideSearchDocumentsPanel();
+  syncDropdownButtonText();
+  handleDocumentSelectChange();
+  syncAssignedKnowledgeButtonState();
+}
+
+window.addEventListener('chat:conversation-context-changed', resetWorkspaceSearchActionState);
+
 /* ---------------------------------------------------------------------------
    Set scope from legacy URL parameter values (personal/group/public/all)
 --------------------------------------------------------------------------- */

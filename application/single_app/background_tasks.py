@@ -386,7 +386,7 @@ def run_control_center_auto_refresh_loop():
 def check_due_workflows_once():
     """Execute interval-based personal workflows that are due."""
     settings = get_settings()
-    if not settings.get('allow_user_workflows', True):
+    if not settings.get('allow_user_workflows', False):
         return []
 
     due_workflows = get_due_personal_workflows(limit=20)

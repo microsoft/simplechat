@@ -59,7 +59,7 @@ from functions_group import (
 )
 from functions_notifications import create_notification
 from functions_personal_workflows import save_personal_workflow
-from functions_settings import get_settings, get_user_settings
+from functions_settings import get_settings, get_user_settings, is_user_workflows_enabled_for_user
 from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
 
 
@@ -1688,7 +1688,10 @@ def _require_group_creation_enabled(settings: Optional[Dict[str, Any]] = None) -
 
 def _require_user_workflows_enabled() -> Dict[str, Any]:
     settings = get_settings() or {}
-    if not settings.get("allow_user_workflows", True):
+    user_roles = (session.get("user") or {}).get("roles") or []
+    if not is_user_workflows_enabled_for_user(settings, user_roles=user_roles):
+        if settings.get("allow_user_workflows", False):
+            raise PermissionError("Insufficient permissions (WorkflowUser role required)")
         raise PermissionError("Personal workflows are disabled by configuration")
     return settings
 

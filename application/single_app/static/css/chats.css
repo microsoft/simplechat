@@ -1354,6 +1354,38 @@ body.layout-split .gutter {
   align-items: center;
 }
 
+.stream-stop-btn {
+  --bs-btn-color: #ffffff;
+  --bs-btn-bg: #a45a5a;
+  --bs-btn-border-color: #a45a5a;
+  --bs-btn-hover-color: #ffffff;
+  --bs-btn-hover-bg: #914d4d;
+  --bs-btn-hover-border-color: #914d4d;
+  --bs-btn-focus-shadow-rgb: 164, 90, 90;
+  --bs-btn-active-color: #ffffff;
+  --bs-btn-active-bg: #824545;
+  --bs-btn-active-border-color: #824545;
+  --bs-btn-disabled-color: #ffffff;
+  --bs-btn-disabled-bg: #a45a5a;
+  --bs-btn-disabled-border-color: #a45a5a;
+  width: 1.65rem;
+  height: 1.65rem;
+  min-width: 1.65rem;
+  line-height: 1;
+  margin-left: 0.25rem;
+}
+
+[data-bs-theme="dark"] .stream-stop-btn {
+  --bs-btn-bg: #9f5f5f;
+  --bs-btn-border-color: #9f5f5f;
+  --bs-btn-hover-bg: #b07070;
+  --bs-btn-hover-border-color: #b07070;
+  --bs-btn-active-bg: #8d5555;
+  --bs-btn-active-border-color: #8d5555;
+  --bs-btn-disabled-bg: #9f5f5f;
+  --bs-btn-disabled-border-color: #9f5f5f;
+}
+
 /* Dropdown menu in message actions */
 .message-actions .dropdown {
   display: inline-block;
@@ -1837,6 +1869,11 @@ a.citation-link:hover {
   color: black;
   border-bottom-left-radius: 0;
   min-width: min(320px, 90%);
+}
+
+.ai-message.streaming-message .message-bubble {
+  min-width: min(360px, 95%);
+  padding: 12px;
 }
 
 .collaborator-message .message-bubble {

@@ -125,6 +125,13 @@
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Prompts</span>
                 </a>
               </li>
+              {% if settings.allow_user_workflows %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab">
+                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Workflows</span>
+                </a>
+              </li>
+              {% endif %}
               {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab">
@@ -583,6 +590,11 @@
                 </a>
               </li>
               <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="workflow-settings-section">
+                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Workflow</span>
+                </a>
+              </li>
+              <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="group-workspaces-section">
                   <i class="bi bi-people me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Workspaces</span>
                 </a>
@@ -806,7 +818,7 @@
     {% if request.endpoint == 'chats' %}
     {% set conversations_menu_expanded = sidebar_menu_state.get('conversations', true) %}
     <div id="conversations-section" class="flex-grow-1 overflow-auto">
-      <div id="conversations-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="conversations-list-container" aria-expanded="{{ 'true' if conversations_menu_expanded else 'false' }}" data-sidebar-menu-key="conversations" data-sidebar-menu-target="conversations-list-container" data-sidebar-menu-caret="conversations-caret">
+      <div id="conversations-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" role="button" tabindex="0" aria-controls="conversations-list-container" aria-expanded="{{ 'true' if conversations_menu_expanded else 'false' }}" data-sidebar-menu-key="conversations" data-sidebar-menu-target="conversations-list-container" data-sidebar-menu-caret="conversations-caret">
         <div class="d-flex align-items-center">
           <span class="nav-text">Conversations</span>
           <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not conversations_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
@@ -851,6 +863,20 @@
           <div class="text-center p-2 text-muted small">Loading conversations...</div>
         </div>
       </div>
+      {% if settings.allow_user_workflows %}
+      <div id="sidebar-workflow-section" class="d-none">
+        <div id="sidebar-workflows-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" role="button" tabindex="0" aria-controls="sidebar-workflow-list-container" aria-expanded="true">
+          <div class="d-flex align-items-center">
+            <span class="nav-text">Workflows</span>
+            <i id="sidebar-workflows-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+          </div>
+        </div>
+        <div id="sidebar-workflow-list-container" class="px-2 sidebar-workflow-list-container">
+          <div id="sidebar-workflow-conversations-list" class="list-group list-group-flush"></div>
+          <button type="button" id="sidebar-workflow-show-more-btn" class="btn btn-sm btn-link text-muted w-100 d-none" aria-expanded="false">Show more</button>
+        </div>
+      </div>
+      {% endif %}
     </div>
     {% endif %}
   </div>

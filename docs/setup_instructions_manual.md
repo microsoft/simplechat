@@ -288,6 +288,7 @@ The application uses Azure Active Directory (Entra ID) for user authentication a
     | **Users**                  | Users/Groups         | `User`                 | Standard user access to chat features.           | Yes                                  |
     | **Create Group**           | Users/Groups         | `CreateGroups`         | Allows user to create new groups (if enabled).   | Yes                                  |
     | **Chat File Upload User**  | Users/Groups         | `ChatFileUploadUser`   | Allows chat file uploads when role enforcement is enabled. | Yes                                  |
+    | **Workflow User**          | Users/Groups         | `WorkflowUser`         | Allows personal workflow access when role enforcement is enabled. | Yes                                  |
     | **Safety Violation Admin** | Users/Groups         | `SafetyViolationAdmin` | Allows access to view content safety violations. | Yes                                  |
     | **Feedback Admin**         | Users/Groups         | `FeedbackAdmin`        | Allows access to view user feedback admin page.  | Yes                                  |
 

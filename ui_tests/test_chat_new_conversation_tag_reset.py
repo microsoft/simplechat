@@ -1,16 +1,19 @@
 # test_chat_new_conversation_tag_reset.py
 """
-UI test for chat tag reset on new conversation.
-Version: 0.240.026
+UI test for chat toolbar reset on new conversation.
+Version: 0.241.106
 Implemented in: 0.240.026
+Updated in: 0.241.106
 
 This test ensures that selecting a chat tag updates the visible selector
 state and that starting a brand new conversation clears the tag label and
-checkbox state back to the default "All Tags" view.
+checkbox state back to the default "All Tags" view. It also validates that
+per-chat toolbar actions do not remain active after explicit New Chat.
 """
 
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -96,7 +99,8 @@ def test_new_conversation_clears_selected_chat_tags(playwright):
     try:
         page.goto(f"{BASE_URL}/chats", wait_until="networkidle")
 
-        page.locator("#search-documents-btn").click()
+        search_documents_button = page.locator("#search-documents-btn")
+        search_documents_button.click()
         page.wait_for_function(
             """
             () => {
@@ -109,6 +113,11 @@ def test_new_conversation_clears_selected_chat_tags(playwright):
         page.locator("#tags-dropdown-button").click()
         page.locator('#tags-dropdown-items [data-tag-value="alpha"]').click()
         expect(page.locator("#tags-dropdown-button .selected-tags-text")).to_have_text("alpha")
+
+        web_search_button = page.locator("#search-web-btn")
+        if web_search_button.count() > 0:
+            web_search_button.click()
+            expect(web_search_button).to_have_class(re.compile(r".*\bactive\b.*"))
 
         page.locator("#new-conversation-btn").click()
 
@@ -124,6 +133,10 @@ def test_new_conversation_clears_selected_chat_tags(playwright):
 
         expect(page.locator("#tags-dropdown-button .selected-tags-text")).to_have_text("All Tags")
         assert page.locator("#tags-dropdown-items .tag-checkbox:checked").count() == 0
+        expect(search_documents_button).not_to_have_class(re.compile(r".*\bactive\b.*"))
+        expect(page.locator("#search-documents-container")).not_to_be_visible()
+        if web_search_button.count() > 0:
+            expect(web_search_button).not_to_have_class(re.compile(r".*\bactive\b.*"))
     finally:
         context.close()
         browser.close()

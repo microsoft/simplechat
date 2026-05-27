@@ -737,6 +737,15 @@ resource "azuread_application_app_role" "app_registration_chat_file_upload_user"
   role_id              = "3f6ec07d-db95-4c0e-ab03-0645b95736e3"
 }
 
+resource "azuread_application_app_role" "app_registration_workflow_user" {
+  application_id       = azuread_application.app_registration.id
+  allowed_member_types = ["User"]
+  description          = "Allows personal workflow access when the workflow app role requirement is enabled."
+  display_name         = "Workflow User"
+  value                = "WorkflowUser"
+  role_id              = "7d42c0b7-5a95-43b6-9e38-2fb06988901e"
+}
+
 resource "azuread_application_app_role" "app_registration_feedbackadmin" {
   application_id       = azuread_application.app_registration.id
   allowed_member_types = ["User"]

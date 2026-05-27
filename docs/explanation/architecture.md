@@ -278,6 +278,8 @@ Application Roles:
 │   └── Basic chat and document access
 ├── CreateGroups
 │   └── Permission to create new groups
+├── WorkflowUser
+│   └── Optional access gate for personal workflows
 ├── SafetyViolationAdmin
 │   └── View and manage content safety violations
 └── FeedbackAdmin

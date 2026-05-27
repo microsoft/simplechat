@@ -261,6 +261,17 @@ function setPromptSelectionVisible(isVisible, { clearSelection = true } = {}) {
     userInput.classList.remove("with-prompt-active");
 }
 
+function resetPromptSelectionState(event = null) {
+    const detail = event?.detail || {};
+    if (detail.preserveSelections) {
+        return;
+    }
+
+    setPromptSelectionVisible(false);
+}
+
+window.addEventListener("chat:conversation-context-changed", resetPromptSelectionState);
+
 function findPromptOption(promptId, promptScope = "", scopeId = "") {
     const normalizedPromptId = String(promptId || "");
     const normalizedPromptScope = String(promptScope || "");

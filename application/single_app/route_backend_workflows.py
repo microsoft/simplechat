@@ -33,7 +33,7 @@ from functions_personal_workflows import (
     save_personal_workflow,
     update_personal_workflow_runtime_fields,
 )
-from functions_settings import enabled_required, get_settings
+from functions_settings import enabled_required, get_settings, workflow_user_required
 from functions_source_review import (
     URL_ACCESS_CONTEXT_WORKFLOW,
     get_url_access_max_urls,
@@ -208,6 +208,7 @@ def register_route_backend_workflows(app):
     @login_required
     @user_required
     @enabled_required('allow_user_workflows')
+    @workflow_user_required
     def get_user_workflows():
         user_id = get_current_user_id()
         return jsonify({'workflows': get_personal_workflows(user_id)})
@@ -218,6 +219,7 @@ def register_route_backend_workflows(app):
     @login_required
     @user_required
     @enabled_required('allow_user_workflows')
+    @workflow_user_required
     def save_user_workflow():
         user_id = get_current_user_id()
         payload = request.get_json(silent=True) or {}
@@ -264,6 +266,7 @@ def register_route_backend_workflows(app):
     @login_required
     @user_required
     @enabled_required('allow_user_workflows')
+    @workflow_user_required
     def delete_user_workflow(workflow_id):
         user_id = get_current_user_id()
         workflow = get_personal_workflow(user_id, workflow_id)
@@ -287,6 +290,7 @@ def register_route_backend_workflows(app):
     @login_required
     @user_required
     @enabled_required('allow_user_workflows')
+    @workflow_user_required
     def get_user_workflow_runs(workflow_id):
         user_id = get_current_user_id()
         workflow = get_personal_workflow(user_id, workflow_id)
@@ -304,6 +308,7 @@ def register_route_backend_workflows(app):
     @login_required
     @user_required
     @enabled_required('allow_user_workflows')
+    @workflow_user_required
     def get_user_workflow_activity_snapshot():
         user_id = get_current_user_id()
         conversation_id = request.args.get('conversation_id', '')
@@ -342,6 +347,7 @@ def register_route_backend_workflows(app):
     @login_required
     @user_required
     @enabled_required('allow_user_workflows')
+    @workflow_user_required
     def stream_user_workflow_activity():
         user_id = get_current_user_id()
         conversation_id = request.args.get('conversation_id', '')
@@ -395,6 +401,7 @@ def register_route_backend_workflows(app):
     @login_required
     @user_required
     @enabled_required('allow_user_workflows')
+    @workflow_user_required
     def run_user_workflow(workflow_id):
         user_id = get_current_user_id()
         workflow = get_personal_workflow(user_id, workflow_id)

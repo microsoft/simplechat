@@ -1662,7 +1662,7 @@ function renderRunHistory(runs) {
         const conversationLink = conversationUrl
             ? `
                 <div class="d-flex flex-wrap gap-2">
-                    <a class="btn btn-sm btn-outline-primary" href="${escapeHtml(conversationUrl)}"><i class="bi bi-chat-dots-fill me-1"></i>Open workflow</a>
+                    <a class="btn btn-sm btn-outline-primary" href="${escapeHtml(conversationUrl)}"><i class="bi bi-chat-dots-fill me-1"></i>Open workflow conversation</a>
                     <a class="btn btn-sm btn-outline-info" href="${escapeHtml(activityUrl)}" target="_blank" rel="noopener"><i class="bi bi-activity me-1"></i>Open activity view</a>
                 </div>
                 <div class="small text-muted mt-1">${escapeHtml(conversationId)}</div>

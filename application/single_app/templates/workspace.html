@@ -1605,6 +1605,14 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+            <div class="small text-muted">
+              Conversation: <span id="workflow-history-conversation-id">Not created yet.</span>
+            </div>
+            <a id="workflow-history-open-conversation-link" class="btn btn-sm btn-outline-primary d-none" href="#">
+              Open workflow conversation
+            </a>
+          </div>
           <div class="table-responsive">
             <table class="table table-sm table-striped" id="workflow-history-table">
               <thead>

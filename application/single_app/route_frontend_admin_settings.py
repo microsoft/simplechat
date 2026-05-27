@@ -291,7 +291,9 @@ def register_route_frontend_admin_settings(app):
         if 'allow_user_plugins' not in settings:
             settings['allow_user_plugins'] = False
         if 'allow_user_workflows' not in settings:
-            settings['allow_user_workflows'] = True
+            settings['allow_user_workflows'] = False
+        if 'require_member_of_workflow_user' not in settings:
+            settings['require_member_of_workflow_user'] = False
         if 'allow_group_agents' not in settings:
             settings['allow_group_agents'] = False
         if 'allow_group_custom_endpoints' not in settings:
@@ -543,6 +545,7 @@ def register_route_frontend_admin_settings(app):
             require_owner_for_group_agent_management = form_data.get('require_owner_for_group_agent_management') == 'on'
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_chat_file_upload_user = form_data.get('require_member_of_chat_file_upload_user') == 'on'
+            require_member_of_workflow_user = form_data.get('require_member_of_workflow_user') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -1489,6 +1492,8 @@ def register_route_frontend_admin_settings(app):
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_chat_file_uploads': form_data.get('enable_chat_file_uploads') == 'on',
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
+                'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
+                'require_member_of_workflow_user': require_member_of_workflow_user,
                 'enforce_workspace_scope_lock': form_data.get('enforce_workspace_scope_lock') == 'on',
                 'enable_file_sync': requested_enable_file_sync,
                 'enable_file_sync_personal': file_sync_settings['enable_file_sync_personal'],

@@ -279,6 +279,10 @@ def register_route_frontend_chats(app):
         public_settings = sanitize_settings_for_user(settings)
         current_user_info = get_current_user_info() or {}
         current_user_roles = (session.get('user') or {}).get('roles', [])
+        user_workflows_enabled_for_user = is_user_workflows_enabled_for_user(
+            settings,
+            user_roles=current_user_roles,
+        )
         chat_file_upload_enabled_for_user = is_chat_file_upload_enabled_for_user(settings, current_user_roles)
         source_review_enabled_for_user = is_source_review_enabled_for_user(
             settings,
@@ -296,6 +300,7 @@ def register_route_frontend_chats(app):
         public_settings['enable_source_review'] = source_review_enabled_for_user
         public_settings['enable_url_access'] = url_access_enabled_for_user
         public_settings['enable_chat_file_uploads'] = chat_file_upload_enabled_for_user
+        public_settings['allow_user_workflows'] = user_workflows_enabled_for_user
         public_settings['enable_deep_source_review'] = bool(
             source_review_enabled_for_user and settings.get('enable_deep_source_review', False)
         )
@@ -448,6 +453,7 @@ def register_route_frontend_chats(app):
     @login_required
     @user_required
     @enabled_required('allow_user_workflows')
+    @workflow_user_required
     def workflow_activity():
         user_id = get_current_user_id()
         if not user_id:

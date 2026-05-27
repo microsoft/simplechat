@@ -105,6 +105,9 @@ def test_chat_workflow_sidebar_sections(playwright):
         workflow_list = page.locator("#sidebar-workflow-conversations-list")
         workflow_toggle = page.locator("#sidebar-workflow-show-more-btn")
 
+        if workflow_section.count() == 0:
+            pytest.skip("Personal workflows are disabled or unavailable for this authenticated user.")
+
         page.wait_for_function(
             """
             () => {

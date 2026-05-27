@@ -623,6 +623,18 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   gap: 2px;
 }
 
+.sidebar-section-toggle {
+  cursor: pointer;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.sidebar-workflow-list-container {
+  max-height: min(18rem, 35vh);
+  overflow-y: auto;
+}
+
 /* Compact action buttons in selection mode */
 #conversations-actions .btn {
   padding: 2px 4px !important;

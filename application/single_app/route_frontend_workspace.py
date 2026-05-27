@@ -25,6 +25,10 @@ def register_route_frontend_workspace(app):
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
         user_info = get_current_user_info() or {}
         current_user_roles = (session.get('user') or {}).get('roles', [])
+        public_settings['allow_user_workflows'] = is_user_workflows_enabled_for_user(
+            settings,
+            user_roles=current_user_roles,
+        )
         public_settings['enable_url_access'] = is_url_access_enabled_for_user(
             settings,
             user_roles=current_user_roles,

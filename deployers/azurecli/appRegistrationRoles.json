@@ -86,6 +86,14 @@
     "id": "3f6ec07d-db95-4c0e-ab03-0645b95736e3",
     "isEnabled": true,
     "value": "ChatFileUploadUser"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Allows personal workflow access when the workflow app role requirement is enabled.",
+    "displayName": "Workflow User",
+    "id": "7d42c0b7-5a95-43b6-9e38-2fb06988901e",
+    "isEnabled": true,
+    "value": "WorkflowUser"
   }
 
 ]

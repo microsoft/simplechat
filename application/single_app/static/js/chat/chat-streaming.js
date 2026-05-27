@@ -95,6 +95,7 @@ function removeStreamingStopButton(messageId) {
     if (stopButton) {
         stopButton.remove();
     }
+    messageElement?.classList.remove('streaming-message');
 }
 
 function attachStreamingStopButton(messageId, streamContext) {
@@ -109,14 +110,12 @@ function attachStreamingStopButton(messageId, streamContext) {
         return;
     }
 
+    messageElement.classList.add('streaming-message');
+
     const stopButton = document.createElement('button');
     stopButton.type = 'button';
-    stopButton.className = 'btn btn-sm btn-danger stream-stop-btn d-inline-flex align-items-center justify-content-center rounded-circle p-0 border-0';
+    stopButton.className = 'btn btn-sm stream-stop-btn d-inline-flex align-items-center justify-content-center rounded-circle p-0 border-0';
     stopButton.dataset.messageId = messageId;
-    stopButton.style.width = '1.65rem';
-    stopButton.style.height = '1.65rem';
-    stopButton.style.minWidth = '1.65rem';
-    stopButton.style.lineHeight = '1';
 
     const icon = document.createElement('i');
     icon.className = 'bi bi-stop-fill';

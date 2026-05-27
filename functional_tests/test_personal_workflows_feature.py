@@ -1,7 +1,7 @@
 # test_personal_workflows_feature.py
 """
 Functional test for personal workflows feature.
-Version: 0.241.036
+Version: 0.241.106
 Implemented in: 0.241.029
 
 This test ensures personal workflows are wired through backend routes,
@@ -36,8 +36,8 @@ def test_personal_workflows_feature_wiring():
     workflow_js_content = read_text("application/single_app/static/js/workspace/workspace_workflows.js")
     feature_doc_content = read_text("docs/explanation/features/PERSONAL_WORKFLOWS.md")
 
-    assert 'VERSION = "0.241.036"' in config_content, (
-        "Expected config.py version 0.241.036 for the personal workflows feature."
+    assert 'VERSION = "0.241.106"' in config_content, (
+        "Expected config.py version 0.241.106 for the personal workflows feature."
     )
     assert 'cosmos_personal_workflows_container_name = "personal_workflows"' in config_content, (
         "Expected config.py to register the personal workflows Cosmos container with the exported plural name."
@@ -56,8 +56,11 @@ def test_personal_workflows_feature_wiring():
     ) in config_content, (
         "Expected workflow runs to use a user_id partition key that matches workflow run queries and deletes."
     )
-    assert "'allow_user_workflows': True" in settings_content, (
-        "Expected functions_settings.py to default allow_user_workflows to True."
+    assert "'allow_user_workflows': False" in settings_content, (
+        "Expected functions_settings.py to default allow_user_workflows to False."
+    )
+    assert "'require_member_of_workflow_user': False" in settings_content, (
+        "Expected functions_settings.py to default require_member_of_workflow_user to False."
     )
     assert "register_route_backend_workflows(app)" in app_content, (
         "Expected app.py to register the backend workflow routes."
@@ -125,6 +128,12 @@ def test_personal_workflows_feature_wiring():
     assert 'id="allow_user_workflows"' in admin_settings_content, (
         "Expected admin settings to expose the Allow User Workflows toggle."
     )
+    assert 'id="workflow-settings-section"' in admin_settings_content, (
+        "Expected admin settings to expose a dedicated Workflow settings section."
+    )
+    assert 'id="require_member_of_workflow_user"' in admin_settings_content, (
+        "Expected admin settings to expose the WorkflowUser app role requirement toggle."
+    )
     assert "const DEFAULT_WORKFLOW_SECTION_LIMIT = 5;" in sidebar_js_content, (
         "Expected the chat sidebar workflow section to default to five visible workflow conversations."
     )
@@ -166,6 +175,9 @@ def test_personal_workflows_feature_wiring():
     )
     assert "Personal Workflows" in feature_doc_content, (
         "Expected PERSONAL_WORKFLOWS.md to document the feature."
+    )
+    assert "WorkflowUser" in feature_doc_content, (
+        "Expected PERSONAL_WORKFLOWS.md to document the WorkflowUser access gate."
     )
 
     print("✅ Personal workflows feature wiring verified.")

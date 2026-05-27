@@ -2,8 +2,9 @@
 # test_chat_preserves_workspace_selection_on_auto_create.py
 """
 Functional test for chat workspace selection preservation on implicit conversation creation.
-Version: 0.239.105
+Version: 0.241.106
 Implemented in: 0.239.105
+Updated in: 0.241.106
 
 This test ensures that auto-creating a conversation from the chat input,
 prompt picker, send flow, or file upload flow does not reset selected
@@ -109,7 +110,7 @@ def test_create_new_conversation_reuses_pending_request_and_respects_preserve_fl
             'let pendingConversationCreation = null;',
             'if (pendingConversationCreation) {',
             'await pendingConversationCreation;',
-            'const { preserveSelections = false } = options;',
+            'const { preserveSelections = false, initialMessage = "" } = options;',
             'resetScopeLock({ preserveSelections });',
         ]
 
@@ -144,8 +145,11 @@ def test_implicit_conversation_creation_call_sites_preserve_workspace_filters():
             'input focus preserves selections': 'createNewConversation(null, { preserveSelections: true });' in onload_content,
             'prompt button preserves selections': onload_content.count('createNewConversation(null, { preserveSelections: true });') >= 2,
             'file button preserves selections': onload_content.count('createNewConversation(null, { preserveSelections: true });') >= 3,
-            'file upload auto-create preserves selections': input_actions_content.count('}, { preserveSelections: true });') >= 2,
-            'send flow preserves selections': '}, { preserveSelections: true });' in messages_content,
+            'file upload auto-create preserves selections': (
+                'return createNewConversation(() => {' in input_actions_content
+                and '}, { preserveSelections: true });' in input_actions_content
+            ),
+            'send flow preserves selections': '}, { preserveSelections: true, initialMessage: combinedMessage });' in messages_content,
         }
 
         failed_checks = [name for name, passed in checks.items() if not passed]
