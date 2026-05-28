@@ -234,6 +234,18 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 "id": group_id,
                 "name": group_name or "Unknown Group"
             }
+    elif (
+        selected_agent_details
+        and selected_agent_details.get('assigned_knowledge_enabled')
+        and not selected_agent_details.get('is_global')
+    ):
+        user_info = get_user_info_by_id(user_id)
+        agent_primary_context = {
+            "type": "primary",
+            "scope": "personal",
+            "id": user_id,
+            "name": user_info.get('name', 'Personal') if user_info else 'Personal'
+        }
 
     # Process documents from search results first to determine primary context
     document_map = {}  # Map of document_id -> {scope, chunks, classification}
@@ -267,7 +279,10 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
     
     # Set primary context based on document usage
     primary_context = None
-    if workspace_used:
+    if agent_primary_context and selected_agent_details and selected_agent_details.get('assigned_knowledge_enabled'):
+        primary_context = agent_primary_context
+        agent_primary_context_active = True
+    elif workspace_used:
         # Documents were used - the first workspace becomes primary context
         scope_type = workspace_used['scope']
         scope_id = workspace_used['id']

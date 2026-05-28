@@ -83,6 +83,30 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-trash',
         'color': 'warning'
     },
+    'personal_document_share_pending': {
+        'icon': 'bi-file-earmark-plus',
+        'color': 'warning'
+    },
+    'personal_document_share_approved': {
+        'icon': 'bi-file-earmark-check',
+        'color': 'success'
+    },
+    'personal_document_share_denied': {
+        'icon': 'bi-file-earmark-x',
+        'color': 'danger'
+    },
+    'group_document_share_pending': {
+        'icon': 'bi-folder-plus',
+        'color': 'warning'
+    },
+    'group_document_share_approved': {
+        'icon': 'bi-folder-check',
+        'color': 'success'
+    },
+    'group_document_share_denied': {
+        'icon': 'bi-folder-x',
+        'color': 'danger'
+    },
     'system_announcement': {
         'icon': 'bi-megaphone',
         'color': 'info'

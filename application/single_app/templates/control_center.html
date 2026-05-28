@@ -1221,12 +1221,13 @@
                                                     <th class="sortable" data-sort="members" style="padding-right: 25px;">Members</th>
                                                     <th class="sortable" data-sort="status" style="padding-right: 25px;">Status</th>
                                                     <th class="sortable" data-sort="documents" style="padding-right: 25px;">Documents</th>
+                                                    <th class="sortable" data-sort="tokens" style="padding-right: 25px;">Token Total</th>
                                                     <th>Actions</th>
                                                 </tr>
                                             </thead>
                                             <tbody id="groupsTableBody">
                                                 <tr>
-                                                    <td colspan="7" class="text-center py-4">
+                                                    <td colspan="8" class="text-center py-4">
                                                         <div class="spinner-border text-primary" role="status">
                                                             <span class="visually-hidden">Loading...</span>
                                                         </div>
@@ -1891,6 +1892,9 @@
                                     <div class="row mt-2">
                                         <div class="col-md-6">
                                             <strong>Created:</strong> <span id="modalGroupCreated">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Token Total:</strong> <span id="modalGroupTokens">-</span>
                                         </div>
                                     </div>
                                 </div>
@@ -3553,6 +3557,8 @@ window.GroupManager = {
             document.getElementById('modalGroupOwner').textContent = `${group.owner_name || group.created_by || 'Unknown'} (${group.owner_email || 'No email'})`;
             document.getElementById('modalGroupMembers').textContent = `${group.member_count || 0} active members`;
             document.getElementById('modalGroupDocuments').textContent = `${group.document_count || 0} documents`;
+            const tokenTotal = Number(group.token_total ?? group.total_tokens ?? group.activity?.token_metrics?.total_tokens ?? 0);
+            document.getElementById('modalGroupTokens').textContent = `${Number.isFinite(tokenTotal) ? Math.trunc(tokenTotal).toLocaleString() : '0'} tokens`;
             
             // Format dates
             const formatDate = (dateStr) => {

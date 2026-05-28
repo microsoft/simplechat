@@ -1,12 +1,6 @@
 <!-- templates/group_workspaces.html -->
 {% extends "base.html" %} {% block title %} Group Workspace - {{
 app_settings.app_title }} {% endblock %} {% block head %}
-<!-- <link
-  rel="stylesheet"
-  href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css"
-/>
- LOCAL VERSION BELOW 
- -->
  <link
   rel="stylesheet"
   href="/static/css/simplemde.min.css"
@@ -384,7 +378,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <option value="sync-tab-btn">Sync</option>
         {% endif %}
         {% if group_workspace_identities_enabled %}
-          <option value="identities-tab-btn">Identities</option>
+          <option value="identities-tab-btn" data-group-identities-section-option hidden disabled>Identities</option>
         {% endif %}
         <option value="prompts-tab-btn">Group Prompts</option>
         {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
@@ -435,7 +429,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </li>
     {% endif %}
     {% if group_workspace_identities_enabled %}
-    <li class="nav-item" role="presentation">
+    <li class="nav-item d-none" role="presentation" data-group-identities-tab-nav>
       <button
         class="nav-link"
         id="identities-tab-btn"
@@ -872,6 +866,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
           id="group-workspace-identities-root"
           data-workspace-identity-root="true"
           data-identity-api-base="/api/workspace-identities/group"
+          data-can-manage="false"
+          data-permission-message="You do not have permission to manage or view identities for this group."
           data-default-capability="{% if file_sync_enabled %}file_sync{% else %}action{% endif %}"
           data-capability-options="{% if file_sync_enabled %}file_sync{% endif %}{% if settings.enable_semantic_kernel %}{% if file_sync_enabled %},{% endif %}action{% endif %}"
           data-auth-type-options="username_password,anonymous,api_key,bearer_token,client_secret,connection_string,managed_identity"
@@ -1575,6 +1571,29 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 
+<!-- Group Shared Document Approval Modal -->
+<div class="modal fade" id="groupSharedDocumentApprovalModal" tabindex="-1" aria-labelledby="groupSharedDocumentApprovalModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="groupSharedDocumentApprovalModalLabel">Approve Shared Document</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">
+          This file was shared with this group by <strong id="groupSharedDocumentApprovalOwnerName">the owning group</strong>.
+        </p>
+        <p class="text-muted small mb-0">Approval makes the file available for group document search.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-danger action-btn-wide me-1" id="groupSharedDocumentDenyBtn">Deny</button>
+        <button type="button" class="btn btn-sm btn-secondary action-btn-wide me-1" data-bs-dismiss="modal" id="groupSharedDocumentCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-sm btn-success action-btn-wide" id="groupSharedDocumentApproveBtn">Approve</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Group Document Delete Modal -->
 <div class="modal fade" id="groupDocumentDeleteModal" tabindex="-1" aria-labelledby="groupDocumentDeleteModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
@@ -1766,9 +1785,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 {% endblock %} 
 
 {% block scripts %}
-<!-- SimpleMDE CSS/JS (Keep As Is) -->
-<!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
- LOCAL VERSION BELOW -->
+<!-- SimpleMDE -->
 <script src="/static/js/simplemde/simplemde.min.js"></script>
 
 <!-- Include group document sharing JS -->
@@ -1935,12 +1952,81 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let userGroups = [];
   let activeGroupId = null; // Crucial for group context
   let activeGroupName = ""; // Store name for display
+  const GROUP_WORKSPACE_IDENTITY_MANAGER_ROLES = ["Owner", "Admin", "DocumentManager"];
+
+  function canManageGroupWorkspaceIdentities() {
+    return GROUP_WORKSPACE_IDENTITY_MANAGER_ROLES.includes(userRoleInActiveGroup);
+  }
+
+  function switchToGroupDocumentsTab() {
+    const documentsTabButton = document.getElementById("documents-tab-btn");
+    if (!documentsTabButton) {
+      return;
+    }
+
+    if (window.bootstrap?.Tab) {
+      window.bootstrap.Tab.getOrCreateInstance(documentsTabButton).show();
+    } else {
+      documentsTabButton.click();
+    }
+  }
+
+  function refreshGroupWorkspaceIdentities() {
+    const identitiesRoot = document.getElementById("group-workspace-identities-root");
+    if (!identitiesRoot || !canManageGroupWorkspaceIdentities()) {
+      return;
+    }
+
+    identitiesRoot.dispatchEvent(new CustomEvent("workspace-identities:refresh"));
+  }
+
+  function updateGroupIdentitiesPermissionUI() {
+    const canManageIdentities = canManageGroupWorkspaceIdentities();
+    const identitiesTabButton = document.getElementById("identities-tab-btn");
+    const identitiesTabPane = document.getElementById("identities-tab");
+    const identitiesNavItem = document.querySelector("[data-group-identities-tab-nav]");
+    const identitiesSidebarItem = document.querySelector("[data-group-identities-sidebar-nav]");
+    const identitiesSectionOption = document.querySelector("[data-group-identities-section-option]");
+    const sectionSelect = document.getElementById("group-workspace-section-select");
+    const identitiesRoot = document.getElementById("group-workspace-identities-root");
+
+    if (identitiesNavItem) {
+      identitiesNavItem.classList.toggle("d-none", !canManageIdentities);
+    }
+    if (identitiesSidebarItem) {
+      identitiesSidebarItem.classList.toggle("d-none", !canManageIdentities);
+    }
+    if (identitiesSectionOption) {
+      identitiesSectionOption.hidden = !canManageIdentities;
+      identitiesSectionOption.disabled = !canManageIdentities;
+    }
+
+    const identitiesActive = Boolean(
+      identitiesTabButton?.classList.contains("active") || identitiesTabPane?.classList.contains("active")
+    );
+    if (!canManageIdentities && identitiesActive) {
+      switchToGroupDocumentsTab();
+      if (sectionSelect) {
+        sectionSelect.value = "documents-tab-btn";
+      }
+    }
+
+    if (identitiesRoot) {
+      const nextPermissionValue = canManageIdentities ? "true" : "false";
+      const permissionChanged = identitiesRoot.dataset.canManage !== nextPermissionValue;
+      identitiesRoot.dataset.canManage = nextPermissionValue;
+      if (permissionChanged) {
+        identitiesRoot.dispatchEvent(new CustomEvent("workspace-identities:permissions-changed"));
+      }
+    }
+  }
 
   function notifyGroupWorkspaceContext() {
     window.groupWorkspaceContext = {
       activeGroupId,
       activeGroupName,
       userRole: userRoleInActiveGroup,
+      canManageIdentities: canManageGroupWorkspaceIdentities(),
       requireOwnerForAgentManagement: {{ settings.require_owner_for_group_agent_management | tojson }}
     };
     window.dispatchEvent(new CustomEvent('groupWorkspace:context-changed', {
@@ -2817,6 +2903,42 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return 'Use chat, metadata tools, and group actions directly from this document card.';
   }
 
+  function getGroupDocumentAccess(doc) {
+    const currentGroupId = String(activeGroupId || '');
+    const ownerGroupId = String(doc?.group_id || doc?.owner_group_id || '');
+    const isOwnerGroup = Boolean(currentGroupId && ownerGroupId === currentGroupId);
+    let sharedGroupEntry = null;
+
+    if (!isOwnerGroup && currentGroupId && Array.isArray(doc?.shared_group_ids)) {
+      sharedGroupEntry = doc.shared_group_ids.find(entry => {
+        const normalizedEntry = String(entry || '');
+        return normalizedEntry === currentGroupId || normalizedEntry.startsWith(`${currentGroupId},`);
+      }) || null;
+    }
+
+    let approvalStatus = String(doc?.shared_approval_status || '').trim().toLowerCase();
+    if (!approvalStatus && sharedGroupEntry) {
+      approvalStatus = String(sharedGroupEntry).includes(',')
+        ? String(sharedGroupEntry).split(',', 2)[1]
+        : 'approved';
+    }
+    if (isOwnerGroup) {
+      approvalStatus = 'owner';
+    }
+
+    const requiresApproval = !isOwnerGroup && approvalStatus === 'not_approved';
+    const hasApprovedAccess = isOwnerGroup || approvalStatus === 'approved';
+
+    return {
+      isOwnerGroup,
+      sharedGroupEntry,
+      approvalStatus,
+      requiresApproval,
+      hasApprovedAccess,
+      ownerGroupName: doc?.owner_group_name || 'the owning group'
+    };
+  }
+
   function renderGroupDocumentsEmptyState(filtersActive) {
     const message = filtersActive
       ? 'No group documents found matching the current filters.'
@@ -2859,19 +2981,23 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function createGroupDocumentCard(doc, userRole) {
     const docId = doc.id;
     const { pct, docStatus, hasError, isComplete } = getGroupDocumentProcessingState(doc);
+    const access = getGroupDocumentAccess(doc);
     const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRole);
     const groupStatus = window.currentGroupStatus || 'active';
-    const canModify = groupStatus === 'active';
-    const canChat = groupStatus !== 'inactive';
-    const canShare = canManage && (groupStatus === 'active' || groupStatus === 'upload_disabled');
-    const canDelete = canManage && (groupStatus === 'active' || groupStatus === 'upload_disabled');
+    const canModify = access.isOwnerGroup && groupStatus === 'active';
+    const canChat = access.hasApprovedAccess && groupStatus !== 'inactive';
+    const canShare = canManage && access.isOwnerGroup && (groupStatus === 'active' || groupStatus === 'upload_disabled');
+    const canDelete = canManage && access.isOwnerGroup && (groupStatus === 'active' || groupStatus === 'upload_disabled');
+    const canRemove = canManage && !access.isOwnerGroup && Boolean(access.sharedGroupEntry) && (groupStatus === 'active' || groupStatus === 'upload_disabled');
     const displayTitle = doc.title && doc.title !== doc.file_name ? doc.title : (doc.file_name || 'Untitled');
     const subtitle = doc.title && doc.title !== doc.file_name ? (doc.file_name || '') : '';
     const selected = groupSelectedDocuments.has(docId);
     const checkboxClass = groupSelectionMode ? '' : ' d-none';
 
     let statusBadge = '<span class="badge bg-success">Ready</span>';
-    if (hasError) {
+    if (access.requiresApproval) {
+      statusBadge = '<span class="badge bg-warning text-dark">Pending Approval</span>';
+    } else if (hasError) {
       statusBadge = '<span class="badge bg-danger">Error</span>';
     } else if (!isComplete) {
       statusBadge = `<span class="badge bg-info text-dark">Processing ${pct.toFixed(0)}%</span>`;
@@ -2880,7 +3006,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
 
     let primaryButtonsHtml = '';
-    if (isComplete && !hasError && canChat) {
+    if (isComplete && !hasError && access.requiresApproval && canManage) {
+      primaryButtonsHtml += `
+        <button class="btn btn-sm btn-success me-1" onclick="approveSharedGroupDocument('${docId}')">
+          <i class="bi bi-check-circle me-1"></i>Approve
+        </button>`;
+    } else if (isComplete && !hasError && canChat) {
       primaryButtonsHtml += `
         <button class="btn btn-sm btn-primary me-1" onclick="searchGroupDocumentInChat('${docId}')">
           <i class="bi bi-chat-dots me-1"></i>Chat
@@ -2936,11 +3067,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;">
             <i class="bi bi-trash-fill me-2"></i>Delete
           </a></li>`;
+      } else if (canRemove) {
+        dropdownItems += `
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item text-danger" href="#" onclick="removeSharedGroupDocument('${docId}', event); return false;">
+            <i class="bi bi-x-circle-fill me-2"></i>Remove
+          </a></li>`;
       }
-    } else if (canManage) {
+    } else if (canDelete) {
       dropdownItems += `
         <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;">
           <i class="bi bi-trash-fill me-2"></i>Delete
+        </a></li>`;
+    } else if (canRemove) {
+      dropdownItems += `
+        <li><a class="dropdown-item text-danger" href="#" onclick="removeSharedGroupDocument('${docId}', event); return false;">
+          <i class="bi bi-x-circle-fill me-2"></i>Remove
         </a></li>`;
     }
 
@@ -3858,6 +4000,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           // Disable upload section if no group active
           if (uploadSection) uploadSection.style.display = "none";
           if (uploadHr) uploadHr.style.display = "none";
+          updateGroupIdentitiesPermissionUI();
         }
 
         notifyGroupWorkspaceContext();
@@ -3868,6 +4011,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
           "Could not fetch your groups: " +
             (err.error || err.message || "Unknown error")
         );
+        activeGroupId = null;
+        userRoleInActiveGroup = null;
+        activeGroupName = "";
+        updateGroupIdentitiesPermissionUI();
         sel.innerHTML = "<option>Error loading groups</option>"; // Show error in dropdown
         selectedGroupText.textContent = "Error loading groups";
         dropdownItems.innerHTML = '<div class="dropdown-item disabled">Error loading groups</div>';
@@ -3962,6 +4109,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
       loadGroupWorkspaceTags();
     } else if (targetId === "#prompts-tab") {
       fetchGroupPrompts();
+    } else if (targetId === "#identities-tab") {
+      refreshGroupWorkspaceIdentities();
     } else if (targetId === "#group-agents-tab") {
       if (window.fetchGroupAgents) {
         window.fetchGroupAgents();
@@ -4003,6 +4152,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     updateActiveGroupHero(activeGroup);
     updateManageGroupButton(activeGroup);
+    updateGroupIdentitiesPermissionUI();
 
     notifyGroupWorkspaceContext();
   }
@@ -4254,6 +4404,106 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     showGroupDocumentDeleteFeedback(message, variant);
   }
+
+  function refreshGroupSharedDocumentRows() {
+    if (typeof fetchGroupDocuments === 'function') {
+      fetchGroupDocuments();
+      return;
+    }
+
+    refreshCurrentGroupDocumentView();
+  }
+
+  async function submitGroupSharedDocumentAction(documentId, action, triggerElement = null) {
+    const normalizedAction = String(action || '').trim().toLowerCase();
+    const endpoint = normalizedAction === 'approve'
+      ? `/api/group_documents/${encodeURIComponent(documentId)}/approve-share-with-group`
+      : `/api/group_documents/${encodeURIComponent(documentId)}/remove-self`;
+    const method = normalizedAction === 'approve' ? 'POST' : 'DELETE';
+    const originalButtonHtml = triggerElement ? triggerElement.innerHTML : null;
+
+    if (triggerElement) {
+      triggerElement.disabled = true;
+      triggerElement.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+    }
+
+    try {
+      const response = await fetch(endpoint, { method });
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responseData.error || `Server responded with status ${response.status}`);
+      }
+
+      showGroupWorkspaceMessage(
+        responseData.message || (normalizedAction === 'approve' ? 'Document share approved.' : 'Document share removed.'),
+        normalizedAction === 'approve' ? 'success' : 'info'
+      );
+      refreshGroupSharedDocumentRows();
+      return true;
+    } catch (error) {
+      showGroupWorkspaceMessage(
+        error.message || 'Failed to update shared document access.',
+        'danger'
+      );
+      if (triggerElement && document.body.contains(triggerElement)) {
+        triggerElement.disabled = false;
+        triggerElement.innerHTML = originalButtonHtml;
+      }
+      return false;
+    }
+  }
+
+  window.approveSharedGroupDocument = function(documentId, ownerGroupName = 'the owning group') {
+    const modalEl = document.getElementById('groupSharedDocumentApprovalModal');
+    const ownerNameEl = document.getElementById('groupSharedDocumentApprovalOwnerName');
+    const approveBtn = document.getElementById('groupSharedDocumentApproveBtn');
+    const denyBtn = document.getElementById('groupSharedDocumentDenyBtn');
+    const cancelBtn = document.getElementById('groupSharedDocumentCancelBtn');
+
+    if (!modalEl || !ownerNameEl || !approveBtn || !denyBtn || !cancelBtn) {
+      showGroupWorkspaceMessage('Shared document approval controls are unavailable.', 'danger');
+      return;
+    }
+
+    const cachedDocument = (groupLastFetchedDocs || []).find(doc => doc.id === documentId) || null;
+    ownerNameEl.textContent = cachedDocument?.owner_group_name || ownerGroupName || 'the owning group';
+    approveBtn.disabled = false;
+    denyBtn.disabled = false;
+    approveBtn.textContent = 'Approve';
+    denyBtn.textContent = 'Deny';
+    approveBtn.onclick = null;
+    denyBtn.onclick = null;
+    cancelBtn.onclick = null;
+
+    approveBtn.onclick = async function() {
+      const succeeded = await submitGroupSharedDocumentAction(documentId, 'approve', approveBtn);
+      if (succeeded) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+      }
+    };
+
+    denyBtn.onclick = async function() {
+      const succeeded = await submitGroupSharedDocumentAction(documentId, 'deny', denyBtn);
+      if (succeeded) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+      }
+    };
+
+    cancelBtn.onclick = function() {
+      bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    };
+
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  };
+
+  window.removeSharedGroupDocument = async function(documentId, event) {
+    if (event) {
+      event.preventDefault();
+    }
+
+    const triggerElement = event?.target?.closest('button, a') || null;
+    await submitGroupSharedDocumentAction(documentId, 'remove', triggerElement);
+  };
 
   function getGroupGeneratedArtifactRequesterId(doc) {
     return String(
@@ -4663,9 +4913,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
       docStatus.toLowerCase().includes("error");
     const hasError = docStatus.toLowerCase().includes("error");
     const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRole); // Check role for actions
+    const access = getGroupDocumentAccess(doc);
     const isPendingGeneratedArtifact = isPendingGeneratedArtifactDocument(doc);
-    const isSelected = groupSelectedDocuments.has(docId);
-
+    const groupStatus = window.currentGroupStatus || 'active';
+    const canModify = access.isOwnerGroup && groupStatus === 'active';
+    const canChat = access.hasApprovedAccess && groupStatus !== 'inactive';
+    const canRemove = canManage && !access.isOwnerGroup && Boolean(access.sharedGroupEntry) && (groupStatus === 'active' || groupStatus === 'upload_disabled');
     const docRow = document.createElement("tr");
     docRow.id = `group-doc-row-${docId}`; // Use distinct prefix
     docRow.classList.add("document-row");
@@ -4689,10 +4942,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Create the actions dropdown menu and chat button
     let actionsDropdown = '';
     let chatButton = '';
-    
-    // Get current group status
-    const groupStatus = window.currentGroupStatus || 'active';
-    const canChat = (groupStatus !== 'inactive');
     
     // Chat button for everyone with access (outside dropdown) - but only if group allows chat
     if (isComplete && !hasError && canChat) {
@@ -4719,11 +4968,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     <i class="bi bi-check-square me-2"></i>Select
                 </a></li>
         `;
-        
-        // Get current group status
-        const groupStatus = window.currentGroupStatus || 'active';
-        const canModify = (groupStatus === 'active');
-        const canChat = (groupStatus !== 'inactive');
         
         // Edit/Extract Metadata - only for active groups
         if (canModify) {
@@ -4754,7 +4998,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         }
         
         // Add sharing and delete/remove actions based on user role AND group status
-        if (canManage) {
+        if (canManage && access.isOwnerGroup) {
             // Share only available for active and upload_disabled groups (not locked or inactive)
             const canShare = (groupStatus === 'active' || groupStatus === 'upload_disabled');
             if (canShare) {
@@ -4777,6 +5021,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     </a></li>
                 `;
             }
+          } else if (canRemove) {
+            actionsDropdown += `
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item text-danger" href="#" onclick="removeSharedGroupDocument('${docId}', event); return false;">
+                <i class="bi bi-x-circle-fill me-2"></i>Remove
+              </a></li>
+            `;
         } else {
             // Non-manager actions - in group context, regular members typically can't remove documents
             // This could be extended to support "request removal" or similar functionality
@@ -4787,7 +5038,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </ul>
         </div>
         `;
-    } else if (canManage) {
+    } else if (canManage && access.isOwnerGroup) {
         // Only managers can delete incomplete/error documents
         actionsDropdown = `
         <div class="dropdown action-dropdown">
@@ -4805,6 +5056,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
         // Non-managers cannot perform any actions on incomplete/error documents
         actionsDropdown = '';
     }
+
+    let approvalButton = '';
+    if (isComplete && !hasError && access.requiresApproval && canManage) {
+      approvalButton = `
+        <button type="button" class="btn btn-sm btn-success me-1"
+          onclick="approveSharedGroupDocument('${docId}')"
+          title="Approve access to this shared document"
+          aria-label="Approve access to shared group document: ${escapeHtml(doc.file_name || 'Untitled')}"
+        >
+          <i class="bi bi-check-circle me-1" aria-hidden="true"></i>
+          Approve
+        </button>
+      `;
+    }
     
     // Complete row HTML
     docRow.innerHTML = `
@@ -4812,6 +5077,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")}</td>
       <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
       <td class="align-middle document-actions-cell">
+        ${approvalButton}
             ${chatButton}
             ${actionsDropdown}
         </td>
@@ -6545,8 +6811,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     const groupStatus = window.currentGroupStatus || 'active';
     const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
-    const canModify = (groupStatus === 'active');
-    const canChat = (groupStatus !== 'inactive');
+    const groupCanModify = groupStatus === 'active';
+    const groupCanChat = groupStatus !== 'inactive';
 
     docs.forEach(doc => {
       const docId = doc.id;
@@ -6558,6 +6824,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
           || docStatus.toLowerCase().includes('error');
       const hasError = docStatus.toLowerCase().includes('error');
       const isSelected = groupSelectedDocuments.has(docId);
+      const access = getGroupDocumentAccess(doc);
+      const canModify = access.isOwnerGroup && groupCanModify;
+      const canChat = access.hasApprovedAccess && groupCanChat;
+      const canRemove = canManage && !access.isOwnerGroup && Boolean(access.sharedGroupEntry) && (groupStatus === 'active' || groupStatus === 'upload_disabled');
 
       // First column: expand/collapse or status indicator
       let firstColHtml = '';
@@ -6573,6 +6843,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
       let chatButton = '';
       if (isComplete && !hasError && canChat) {
         chatButton = `<button class="btn btn-sm btn-primary me-1 action-btn-wide text-start" onclick="searchGroupDocumentInChat('${docId}')" title="Open Chat for Document" aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"><i class="bi bi-chat-dots-fill me-1" aria-hidden="true"></i>Chat</button>`;
+      }
+      let approvalButton = '';
+      if (isComplete && !hasError && access.requiresApproval && canManage) {
+        approvalButton = `<button type="button" class="btn btn-sm btn-success me-1" onclick="approveSharedGroupDocument('${docId}')" title="Approve access to this shared document" aria-label="Approve access to shared group document: ${escapeHtml(doc.file_name || 'Untitled')}"><i class="bi bi-check-circle me-1" aria-hidden="true"></i>Approve</button>`;
       }
 
       // Actions dropdown
@@ -6591,7 +6865,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           actionsDropdown += `<li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;"><i class="bi bi-chat-dots-fill me-2"></i>Chat</a></li>`;
         }
 
-        if (canManage) {
+        if (canManage && access.isOwnerGroup) {
           const canShare = (groupStatus === 'active' || groupStatus === 'upload_disabled');
           if (canShare) {
             actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;"><i class="bi bi-share-fill me-2"></i>Share<span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span></a></li>`;
@@ -6600,10 +6874,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
           if (canDelete) {
             actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>`;
           }
+        } else if (canRemove) {
+          actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="#" onclick="removeSharedGroupDocument('${docId}', event); return false;"><i class="bi bi-x-circle-fill me-2"></i>Remove</a></li>`;
         }
 
         actionsDropdown += `</ul></div>`;
-      } else if (canManage) {
+      } else if (canManage && access.isOwnerGroup) {
         const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
         if (canDelete) {
           actionsDropdown = `<div class="dropdown action-dropdown d-inline-block"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-three-dots-vertical"></i></button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li></ul></div>`;
@@ -6614,7 +6890,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <td class="align-middle">${firstColHtml}</td>
         <td class="align-middle" title="${escapeHtml(doc.file_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || '')}</td>
         <td class="align-middle" title="${escapeHtml(doc.title || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.title || 'N/A')}</td>
-        <td class="align-middle">${chatButton}${actionsDropdown}</td>
+        <td class="align-middle">${approvalButton}${chatButton}${actionsDropdown}</td>
       </tr>`;
     });
     html += '</tbody></table>';

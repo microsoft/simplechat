@@ -569,6 +569,46 @@
             aria-labelledby="profile-stats-tab"
         >
 
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
+        <div>
+            <h5 class="mb-1"><i class="bi bi-graph-up me-2"></i>Activity Stats</h5>
+            <div class="small text-muted">Showing <span class="profile-stats-window-label">Last 30 Days</span></div>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <div class="btn-group" role="group" aria-label="Profile stats time window">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="profile-stats-window-7" data-profile-stats-days="7">7 Days</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm active" id="profile-stats-window-30" data-profile-stats-days="30">30 Days</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="profile-stats-window-90" data-profile-stats-days="90">90 Days</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="profile-stats-window-custom" data-bs-toggle="collapse" data-bs-target="#profileStatsCustomDateRange" aria-expanded="false" aria-controls="profileStatsCustomDateRange">
+                    <i class="bi bi-calendar3 me-1"></i>Custom
+                </button>
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="profile-stats-export-btn" data-bs-toggle="modal" data-bs-target="#exportActivityModal">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+        </div>
+    </div>
+
+    <div class="collapse mb-3" id="profileStatsCustomDateRange">
+        <div class="card card-body py-2">
+            <div class="row align-items-end g-2">
+                <div class="col-md-4">
+                    <label for="profileStatsStartDate" class="form-label small">Start Date</label>
+                    <input type="date" class="form-control form-control-sm" id="profileStatsStartDate" />
+                </div>
+                <div class="col-md-4">
+                    <label for="profileStatsEndDate" class="form-label small">End Date</label>
+                    <input type="date" class="form-control form-control-sm" id="profileStatsEndDate" />
+                </div>
+                <div class="col-md-4">
+                    <button type="button" class="btn btn-primary btn-sm" id="profileStatsApplyCustomRange">
+                        <i class="bi bi-check2 me-1"></i>Apply
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Cached Metrics Info -->
     <div class="alert alert-info mb-3" role="alert">
         <i class="bi bi-info-circle me-2"></i>
@@ -623,7 +663,7 @@
     <div class="row g-3 mb-4">
         <div class="col-lg-6">
             <div class="chart-card">
-                <h5 class="mb-3"><i class="bi bi-graph-up me-2"></i>Login Activity (Last 30 Days)</h5>
+                <h5 class="mb-3"><i class="bi bi-graph-up me-2"></i>Login Activity (<span class="profile-stats-window-label">Last 30 Days</span>)</h5>
                 <div class="chart-container">
                     <canvas id="loginChart"></canvas>
                 </div>
@@ -631,7 +671,7 @@
         </div>
         <div class="col-lg-6">
             <div class="chart-card">
-                <h5 class="mb-3"><i class="bi bi-chat-left-dots me-2"></i>Conversation Activity (Last 30 Days)</h5>
+                <h5 class="mb-3"><i class="bi bi-chat-left-dots me-2"></i>Conversation Activity (<span class="profile-stats-window-label">Last 30 Days</span>)</h5>
                 <div class="chart-container">
                     <canvas id="conversationChart"></canvas>
                 </div>
@@ -642,7 +682,7 @@
     <div class="row g-3 mb-4">
         <div class="col-lg-6">
             <div class="chart-card">
-                <h5 class="mb-3"><i class="bi bi-file-earmark-bar-graph me-2"></i>Document Activity (Last 30 Days)</h5>
+                <h5 class="mb-3"><i class="bi bi-file-earmark-bar-graph me-2"></i>Document Activity (<span class="profile-stats-window-label">Last 30 Days</span>)</h5>
                 <div class="chart-container">
                     <canvas id="documentChart"></canvas>
                 </div>
@@ -650,7 +690,7 @@
         </div>
         <div class="col-lg-6">
             <div class="chart-card">
-                <h5 class="mb-3"><i class="bi bi-cpu me-2"></i>Token Usage (Last 30 Days)</h5>
+                <h5 class="mb-3"><i class="bi bi-cpu me-2"></i>Token Usage (<span class="profile-stats-window-label">Last 30 Days</span>)</h5>
                 <div class="chart-container">
                     <canvas id="tokenChart"></canvas>
                 </div>
@@ -1899,25 +1939,25 @@
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="exportLogins" checked>
                         <label class="form-check-label" for="exportLogins">
-                            Login Activity (Last 30 Days)
+                            Login Activity
                         </label>
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="exportConversations" checked>
                         <label class="form-check-label" for="exportConversations">
-                            Conversation Activity (Last 30 Days)
+                            Conversation Activity
                         </label>
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="exportDocuments" checked>
                         <label class="form-check-label" for="exportDocuments">
-                            Document Activity (Last 30 Days)
+                            Document Activity
                         </label>
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="exportTokens" checked>
                         <label class="form-check-label" for="exportTokens">
-                            Token Usage (Last 30 Days)
+                            Token Usage
                         </label>
                     </div>
                     <div class="form-check mt-2">
@@ -1925,6 +1965,39 @@
                         <label class="form-check-label" for="exportMetrics">
                             Summary Metrics (Totals)
                         </label>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Select Time Window</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="profileExportTimeWindow" value="7" id="profileExport7days">
+                        <label class="form-check-label" for="profileExport7days">Last 7 Days</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="profileExportTimeWindow" value="30" id="profileExport30days" checked>
+                        <label class="form-check-label" for="profileExport30days">Last 30 Days</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="profileExportTimeWindow" value="90" id="profileExport90days">
+                        <label class="form-check-label" for="profileExport90days">Last 90 Days</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="profileExportTimeWindow" value="custom" id="profileExportCustom">
+                        <label class="form-check-label" for="profileExportCustom">Custom Range</label>
+                    </div>
+
+                    <div class="mt-3 d-none" id="profileExportCustomDateRange">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label for="profileExportStartDate" class="form-label small">Start Date</label>
+                                <input type="date" class="form-control form-control-sm" id="profileExportStartDate" />
+                            </div>
+                            <div class="col-6">
+                                <label for="profileExportEndDate" class="form-label small">End Date</label>
+                                <input type="date" class="form-control form-control-sm" id="profileExportEndDate" />
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -1935,7 +2008,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="exportActivityData()">
+                <button type="button" class="btn btn-primary" id="execute-profile-export-btn">
                     <i class="bi bi-download me-1"></i>Export CSV
                 </button>
             </div>
@@ -1957,6 +2030,8 @@ window.profilePageConfig = {
 
 // Initialize charts
 let loginChart, conversationChart, documentChart, tokenChart, storageChart;
+let profileStatsWindow = { days: 30, startDate: '', endDate: '' };
+let profileStatsDateRange = [];
 let factMemoryEntries = [];
 let filteredFactMemoryEntries = [];
 let factMemoryCurrentPage = 1;
@@ -2035,6 +2110,167 @@ function handleProfileFeatureAction() {
     window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }
 
+function getDateInputValueDaysAgo(daysAgo) {
+    const dateValue = new Date();
+    dateValue.setDate(dateValue.getDate() - daysAgo);
+    return dateValue.toISOString().split('T')[0];
+}
+
+function formatDateInputForDisplay(dateValue) {
+    const parts = String(dateValue || '').split('-');
+    if (parts.length !== 3) {
+        return dateValue;
+    }
+
+    return `${Number(parts[1])}/${Number(parts[2])}/${parts[0]}`;
+}
+
+function setDateInputDefaults(startInputId, endInputId) {
+    const startInput = document.getElementById(startInputId);
+    const endInput = document.getElementById(endInputId);
+
+    if (startInput && !startInput.value) {
+        startInput.value = getDateInputValueDaysAgo(29);
+    }
+
+    if (endInput && !endInput.value) {
+        endInput.value = getDateInputValueDaysAgo(0);
+    }
+}
+
+function getProfileStatsWindowLabel(windowConfig = profileStatsWindow) {
+    if (windowConfig.startDate && windowConfig.endDate) {
+        return `${formatDateInputForDisplay(windowConfig.startDate)} - ${formatDateInputForDisplay(windowConfig.endDate)}`;
+    }
+
+    return `Last ${windowConfig.days || 30} Days`;
+}
+
+function updateProfileStatsWindowLabels(label) {
+    document.querySelectorAll('.profile-stats-window-label').forEach(labelElement => {
+        labelElement.textContent = label;
+    });
+}
+
+function setProfileStatsWindow(days) {
+    profileStatsWindow = { days, startDate: '', endDate: '' };
+    document.querySelectorAll('[data-profile-stats-days]').forEach(button => {
+        button.classList.toggle('active', button.dataset.profileStatsDays === String(days));
+    });
+
+    const customButton = document.getElementById('profile-stats-window-custom');
+    if (customButton) {
+        customButton.classList.remove('active');
+    }
+
+    updateProfileStatsWindowLabels(getProfileStatsWindowLabel());
+    loadActivityChartData();
+}
+
+function applyProfileStatsCustomRange() {
+    const startDate = document.getElementById('profileStatsStartDate')?.value || '';
+    const endDate = document.getElementById('profileStatsEndDate')?.value || '';
+
+    if (!startDate || !endDate) {
+        showToastMessage('Please select both start and end dates.', 'info');
+        return;
+    }
+
+    if (new Date(startDate) > new Date(endDate)) {
+        showToastMessage('Start date must be before end date.', 'info');
+        return;
+    }
+
+    const diffMs = Math.abs(new Date(endDate) - new Date(startDate));
+    const days = Math.ceil(diffMs / 86400000) + 1;
+    profileStatsWindow = { days, startDate, endDate };
+
+    document.querySelectorAll('[data-profile-stats-days]').forEach(button => {
+        button.classList.remove('active');
+    });
+
+    const customButton = document.getElementById('profile-stats-window-custom');
+    if (customButton) {
+        customButton.classList.add('active');
+    }
+
+    updateProfileStatsWindowLabels(getProfileStatsWindowLabel());
+    loadActivityChartData();
+}
+
+function getProfileStatsQueryString(windowConfig = profileStatsWindow) {
+    const params = new URLSearchParams();
+    if (windowConfig.startDate && windowConfig.endDate) {
+        params.set('start_date', windowConfig.startDate);
+        params.set('end_date', windowConfig.endDate);
+    } else {
+        params.set('days', windowConfig.days || 30);
+    }
+    return params.toString();
+}
+
+function getProfileStatsDateRange() {
+    if (Array.isArray(profileStatsDateRange) && profileStatsDateRange.length > 0) {
+        return profileStatsDateRange;
+    }
+
+    return getLastDays(profileStatsWindow.days || 30);
+}
+
+function getProfileExportWindowSelection() {
+    const selectedRadio = document.querySelector('input[name="profileExportTimeWindow"]:checked');
+    const selectedValue = selectedRadio ? selectedRadio.value : '30';
+
+    if (selectedValue === 'custom') {
+        const startDate = document.getElementById('profileExportStartDate')?.value || '';
+        const endDate = document.getElementById('profileExportEndDate')?.value || '';
+        if (!startDate || !endDate) {
+            throw new Error('Please select both start and end dates for the custom export range.');
+        }
+        if (new Date(startDate) > new Date(endDate)) {
+            throw new Error('Export start date must be before end date.');
+        }
+        const diffMs = Math.abs(new Date(endDate) - new Date(startDate));
+        return {
+            days: Math.ceil(diffMs / 86400000) + 1,
+            startDate,
+            endDate
+        };
+    }
+
+    return { days: Number(selectedValue) || 30, startDate: '', endDate: '' };
+}
+
+function toggleProfileExportCustomDateRange() {
+    const customRange = document.getElementById('profileExportCustomDateRange');
+    const customRadio = document.getElementById('profileExportCustom');
+    if (!customRange || !customRadio) {
+        return;
+    }
+
+    customRange.classList.toggle('d-none', !customRadio.checked);
+    if (customRadio.checked) {
+        setDateInputDefaults('profileExportStartDate', 'profileExportEndDate');
+    }
+}
+
+function initializeProfileStatsWindowControls() {
+    setDateInputDefaults('profileStatsStartDate', 'profileStatsEndDate');
+    updateProfileStatsWindowLabels(getProfileStatsWindowLabel());
+
+    document.querySelectorAll('[data-profile-stats-days]').forEach(button => {
+        button.addEventListener('click', () => {
+            setProfileStatsWindow(Number(button.dataset.profileStatsDays) || 30);
+        });
+    });
+
+    document.getElementById('profileStatsApplyCustomRange')?.addEventListener('click', applyProfileStatsCustomRange);
+    document.querySelectorAll('input[name="profileExportTimeWindow"]').forEach(radio => {
+        radio.addEventListener('change', toggleProfileExportCustomDateRange);
+    });
+    document.getElementById('execute-profile-export-btn')?.addEventListener('click', exportActivityData);
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Profile DOMContentLoaded fired');
     
@@ -2054,6 +2290,7 @@ document.addEventListener('DOMContentLoaded', function() {
     handleProfileFeatureAction();
     loadNavigationPreferences();
     loadTutorialPreferences();
+    initializeProfileStatsWindowControls();
     initializeFactMemoryModalInstances();
     loadFactMemory();
     loadMicrophoneSettings();
@@ -2896,8 +3133,7 @@ function saveTutorialPreferences() {
 }
 
 function loadActivityChartData() {
-    // Fetch activity trends data
-    fetch('/api/user/activity-trends?days=30')
+    fetch(`/api/user/activity-trends?${getProfileStatsQueryString()}`)
         .then(response => response.json())
         .then(data => {
             console.log('Activity trends data received:', data);
@@ -2906,6 +3142,9 @@ function loadActivityChartData() {
             console.log('Documents:', data.documents);
             console.log('Tokens:', data.tokens);
             console.log('Storage:', data.storage);
+
+            profileStatsDateRange = data.dateRange || [];
+            updateProfileStatsWindowLabels(data.window?.label || getProfileStatsWindowLabel());
             
             updateLoginChart(data.logins || []);
             updateConversationChart(data.conversations || []);
@@ -3029,16 +3268,16 @@ function getDoughnutChartOptions() {
 }
 
 function updateLoginChart(data) {
-    const last30Days = getLast30Days();
-    const values = last30Days.map(date => {
+    const dateRange = getProfileStatsDateRange();
+    const values = dateRange.map(date => {
         const found = data.find(d => d.date === date);
         return found ? found.count : 0;
     });
     
-    console.log('Login chart - last30Days:', last30Days);
+    console.log('Login chart - dateRange:', dateRange);
     console.log('Login chart - values:', values);
     
-    loginChart.data.labels = last30Days.map(d => formatDate(d));
+    loginChart.data.labels = dateRange.map(d => formatDate(d));
     loginChart.data.datasets = [{
         label: 'Logins',
         data: values,
@@ -3051,31 +3290,31 @@ function updateLoginChart(data) {
 }
 
 function updateConversationChart(data) {
-    const last30Days = getLast30Days();
+    const dateRange = getProfileStatsDateRange();
     
     // Handle both old format (array) and new format (object with creates/deletes)
     let createValues, deleteValues;
     
     if (data.creates && data.deletes) {
         // New format with separate creates and deletes
-        createValues = last30Days.map(date => {
+        createValues = dateRange.map(date => {
             const found = data.creates.find(d => d.date === date);
             return found ? found.count : 0;
         });
-        deleteValues = last30Days.map(date => {
+        deleteValues = dateRange.map(date => {
             const found = data.deletes.find(d => d.date === date);
             return found ? found.count : 0;
         });
     } else {
         // Old format - treat as creates only
-        createValues = last30Days.map(date => {
+        createValues = dateRange.map(date => {
             const found = data.find(d => d.date === date);
             return found ? found.count : 0;
         });
-        deleteValues = last30Days.map(() => 0);
+        deleteValues = dateRange.map(() => 0);
     }
     
-    conversationChart.data.labels = last30Days.map(d => formatDate(d));
+    conversationChart.data.labels = dateRange.map(d => formatDate(d));
     conversationChart.data.datasets = [
         {
             label: 'Created',
@@ -3096,31 +3335,31 @@ function updateConversationChart(data) {
 }
 
 function updateDocumentChart(data) {
-    const last30Days = getLast30Days();
+    const dateRange = getProfileStatsDateRange();
     
     // Handle both old format (array) and new format (object with uploads/deletes)
     let uploadValues, deleteValues;
     
     if (data.uploads && data.deletes) {
         // New format with separate uploads and deletes
-        uploadValues = last30Days.map(date => {
+        uploadValues = dateRange.map(date => {
             const found = data.uploads.find(d => d.date === date);
             return found ? found.count : 0;
         });
-        deleteValues = last30Days.map(date => {
+        deleteValues = dateRange.map(date => {
             const found = data.deletes.find(d => d.date === date);
             return found ? found.count : 0;
         });
     } else {
         // Old format - treat as uploads only
-        uploadValues = last30Days.map(date => {
+        uploadValues = dateRange.map(date => {
             const found = data.find(d => d.date === date);
             return found ? found.count : 0;
         });
-        deleteValues = last30Days.map(() => 0);
+        deleteValues = dateRange.map(() => 0);
     }
     
-    documentChart.data.labels = last30Days.map(d => formatDate(d));
+    documentChart.data.labels = dateRange.map(d => formatDate(d));
     documentChart.data.datasets = [
         {
             label: 'Uploads',
@@ -3141,13 +3380,13 @@ function updateDocumentChart(data) {
 }
 
 function updateTokenChart(data) {
-    const last30Days = getLast30Days();
-    const values = last30Days.map(date => {
+    const dateRange = getProfileStatsDateRange();
+    const values = dateRange.map(date => {
         const found = data.find(d => d.date === date);
         return found ? (found.tokens / 1000000) : 0; // Convert to millions
     });
     
-    tokenChart.data.labels = last30Days.map(d => formatDate(d));
+    tokenChart.data.labels = dateRange.map(d => formatDate(d));
     tokenChart.data.datasets = [{
         label: 'Tokens',
         data: values,
@@ -3172,14 +3411,18 @@ function updateStorageChart(data) {
     storageChart.update();
 }
 
-function getLast30Days() {
+function getLastDays(daysToInclude) {
     const days = [];
-    for (let i = 29; i >= 0; i--) {
+    for (let i = daysToInclude - 1; i >= 0; i--) {
         const date = new Date();
         date.setDate(date.getDate() - i);
         days.push(date.toISOString().split('T')[0]);
     }
     return days;
+}
+
+function getLast30Days() {
+    return getLastDays(30);
 }
 
 function formatDate(dateStr) {
@@ -3558,8 +3801,38 @@ function showSuccessToast(message) {
     });
 }
 
+function escapeCsvValue(value) {
+    const stringValue = value === null || typeof value === 'undefined' ? '' : String(value);
+    if (/[",\n\r]/.test(stringValue)) {
+        return `"${stringValue.replace(/"/g, '""')}"`;
+    }
+    return stringValue;
+}
+
+function appendCsvRow(rows, values) {
+    rows.push(values.map(escapeCsvValue).join(','));
+}
+
+function appendCsvSectionBreak(rows) {
+    rows.push('');
+}
+
+function downloadCsvFile(csvContent, filename) {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    link.href = url;
+    link.download = filename;
+    link.classList.add('d-none');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
 // Export activity data to CSV
-function exportActivityData() {
+async function exportActivityData() {
     const includeLogins = document.getElementById('exportLogins').checked;
     const includeConversations = document.getElementById('exportConversations').checked;
     const includeDocuments = document.getElementById('exportDocuments').checked;
@@ -3567,120 +3840,129 @@ function exportActivityData() {
     const includeMetrics = document.getElementById('exportMetrics').checked;
     
     if (!includeLogins && !includeConversations && !includeDocuments && !includeTokens && !includeMetrics) {
-        alert('Please select at least one data type to export.');
+        showToastMessage('Please select at least one data type to export.', 'info');
+        return;
+    }
+
+    let exportWindow;
+    try {
+        exportWindow = getProfileExportWindowSelection();
+    } catch (error) {
+        showToastMessage(error.message, 'info');
         return;
     }
     
-    // Close modal
-    const modal = bootstrap.Modal.getInstance(document.getElementById('exportActivityModal'));
-    modal.hide();
-    
-    // Fetch activity data
-    Promise.all([
-        fetch('/api/user/activity-trends?days=30').then(r => r.json()),
-        fetch('/api/user/settings').then(r => r.json())
-    ])
-    .then(([trendsData, settingsData]) => {
-        let csvContent = '';
+    const exportButton = document.getElementById('execute-profile-export-btn');
+    const originalButtonHtml = exportButton ? exportButton.innerHTML : '';
+    if (exportButton) {
+        exportButton.disabled = true;
+        exportButton.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Exporting...';
+    }
+
+    try {
+        const [trendsResponse, settingsResponse] = await Promise.all([
+            fetch(`/api/user/activity-trends?${getProfileStatsQueryString(exportWindow)}`),
+            fetch('/api/user/settings')
+        ]);
+
+        if (!trendsResponse.ok || !settingsResponse.ok) {
+            throw new Error('Unable to load export data.');
+        }
+
+        const [trendsData, settingsData] = await Promise.all([
+            trendsResponse.json(),
+            settingsResponse.json()
+        ]);
+
+        const rows = [];
         const metrics = settingsData.settings?.metrics || {};
         const userName = '{{ user.get("name", "User") }}';
         const userEmail = '{{ user.get("preferred_username", "N/A") }}';
+        const windowLabel = trendsData.window?.label || getProfileStatsWindowLabel(exportWindow);
         
-        // Add header with user info
-        csvContent += `User Activity Export\n`;
-        csvContent += `User: ${userName}\n`;
-        csvContent += `Email: ${userEmail}\n`;
-        csvContent += `Export Date: ${new Date().toLocaleString()}\n`;
-        csvContent += `Data Period: Last 30 Days\n\n`;
+        rows.push('User Activity Export');
+        appendCsvRow(rows, ['User', userName]);
+        appendCsvRow(rows, ['Email', userEmail]);
+        appendCsvRow(rows, ['Export Date', new Date().toLocaleString()]);
+        appendCsvRow(rows, ['Data Period', windowLabel]);
+        appendCsvSectionBreak(rows);
         
-        // Add summary metrics if selected
         if (includeMetrics && metrics) {
-            csvContent += `SUMMARY METRICS\n`;
-            csvContent += `Metric,Value\n`;
+            rows.push('SUMMARY METRICS');
+            appendCsvRow(rows, ['Metric', 'Value']);
             
             if (metrics.login_metrics) {
-                csvContent += `Total Logins,${metrics.login_metrics.total_logins || 0}\n`;
-                csvContent += `Last Login,${metrics.login_metrics.last_login || 'Never'}\n`;
+                appendCsvRow(rows, ['Total Logins', metrics.login_metrics.total_logins || 0]);
+                appendCsvRow(rows, ['Last Login', metrics.login_metrics.last_login || 'Never']);
             }
             
             if (metrics.chat_metrics) {
-                csvContent += `Total Conversations,${metrics.chat_metrics.total_conversations || 0}\n`;
-                csvContent += `Total Messages,${metrics.chat_metrics.total_messages || 0}\n`;
-                csvContent += `Total Message Size (bytes),${metrics.chat_metrics.total_message_size || 0}\n`;
+                appendCsvRow(rows, ['Total Conversations', metrics.chat_metrics.total_conversations || 0]);
+                appendCsvRow(rows, ['Total Messages', metrics.chat_metrics.total_messages || 0]);
+                appendCsvRow(rows, ['Total Message Size (bytes)', metrics.chat_metrics.total_message_size || 0]);
             }
             
             if (metrics.document_metrics) {
-                csvContent += `Total Documents,${metrics.document_metrics.total_documents || 0}\n`;
-                csvContent += `AI Search Size (bytes),${metrics.document_metrics.ai_search_size || 0}\n`;
-                csvContent += `Storage Size (bytes),${metrics.document_metrics.storage_account_size || 0}\n`;
+                appendCsvRow(rows, ['Total Documents', metrics.document_metrics.total_documents || 0]);
+                appendCsvRow(rows, ['AI Search Size (bytes)', metrics.document_metrics.ai_search_size || 0]);
+                appendCsvRow(rows, ['Storage Size (bytes)', metrics.document_metrics.storage_account_size || 0]);
             }
             
             if (metrics.calculated_at) {
-                csvContent += `Metrics Calculated At,${metrics.calculated_at}\n`;
+                appendCsvRow(rows, ['Metrics Calculated At', metrics.calculated_at]);
             }
             
-            csvContent += `\n`;
+            appendCsvSectionBreak(rows);
         }
         
-        // Add login activity
         if (includeLogins && trendsData.logins) {
-            csvContent += `LOGIN ACTIVITY (Last 30 Days)\n`;
-            csvContent += `Date,Logins\n`;
-            trendsData.logins.forEach(item => {
-                csvContent += `${item.date},${item.count}\n`;
-            });
-            csvContent += `\n`;
+            rows.push(`LOGIN ACTIVITY (${windowLabel})`);
+            appendCsvRow(rows, ['Date', 'Logins']);
+            trendsData.logins.forEach(item => appendCsvRow(rows, [item.date, item.count]));
+            appendCsvSectionBreak(rows);
         }
         
-        // Add conversation activity
         if (includeConversations && trendsData.conversations) {
-            csvContent += `CONVERSATION ACTIVITY (Last 30 Days)\n`;
-            csvContent += `Date,Conversations Created\n`;
-            trendsData.conversations.forEach(item => {
-                csvContent += `${item.date},${item.count}\n`;
-            });
-            csvContent += `\n`;
+            rows.push(`CONVERSATION ACTIVITY (${windowLabel})`);
+            appendCsvRow(rows, ['Date', 'Conversations Created', 'Conversations Deleted']);
+            const creates = trendsData.conversations.creates || [];
+            const deletesByDate = new Map((trendsData.conversations.deletes || []).map(item => [item.date, item.count]));
+            creates.forEach(item => appendCsvRow(rows, [item.date, item.count, deletesByDate.get(item.date) || 0]));
+            appendCsvSectionBreak(rows);
         }
         
-        // Add document activity
         if (includeDocuments && trendsData.documents) {
-            csvContent += `DOCUMENT ACTIVITY (Last 30 Days)\n`;
-            csvContent += `Date,Documents Uploaded\n`;
-            trendsData.documents.forEach(item => {
-                csvContent += `${item.date},${item.count}\n`;
-            });
-            csvContent += `\n`;
+            rows.push(`DOCUMENT ACTIVITY (${windowLabel})`);
+            appendCsvRow(rows, ['Date', 'Documents Uploaded', 'Documents Deleted']);
+            const uploads = trendsData.documents.uploads || [];
+            const deletesByDate = new Map((trendsData.documents.deletes || []).map(item => [item.date, item.count]));
+            uploads.forEach(item => appendCsvRow(rows, [item.date, item.count, deletesByDate.get(item.date) || 0]));
+            appendCsvSectionBreak(rows);
         }
         
-        // Add token usage
         if (includeTokens && trendsData.tokens) {
-            csvContent += `TOKEN USAGE (Last 30 Days)\n`;
-            csvContent += `Date,Total Tokens\n`;
-            trendsData.tokens.forEach(item => {
-                csvContent += `${item.date},${item.tokens}\n`;
-            });
-            csvContent += `\n`;
+            rows.push(`TOKEN USAGE (${windowLabel})`);
+            appendCsvRow(rows, ['Date', 'Total Tokens']);
+            trendsData.tokens.forEach(item => appendCsvRow(rows, [item.date, item.tokens]));
+            appendCsvSectionBreak(rows);
         }
-        
-        // Create and download file
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        const filename = `activity_export_${new Date().toISOString().split('T')[0]}.csv`;
-        
-        link.setAttribute('href', url);
-        link.setAttribute('download', filename);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
+
+        downloadCsvFile(rows.join('\n'), `activity_export_${new Date().toISOString().split('T')[0]}.csv`);
+
+        const modal = bootstrap.Modal.getInstance(document.getElementById('exportActivityModal'));
+        if (modal) {
+            modal.hide();
+        }
         showSuccessToast('Activity data exported successfully!');
-    })
-    .catch(error => {
+    } catch (error) {
         console.error('Error exporting activity data:', error);
-        alert('Error exporting activity data. Please try again.');
-    });
+        showToastMessage('Error exporting activity data. Please try again.', 'info');
+    } finally {
+        if (exportButton) {
+            exportButton.disabled = false;
+            exportButton.innerHTML = originalButtonHtml;
+        }
+    }
 }
 
 // Text-to-Speech Settings Functions

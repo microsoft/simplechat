@@ -93,8 +93,15 @@ def normalize_search_id_list(raw_ids):
     return normalized_ids
 
 
-def _resolve_public_workspace_ids_for_search(user_id, active_public_workspace_id=None):
+def _resolve_public_workspace_ids_for_search(
+    user_id,
+    active_public_workspace_id=None,
+    enforce_public_workspace_visibility=True,
+):
     requested_workspace_ids = normalize_search_id_list(active_public_workspace_id)
+    if requested_workspace_ids and not enforce_public_workspace_visibility:
+        return requested_workspace_ids
+
     visible_workspace_ids = normalize_search_id_list(
         get_user_visible_public_workspace_ids_from_settings(user_id) or []
     )
@@ -252,7 +259,7 @@ def _build_odata_any_eq(collection_field: str, iterator_name: str, value: Any) -
     escaped_value = _escape_odata_literal(value)
     return f"{collection_field}/any({iterator_name}: {iterator_name} eq '{escaped_value}')"
 
-def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection"):
+def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True):
     """
     Hybrid search that queries the user doc index, group doc index, or public doc index
     depending on doc type.
@@ -263,6 +270,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     document_ids: Optional list of document IDs to filter by (OR logic - any document matches)
     document_filter_mode: "intersection" keeps document IDs and tags conjunctive; "union" makes them additive
     active_group_ids: Optional list of group IDs for multi-group search (OR logic)
+    enforce_public_workspace_visibility: If False, requested public workspace IDs bypass the user's directory-visible preference.
 
     This function uses document-set-aware caching to ensure consistent results
     across identical queries against the same document set.
@@ -279,6 +287,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     active_public_workspace_ids = _resolve_public_workspace_ids_for_search(
         user_id,
         active_public_workspace_id=active_public_workspace_id,
+        enforce_public_workspace_visibility=enforce_public_workspace_visibility,
     )
 
     # Resolve document_ids from single document_id for backwards compat

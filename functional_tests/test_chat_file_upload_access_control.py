@@ -2,7 +2,7 @@
 # test_chat_file_upload_access_control.py
 """
 Functional test for chat file upload access control and client enablement.
-Version: 0.241.110
+Version: 0.241.111
 Implemented in: 0.241.110
 
 This test ensures chat follow-up uploads can be globally disabled or limited to
@@ -43,7 +43,7 @@ FIX_DOC_FILE = os.path.join(
     "CHAT_FILE_UPLOAD_CLIENT_FLAG_FIX.md",
 )
 
-CURRENT_VERSION = "0.241.110"
+CURRENT_VERSION = "0.241.111"
 ACCESS_CONTROL_VERSION = "0.241.098"
 CLIENT_FLAG_FIX_VERSION = "0.241.110"
 

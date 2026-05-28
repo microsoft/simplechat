@@ -19,6 +19,17 @@ from functions_collaboration import (
     serialize_collaboration_conversation,
 )
 from functions_settings import *
+from functions_conversation_feed import (
+    CONVERSATION_FEED_SOURCE_COLLABORATION,
+    CONVERSATION_FEED_SOURCE_LEGACY,
+    build_conversation_feed_page,
+    decode_conversation_feed_cursor,
+    get_conversation_feed_source_offsets,
+    is_conversation_feed_cursor_compatible,
+    normalize_conversation_feed_page_size,
+    sort_conversation_feed_recent,
+    tag_conversation_feed_source,
+)
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
 from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
@@ -366,6 +377,255 @@ def _load_accessible_collaboration_search_conversations(user_id):
     return conversations
 
 
+def _is_conversation_priority(conversation_item):
+    return bool(
+        (conversation_item or {}).get('is_pinned', False)
+        or (conversation_item or {}).get('has_unread_assistant_response', False)
+    )
+
+
+def _conversation_feed_matches_search(conversation_item, search_term):
+    normalized_search = str(search_term or '').strip()
+    if not normalized_search:
+        return True
+    return _matches_search_text((conversation_item or {}).get('title', ''), normalized_search)
+
+
+def _query_legacy_conversations_for_feed(
+    user_id,
+    include_hidden=False,
+    search_term='',
+    extra_conditions=None,
+    offset=0,
+    limit=None,
+):
+    query_parts = ['c.user_id = @user_id']
+    query_parameters = [{'name': '@user_id', 'value': user_id}]
+
+    if not include_hidden:
+        query_parts.append('(NOT IS_DEFINED(c.is_hidden) OR c.is_hidden = false)')
+
+    if search_term:
+        query_parts.append('(IS_STRING(c.title) AND CONTAINS(LOWER(c.title), @search_term))')
+        query_parameters.append({'name': '@search_term', 'value': str(search_term).lower()})
+
+    for condition in extra_conditions or []:
+        query_parts.append(condition)
+
+    normalized_offset = max(0, int(offset or 0))
+    normalized_limit = None
+    if limit is not None:
+        normalized_limit = max(1, int(limit))
+
+    query = f"SELECT * FROM c WHERE {' AND '.join(query_parts)} ORDER BY c.last_updated DESC"
+    if normalized_limit is not None:
+        query = f'{query} OFFSET {normalized_offset} LIMIT {normalized_limit}'
+
+    items = list(cosmos_conversations_container.query_items(
+        query=query,
+        parameters=query_parameters,
+        enable_cross_partition_query=True,
+    ))
+
+    return [
+        tag_conversation_feed_source(
+            normalize_conversation_unread_state(item),
+            CONVERSATION_FEED_SOURCE_LEGACY,
+        )
+        for item in items
+    ]
+
+
+def _count_hidden_legacy_conversations(user_id):
+    query = (
+        'SELECT VALUE COUNT(1) FROM c '
+        'WHERE c.user_id = @user_id AND c.is_hidden = true'
+    )
+    results = list(cosmos_conversations_container.query_items(
+        query=query,
+        parameters=[{'name': '@user_id', 'value': user_id}],
+        enable_cross_partition_query=True,
+    ))
+    return int(results[0]) if results else 0
+
+
+def _load_unread_collaboration_notification_map(user_id):
+    query = """
+        SELECT c.metadata.conversation_id AS conversation_id,
+               c.metadata.message_id AS message_id,
+               c.created_at AS created_at
+        FROM c
+        WHERE c.user_id = @user_id
+        AND c.notification_type = @notification_type
+        AND (NOT IS_DEFINED(c.read_by) OR NOT ARRAY_CONTAINS(c.read_by, @user_id))
+    """
+    notifications = list(cosmos_notifications_container.query_items(
+        query=query,
+        parameters=[
+            {'name': '@user_id', 'value': user_id},
+            {'name': '@notification_type', 'value': 'collaboration_message_received'},
+        ],
+        partition_key=user_id,
+    ))
+
+    unread_by_conversation = {}
+    for notification in notifications:
+        conversation_id = str(notification.get('conversation_id') or '').strip()
+        if not conversation_id:
+            continue
+
+        current_notification = unread_by_conversation.get(conversation_id)
+        if (
+            current_notification is None
+            or str(notification.get('created_at') or '') > str(current_notification.get('created_at') or '')
+        ):
+            unread_by_conversation[conversation_id] = notification
+
+    return unread_by_conversation
+
+
+def _load_collaboration_conversations_for_feed(user_id):
+    conversations = _load_accessible_collaboration_search_conversations(user_id)
+    try:
+        unread_by_conversation = _load_unread_collaboration_notification_map(user_id)
+    except Exception as exc:
+        log_event(
+            f'[ConversationFeed] Failed to load collaboration unread state: {exc}',
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        unread_by_conversation = {}
+    feed_conversations = []
+
+    for conversation in conversations:
+        feed_conversation = tag_conversation_feed_source(
+            conversation,
+            CONVERSATION_FEED_SOURCE_COLLABORATION,
+        )
+        unread_notification = unread_by_conversation.get(str(feed_conversation.get('id') or ''))
+        if unread_notification:
+            feed_conversation['has_unread_assistant_response'] = True
+            feed_conversation['last_unread_assistant_message_id'] = unread_notification.get('message_id')
+            feed_conversation['last_unread_assistant_at'] = unread_notification.get('created_at')
+        feed_conversations.append(feed_conversation)
+
+    return feed_conversations
+
+
+def _filter_collaboration_conversations_for_feed(conversations, include_hidden=False, search_term=''):
+    filtered_conversations = []
+    for conversation in conversations or []:
+        if not include_hidden and conversation.get('is_hidden', False):
+            continue
+        if not _conversation_feed_matches_search(conversation, search_term):
+            continue
+        filtered_conversations.append(conversation)
+    return filtered_conversations
+
+
+def _filter_legacy_source_duplicates(conversations, collaboration_source_ids):
+    if not collaboration_source_ids:
+        return list(conversations or [])
+
+    return [
+        conversation for conversation in conversations or []
+        if str(conversation.get('id') or '').strip() not in collaboration_source_ids
+    ]
+
+
+def _build_conversation_feed(user_id, page_size, source_offsets, include_priority, include_hidden, search_term):
+    recent_fetch_limit = page_size + 1
+    hidden_count = _count_hidden_legacy_conversations(user_id)
+
+    try:
+        collaboration_conversations = _load_collaboration_conversations_for_feed(user_id)
+    except Exception as exc:
+        log_event(
+            f'[ConversationFeed] Failed to load collaborative conversations: {exc}',
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        collaboration_conversations = []
+
+    hidden_count += sum(1 for conversation in collaboration_conversations if conversation.get('is_hidden', False))
+    collaboration_source_ids = {
+        str(conversation.get('source_conversation_id') or '').strip()
+        for conversation in collaboration_conversations
+        if conversation.get('source_conversation_id')
+    }
+
+    filtered_collaboration_conversations = _filter_collaboration_conversations_for_feed(
+        collaboration_conversations,
+        include_hidden=include_hidden,
+        search_term=search_term,
+    )
+    collaboration_priority_conversations = [
+        conversation for conversation in filtered_collaboration_conversations
+        if _is_conversation_priority(conversation)
+    ]
+    collaboration_recent_conversations = [
+        conversation for conversation in filtered_collaboration_conversations
+        if not _is_conversation_priority(conversation)
+    ]
+    collaboration_recent_conversations = sort_conversation_feed_recent(collaboration_recent_conversations)
+    collaboration_offset = source_offsets.get(CONVERSATION_FEED_SOURCE_COLLABORATION, 0)
+    collaboration_recent_window = collaboration_recent_conversations[
+        collaboration_offset:collaboration_offset + recent_fetch_limit
+    ]
+
+    priority_conversations = list(collaboration_priority_conversations) if include_priority else []
+    if include_priority:
+        legacy_pinned_conversations = _query_legacy_conversations_for_feed(
+            user_id,
+            include_hidden=include_hidden,
+            search_term=search_term,
+            extra_conditions=['c.is_pinned = true'],
+        )
+        legacy_unread_conversations = _query_legacy_conversations_for_feed(
+            user_id,
+            include_hidden=include_hidden,
+            search_term=search_term,
+            extra_conditions=[
+                'c.has_unread_assistant_response = true',
+                '(NOT IS_DEFINED(c.is_pinned) OR c.is_pinned = false)',
+            ],
+        )
+        priority_conversations.extend(_filter_legacy_source_duplicates(
+            legacy_pinned_conversations + legacy_unread_conversations,
+            collaboration_source_ids,
+        ))
+
+    legacy_recent_conversations = _query_legacy_conversations_for_feed(
+        user_id,
+        include_hidden=include_hidden,
+        search_term=search_term,
+        extra_conditions=[
+            '(NOT IS_DEFINED(c.is_pinned) OR c.is_pinned = false)',
+            '(NOT IS_DEFINED(c.has_unread_assistant_response) OR c.has_unread_assistant_response = false)',
+        ],
+        offset=source_offsets.get(CONVERSATION_FEED_SOURCE_LEGACY, 0),
+        limit=recent_fetch_limit,
+    )
+    legacy_recent_conversations = _filter_legacy_source_duplicates(
+        legacy_recent_conversations,
+        collaboration_source_ids,
+    )
+
+    return build_conversation_feed_page(
+        priority_conversations=priority_conversations,
+        recent_conversations_by_source={
+            CONVERSATION_FEED_SOURCE_LEGACY: legacy_recent_conversations,
+            CONVERSATION_FEED_SOURCE_COLLABORATION: collaboration_recent_window,
+        },
+        page_size=page_size,
+        source_offsets=source_offsets,
+        include_priority=include_priority,
+        hidden_count=hidden_count,
+        search_term=search_term,
+        include_hidden=include_hidden,
+    )
+
+
 def _collect_child_message_documents(conversation_id, root_message_ids):
     """Collect child records linked by parent_message_id for the provided message ids."""
     pending_ids = [message_id for message_id in root_message_ids if message_id]
@@ -657,6 +917,48 @@ def register_route_backend_conversations(app):
         return jsonify({
             'conversations': normalized_items
         }), 200
+
+
+    @app.route('/api/conversations/feed', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_conversations_feed():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            search_term = str(request.args.get('search') or '').strip()
+            include_hidden = str(request.args.get('include_hidden', 'false')).strip().lower() in ('1', 'true', 'yes')
+            page_size = normalize_conversation_feed_page_size(request.args.get('page_size'))
+            cursor_data = decode_conversation_feed_cursor(request.args.get('cursor'))
+            cursor_is_compatible = is_conversation_feed_cursor_compatible(
+                cursor_data,
+                search_term=search_term,
+                include_hidden=include_hidden,
+            )
+            source_offsets = get_conversation_feed_source_offsets(cursor_data) if cursor_is_compatible else {}
+            include_priority = not cursor_is_compatible
+
+            feed_payload = _build_conversation_feed(
+                user_id=user_id,
+                page_size=page_size,
+                source_offsets=source_offsets,
+                include_priority=include_priority,
+                include_hidden=include_hidden,
+                search_term=search_term,
+            )
+            feed_payload['search_term'] = search_term
+            feed_payload['include_hidden'] = include_hidden
+            return jsonify(feed_payload), 200
+        except Exception as exc:
+            log_event(
+                f'[ConversationFeed] Failed to load feed: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load conversations'}), 500
 
 
     @app.route('/api/create_conversation', methods=['POST'])

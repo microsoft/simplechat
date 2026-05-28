@@ -2,7 +2,7 @@
 # test_admin_app_role_settings_consistency.py
 """
 Functional test for Admin Settings app-role copy and deployer role definitions.
-Version: 0.241.110
+Version: 0.241.111
 Implemented in: 0.241.110
 
 This test ensures admin-facing app-role settings use consistent role-value-first
@@ -24,7 +24,7 @@ CONFIG_FILE = os.path.join(APP_ROOT, "config.py")
 APP_ROLES_FILE = os.path.join(REPO_ROOT, "deployers", "azurecli", "appRegistrationRoles.json")
 DEPLOYER_VERSION_FILE = os.path.join(REPO_ROOT, "deployers", "version.txt")
 
-CURRENT_VERSION = "0.241.110"
+CURRENT_VERSION = "0.241.111"
 DEPLOYER_VERSION = "1.0.11"
 
 REQUIRED_ADMIN_ROLE_SNIPPETS = [

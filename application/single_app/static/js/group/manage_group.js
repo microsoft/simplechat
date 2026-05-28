@@ -2,9 +2,168 @@
 import { showToast } from "../chat/chat-toast.js";
 
 let currentUserRole = null;
+let currentStatsWindow = { days: 30, startDate: "", endDate: "" };
+let currentStatsData = null;
+
+function getDateInputValueDaysAgo(daysAgo) {
+  const dateValue = new Date();
+  dateValue.setDate(dateValue.getDate() - daysAgo);
+  return dateValue.toISOString().split("T")[0];
+}
+
+function formatDateInputForDisplay(dateValue) {
+  const parts = String(dateValue || "").split("-");
+  if (parts.length !== 3) {
+    return dateValue;
+  }
+
+  return `${Number(parts[1])}/${Number(parts[2])}/${parts[0]}`;
+}
+
+function setDateInputDefaults(startInputId, endInputId) {
+  const startInput = document.getElementById(startInputId);
+  const endInput = document.getElementById(endInputId);
+
+  if (startInput && !startInput.value) {
+    startInput.value = getDateInputValueDaysAgo(29);
+  }
+
+  if (endInput && !endInput.value) {
+    endInput.value = getDateInputValueDaysAgo(0);
+  }
+}
+
+function getStatsWindowLabel(windowConfig = currentStatsWindow) {
+  if (windowConfig.startDate && windowConfig.endDate) {
+    return `${formatDateInputForDisplay(windowConfig.startDate)} - ${formatDateInputForDisplay(windowConfig.endDate)}`;
+  }
+
+  return `Last ${windowConfig.days || 30} Days`;
+}
+
+function updateStatsWindowLabels(label) {
+  $(".stats-window-label").text(label);
+}
+
+function getStatsQueryString(windowConfig = currentStatsWindow) {
+  const params = new URLSearchParams();
+  if (windowConfig.startDate && windowConfig.endDate) {
+    params.set("start_date", windowConfig.startDate);
+    params.set("end_date", windowConfig.endDate);
+  } else {
+    params.set("days", windowConfig.days || 30);
+  }
+  return params.toString();
+}
+
+function setStatsWindow(days) {
+  currentStatsWindow = { days, startDate: "", endDate: "" };
+  $("[data-stats-days]").removeClass("active");
+  $(`[data-stats-days="${days}"]`).addClass("active");
+  $("#groupStatsWindowCustom").removeClass("active");
+  updateStatsWindowLabels(getStatsWindowLabel());
+  loadGroupStats();
+}
+
+function applyStatsCustomRange() {
+  const startDate = $("#groupStatsStartDate").val();
+  const endDate = $("#groupStatsEndDate").val();
+
+  if (!startDate || !endDate) {
+    showToast("Please select both start and end dates.", "warning");
+    return;
+  }
+
+  if (new Date(startDate) > new Date(endDate)) {
+    showToast("Start date must be before end date.", "warning");
+    return;
+  }
+
+  const diffMs = Math.abs(new Date(endDate) - new Date(startDate));
+  currentStatsWindow = {
+    days: Math.ceil(diffMs / 86400000) + 1,
+    startDate,
+    endDate
+  };
+  $("[data-stats-days]").removeClass("active");
+  $("#groupStatsWindowCustom").addClass("active");
+  updateStatsWindowLabels(getStatsWindowLabel());
+  loadGroupStats();
+}
+
+function getExportStatsWindowSelection() {
+  const selectedValue = $('input[name="groupExportTimeWindow"]:checked').val() || "30";
+  if (selectedValue === "custom") {
+    const startDate = $("#groupExportStartDate").val();
+    const endDate = $("#groupExportEndDate").val();
+    if (!startDate || !endDate) {
+      throw new Error("Please select both start and end dates for the custom export range.");
+    }
+    if (new Date(startDate) > new Date(endDate)) {
+      throw new Error("Export start date must be before end date.");
+    }
+    const diffMs = Math.abs(new Date(endDate) - new Date(startDate));
+    return {
+      days: Math.ceil(diffMs / 86400000) + 1,
+      startDate,
+      endDate
+    };
+  }
+
+  return { days: Number(selectedValue) || 30, startDate: "", endDate: "" };
+}
+
+function toggleExportCustomDateRange() {
+  const isCustom = $("#groupExportCustom").prop("checked");
+  $("#groupExportCustomDateRange").toggleClass("d-none", !isCustom);
+  if (isCustom) {
+    setDateInputDefaults("groupExportStartDate", "groupExportEndDate");
+  }
+}
+
+function initializeStatsWindowControls() {
+  setDateInputDefaults("groupStatsStartDate", "groupStatsEndDate");
+  updateStatsWindowLabels(getStatsWindowLabel());
+  $("[data-stats-days]").on("click", function () {
+    setStatsWindow(Number($(this).data("stats-days")) || 30);
+  });
+  $("#groupStatsApplyCustomRange").on("click", applyStatsCustomRange);
+  $('input[name="groupExportTimeWindow"]').on("change", toggleExportCustomDateRange);
+  $("#executeGroupStatsExportBtn").on("click", exportGroupStats);
+}
+
+function escapeCsvValue(value) {
+  const stringValue = value === null || typeof value === "undefined" ? "" : String(value);
+  if (/[",\n\r]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+}
+
+function appendCsvRow(rows, values) {
+  rows.push(values.map(escapeCsvValue).join(","));
+}
+
+function appendCsvSectionBreak(rows) {
+  rows.push("");
+}
+
+function downloadCsvFile(csvContent, filename) {
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.classList.add("d-none");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 $(document).ready(function () {
   initializeColorPicker();
+  initializeStatsWindowControls();
 
   loadGroupInfo(function () {
     loadMembers();
@@ -1045,8 +1204,11 @@ function handleCsvFileSelect(event) {
 let documentChart, storageChart, tokenChart;
 
 function loadGroupStats() {
-  $.get(`/api/groups/${groupId}/stats`)
+  $.get(`/api/groups/${groupId}/stats?${getStatsQueryString()}`)
     .done(function(data) {
+      currentStatsData = data;
+      updateStatsWindowLabels(data.window?.label || getStatsWindowLabel());
+
       // Update stat cards
       $('#stat-documents').text(data.totalDocuments || 0);
       
@@ -1061,9 +1223,9 @@ function loadGroupStats() {
       $('#stat-members').text(data.totalMembers || 0);
 
       // Create charts
-      createDocumentChart(data.documentActivity);
-      createStorageChart(data.storage);
-      createTokenChart(data.tokenUsage);
+      createDocumentChart(data.documentActivity || { labels: [], uploads: [], deletes: [] });
+      createStorageChart(data.storage || {});
+      createTokenChart(data.tokenUsage || { labels: [], data: [] });
     })
     .fail(function(xhr) {
       console.error('Failed to load group stats:', xhr);
@@ -1072,6 +1234,106 @@ function loadGroupStats() {
       $('#stat-tokens').text('Error');
       $('#stat-members').text('Error');
     });
+}
+
+async function exportGroupStats() {
+  const includeSummary = $("#groupExportSummary").prop("checked");
+  const includeDocuments = $("#groupExportDocuments").prop("checked");
+  const includeTokens = $("#groupExportTokens").prop("checked");
+  const includeStorage = $("#groupExportStorage").prop("checked");
+
+  if (!includeSummary && !includeDocuments && !includeTokens && !includeStorage) {
+    showToast("Please select at least one data type to export.", "warning");
+    return;
+  }
+
+  let exportWindow;
+  try {
+    exportWindow = getExportStatsWindowSelection();
+  } catch (error) {
+    showToast(error.message, "warning");
+    return;
+  }
+
+  const exportButton = document.getElementById("executeGroupStatsExportBtn");
+  const originalHtml = exportButton ? exportButton.innerHTML : "";
+  if (exportButton) {
+    exportButton.disabled = true;
+    exportButton.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Exporting...';
+  }
+
+  try {
+    const response = await fetch(`/api/groups/${groupId}/stats?${getStatsQueryString(exportWindow)}`);
+    if (!response.ok) {
+      throw new Error("Unable to load stats for export.");
+    }
+
+    const stats = await response.json();
+    const windowLabel = stats.window?.label || getStatsWindowLabel(exportWindow);
+    const rows = [];
+
+    rows.push("Group Stats Export");
+    appendCsvRow(rows, ["Export Date", new Date().toLocaleString()]);
+    appendCsvRow(rows, ["Data Period", windowLabel]);
+    appendCsvSectionBreak(rows);
+
+    if (includeSummary) {
+      rows.push("SUMMARY METRICS");
+      appendCsvRow(rows, ["Metric", "Value"]);
+      appendCsvRow(rows, ["Total Documents", stats.totalDocuments || 0]);
+      appendCsvRow(rows, ["Storage Used (bytes)", stats.storageUsed || 0]);
+      appendCsvRow(rows, ["Total Tokens", stats.totalTokens || 0]);
+      appendCsvRow(rows, ["Total Members", stats.totalMembers || 0]);
+      appendCsvSectionBreak(rows);
+    }
+
+    if (includeDocuments) {
+      rows.push(`DOCUMENT ACTIVITY (${windowLabel})`);
+      appendCsvRow(rows, ["Date", "Uploads", "Deletes"]);
+      const labels = stats.documentActivity?.labels || [];
+      const uploads = stats.documentActivity?.uploads || [];
+      const deletes = stats.documentActivity?.deletes || [];
+      labels.forEach((label, index) => {
+        appendCsvRow(rows, [label, uploads[index] || 0, deletes[index] || 0]);
+      });
+      appendCsvSectionBreak(rows);
+    }
+
+    if (includeTokens) {
+      rows.push(`TOKEN USAGE (${windowLabel})`);
+      appendCsvRow(rows, ["Date", "Total Tokens"]);
+      const labels = stats.tokenUsage?.labels || [];
+      const tokenValues = stats.tokenUsage?.data || [];
+      labels.forEach((label, index) => {
+        appendCsvRow(rows, [label, tokenValues[index] || 0]);
+      });
+      appendCsvSectionBreak(rows);
+    }
+
+    if (includeStorage) {
+      rows.push("STORAGE USAGE");
+      appendCsvRow(rows, ["Metric", "Bytes", "Formatted"]);
+      appendCsvRow(rows, ["AI Search", stats.storage?.ai_search_size || 0, formatBytes(stats.storage?.ai_search_size || 0)]);
+      appendCsvRow(rows, ["Blob Storage", stats.storage?.storage_account_size || 0, formatBytes(stats.storage?.storage_account_size || 0)]);
+      appendCsvSectionBreak(rows);
+    }
+
+    downloadCsvFile(rows.join("\n"), `group_stats_export_${new Date().toISOString().split("T")[0]}.csv`);
+
+    const modal = bootstrap.Modal.getInstance(document.getElementById("groupStatsExportModal"));
+    if (modal) {
+      modal.hide();
+    }
+    showToast("Group stats exported successfully.", "success");
+  } catch (error) {
+    console.error("Failed to export group stats:", error);
+    showToast("Failed to export group stats.", "danger");
+  } finally {
+    if (exportButton) {
+      exportButton.disabled = false;
+      exportButton.innerHTML = originalHtml;
+    }
+  }
 }
 
 function createDocumentChart(activityData) {

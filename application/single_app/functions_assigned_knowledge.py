@@ -20,7 +20,6 @@ from functions_group import find_group_by_id, get_user_role_in_group
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_all_public_workspaces,
-    get_user_visible_public_workspace_ids_from_settings,
 )
 from functions_source_review import normalize_review_url
 
@@ -282,24 +281,12 @@ def normalize_assigned_knowledge(
     return normalized
 
 
-def _visible_public_workspace_id_set(user_id: str) -> set:
-    return set(_dedupe_strings(get_user_visible_public_workspace_ids_from_settings(user_id) or []))
-
-
-def _validate_public_workspace_ids(
-    user_id: str,
-    public_workspace_ids: List[str],
-    *,
-    is_admin: bool,
-) -> List[str]:
+def _validate_public_workspace_ids(public_workspace_ids: List[str]) -> List[str]:
     if not public_workspace_ids:
         return []
 
-    visible_ids = _visible_public_workspace_id_set(user_id) if not is_admin else None
     validated_ids = []
     for workspace_id in public_workspace_ids:
-        if visible_ids is not None and workspace_id not in visible_ids:
-            raise AssignedKnowledgeError("Assigned public workspace is not visible to this user.")
         if not find_public_workspace_by_id(workspace_id):
             raise AssignedKnowledgeError("Assigned public workspace was not found.")
         validated_ids.append(workspace_id)
@@ -352,9 +339,7 @@ def validate_assigned_knowledge_for_agent(
 
     scopes = normalized["scopes"]
     scopes["public_workspace_ids"] = _validate_public_workspace_ids(
-        user_id,
         scopes.get("public_workspace_ids", []),
-        is_admin=is_admin,
     )
     if scopes.get("group_ids"):
         scopes["group_ids"] = _validate_group_ids(user_id, scopes.get("group_ids", []))
@@ -491,6 +476,100 @@ def build_assigned_knowledge_runtime_filters(agent: Dict[str, Any]) -> Optional[
     }
 
 
+def resolve_assigned_knowledge_active_documents(
+    user_id: str,
+    assigned_knowledge_filters: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Resolve the final active indexed document set for Assigned Knowledge."""
+    if not isinstance(assigned_knowledge_filters, dict):
+        return []
+    if not assigned_knowledge_filters.get("has_workspace_knowledge"):
+        return []
+
+    assigned_knowledge = assigned_knowledge_filters.get("assigned_knowledge") or {}
+    scopes = assigned_knowledge.get("scopes") or {}
+    personal_enabled = bool(scopes.get("personal"))
+    group_ids = scopes.get("group_ids") or assigned_knowledge_filters.get("active_group_ids") or []
+    public_workspace_ids = (
+        scopes.get("public_workspace_ids")
+        or assigned_knowledge_filters.get("active_public_workspace_ids")
+        or []
+    )
+    explicit_document_ids = set(
+        _dedupe_strings(
+            assigned_knowledge.get("document_ids")
+            or assigned_knowledge_filters.get("document_ids")
+            or [],
+            limit=ASSIGNED_KNOWLEDGE_MAX_DOCUMENT_IDS,
+        )
+    )
+    selected_tags = sanitize_tags_for_filter(
+        assigned_knowledge.get("tags")
+        or assigned_knowledge_filters.get("tags_filter")
+        or []
+    )[:ASSIGNED_KNOWLEDGE_MAX_TAGS]
+    include_all_source_documents = not explicit_document_ids and not selected_tags
+
+    candidate_documents = []
+    if personal_enabled:
+        candidate_documents.extend([
+            _serialize_catalog_document(
+                document,
+                scope="personal",
+                source_id="personal",
+                source_name="Personal workspace",
+            )
+            for document in _get_personal_catalog_documents(user_id)
+        ])
+
+    for group_id in group_ids:
+        group_doc = find_group_by_id(group_id)
+        group_name = (group_doc or {}).get("name") or "Group workspace"
+        candidate_documents.extend([
+            _serialize_catalog_document(
+                document,
+                scope="group",
+                source_id=group_id,
+                source_name=group_name,
+            )
+            for document in _get_group_catalog_documents(group_id)
+        ])
+
+    if public_workspace_ids:
+        public_sources = _public_workspace_source_map()
+        for document in _get_public_catalog_documents(public_workspace_ids):
+            source_id = str(document.get("public_workspace_id") or "").strip()
+            source = public_sources.get(source_id, {})
+            candidate_documents.append(_serialize_catalog_document(
+                document,
+                scope="public",
+                source_id=source_id,
+                source_name=source.get("label") or "Public workspace",
+            ))
+
+    active_documents = []
+    seen_document_ids = set()
+    for document in candidate_documents:
+        document_id = str(document.get("id") or "").strip()
+        if not document_id or document_id in seen_document_ids:
+            continue
+        document_tags = set(sanitize_tags_for_filter(document.get("tags") or []))
+        matches_tags = bool(selected_tags) and all(tag in document_tags for tag in selected_tags)
+        if not include_all_source_documents and document_id not in explicit_document_ids and not matches_tags:
+            continue
+        seen_document_ids.add(document_id)
+        active_documents.append(document)
+
+    return sorted(
+        active_documents,
+        key=lambda document: (
+            str(document.get("source_name") or "").lower(),
+            str(document.get("title") or document.get("file_name") or "").lower(),
+            str(document.get("id") or ""),
+        ),
+    )
+
+
 def _query_documents(container: Any, query: str, parameters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     try:
         documents = list(
@@ -584,15 +663,12 @@ def _get_public_catalog_documents(public_workspace_ids: List[str]) -> List[Dict[
     return _query_documents(cosmos_public_documents_container, query, parameters)
 
 
-def _public_workspace_source_map(user_id: str, *, is_admin: bool) -> Dict[str, Dict[str, str]]:
-    visible_ids = None if is_admin else _visible_public_workspace_id_set(user_id)
+def _public_workspace_source_map() -> Dict[str, Dict[str, str]]:
     workspaces = get_all_public_workspaces() or []
     source_map = {}
     for workspace in workspaces:
         workspace_id = str(workspace.get("id") or "").strip()
         if not workspace_id:
-            continue
-        if visible_ids is not None and workspace_id not in visible_ids:
             continue
         source_map[workspace_id] = {
             "scope": "public",
@@ -629,7 +705,7 @@ def build_assigned_knowledge_catalog(
             for document in personal_documents
         ])
 
-        public_sources = _public_workspace_source_map(user_id, is_admin=False)
+        public_sources = _public_workspace_source_map()
         sources.extend(public_sources.values())
         public_documents = _get_public_catalog_documents(list(public_sources.keys()))
         _append_tag_counts(tag_counts, public_documents)
@@ -660,7 +736,7 @@ def build_assigned_knowledge_catalog(
                 for document in group_documents
             ])
     elif normalized_scope == "global":
-        public_sources = _public_workspace_source_map(user_id, is_admin=is_admin)
+        public_sources = _public_workspace_source_map()
         sources.extend(public_sources.values())
         public_documents = _get_public_catalog_documents(list(public_sources.keys()))
         _append_tag_counts(tag_counts, public_documents)

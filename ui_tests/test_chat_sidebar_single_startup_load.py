@@ -1,12 +1,11 @@
 # test_chat_sidebar_single_startup_load.py
 """
-UI test for single chat sidebar startup load.
-Version: 0.241.076
-Implemented in: 0.241.076
+UI test for single chat sidebar startup feed load.
+Version: 0.241.112
+Implemented in: 0.241.112
 
-This test ensures the chat page bootstrap loads conversation data once for the
-visible sidebar and does not trigger duplicate startup requests that cause the
-conversation list to flash back to a loading state.
+This test ensures the chat page bootstrap loads the paged conversation feed once
+for the visible sidebar and does not fall back to duplicate legacy list requests.
 """
 
 import json
@@ -14,7 +13,6 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -30,23 +28,31 @@ def _fulfill_json(route, payload, status=200):
 
 
 @pytest.mark.ui
-def test_chat_sidebar_uses_single_startup_conversation_load(playwright):
-    """Validate that chat startup loads the conversation sidebar only once."""
+def test_chat_sidebar_uses_single_startup_conversation_feed_load():
+    """Validate that chat startup loads the conversation feed once."""
     if not BASE_URL:
         pytest.skip("Set SIMPLECHAT_UI_BASE_URL to run this UI test.")
     if not STORAGE_STATE or not Path(STORAGE_STATE).exists():
         pytest.skip("Set SIMPLECHAT_UI_STORAGE_STATE to a valid authenticated Playwright storage state file.")
 
-    browser = playwright.chromium.launch()
+    try:
+        from playwright.sync_api import expect, sync_playwright
+    except ModuleNotFoundError:
+        pytest.skip("Install ui_tests requirements to run Playwright UI tests.")
+
+    playwright_context = sync_playwright().start()
+    browser = playwright_context.chromium.launch()
     context = browser.new_context(
         storage_state=STORAGE_STATE,
         viewport={"width": 1440, "height": 900},
     )
     page = context.new_page()
 
+    feed_request_count = 0
     legacy_request_count = 0
     collaboration_request_count = 0
     conversations_payload = {
+        "success": True,
         "conversations": [
             {
                 "id": "conversation-001",
@@ -70,7 +76,10 @@ def test_chat_sidebar_uses_single_startup_conversation_load(playwright):
                 "is_hidden": False,
                 "has_unread_assistant_response": False,
             },
-        ]
+        ],
+        "has_more": False,
+        "next_cursor": None,
+        "hidden_count": 0,
     }
 
     def handle_user_settings(route):
@@ -80,10 +89,15 @@ def test_chat_sidebar_uses_single_startup_conversation_load(playwright):
 
         _fulfill_json(route, {"success": True})
 
+    def handle_feed_conversations(route):
+        nonlocal feed_request_count
+        feed_request_count += 1
+        _fulfill_json(route, conversations_payload)
+
     def handle_legacy_conversations(route):
         nonlocal legacy_request_count
         legacy_request_count += 1
-        _fulfill_json(route, conversations_payload)
+        _fulfill_json(route, {"conversations": []})
 
     def handle_collaboration_conversations(route):
         nonlocal collaboration_request_count
@@ -91,6 +105,7 @@ def test_chat_sidebar_uses_single_startup_conversation_load(playwright):
         _fulfill_json(route, [])
 
     page.route("**/api/user/settings", handle_user_settings)
+    page.route("**/api/conversations/feed?**", handle_feed_conversations)
     page.route("**/api/get_conversations", handle_legacy_conversations)
     page.route("**/api/collaboration/conversations?*", handle_collaboration_conversations)
 
@@ -112,8 +127,10 @@ def test_chat_sidebar_uses_single_startup_conversation_load(playwright):
 
         expect(sidebar_list).to_contain_text("Architecture Notes")
         expect(sidebar_list).to_contain_text("Release Planning")
-        assert legacy_request_count == 1
-        assert collaboration_request_count == 1
+        assert feed_request_count == 1
+        assert legacy_request_count == 0
+        assert collaboration_request_count == 0
     finally:
         context.close()
         browser.close()
+        playwright_context.stop()

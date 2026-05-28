@@ -815,24 +815,34 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
             SELECT *
             FROM c
             WHERE c.id = @document_id
-                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
+                AND (
+                    c.group_id = @group_id
+                    OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                    OR EXISTS(SELECT VALUE s FROM s IN c.shared_group_ids WHERE STARTSWITH(s, @group_id_prefix))
+                )
             ORDER BY c.version DESC
         """
         parameters = [
             {"name": "@document_id", "value": document_id},
-            {"name": "@group_id", "value": group_id}
+            {"name": "@group_id", "value": group_id},
+            {"name": "@group_id_prefix", "value": f"{group_id},"}
         ]
     else:
         query = """
             SELECT *
             FROM c
             WHERE c.id = @document_id
-                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
+                AND (
+                    c.user_id = @user_id
+                    OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                    OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
+                )
             ORDER BY c.version DESC
         """
         parameters = [
             {"name": "@document_id", "value": document_id},
-            {"name": "@user_id", "value": user_id}
+            {"name": "@user_id", "value": user_id},
+            {"name": "@user_id_prefix", "value": f"{user_id},"}
         ]
 
     add_file_task_to_file_processing_log(
@@ -7456,14 +7466,14 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
             
             # Update all chunks with the new shared_user_ids
             try:
-                chunks = get_all_chunks(document_id, owner_user_id)
+                chunks = get_all_chunks(document_id, actual_owner_id)
                 for chunk in chunks:
                     chunk_id = chunk.get('id')
                     if chunk_id:
                         try:
                             update_chunk_metadata(
                                 chunk_id=chunk_id,
-                                user_id=owner_user_id,
+                                user_id=actual_owner_id,
                                 group_id=None,
                                 public_workspace_id=None,
                                 document_id=document_id,
@@ -7726,11 +7736,15 @@ def get_documents_shared_with_group(group_id):
         query = """
             SELECT *
             FROM c
-            WHERE ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+            WHERE (
+                    ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                    OR ARRAY_CONTAINS(c.shared_group_ids, @group_id_approved)
+                )
                 AND c.group_id != @group_id
         """
         parameters = [
-            {"name": "@group_id", "value": group_id}
+            {"name": "@group_id", "value": group_id},
+            {"name": "@group_id_approved", "value": f"{group_id},approved"}
         ]
         
         documents = list(

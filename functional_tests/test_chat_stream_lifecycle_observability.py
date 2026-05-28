@@ -2,7 +2,7 @@
 # test_chat_stream_lifecycle_observability.py
 """
 Functional test for chat stream lifecycle observability.
-Version: 0.241.110
+Version: 0.241.111
 Implemented in: 0.241.109
 
 This test ensures long-running chat streams persist lifecycle state for
@@ -19,7 +19,7 @@ ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
 STREAMING_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-streaming.js"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
 FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.109" / "CHAT_STREAM_LIFECYCLE_OBSERVABILITY_FIX.md"
-CURRENT_VERSION = "0.241.110"
+CURRENT_VERSION = "0.241.111"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:

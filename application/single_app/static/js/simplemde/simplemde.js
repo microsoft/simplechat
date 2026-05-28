@@ -1270,31 +1270,8 @@ function SimpleMDE(options) {
 	options.parent = this;
 
 
-	// Check if Font Awesome needs to be auto downloaded
-	var autoDownloadFA = true;
-
-	if(options.autoDownloadFontAwesome === false) {
-		autoDownloadFA = false;
-	}
-
-	if(options.autoDownloadFontAwesome !== true) {
-		var styleSheets = document.styleSheets;
-		for(var i = 0; i < styleSheets.length; i++) {
-			if(!styleSheets[i].href)
-				continue;
-
-			if(styleSheets[i].href.indexOf("//maxcdn.bootstrapcdn.com/font-awesome/") > -1) {
-				autoDownloadFA = false;
-			}
-		}
-	}
-
-	if(autoDownloadFA) {
-		var link = document.createElement("link");
-		link.rel = "stylesheet";
-		link.href = "https://maxcdn.bootstrapcdn.com/font-awesome/latest/css/font-awesome.min.css";
-		document.getElementsByTagName("head")[0].appendChild(link);
-	}
+	// SimpleChat serves vendor assets locally; do not auto-download Font Awesome.
+	var autoDownloadFA = false;
 
 
 	// Find the textarea to use
@@ -1464,7 +1441,7 @@ SimpleMDE.prototype.render = function(el) {
 	}, false);
 
 	var mode, backdrop;
-	if(options.spellChecker !== false) {
+	if(options.spellChecker === true) {
 		mode = "spell-checker";
 		backdrop = options.parsingConfig;
 		backdrop.name = "gfm";

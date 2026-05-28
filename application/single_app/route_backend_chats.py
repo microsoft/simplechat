@@ -47,6 +47,7 @@ from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH,
     ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_URL_REVIEW,
     build_assigned_knowledge_runtime_filters,
+    resolve_assigned_knowledge_active_documents,
 )
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agents
@@ -55,6 +56,7 @@ from functions_source_review import (
     build_deep_research_ledger,
     build_deep_research_ledger_markdown,
     build_deep_research_query_plan,
+    build_research_search_prompt,
     compact_deep_research_result_for_metadata,
     compact_source_review_result_for_metadata,
     extract_urls_from_text,
@@ -167,6 +169,7 @@ def _build_assigned_knowledge_search_args(assigned_knowledge_filters, *, query, 
         'active_group_ids': list(assigned_knowledge_filters.get('active_group_ids') or []),
         'active_public_workspace_id': list(assigned_knowledge_filters.get('active_public_workspace_ids') or []),
         'document_filter_mode': assigned_knowledge_filters.get('document_filter_mode') or 'union',
+        'enforce_public_workspace_visibility': False,
     }
 
 
@@ -187,6 +190,95 @@ def _get_assigned_knowledge_web_source_urls(assigned_knowledge_filters, mode=Non
         seen_urls.add(source_url)
         urls.append(source_url)
     return urls
+
+
+def _is_assigned_knowledge_inventory_request(user_message):
+    normalized_message = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not normalized_message:
+        return False
+
+    knowledge_terms = (
+        "document",
+        "documents",
+        "file",
+        "files",
+        "knowledge",
+        "source",
+        "sources",
+    )
+    if not any(term in normalized_message for term in knowledge_terms):
+        return False
+
+    inventory_phrases = (
+        "what documents",
+        "which documents",
+        "what files",
+        "which files",
+        "list documents",
+        "list the documents",
+        "show documents",
+        "show the documents",
+        "how many documents",
+        "how many files",
+        "documents do you have access",
+        "documents can you access",
+        "files do you have access",
+        "files can you access",
+        "what knowledge",
+        "which knowledge",
+        "assigned knowledge",
+        "what sources",
+        "which sources",
+    )
+    return any(phrase in normalized_message for phrase in inventory_phrases)
+
+
+def _build_assigned_knowledge_inventory_aug_message(user_id, assigned_knowledge_filters, user_message):
+    active_documents = resolve_assigned_knowledge_active_documents(user_id, assigned_knowledge_filters)
+    web_sources = (assigned_knowledge_filters.get('web_sources') or []) if isinstance(assigned_knowledge_filters, dict) else []
+    document_lines = []
+    for index, document in enumerate(active_documents, start=1):
+        title = str(document.get('title') or document.get('file_name') or document.get('id') or 'Untitled document').strip()
+        source_name = str(document.get('source_name') or document.get('scope') or 'source').strip()
+        scope = str(document.get('scope') or '').strip()
+        tags = document.get('tags') or []
+        tag_text = f"; Tags: {', '.join(tags)}" if tags else ""
+        document_lines.append(f"{index}. {title} (Source workspace: {source_name}; Scope: {scope}{tag_text})")
+
+    if document_lines:
+        document_inventory = "\n".join(document_lines)
+    else:
+        document_inventory = "No indexed workspace documents are active for this agent."
+
+    web_source_lines = []
+    for index, source in enumerate(web_sources, start=1):
+        url = str(source.get('url') or '').strip()
+        if not url:
+            continue
+        mode = str(source.get('mode') or 'url_review').strip()
+        web_source_lines.append(f"{index}. {url} ({mode})")
+    web_source_inventory = "\n".join(web_source_lines) if web_source_lines else "No assigned web sources."
+
+    content = (
+        "The user is asking what documents, files, sources, or assigned knowledge this agent can access. "
+        "Answer deterministically from the inventory below. State the exact active indexed workspace document count. "
+        "If the user asks what documents are available, list every active indexed workspace document below; do not list only retrieved citations. "
+        "Mention assigned web sources separately because they are reviewed live and are not indexed workspace documents.\n\n"
+        f"User question: {user_message}\n\n"
+        f"Active indexed workspace documents: {len(active_documents)}\n"
+        f"{document_inventory}\n\n"
+        f"Assigned web sources: {len(web_source_lines)}\n"
+        f"{web_source_inventory}"
+    )
+    return {
+        'role': 'system',
+        'content': content,
+        'documents': active_documents,
+        'assigned_knowledge_inventory': {
+            'active_document_count': len(active_documents),
+            'web_source_count': len(web_source_lines),
+        }
+    }
 
 
 def _merge_search_results_by_identity(*result_sets):
@@ -11419,8 +11511,8 @@ def register_route_backend_chats(app):
                         'group_name': agent_info.get('group_name'),
                         'agent_id': agent_info.get('id')
                     }
-                    if assigned_knowledge_filters:
-                        user_metadata['agent_selection']['assigned_knowledge_enabled'] = True
+                if assigned_knowledge_filters and 'agent_selection' in user_metadata:
+                    user_metadata['agent_selection']['assigned_knowledge_enabled'] = True
                 
                 # Model selection information
                 user_metadata['model_selection'] = {
@@ -12177,6 +12269,24 @@ def register_route_backend_chats(app):
                         'search',
                         'No matching excerpts were found in the previously grounded documents'
                     )
+
+            if (
+                assigned_knowledge_filters
+                and assigned_knowledge_filters.get('has_workspace_knowledge')
+                and _is_assigned_knowledge_inventory_request(user_message)
+            ):
+                inventory_message = _build_assigned_knowledge_inventory_aug_message(
+                    user_id,
+                    assigned_knowledge_filters,
+                    user_message,
+                )
+                system_messages_for_augmentation.append(inventory_message)
+                inventory_meta = inventory_message.get('assigned_knowledge_inventory') or {}
+                thought_tracker.add_thought(
+                    'search',
+                    f"Prepared assigned knowledge inventory with {inventory_meta.get('active_document_count', 0)} active documents",
+                    detail=f"web_sources={inventory_meta.get('web_source_count', 0)}",
+                )
 
             # Update message-level chat_type based on actual document usage for this message
             # This must happen after document search is completed so search_results is populated
@@ -14673,6 +14783,8 @@ def register_route_backend_chats(app):
                         'group_name': request_agent_info.get('group_name'),
                         'agent_id': request_agent_info.get('id')
                     }
+                    if assigned_knowledge_filters:
+                        user_metadata['agent_selection']['assigned_knowledge_enabled'] = True
                 
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
@@ -15345,6 +15457,24 @@ def register_route_backend_chats(app):
                             'search',
                             'No matching excerpts were found in the previously grounded documents'
                         )
+
+                if (
+                    assigned_knowledge_filters
+                    and assigned_knowledge_filters.get('has_workspace_knowledge')
+                    and _is_assigned_knowledge_inventory_request(user_message)
+                ):
+                    inventory_message = _build_assigned_knowledge_inventory_aug_message(
+                        user_id,
+                        assigned_knowledge_filters,
+                        user_message,
+                    )
+                    system_messages_for_augmentation.append(inventory_message)
+                    inventory_meta = inventory_message.get('assigned_knowledge_inventory') or {}
+                    yield emit_thought(
+                        'search',
+                        f"Prepared assigned knowledge inventory with {inventory_meta.get('active_document_count', 0)} active documents",
+                        detail=f"web_sources={inventory_meta.get('web_source_count', 0)}",
+                    )
                 
                 workspace_tabular_file_contexts = []
                 workspace_tabular_files = set()
@@ -18311,9 +18441,10 @@ def perform_web_search(
         record_web_search_run(True, 'empty_query')
         return True  # Not an error, just empty query
 
+    search_request_content = build_research_search_prompt(query_text)
     debug_print(f"[WebSearch] Building message history with query: {query_text[:100]}...")
     message_history = [
-        ChatMessageContent(role="user", content=query_text)
+        ChatMessageContent(role="user", content=search_request_content)
     ]
     debug_print(f"[WebSearch] Message history created with {len(message_history)} message(s)")
 

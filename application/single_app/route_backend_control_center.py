@@ -66,6 +66,156 @@ def clamp_control_center_page(page, total_pages):
     return min(max(page, 1), max(total_pages, 1))
 
 
+def _normalize_group_token_total(value):
+    """Coerce a Cosmos token aggregate result into a non-negative integer."""
+    try:
+        token_total = int(value or 0)
+    except (TypeError, ValueError):
+        token_total = 0
+
+    return max(token_total, 0)
+
+
+def get_group_token_totals(group_ids):
+    """Return all-time token totals keyed by group id for Control Center group management."""
+    normalized_group_ids = []
+    seen_group_ids = set()
+    for group_id in group_ids or []:
+        normalized_group_id = str(group_id or '').strip()
+        if normalized_group_id and normalized_group_id not in seen_group_ids:
+            normalized_group_ids.append(normalized_group_id)
+            seen_group_ids.add(normalized_group_id)
+
+    token_totals = {group_id: 0 for group_id in normalized_group_ids}
+    if not normalized_group_ids:
+        return token_totals
+
+    aggregate_query = """
+        SELECT c.workspace_context.group_id AS group_id, SUM(c.usage.total_tokens) AS total_tokens
+        FROM c
+        WHERE c.activity_type = 'token_usage'
+        AND IS_DEFINED(c.workspace_context.group_id)
+        AND ARRAY_CONTAINS(@group_ids, c.workspace_context.group_id)
+        AND IS_DEFINED(c.usage.total_tokens)
+        AND IS_NUMBER(c.usage.total_tokens)
+        GROUP BY c.workspace_context.group_id
+    """
+    aggregate_params = [{"name": "@group_ids", "value": normalized_group_ids}]
+
+    try:
+        aggregate_rows = cosmos_activity_logs_container.query_items(
+            query=aggregate_query,
+            parameters=aggregate_params,
+            enable_cross_partition_query=True
+        )
+        for row in aggregate_rows:
+            row_group_id = str(row.get('group_id') or '').strip()
+            if row_group_id in token_totals:
+                token_totals[row_group_id] = _normalize_group_token_total(row.get('total_tokens'))
+
+        return token_totals
+    except Exception as aggregate_error:
+        debug_print(f"[ControlCenter] Error aggregating group token totals: {aggregate_error}")
+
+    fallback_query = """
+        SELECT VALUE SUM(c.usage.total_tokens)
+        FROM c
+        WHERE c.activity_type = 'token_usage'
+        AND c.workspace_context.group_id = @group_id
+        AND IS_DEFINED(c.usage.total_tokens)
+        AND IS_NUMBER(c.usage.total_tokens)
+    """
+    for group_id in normalized_group_ids:
+        try:
+            fallback_rows = list(cosmos_activity_logs_container.query_items(
+                query=fallback_query,
+                parameters=[{"name": "@group_id", "value": group_id}],
+                enable_cross_partition_query=True
+            ))
+            token_totals[group_id] = _normalize_group_token_total(fallback_rows[0] if fallback_rows else 0)
+        except Exception as fallback_error:
+            debug_print(f"[ControlCenter] Error aggregating token total for group {group_id}: {fallback_error}")
+
+    return token_totals
+
+
+def attach_group_token_totals(groups):
+    """Attach all-time token totals to enhanced group payloads."""
+    token_totals = get_group_token_totals([group.get('id') for group in groups or []])
+    for group in groups or []:
+        group_id = str(group.get('id') or '').strip()
+        token_total = token_totals.get(group_id, 0)
+        group['token_total'] = token_total
+        group['total_tokens'] = token_total
+        if not isinstance(group.get('activity'), dict):
+            group['activity'] = {}
+        group['activity']['token_metrics'] = {
+            'total_tokens': token_total
+        }
+
+    return groups
+
+
+def normalize_scope_ids(scope_ids):
+    """Return unique, non-empty scope ids while preserving first-seen order."""
+    normalized_scope_ids = []
+    seen_scope_ids = set()
+    for scope_id in scope_ids or []:
+        normalized_scope_id = str(scope_id or '').strip()
+        if normalized_scope_id and normalized_scope_id not in seen_scope_ids:
+            normalized_scope_ids.append(normalized_scope_id)
+            seen_scope_ids.add(normalized_scope_id)
+
+    return normalized_scope_ids
+
+
+def get_group_name_map(group_ids):
+    """Resolve group names keyed by group id for reporting surfaces."""
+    group_names = {}
+    for group_id in normalize_scope_ids(group_ids):
+        try:
+            group_doc = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            group_names[group_id] = group_doc.get('name') or group_id
+        except Exception as ex:
+            group_names[group_id] = ''
+            log_event(
+                '[ControlCenter][TokenExport] Failed to resolve group name.',
+                extra={
+                    'group_id': group_id,
+                    'error_type': type(ex).__name__
+                },
+                debug_only=True,
+                category='CONTROL_CENTER'
+            )
+
+    return group_names
+
+
+def get_public_workspace_name_map(public_workspace_ids):
+    """Resolve public workspace names keyed by public workspace id for reporting surfaces."""
+    public_workspace_names = {}
+    for public_workspace_id in normalize_scope_ids(public_workspace_ids):
+        try:
+            workspace_doc = cosmos_public_workspaces_container.read_item(
+                item=public_workspace_id,
+                partition_key=public_workspace_id
+            )
+            public_workspace_names[public_workspace_id] = workspace_doc.get('name') or public_workspace_id
+        except Exception as ex:
+            public_workspace_names[public_workspace_id] = ''
+            log_event(
+                '[ControlCenter][TokenExport] Failed to resolve public workspace name.',
+                extra={
+                    'public_workspace_id': public_workspace_id,
+                    'error_type': type(ex).__name__
+                },
+                debug_only=True,
+                category='CONTROL_CENTER'
+            )
+
+    return public_workspace_names
+
+
 def normalize_token_filter_value(value):
     """Normalize optional token filter values from query params or request JSON."""
     if value is None:
@@ -1228,6 +1378,8 @@ def enhance_group_with_activity(group, force_refresh=False):
             'member_count': len(users_list),  # Owner is already included in users_list
             'document_count': 0,  # Will be updated from database
             'storage_size': 0,  # Will be updated from storage account
+            'token_total': 0,
+            'total_tokens': 0,
             'last_activity': None,  # Will be updated from group_documents
             'recent_activity_count': 0,  # Will be calculated
             'status': group.get('status', 'active'),  # Read from group document, default to 'active'
@@ -1239,6 +1391,9 @@ def enhance_group_with_activity(group, force_refresh=False):
                     'total_documents': 0,
                     'ai_search_size': 0,  # pages × 80KB  
                     'storage_account_size': 0  # Actual file sizes from storage
+                },
+                'token_metrics': {
+                    'total_tokens': 0
                 },
                 'member_metrics': {
                     'total_members': len(users_list),  # Owner is already included in users_list
@@ -2476,6 +2631,10 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
                     parameters=token_parameters,
                     enable_cross_partition_query=True
                 ))
+                group_name_map = get_group_name_map(token_log.get('group_id') for token_log in token_activities)
+                public_workspace_name_map = get_public_workspace_name_map(
+                    token_log.get('public_workspace_id') for token_log in token_activities
+                )
                 
                 token_records = []
                 for token_log in token_activities:
@@ -2483,6 +2642,8 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
                     user_info = get_user_info(user_id)
                     timestamp = token_log.get('timestamp') or token_log.get('created_at')
                     token_type = token_log.get('token_type', 'unknown')
+                    group_id = str(token_log.get('group_id') or '').strip()
+                    public_workspace_id = str(token_log.get('public_workspace_id') or '').strip()
                     
                     if timestamp:
                         try:
@@ -2501,8 +2662,10 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
                                 'user_id': user_id,
                                 'token_type': token_type,
                                 'workspace_type': token_log.get('workspace_type', ''),
-                                'group_id': token_log.get('group_id', ''),
-                                'public_workspace_id': token_log.get('public_workspace_id', ''),
+                                'group_id': group_id,
+                                'group_name': group_name_map.get(group_id, ''),
+                                'public_workspace_id': public_workspace_id,
+                                'public_workspace_name': public_workspace_name_map.get(public_workspace_id, ''),
                                 'model_name': token_log.get('model_name', 'Unknown'),
                                 'prompt_tokens': prompt_tokens,
                                 'completion_tokens': completion_tokens,
@@ -2964,6 +3127,7 @@ def register_route_backend_control_center(app):
                 for group in groups:
                     enhanced_group = enhance_group_with_activity(group, force_refresh=force_refresh)
                     enhanced_groups.append(enhanced_group)
+                attach_group_token_totals(enhanced_groups)
                 
                 return jsonify({
                     'success': True,
@@ -3005,6 +3169,7 @@ def register_route_backend_control_center(app):
             for group in groups:
                 enhanced_group = enhance_group_with_activity(group, force_refresh=force_refresh)
                 enhanced_groups.append(enhanced_group)
+            attach_group_token_totals(enhanced_groups)
             
             return jsonify({
                 'groups': enhanced_groups,
@@ -3138,6 +3303,7 @@ def register_route_backend_control_center(app):
             
             # Enhance with activity data
             enhanced_group = enhance_group_with_activity(group)
+            attach_group_token_totals([enhanced_group])
             
             return jsonify(enhanced_group), 200
             
@@ -5312,8 +5478,8 @@ def register_route_backend_control_center(app):
                         debug_print(f"🔍 [CSV DEBUG] Writing token usage headers for {chart_type}")
                         writer.writerow([
                             'Display Name', 'Email', 'User ID', 'Workspace Type', 'Group ID',
-                            'Public Workspace ID', 'Token Type', 'Model Name', 'Prompt Tokens',
-                            'Completion Tokens', 'Total Tokens', 'Timestamp'
+                            'Group Name', 'Public Workspace ID', 'Public Workspace Name', 'Token Type',
+                            'Model Name', 'Prompt Tokens', 'Completion Tokens', 'Total Tokens', 'Timestamp'
                         ])
                         record_count = 0
                         for record in raw_data[chart_type]:
@@ -5327,7 +5493,9 @@ def register_route_backend_control_center(app):
                                 record.get('user_id', ''),
                                 record.get('workspace_type', ''),
                                 record.get('group_id', ''),
+                                record.get('group_name', ''),
                                 record.get('public_workspace_id', ''),
+                                record.get('public_workspace_name', ''),
                                 record.get('token_type', ''),
                                 record.get('model_name', ''),
                                 record.get('prompt_tokens', ''),

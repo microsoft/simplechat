@@ -2,7 +2,7 @@
 # test_document_auto_metadata_extraction_consistency.py
 """
 Functional test for document auto metadata extraction consistency.
-Version: 0.241.110
+Version: 0.241.111
 Implemented in: 0.241.110
 
 This test ensures upload processing runs final metadata extraction consistently
@@ -185,7 +185,7 @@ def test_config_version_bumped_for_auto_metadata_fix():
     config_source = read_file(CONFIG_FILE)
     version_match = re.search(r'VERSION = "([0-9.]+)"', config_source)
     assert version_match, 'Could not find VERSION in config.py'
-    assert version_match.group(1) == '0.241.110', 'Expected config.py version 0.241.110'
+    assert version_match.group(1) == '0.241.111', 'Expected config.py version 0.241.111'
 
     print('Config version bump passed')
     return True

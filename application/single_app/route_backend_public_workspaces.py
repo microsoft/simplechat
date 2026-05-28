@@ -7,6 +7,12 @@ from functions_public_workspaces import *
 from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
+from functions_stats_windows import (
+    build_stats_date_series,
+    resolve_stats_time_window,
+    stats_window_response_payload,
+    timestamp_to_stats_date_key,
+)
 from functions_workspace_branding import (
     DEFAULT_WORKSPACE_HERO_COLOR,
     decode_workspace_logo_base64,
@@ -926,6 +932,11 @@ def register_route_backend_public_workspaces(app):
         if not is_member:
             return jsonify({"error": "Forbidden"}), 403
 
+        try:
+            stats_window = resolve_stats_time_window(request.args)
+        except ValueError as ex:
+            return jsonify({"error": str(ex)}), 400
+
         # Get metrics from workspace record (pre-calculated)
         metrics = ws.get("metrics", {})
         document_metrics = metrics.get("document_metrics", {})
@@ -939,23 +950,27 @@ def register_route_backend_public_workspaces(app):
         doc_managers = ws.get("documentManagers", [])
         total_members = 1 + len(admins) + len(doc_managers)
 
-        # Get token usage from activity logs (last 30 days)
-        from datetime import datetime, timedelta
-        thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        start_date = stats_window['start_date_iso']
+        end_date = stats_window['end_date_iso']
         
         debug_print(f"[PUBLIC_WORKSPACE_STATS] Workspace ID: {ws_id}")
-        debug_print(f"[PUBLIC_WORKSPACE_STATS] Start date: {thirty_days_ago}")
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] Start date: {start_date}")
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] End date: {end_date}")
         
         token_query = """
             SELECT a.usage
             FROM a 
             WHERE a.workspace_context.public_workspace_id = @wsId 
-            AND a.timestamp >= @startDate
+            AND (
+                (IS_DEFINED(a.timestamp) AND a.timestamp >= @startDate AND a.timestamp <= @endDate)
+                OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate)
+            )
             AND a.activity_type = 'token_usage'
         """
         token_params = [
             {"name": "@wsId", "value": ws_id},
-            {"name": "@startDate", "value": thirty_days_ago}
+            {"name": "@startDate", "value": start_date},
+            {"name": "@endDate", "value": end_date}
         ]
         
         total_tokens = 0
@@ -980,12 +995,13 @@ def register_route_backend_public_workspaces(app):
         doc_delete_data = []
         token_usage_labels = []
         token_usage_data = []
+        date_series = build_stats_date_series(stats_window['start_date'], stats_window['end_date'])
+        date_index_by_key = {}
         
-        # Generate labels for last 30 days
-        for i in range(29, -1, -1):
-            date = datetime.utcnow() - timedelta(days=i)
-            doc_activity_labels.append(date.strftime("%m/%d"))
-            token_usage_labels.append(date.strftime("%m/%d"))
+        for index, day in enumerate(date_series):
+            date_index_by_key[day['date']] = index
+            doc_activity_labels.append(day['label'])
+            token_usage_labels.append(day['label'])
             doc_upload_data.append(0)
             doc_delete_data.append(0)
             token_usage_data.append(0)
@@ -995,7 +1011,10 @@ def register_route_backend_public_workspaces(app):
             SELECT a.timestamp, a.created_at
             FROM a
             WHERE a.workspace_context.public_workspace_id = @wsId
-            AND a.timestamp >= @startDate
+            AND (
+                (IS_DEFINED(a.timestamp) AND a.timestamp >= @startDate AND a.timestamp <= @endDate)
+                OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate)
+            )
             AND a.activity_type = 'document_creation'
         """
         debug_print(f"[PUBLIC_WORKSPACE_STATS] Document upload query: {doc_upload_query}")
@@ -1012,15 +1031,11 @@ def register_route_backend_public_workspaces(app):
             for item in upload_results:
                 timestamp = item.get("timestamp") or item.get("created_at")
                 if timestamp:
-                    try:
-                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        day_date = dt.strftime("%m/%d")
-                        if day_date in doc_activity_labels:
-                            idx = doc_activity_labels.index(day_date)
-                            doc_upload_data[idx] += 1
-                            debug_print(f"[PUBLIC_WORKSPACE_STATS] Added upload for {day_date}")
-                    except Exception as e:
-                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Error parsing timestamp {timestamp}: {e}")
+                    date_key = timestamp_to_stats_date_key(timestamp)
+                    idx = date_index_by_key.get(date_key)
+                    if idx is not None:
+                        doc_upload_data[idx] += 1
+                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Added upload for {date_key}")
         except Exception as e:
             debug_print(f"[PUBLIC_WORKSPACE_STATS] Error querying document uploads: {e}")
             import traceback
@@ -1031,7 +1046,10 @@ def register_route_backend_public_workspaces(app):
             SELECT a.timestamp, a.created_at
             FROM a
             WHERE a.workspace_context.public_workspace_id = @wsId
-            AND a.timestamp >= @startDate
+            AND (
+                (IS_DEFINED(a.timestamp) AND a.timestamp >= @startDate AND a.timestamp <= @endDate)
+                OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate)
+            )
             AND a.activity_type = 'document_deletion'
         """
         debug_print(f"[PUBLIC_WORKSPACE_STATS] Document delete query: {doc_delete_query}")
@@ -1047,15 +1065,11 @@ def register_route_backend_public_workspaces(app):
             for item in delete_results:
                 timestamp = item.get("timestamp") or item.get("created_at")
                 if timestamp:
-                    try:
-                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        day_date = dt.strftime("%m/%d")
-                        if day_date in doc_activity_labels:
-                            idx = doc_activity_labels.index(day_date)
-                            doc_delete_data[idx] += 1
-                            debug_print(f"[PUBLIC_WORKSPACE_STATS] Added delete for {day_date}")
-                    except Exception as e:
-                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Error parsing timestamp {timestamp}: {e}")
+                    date_key = timestamp_to_stats_date_key(timestamp)
+                    idx = date_index_by_key.get(date_key)
+                    if idx is not None:
+                        doc_delete_data[idx] += 1
+                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Added delete for {date_key}")
         except Exception as e:
             debug_print(f"[PUBLIC_WORKSPACE_STATS] Error querying document deletes: {e}")
             import traceback
@@ -1066,7 +1080,10 @@ def register_route_backend_public_workspaces(app):
             SELECT a.timestamp, a.created_at, a.usage
             FROM a
             WHERE a.workspace_context.public_workspace_id = @wsId
-            AND a.timestamp >= @startDate
+            AND (
+                (IS_DEFINED(a.timestamp) AND a.timestamp >= @startDate AND a.timestamp <= @endDate)
+                OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate)
+            )
             AND a.activity_type = 'token_usage'
         """
         debug_print(f"[PUBLIC_WORKSPACE_STATS] Token usage query: {token_activity_query}")
@@ -1082,17 +1099,13 @@ def register_route_backend_public_workspaces(app):
             for item in token_results:
                 timestamp = item.get("timestamp") or item.get("created_at")
                 if timestamp:
-                    try:
-                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        day_date = dt.strftime("%m/%d")
-                        if day_date in token_usage_labels:
-                            idx = token_usage_labels.index(day_date)
-                            usage = item.get("usage", {})
-                            tokens = usage.get("total_tokens", 0)
-                            token_usage_data[idx] += tokens
-                            debug_print(f"[PUBLIC_WORKSPACE_STATS] Added {tokens} tokens for {day_date}")
-                    except Exception as e:
-                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Error parsing timestamp {timestamp}: {e}")
+                    date_key = timestamp_to_stats_date_key(timestamp)
+                    idx = date_index_by_key.get(date_key)
+                    if idx is not None:
+                        usage = item.get("usage", {})
+                        tokens = usage.get("total_tokens", 0)
+                        token_usage_data[idx] += tokens
+                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Added {tokens} tokens for {date_key}")
         except Exception as e:
             debug_print(f"[PUBLIC_WORKSPACE_STATS] Error querying token usage: {e}")
             import traceback
@@ -1120,7 +1133,9 @@ def register_route_backend_public_workspaces(app):
             "tokenUsage": {
                 "labels": token_usage_labels,
                 "data": token_usage_data
-            }
+            },
+            "dateRange": [day['date'] for day in date_series],
+            "window": stats_window_response_payload(stats_window)
         }
         
         debug_print(f"[PUBLIC_WORKSPACE_STATS] Final stats: {stats}")

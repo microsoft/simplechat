@@ -836,14 +836,14 @@ export class AgentModalStepper {
     this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-source-available', availableSources, {
       category: 'source',
       listRole: 'available',
-      emptyText: 'No available sources',
+      emptyText: 'No available source workspaces',
       getKey: source => this.getCatalogSourceKey(source),
       renderContent: source => this.createAssignedKnowledgeSourceContent(source)
     });
     this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-source-selected', selectedSources, {
       category: 'source',
       listRole: 'selected',
-      emptyText: 'No selected sources',
+      emptyText: 'No selected source workspaces',
       getKey: source => this.getCatalogSourceKey(source),
       renderContent: source => this.createAssignedKnowledgeSourceContent(source)
     });
@@ -916,7 +916,7 @@ export class AgentModalStepper {
     this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-document-selected', selectedDocuments, {
       category: 'document',
       listRole: 'selected',
-      emptyText: 'No selected documents',
+      emptyText: 'No specific documents',
       getKey: documentItem => documentItem.id || '',
       renderContent: documentItem => this.createAssignedKnowledgeDocumentContent(documentItem)
     });
@@ -1022,7 +1022,7 @@ export class AgentModalStepper {
     this.renderAssignedKnowledgeTransferItems('agent-assigned-knowledge-tag-selected', selectedTagItems, {
       category: 'tag',
       listRole: 'selected',
-      emptyText: 'No selected tags',
+      emptyText: 'No selected tag limits',
       getKey: tag => tag.name,
       renderContent: tag => this.createAssignedKnowledgeTagContent(tag)
     });
@@ -1259,8 +1259,8 @@ export class AgentModalStepper {
       return [];
     }
     const explicitDocumentIds = new Set(config.document_ids || []);
-    const selectedTags = new Set(config.tags || []);
-    const includeAllSourceDocuments = !explicitDocumentIds.size && !selectedTags.size;
+    const selectedTags = this.normalizeStringArray(config.tags || []);
+    const includeAllSourceDocuments = !explicitDocumentIds.size && !selectedTags.length;
     const resolved = [];
 
     (this.assignedKnowledgeCatalog.documents || []).forEach(documentItem => {
@@ -1269,7 +1269,8 @@ export class AgentModalStepper {
         return;
       }
 
-      const matchingTags = (documentItem.tags || []).filter(tag => selectedTags.has(tag));
+      const documentTags = new Set(documentItem.tags || []);
+      const matchesSelectedTags = selectedTags.length && selectedTags.every(tag => documentTags.has(tag));
       const reasons = [];
       if (includeAllSourceDocuments) {
         reasons.push('source');
@@ -1277,8 +1278,8 @@ export class AgentModalStepper {
       if (explicitDocumentIds.has(documentItem.id)) {
         reasons.push('explicit');
       }
-      if (matchingTags.length) {
-        reasons.push(...matchingTags.map(tag => `tag:${tag}`));
+      if (matchesSelectedTags) {
+        reasons.push(...selectedTags.map(tag => `tag:${tag}`));
       }
       if (!reasons.length) {
         return;
@@ -1301,7 +1302,7 @@ export class AgentModalStepper {
     if (!resolved.length) {
       const empty = document.createElement('div');
       empty.className = 'agent-assigned-knowledge-empty-list';
-      empty.textContent = selectedSourceKeys.size ? 'No current document matches' : 'No sources selected';
+      empty.textContent = selectedSourceKeys.size ? 'No active documents match the current limits' : 'No source workspaces selected';
       container.appendChild(empty);
       return;
     }
@@ -1333,10 +1334,10 @@ export class AgentModalStepper {
     const resolvedCount = this.getResolvedAssignedKnowledgeDocuments(config).length;
     const counts = [
       ['agent-assigned-knowledge-source-count', `${sourceCount} selected`],
-      ['agent-assigned-knowledge-tag-count', `${tagCount} selected`],
-      ['agent-assigned-knowledge-document-count', `${documentCount} selected`],
+      ['agent-assigned-knowledge-tag-count', `${tagCount} tag limit${tagCount === 1 ? '' : 's'}`],
+      ['agent-assigned-knowledge-document-count', `${documentCount} specific`],
       ['agent-assigned-knowledge-web-source-count', `${webSourceCount} selected`],
-      ['agent-assigned-knowledge-resolved-count', `${resolvedCount} current match${resolvedCount === 1 ? '' : 'es'}`]
+      ['agent-assigned-knowledge-resolved-count', `${resolvedCount} active document${resolvedCount === 1 ? '' : 's'}`]
     ];
     counts.forEach(([elementId, text]) => {
       const element = document.getElementById(elementId);
@@ -1344,6 +1345,54 @@ export class AgentModalStepper {
         element.textContent = text;
       }
     });
+    this.updateAssignedKnowledgeActiveSummary(config, resolvedCount);
+  }
+
+  formatAssignedKnowledgeCount(count, singular, plural = `${singular}s`) {
+    return `${count} ${count === 1 ? singular : plural}`;
+  }
+
+  getAssignedKnowledgeActiveSummaryText(config = this.pendingAssignedKnowledge, resolvedCount = null) {
+    const sourceCount = this.getAssignedKnowledgeSelectedSourceKeys(config).size;
+    const tagCount = (config.tags || []).length;
+    const documentCount = (config.document_ids || []).length;
+    const activeCount = resolvedCount === null ? this.getResolvedAssignedKnowledgeDocuments(config).length : resolvedCount;
+    if (!sourceCount) {
+      return 'Choose at least one source workspace to set this agent\'s active documents.';
+    }
+
+    const sourceText = this.formatAssignedKnowledgeCount(sourceCount, 'source workspace');
+    const activeText = this.formatAssignedKnowledgeCount(activeCount, 'active document');
+    if (!tagCount && !documentCount) {
+      if (!activeCount) {
+        return `No documents are available from ${sourceText}.`;
+      }
+      return `Using all ${activeText} from ${sourceText}. Add tag limits or specific documents only when the agent should use a smaller set.`;
+    }
+
+    if (!activeCount) {
+      return `No active documents match the selected limits in ${sourceText}. Clear tag limits or add specific documents to expand the active set.`;
+    }
+
+    const limitDescriptions = [];
+    if (tagCount) {
+      limitDescriptions.push(
+        tagCount === 1
+          ? 'documents matching the selected tag limit'
+          : `documents matching all ${tagCount} selected tag limits`
+      );
+    }
+    if (documentCount) {
+      limitDescriptions.push(this.formatAssignedKnowledgeCount(documentCount, 'specific document'));
+    }
+    return `Using ${activeText} from ${sourceText}: ${limitDescriptions.join(' plus ')}. Clear tag limits and specific documents to use every document from the selected source workspaces.`;
+  }
+
+  updateAssignedKnowledgeActiveSummary(config = this.pendingAssignedKnowledge, resolvedCount = null) {
+    const summary = document.getElementById('agent-assigned-knowledge-active-summary');
+    if (summary) {
+      summary.textContent = this.getAssignedKnowledgeActiveSummaryText(config, resolvedCount);
+    }
   }
 
   getAssignedKnowledgeConfig() {
@@ -2835,10 +2884,10 @@ export class AgentModalStepper {
       summaryItems.push(`${scopes.public_workspace_ids.length} public workspace${scopes.public_workspace_ids.length === 1 ? '' : 's'}`);
     }
     if (assignedKnowledge.document_ids?.length) {
-      summaryItems.push(`${assignedKnowledge.document_ids.length} explicit document${assignedKnowledge.document_ids.length === 1 ? '' : 's'}`);
+      summaryItems.push(`${assignedKnowledge.document_ids.length} specific document${assignedKnowledge.document_ids.length === 1 ? '' : 's'}`);
     }
     if (assignedKnowledge.tags?.length) {
-      summaryItems.push(`${assignedKnowledge.tags.length} dynamic tag${assignedKnowledge.tags.length === 1 ? '' : 's'}`);
+      summaryItems.push(`${assignedKnowledge.tags.length} tag limit${assignedKnowledge.tags.length === 1 ? '' : 's'}`);
     }
     if (assignedKnowledge.web_sources?.length) {
       const deepResearchCount = assignedKnowledge.web_sources

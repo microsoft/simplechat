@@ -220,7 +220,7 @@
                 </li>
               {% endif %}
               {% if file_sync_enabled or settings.enable_semantic_kernel or settings.enable_multi_model_endpoints %}
-                <li class="nav-item">
+                <li class="nav-item d-none" data-group-identities-sidebar-nav>
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab">
                     <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
                   </a>

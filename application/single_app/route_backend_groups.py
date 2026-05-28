@@ -9,6 +9,12 @@ from functions_simplechat_operations import (
     add_group_member_for_current_user,
     create_group_for_current_user,
 )
+from functions_stats_windows import (
+    build_stats_date_series,
+    resolve_stats_time_window,
+    stats_window_response_payload,
+    timestamp_to_stats_date_key,
+)
 from functions_workspace_branding import (
     DEFAULT_WORKSPACE_HERO_COLOR,
     decode_workspace_logo_base64,
@@ -987,7 +993,6 @@ def register_route_backend_groups(app):
         Only accessible by owner and admins.
         """
         from functions_debug import debug_print
-        from datetime import datetime, timedelta
         
         info = get_current_user_info()
         user_id = info["userId"]
@@ -1003,6 +1008,11 @@ def register_route_backend_groups(app):
         if not (is_owner or is_admin):
             return jsonify({"error": "Forbidden"}), 403
 
+        try:
+            stats_window = resolve_stats_time_window(request.args)
+        except ValueError as ex:
+            return jsonify({"error": str(ex)}), 400
+
         # Get metrics from group record
         metrics = group.get("metrics", {})
         document_metrics = metrics.get("document_metrics", {})
@@ -1015,22 +1025,27 @@ def register_route_backend_groups(app):
         # Get member count
         total_members = len(group.get("users", []))
 
-        # Get token usage from activity logs (last 30 days)
-        thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        start_date = stats_window['start_date_iso']
+        end_date = stats_window['end_date_iso']
         
         debug_print(f"[GROUP_STATS] Group ID: {group_id}")
-        debug_print(f"[GROUP_STATS] Start date: {thirty_days_ago}")
+        debug_print(f"[GROUP_STATS] Start date: {start_date}")
+        debug_print(f"[GROUP_STATS] End date: {end_date}")
         
         token_query = """
             SELECT a.usage
             FROM a 
             WHERE a.workspace_context.group_id = @groupId 
-            AND a.timestamp >= @startDate
+            AND (
+                (IS_DEFINED(a.timestamp) AND a.timestamp >= @startDate AND a.timestamp <= @endDate)
+                OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate)
+            )
             AND a.activity_type = 'token_usage'
         """
         token_params = [
             {"name": "@groupId", "value": group_id},
-            {"name": "@startDate", "value": thirty_days_ago}
+            {"name": "@startDate", "value": start_date},
+            {"name": "@endDate", "value": end_date}
         ]
         
         total_tokens = 0
@@ -1053,12 +1068,13 @@ def register_route_backend_groups(app):
         doc_delete_data = []
         token_usage_labels = []
         token_usage_data = []
+        date_series = build_stats_date_series(stats_window['start_date'], stats_window['end_date'])
+        date_index_by_key = {}
         
-        # Generate labels for last 30 days
-        for i in range(29, -1, -1):
-            date = datetime.utcnow() - timedelta(days=i)
-            doc_activity_labels.append(date.strftime("%m/%d"))
-            token_usage_labels.append(date.strftime("%m/%d"))
+        for index, day in enumerate(date_series):
+            date_index_by_key[day['date']] = index
+            doc_activity_labels.append(day['label'])
+            token_usage_labels.append(day['label'])
             doc_upload_data.append(0)
             doc_delete_data.append(0)
             token_usage_data.append(0)
@@ -1068,7 +1084,10 @@ def register_route_backend_groups(app):
             SELECT a.timestamp, a.created_at
             FROM a
             WHERE a.workspace_context.group_id = @groupId
-            AND a.timestamp >= @startDate
+            AND (
+                (IS_DEFINED(a.timestamp) AND a.timestamp >= @startDate AND a.timestamp <= @endDate)
+                OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate)
+            )
             AND a.activity_type = 'document_creation'
         """
         try:
@@ -1080,14 +1099,10 @@ def register_route_backend_groups(app):
             for item in activity_iter:
                 timestamp = item.get("timestamp") or item.get("created_at")
                 if timestamp:
-                    try:
-                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        day_date = dt.strftime("%m/%d")
-                        if day_date in doc_activity_labels:
-                            idx = doc_activity_labels.index(day_date)
-                            doc_upload_data[idx] += 1
-                    except Exception as e:
-                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+                    date_key = timestamp_to_stats_date_key(timestamp)
+                    idx = date_index_by_key.get(date_key)
+                    if idx is not None:
+                        doc_upload_data[idx] += 1
         except Exception as e:
             debug_print(f"[GROUP_STATS] Error querying document uploads: {e}")
 
@@ -1096,7 +1111,10 @@ def register_route_backend_groups(app):
             SELECT a.timestamp, a.created_at
             FROM a
             WHERE a.workspace_context.group_id = @groupId
-            AND a.timestamp >= @startDate
+            AND (
+                (IS_DEFINED(a.timestamp) AND a.timestamp >= @startDate AND a.timestamp <= @endDate)
+                OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate)
+            )
             AND a.activity_type = 'document_deletion'
         """
         try:
@@ -1108,14 +1126,10 @@ def register_route_backend_groups(app):
             for item in delete_iter:
                 timestamp = item.get("timestamp") or item.get("created_at")
                 if timestamp:
-                    try:
-                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        day_date = dt.strftime("%m/%d")
-                        if day_date in doc_activity_labels:
-                            idx = doc_activity_labels.index(day_date)
-                            doc_delete_data[idx] += 1
-                    except Exception as e:
-                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+                    date_key = timestamp_to_stats_date_key(timestamp)
+                    idx = date_index_by_key.get(date_key)
+                    if idx is not None:
+                        doc_delete_data[idx] += 1
         except Exception as e:
             debug_print(f"[GROUP_STATS] Error querying document deletes: {e}")
 
@@ -1124,7 +1138,10 @@ def register_route_backend_groups(app):
             SELECT a.timestamp, a.created_at, a.usage
             FROM a
             WHERE a.workspace_context.group_id = @groupId
-            AND a.timestamp >= @startDate
+            AND (
+                (IS_DEFINED(a.timestamp) AND a.timestamp >= @startDate AND a.timestamp <= @endDate)
+                OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate)
+            )
             AND a.activity_type = 'token_usage'
         """
         try:
@@ -1136,16 +1153,12 @@ def register_route_backend_groups(app):
             for item in token_activity_iter:
                 timestamp = item.get("timestamp") or item.get("created_at")
                 if timestamp:
-                    try:
-                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        day_date = dt.strftime("%m/%d")
-                        if day_date in token_usage_labels:
-                            idx = token_usage_labels.index(day_date)
-                            usage = item.get("usage", {})
-                            tokens = usage.get("total_tokens", 0)
-                            token_usage_data[idx] += tokens
-                    except Exception as e:
-                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+                    date_key = timestamp_to_stats_date_key(timestamp)
+                    idx = date_index_by_key.get(date_key)
+                    if idx is not None:
+                        usage = item.get("usage", {})
+                        tokens = usage.get("total_tokens", 0)
+                        token_usage_data[idx] += tokens
         except Exception as e:
             debug_print(f"[GROUP_STATS] Error querying token usage: {e}")
 
@@ -1167,7 +1180,9 @@ def register_route_backend_groups(app):
             "tokenUsage": {
                 "labels": token_usage_labels,
                 "data": token_usage_data
-            }
+            },
+            "dateRange": [day['date'] for day in date_series],
+            "window": stats_window_response_payload(stats_window)
         }
 
         return jsonify(stats), 200

@@ -16,6 +16,9 @@ STYLE
 Always conform to the coding styles defined in styleguide.md in the root of the repo when generating code. If the styleguide.md is missing, try to check the readme.md in the repo root. If readme.md is missing or contains no useful style information, use the default style of the language. If the default style is not defined, follow best practices, accessibility guidelines, and readability.
 Use @terminal when answering questions about Git.
 
+FRONTEND ASSETS
+Browser runtime JavaScript must always be served from a local SimpleChat static asset. Do not add CDN-hosted JavaScript, dynamic imports, worker scripts, or JavaScript companion assets to app templates, static JavaScript, static CSS, or frontend routes. Vendor pinned local copies under `application/single_app/static/`, reference them with local static paths, and keep CSP aligned with local-only script/style sources. See `.github/instructions/local_browser_assets.instructions.md` for the full rule.
+
 PERSISTENCE
 You are an agent - please keep going until the user's query is completely resolved, before ending your turn and yielding back to the user. Only terminate your turn when you are sure that the problem is solved.
  

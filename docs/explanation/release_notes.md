@@ -4,6 +4,39 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.112)**
+
+#### New Features
+
+*   **Conversation Feed Pagination**
+    *   Added a paged conversation feed so chat startup loads pinned conversations, unread conversations, and the first 20 recent conversations instead of pulling every accessible conversation into the browser.
+    *   Added load-more and near-bottom scroll loading for both the main conversation list and docked sidebar, with backend-driven title search that is not limited to the currently loaded page.
+    *   Hidden conversations are excluded from the default feed and reloaded only when users enable the hidden-conversation toggle.
+    *   (Ref: `route_backend_conversations.py`, `functions_conversation_feed.py`, `chat-conversations.js`, `chat-sidebar-conversations.js`, `CONVERSATION_FEED_PAGINATION.md`)
+
+*   **Group File Share Approval Notifications**
+    *   Added notifications when personal and group documents are shared, approved, or denied so recipients know when a file needs review and share owners know the outcome.
+    *   Group document shares now require approval by the receiving group's Owners, Admins, or Document Managers before the file becomes searchable in that group.
+    *   Receiving groups now see Approve or Remove actions for shared files, cannot delete the owner group's document, and cannot view the owner group's shared-recipient list.
+    *   (Ref: group document sharing approval, `route_backend_group_documents.py`, `route_backend_documents.py`, `functions_notifications.py`, `group_workspaces.html`, `GROUP_FILE_SHARE_APPROVAL_NOTIFICATIONS.md`)
+
+#### User Interface Enhancements
+
+*   **Control Center Group Token Totals**
+    *   Added all-time group token usage totals to the Control Center Group Management table so admins can compare group usage alongside members, status, and document metrics.
+    *   Included the same token total in the group management modal and CSV export for consistent reporting.
+    *   (Ref: Control Center group management, group token usage aggregation, `route_backend_control_center.py`, `control-center.js`, `control_center.html`)
+
+### **(v0.241.111)**
+
+#### New Features
+
+*   **Stats Time Windows and CSV Exports**
+    *   Added 7-day, 30-day, 90-day, and custom date windows to personal profile stats, group stats, and public workspace stats so these pages match the Control Center activity-trends experience.
+    *   Added CSV export actions for personal, group, and public stats with selectable metric sections and matching predefined or custom export windows.
+    *   Centralized stats window parsing and daily bucket generation for consistent labels, chart ranges, and backend filtering across all three stats surfaces.
+    *   (Ref: profile stats, group stats, public workspace stats, `functions_stats_windows.py`, `route_frontend_profile.py`, `route_backend_groups.py`, `route_backend_public_workspaces.py`)
+
 ### **(v0.241.106)**
 
 #### New Features

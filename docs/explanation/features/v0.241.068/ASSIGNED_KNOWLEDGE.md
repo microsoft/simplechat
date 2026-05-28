@@ -8,6 +8,12 @@ Updated in version: **0.241.071**
 
 Updated in version: **0.241.087**
 
+Updated in version: **0.241.117**
+
+Updated in version: **0.241.118**
+
+Updated in version: **0.241.119**
+
 ## Overview
 
 Assigned Knowledge lets an agent creator bind an agent to a governed set of workspace and web knowledge. When the agent is selected in chat, document search and assigned URL review are forced on from the configured knowledge sources. Agent creators can optionally allow users to add their own workspace documents as task-specific context alongside the assigned baseline.
@@ -94,13 +100,15 @@ No new app-level setting is required. Each agent stores:
 1. Open the agent create or edit modal.
 2. Go to the Knowledge step.
 3. Enable Assigned Knowledge.
-4. Use the searchable Available and Selected lists to choose sources, optional dynamic tags, and optional explicit documents.
+4. Use Source Workspaces to define the document pool, then optionally add Tag Limits or Specific Documents to narrow the final active set.
 5. Add optional Web Sources by pasting one or more URLs and choosing Review URL or Deep Research mode.
 6. Optionally enable User Workspace Context and choose whether users can Search, Analyze, and Compare with their own selected workspace documents.
 7. Save the agent.
 8. Select the agent in chat to force the assigned document and assigned URL context.
 
-The Knowledge step includes a Resolved Documents preview that shows the current union of explicit documents and documents matched by selected tags within the selected sources. Web Sources are listed separately because they are live reviewed evidence, not indexed workspace documents.
+The Knowledge step includes an Active Documents preview that shows the final indexed documents the agent will use from the selected source workspaces. With only source workspaces selected, every document in those sources is active. Tag limits narrow the pool to documents that match the selected tag set, and specific documents are included explicitly alongside tag matches. The source workspace picker lists all public workspaces, including public workspaces hidden from the user's normal directory view, so agent creators can find them through search without changing their personal public workspace selector. Web Sources are listed separately because they are live reviewed evidence, not indexed workspace documents.
+
+When users ask an Assigned Knowledge agent what documents, files, sources, or assigned knowledge it can access, chat injects the complete active document inventory so the answer can include the exact active document count and list rather than only the top retrieved citations. Personal agents remain personal conversations even when their Assigned Knowledge comes from public workspaces; the assigned public workspace is tracked as additional locked context so the personal agent remains selectable on later turns.
 
 When Assigned Knowledge is enabled for the selected agent, the chat workspace picker no longer displays the assigned sources as a read-only selection. If User Workspace Context is disabled, the Workspaces button acts as an Assigned Knowledge indicator and user document selections are ignored by the backend. If User Workspace Context is enabled, the Workspaces panel remains available for task-specific user selections while Assigned Knowledge still runs as the agent baseline.
 

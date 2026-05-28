@@ -11,6 +11,7 @@ from functions_file_sync import (
     apply_synced_document_delete_action,
     build_synced_document_delete_guard,
 )
+from functions_notifications import create_notification, delete_notifications_by_metadata
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
@@ -87,6 +88,78 @@ def _build_citation_key_candidates(citation_id, document_id=None, page_number=No
             _append_unique_lookup_value(candidates, seen_values, f'{normalized_document_id}_{locator_value}')
 
     return candidates
+
+
+PERSONAL_DOCUMENT_SHARE_PENDING_NOTIFICATION_TYPES = ['personal_document_share_pending']
+
+
+def _get_document_display_name(document_item):
+    return str(
+        (document_item or {}).get('title')
+        or (document_item or {}).get('file_name')
+        or 'Document'
+    ).strip()
+
+
+def _clear_personal_document_share_pending_notifications(document_id, target_user_id):
+    delete_notifications_by_metadata(
+        metadata_filters={
+            'share_scope': 'personal',
+            'document_id': document_id,
+            'target_user_id': target_user_id,
+        },
+        notification_types=PERSONAL_DOCUMENT_SHARE_PENDING_NOTIFICATION_TYPES,
+    )
+
+
+def _create_personal_document_share_pending_notification(document_item, owner_user_id, target_user_id):
+    document_name = _get_document_display_name(document_item)
+    return create_notification(
+        user_id=target_user_id,
+        notification_type='personal_document_share_pending',
+        title='Shared document needs approval',
+        message=f'"{document_name}" was shared with you and needs approval before it can be searched.',
+        link_url='/workspace',
+        link_context={
+            'workspace_type': 'personal',
+            'document_id': document_item.get('id'),
+        },
+        metadata={
+            'share_scope': 'personal',
+            'document_id': document_item.get('id'),
+            'document_name': document_name,
+            'owner_user_id': owner_user_id,
+            'target_user_id': target_user_id,
+        },
+    )
+
+
+def _create_personal_document_share_decision_notification(document_item, target_user_id, decision):
+    owner_user_id = (document_item or {}).get('user_id')
+    if not owner_user_id:
+        return None
+
+    normalized_decision = 'approved' if decision == 'approved' else 'denied'
+    document_name = _get_document_display_name(document_item)
+    return create_notification(
+        user_id=owner_user_id,
+        notification_type=f'personal_document_share_{normalized_decision}',
+        title=f'Document share {normalized_decision}',
+        message=f'Your shared document "{document_name}" was {normalized_decision}.',
+        link_url='/workspace',
+        link_context={
+            'workspace_type': 'personal',
+            'document_id': document_item.get('id'),
+        },
+        metadata={
+            'share_scope': 'personal',
+            'document_id': document_item.get('id'),
+            'document_name': document_name,
+            'owner_user_id': owner_user_id,
+            'target_user_id': target_user_id,
+            'decision': normalized_decision,
+        },
+    )
 
 
 def _escape_citation_odata_literal(value):
@@ -1636,21 +1709,39 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'user_id is required'}), 400
         
         try:
-            # Check if user owns the document
-            doc = get_document(user_id, document_id)
-            if not doc:
+            document_item = cosmos_user_documents_container.read_item(
+                item=document_id,
+                partition_key=document_id,
+            )
+            if document_item.get('user_id') != user_id:
                 return jsonify({'error': 'Document not found or access denied'}), 404
+
+            already_shared = any(
+                str(entry).startswith(f"{target_user_id},")
+                for entry in document_item.get('shared_user_ids', [])
+            )
             
             # Share the document
             success = share_document_with_user(document_id, user_id, target_user_id)
             if success:
+                if not already_shared:
+                    refreshed_document = cosmos_user_documents_container.read_item(
+                        item=document_id,
+                        partition_key=document_id,
+                    )
+                    _create_personal_document_share_pending_notification(
+                        refreshed_document,
+                        user_id,
+                        target_user_id,
+                    )
                 # Invalidate cache for both owner and target user
                 invalidate_personal_search_cache(user_id)
                 invalidate_personal_search_cache(target_user_id)
                 return jsonify({'message': 'Document shared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to share document'}), 500
-                
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
             return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
 
@@ -1672,21 +1763,25 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'user_id is required'}), 400
         
         try:
-            # Check if user owns the document
-            doc = get_document(user_id, document_id)
-            if not doc:
+            document_item = cosmos_user_documents_container.read_item(
+                item=document_id,
+                partition_key=document_id,
+            )
+            if document_item.get('user_id') != user_id:
                 return jsonify({'error': 'Document not found or access denied'}), 404
             
             # Unshare the document
             success = unshare_document_from_user(document_id, user_id, target_user_id)
             if success:
+                _clear_personal_document_share_pending_notifications(document_id, target_user_id)
                 # Invalidate cache for both owner and target user
                 invalidate_personal_search_cache(user_id)
                 invalidate_personal_search_cache(target_user_id)
                 return jsonify({'message': 'Document unshared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to unshare document'}), 500
-                
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
             return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
 
@@ -1771,42 +1866,41 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'User not authenticated'}), 401
     
         try:
-            # Always get the document and extract the dict robustly
-            doc_response = get_document(user_id, document_id)
-            doc = None
-            status_code = None
-    
-            # Handle (response, status) tuple
-            if isinstance(doc_response, tuple):
-                resp, status_code = doc_response
-                if hasattr(resp, "get_json"):
-                    doc = resp.get_json()
-                else:
-                    doc = resp
-            elif hasattr(doc_response, "status_code") and hasattr(doc_response, "get_json"):
-                status_code = doc_response.status_code
-                doc = doc_response.get_json()
-            else:
-                doc = doc_response
-    
-            if status_code is not None and status_code != 200:
-                return jsonify({'error': 'Document not found or access denied'}), 404
-            if not doc or not isinstance(doc, dict):
-                return jsonify({'error': 'Document not found or access denied'}), 404
+            doc = cosmos_user_documents_container.read_item(
+                item=document_id,
+                partition_key=document_id,
+            )
     
             # Check if user is the owner - owners cannot remove themselves
             if doc.get('user_id') == user_id:
                 return jsonify({'error': 'Document owners cannot remove themselves from their own documents'}), 400
+
+            shared_entry = next(
+                (
+                    str(entry)
+                    for entry in doc.get('shared_user_ids', [])
+                    if str(entry).startswith(f"{user_id},")
+                ),
+                None,
+            )
+            if not shared_entry:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+
+            was_pending = shared_entry.endswith(',not_approved')
     
             # Remove user from shared_user_ids (pass user_id as both requester and target for self-removal)
             success = unshare_document_from_user(document_id, user_id, user_id)
             if success:
+                _clear_personal_document_share_pending_notifications(document_id, user_id)
+                if was_pending:
+                    _create_personal_document_share_decision_notification(doc, user_id, 'denied')
                 # Invalidate cache for user who removed themselves
                 invalidate_personal_search_cache(user_id)
                 return jsonify({'message': 'Successfully removed from shared document'}), 200
             else:
                 return jsonify({'error': 'Failed to remove from shared document'}), 500
-    
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
             debug_print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
             return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500
@@ -1866,8 +1960,12 @@ def register_route_backend_documents(app):
             
             # Invalidate cache for user who approved (their search results changed)
             if updated:
+                _clear_personal_document_share_pending_notifications(document_id, user_id)
+                _create_personal_document_share_decision_notification(document_item, user_id, 'approved')
                 invalidate_personal_search_cache(user_id)
             
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500

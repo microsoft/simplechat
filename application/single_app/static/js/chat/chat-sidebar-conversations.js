@@ -26,6 +26,7 @@ let pendingSidebarReload = false; // Track if a reload is pending
 let sidebarWorkflowSectionExpanded = false;
 let sidebarWorkflowSectionCollapsed = false;
 let sidebarVisibleConversations = [];
+let sidebarHasMoreConversations = false;
 
 function getShortGroupLabel(name) {
   const normalizedName = (name || '').trim();
@@ -200,7 +201,36 @@ function setSidebarListMessage(container, message) {
     return;
   }
 
-  container.innerHTML = `<div class="text-center p-2 text-muted small">${message}</div>`;
+  const messageEl = document.createElement('div');
+  messageEl.classList.add('text-center', 'p-2', 'text-muted', 'small');
+  messageEl.textContent = message;
+  container.replaceChildren(messageEl);
+}
+
+function createSidebarLoadMoreButton() {
+  const loadMoreButton = document.createElement('button');
+  loadMoreButton.type = 'button';
+  loadMoreButton.classList.add('btn', 'btn-sm', 'btn-link', 'text-muted', 'w-100', 'py-2');
+  loadMoreButton.dataset.conversationLoadMore = 'true';
+  loadMoreButton.textContent = 'Load more conversations';
+  loadMoreButton.addEventListener('click', event => {
+    event.preventDefault();
+    if (window.chatConversations?.loadMoreConversations) {
+      void window.chatConversations.loadMoreConversations();
+    }
+  });
+  return loadMoreButton;
+}
+
+function maybeLoadMoreSidebarConversationsFromScroll(container) {
+  if (!container || !sidebarHasMoreConversations || !window.chatConversations?.loadMoreConversations) {
+    return;
+  }
+
+  const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+  if (distanceFromBottom <= 120) {
+    void window.chatConversations.loadMoreConversations();
+  }
 }
 
 function applyWorkflowSectionCollapsedState(isCollapsed = false) {
@@ -274,6 +304,10 @@ function renderSidebarConversationSections(visibleConversations = [], totalConve
     setSidebarListMessage(sidebarConversationsList, 'No conversations yet.');
   }
 
+  if (sidebarHasMoreConversations) {
+    sidebarConversationsList.appendChild(createSidebarLoadMoreButton());
+  }
+
   renderWorkflowConversations(workflowConversations, isSearchActive);
 }
 
@@ -322,7 +356,9 @@ function resetSidebarConversationSections(showLoadingState = true) {
   }
 }
 
-function renderSidebarConversationPayload(mergedConversations = []) {
+function renderSidebarConversationPayload(mergedConversations = [], feedInfo = {}) {
+  sidebarHasMoreConversations = Boolean(feedInfo.hasMore);
+
   if (mergedConversations.length === 0) {
     renderSidebarConversationSections([], 0);
     dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
@@ -383,7 +419,7 @@ function renderSidebarConversationPayload(mergedConversations = []) {
 
 // Load conversations for the sidebar
 export function loadSidebarConversations(options = {}) {
-  const { conversations = null } = options;
+  const { conversations = null, hasMore = false } = options;
 
   if (!sidebarConversationsList) return;
 
@@ -391,8 +427,14 @@ export function loadSidebarConversations(options = {}) {
     pendingSidebarReload = false;
     isLoadingSidebarConversations = false;
     resetSidebarConversationSections(false);
-    renderSidebarConversationPayload(conversations);
+    renderSidebarConversationPayload(conversations, { hasMore });
     return Promise.resolve(conversations);
+  }
+
+  if (window.chatConversations?.loadConversations) {
+    pendingSidebarReload = false;
+    isLoadingSidebarConversations = false;
+    return window.chatConversations.loadConversations({ syncSidebar: true });
   }
   
   // If already loading, mark that we need to reload again after current load finishes
@@ -1188,6 +1230,10 @@ export function enableSidebarTitleEdit(conversationId) {
 document.addEventListener('DOMContentLoaded', () => {
   // Only initialize if we're on the chats page and elements exist
   if (sidebarConversationsList) {
+    sidebarConversationsList.addEventListener('scroll', () => {
+      maybeLoadMoreSidebarConversationsFromScroll(sidebarConversationsList);
+    });
+
     // Handle new chat button click
     if (sidebarNewChatBtn) {
       sidebarNewChatBtn.addEventListener('click', () => {
@@ -1315,8 +1361,11 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
         
-        // Reload conversations to apply filter
-        loadSidebarConversations();
+        if (window.chatConversations?.setShowHiddenConversations) {
+          window.chatConversations.setShowHiddenConversations(sidebarShowHiddenConversations);
+        } else {
+          loadSidebarConversations();
+        }
       });
     }
   }

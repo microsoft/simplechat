@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
 Functional test for Deep Research query planning and ledger metadata.
-Version: 0.241.066
+Version: 0.241.116
 Implemented in: 0.241.051
-Updated in: 0.241.066
+Updated in: 0.241.116
 
 This test ensures Deep Research clamps admin budgets, caps user-provided URLs,
-plans bounded current-message-only query variants, and records a research ledger
-without exposing raw page content as instructions.
+plans bounded current-message-only query variants with current-date context, and
+records a research ledger without exposing raw page content as instructions.
 """
 
+from datetime import datetime, timezone
 import os
 import sys
 
@@ -88,6 +89,44 @@ def test_deterministic_query_plan_is_bounded():
     return True
 
 
+def test_deep_research_query_plan_includes_temporal_context():
+    """Validate temporal Deep Research requests receive current-date query bias."""
+    from functions_source_review import build_deep_research_query_plan
+
+    fixed_now = datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc)
+    user_message = 'What security events can I participate in to present or be interviewed at?'
+    plan = build_deep_research_query_plan(
+        settings={
+            'deep_research_max_search_queries_per_turn': 5,
+            'deep_research_enable_query_planning': False,
+        },
+        user_message=user_message,
+        base_query=user_message,
+        current_datetime=fixed_now,
+    )
+
+    query_text = ' '.join(item['query'] for item in plan.get('queries', []))
+    assert plan['temporal_context']['current_date'] == '2026-05-28'
+    assert '2026' in query_text
+    assert 'upcoming' in query_text.lower() or 'after may 28, 2026' in query_text.lower()
+    assert 'call for speakers' in query_text.lower() or 'cfp' in query_text.lower()
+    return True
+
+
+def test_research_search_prompt_includes_temporal_context():
+    """Validate web-search agent prompts receive current-date context."""
+    from functions_source_review import build_research_search_prompt
+
+    fixed_now = datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc)
+    prompt = build_research_search_prompt('Find upcoming security conferences.', fixed_now)
+
+    assert 'Current UTC date: 2026-05-28 (May 28, 2026).' in prompt
+    assert 'Search request:' in prompt
+    assert 'Find upcoming security conferences.' in prompt
+    assert 'on or after the current date' in prompt
+    return True
+
+
 def test_deep_research_ledger_and_markdown():
     """Validate ledger metadata summarizes reviewed and skipped pages."""
     from functions_source_review import build_deep_research_ledger, build_deep_research_ledger_markdown
@@ -122,7 +161,16 @@ def test_deep_research_ledger_and_markdown():
     ledger = build_deep_research_ledger(
         settings={'deep_research_max_user_urls_per_turn': 10},
         user_message='Review https://example.com/news',
-        query_plan={'queries': [{'query': 'Review https://example.com/news', 'reason': 'base', 'source': 'base'}]},
+        query_plan={
+            'temporal_context': {
+                'current_date': '2026-05-28',
+                'current_time_utc': '2026-05-28T15:30:00+00:00',
+                'current_year': '2026',
+                'display_date': 'May 28, 2026',
+                'timezone': 'UTC',
+            },
+            'queries': [{'query': 'Review https://example.com/news', 'reason': 'base', 'source': 'base'}],
+        },
         web_search_runs=[{'query': 'Review https://example.com/news', 'success': True, 'new_seed_url_count': 1}],
         web_search_citations=[{'url': 'https://example.com/news/release', 'title': 'Example Release'}],
         source_review_result=source_review_result,
@@ -130,9 +178,11 @@ def test_deep_research_ledger_and_markdown():
     markdown = build_deep_research_ledger_markdown(ledger)
 
     assert ledger['direct_urls']['count'] == 1
+    assert ledger['temporal_context']['current_date'] == '2026-05-28'
     assert ledger['reviewed_pages'][0]['url'] == 'https://example.com/news/release'
     assert ledger['skipped_pages'][0]['reason'] == 'robots_txt_disallowed'
     assert '# Deep Research Ledger' in markdown
+    assert 'Current UTC date: 2026-05-28' in markdown
     assert 'Example Release' in markdown
     assert 'robots_txt_disallowed' in markdown
     return True
@@ -144,6 +194,8 @@ def run_all_tests():
         test_deep_research_config_clamps,
         test_user_url_cap_applies_before_search_citations,
         test_deterministic_query_plan_is_bounded,
+        test_deep_research_query_plan_includes_temporal_context,
+        test_research_search_prompt_includes_temporal_context,
         test_deep_research_ledger_and_markdown,
     ]
     results = []

@@ -6,6 +6,12 @@ from functions_appinsights import log_event
 from functions_authentication import *
 from functions_debug import debug_print
 from functions_settings import get_settings, get_user_settings, update_user_settings
+from functions_stats_windows import (
+    build_stats_date_series,
+    resolve_stats_time_window,
+    stats_window_response_payload,
+    timestamp_to_stats_date_key,
+)
 from semantic_kernel_fact_memory_store import FactMemoryStore
 from swagger_wrapper import swagger_route, get_auth_security
 import traceback
@@ -126,22 +132,24 @@ def register_route_frontend_profile(app):
     @user_required
     def get_user_activity_trends():
         """
-        Get time-series activity trends for the current user over the last 30 days.
+        Get time-series activity trends for the current user's selected stats window.
         Returns data for login activity, conversation creation, document uploads, and token usage.
         """
         try:
-            from datetime import datetime, timezone, timedelta
             from collections import defaultdict
-            from config import cosmos_activity_logs_container, cosmos_conversations_container
-            from config import cosmos_user_documents_container, cosmos_messages_container
+            from config import cosmos_activity_logs_container
             
             user_id = get_current_user_id()
             if not user_id:
                 return jsonify({"error": "Unable to identify user"}), 401
             
-            # Calculate date range for last 30 days
-            end_date = datetime.now(timezone.utc)
-            start_date = end_date - timedelta(days=30)
+            try:
+                stats_window = resolve_stats_time_window(request.args)
+            except ValueError as ex:
+                return jsonify({"error": str(ex)}), 400
+
+            start_date = stats_window['start_date_iso']
+            end_date = stats_window['end_date_iso']
             
             # Initialize data structures for daily aggregation
             logins_by_date = defaultdict(int)
@@ -157,11 +165,15 @@ def register_route_frontend_profile(app):
                     SELECT c.timestamp, c.created_at FROM c 
                     WHERE c.user_id = @user_id 
                     AND c.activity_type = 'user_login'
-                    AND (c.timestamp >= @start_date OR c.created_at >= @start_date)
+                    AND (
+                        (IS_DEFINED(c.timestamp) AND c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                        OR (IS_DEFINED(c.created_at) AND c.created_at >= @start_date AND c.created_at <= @end_date)
+                    )
                 """
                 login_params = [
                     {"name": "@user_id", "value": user_id},
-                    {"name": "@start_date", "value": start_date.isoformat()}
+                    {"name": "@start_date", "value": start_date},
+                    {"name": "@end_date", "value": end_date}
                 ]
                 login_records = list(cosmos_activity_logs_container.query_items(
                     query=login_query,
@@ -172,12 +184,9 @@ def register_route_frontend_profile(app):
                 for record in login_records:
                     timestamp = record.get('timestamp') or record.get('created_at')
                     if timestamp:
-                        try:
-                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                            date_key = dt.strftime('%Y-%m-%d')
+                        date_key = timestamp_to_stats_date_key(timestamp)
+                        if date_key:
                             logins_by_date[date_key] += 1
-                        except Exception as ex:
-                            pass
             except Exception as e:
                 debug_print(f"Error fetching login trends: {e}")
                 log_event(f"Error fetching login trends: {str(e)}", level=logging.ERROR)
@@ -188,11 +197,15 @@ def register_route_frontend_profile(app):
                     SELECT c.timestamp, c.created_at FROM c 
                     WHERE c.user_id = @user_id 
                     AND c.activity_type = 'conversation_creation'
-                    AND (c.timestamp >= @start_date OR c.created_at >= @start_date)
+                    AND (
+                        (IS_DEFINED(c.timestamp) AND c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                        OR (IS_DEFINED(c.created_at) AND c.created_at >= @start_date AND c.created_at <= @end_date)
+                    )
                 """
                 conv_params = [
                     {"name": "@user_id", "value": user_id},
-                    {"name": "@start_date", "value": start_date.isoformat()}
+                    {"name": "@start_date", "value": start_date},
+                    {"name": "@end_date", "value": end_date}
                 ]
                 conv_records = list(cosmos_activity_logs_container.query_items(
                     query=conv_query,
@@ -203,12 +216,9 @@ def register_route_frontend_profile(app):
                 for record in conv_records:
                     timestamp = record.get('timestamp') or record.get('created_at')
                     if timestamp:
-                        try:
-                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                            date_key = dt.strftime('%Y-%m-%d')
+                        date_key = timestamp_to_stats_date_key(timestamp)
+                        if date_key:
                             conversations_by_date[date_key] += 1
-                        except Exception as ex:
-                            pass
             except Exception as e:
                 debug_print(f"Error fetching conversation trends: {e}")
                 log_event(f"Error fetching conversation trends: {str(e)}", level=logging.ERROR)
@@ -219,7 +229,10 @@ def register_route_frontend_profile(app):
                     SELECT c.timestamp, c.created_at FROM c 
                     WHERE c.user_id = @user_id 
                     AND c.activity_type = 'conversation_deletion'
-                    AND (c.timestamp >= @start_date OR c.created_at >= @start_date)
+                    AND (
+                        (IS_DEFINED(c.timestamp) AND c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                        OR (IS_DEFINED(c.created_at) AND c.created_at >= @start_date AND c.created_at <= @end_date)
+                    )
                 """
                 conv_delete_records = list(cosmos_activity_logs_container.query_items(
                     query=conv_delete_query,
@@ -230,12 +243,9 @@ def register_route_frontend_profile(app):
                 for record in conv_delete_records:
                     timestamp = record.get('timestamp') or record.get('created_at')
                     if timestamp:
-                        try:
-                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                            date_key = dt.strftime('%Y-%m-%d')
+                        date_key = timestamp_to_stats_date_key(timestamp)
+                        if date_key:
                             conversations_delete_by_date[date_key] += 1
-                        except Exception as ex:
-                            pass
             except Exception as e:
                 debug_print(f"Error fetching conversation deletion trends: {e}")
                 log_event(f"Error fetching conversation deletion trends: {str(e)}", level=logging.ERROR)
@@ -246,11 +256,15 @@ def register_route_frontend_profile(app):
                     SELECT c.timestamp, c.created_at FROM c 
                     WHERE c.user_id = @user_id 
                     AND c.activity_type = 'document_creation'
-                    AND (c.timestamp >= @start_date OR c.created_at >= @start_date)
+                    AND (
+                        (IS_DEFINED(c.timestamp) AND c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                        OR (IS_DEFINED(c.created_at) AND c.created_at >= @start_date AND c.created_at <= @end_date)
+                    )
                 """
                 doc_params = [
                     {"name": "@user_id", "value": user_id},
-                    {"name": "@start_date", "value": start_date.isoformat()}
+                    {"name": "@start_date", "value": start_date},
+                    {"name": "@end_date", "value": end_date}
                 ]
                 doc_records = list(cosmos_activity_logs_container.query_items(
                     query=doc_upload_query,
@@ -261,12 +275,9 @@ def register_route_frontend_profile(app):
                 for record in doc_records:
                     timestamp = record.get('timestamp') or record.get('created_at')
                     if timestamp:
-                        try:
-                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                            date_key = dt.strftime('%Y-%m-%d')
+                        date_key = timestamp_to_stats_date_key(timestamp)
+                        if date_key:
                             documents_upload_by_date[date_key] += 1
-                        except Exception as ex:
-                            pass
             except Exception as e:
                 debug_print(f"Error fetching document upload trends: {e}")
                 log_event(f"Error fetching document upload trends: {str(e)}", level=logging.ERROR)
@@ -277,7 +288,10 @@ def register_route_frontend_profile(app):
                     SELECT c.timestamp, c.created_at FROM c 
                     WHERE c.user_id = @user_id 
                     AND c.activity_type = 'document_deletion'
-                    AND (c.timestamp >= @start_date OR c.created_at >= @start_date)
+                    AND (
+                        (IS_DEFINED(c.timestamp) AND c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                        OR (IS_DEFINED(c.created_at) AND c.created_at >= @start_date AND c.created_at <= @end_date)
+                    )
                 """
                 doc_delete_records = list(cosmos_activity_logs_container.query_items(
                     query=doc_delete_query,
@@ -288,12 +302,9 @@ def register_route_frontend_profile(app):
                 for record in doc_delete_records:
                     timestamp = record.get('timestamp') or record.get('created_at')
                     if timestamp:
-                        try:
-                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                            date_key = dt.strftime('%Y-%m-%d')
+                        date_key = timestamp_to_stats_date_key(timestamp)
+                        if date_key:
                             documents_delete_by_date[date_key] += 1
-                        except Exception as ex:
-                            pass
             except Exception as e:
                 debug_print(f"Error fetching document delete trends: {e}")
                 log_event(f"Error fetching document delete trends: {str(e)}", level=logging.ERROR)
@@ -304,11 +315,15 @@ def register_route_frontend_profile(app):
                     SELECT c.timestamp, c.created_at, c.usage FROM c 
                     WHERE c.user_id = @user_id 
                     AND c.activity_type = 'token_usage'
-                    AND (c.timestamp >= @start_date OR c.created_at >= @start_date)
+                    AND (
+                        (IS_DEFINED(c.timestamp) AND c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                        OR (IS_DEFINED(c.created_at) AND c.created_at >= @start_date AND c.created_at <= @end_date)
+                    )
                 """
                 token_params = [
                     {"name": "@user_id", "value": user_id},
-                    {"name": "@start_date", "value": start_date.isoformat()}
+                    {"name": "@start_date", "value": start_date},
+                    {"name": "@end_date", "value": end_date}
                 ]
                 token_records = list(cosmos_activity_logs_container.query_items(
                     query=token_query,
@@ -319,24 +334,19 @@ def register_route_frontend_profile(app):
                 for record in token_records:
                     timestamp = record.get('timestamp') or record.get('created_at')
                     if timestamp:
-                        try:
-                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                            date_key = dt.strftime('%Y-%m-%d')
-                            # Extract total tokens from usage field
+                        date_key = timestamp_to_stats_date_key(timestamp)
+                        if date_key:
                             usage = record.get('usage', {})
                             total_tokens = usage.get('total_tokens', 0)
                             tokens_by_date[date_key] += total_tokens
-                        except Exception as ex:
-                            pass
             except Exception as e:
                 debug_print(f"Error fetching token usage trends: {e}")
                 log_event(f"Error fetching token usage trends: {str(e)}", level=logging.ERROR)
             
-            # Generate complete date range (last 30 days)
-            date_range = []
-            for i in range(30):
-                date = end_date - timedelta(days=29-i)
-                date_range.append(date.strftime('%Y-%m-%d'))
+            date_range = [day['date'] for day in build_stats_date_series(
+                stats_window['start_date'],
+                stats_window['end_date'],
+            )]
             
             # Format data for Chart.js
             logins_data = [{"date": date, "count": logins_by_date.get(date, 0)} for date in date_range]
@@ -366,7 +376,9 @@ def register_route_frontend_profile(app):
                 "conversations": conversations_data,
                 "documents": documents_data,
                 "tokens": tokens_data,
-                "storage": storage_data
+                "storage": storage_data,
+                "dateRange": date_range,
+                "window": stats_window_response_payload(stats_window)
             }), 200
             
         except Exception as e:

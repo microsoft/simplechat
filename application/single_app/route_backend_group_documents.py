@@ -25,6 +25,8 @@ PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES = [
     'approval_request_pending',
     'approval_request_pending_submitter',
 ]
+GROUP_DOCUMENT_SHARE_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+GROUP_DOCUMENT_SHARE_PENDING_NOTIFICATION_TYPES = ['group_document_share_pending']
 
 
 def _cleanup_group_generated_artifact_notifications(document_id, group_id):
@@ -43,6 +45,212 @@ def _get_generated_artifact_actor_name(user_info, fallback_user_id):
         str((user_info or {}).get('displayName') or '').strip()
         or str((user_info or {}).get('email') or '').strip()
         or fallback_user_id
+    )
+
+
+def _get_group_document_display_name(document_item):
+    return str(
+        (document_item or {}).get('title')
+        or (document_item or {}).get('file_name')
+        or 'Document'
+    ).strip()
+
+
+def _group_share_entry_matches(entry, group_id):
+    normalized_entry = str(entry or '')
+    return normalized_entry == group_id or normalized_entry.startswith(f"{group_id},")
+
+
+def _get_group_share_status(entry):
+    normalized_entry = str(entry or '')
+    if ',' not in normalized_entry:
+        return 'approved'
+    return normalized_entry.split(',', 1)[1] or 'unknown'
+
+
+def _find_group_share_entry(shared_group_ids, group_id):
+    for entry in shared_group_ids or []:
+        if _group_share_entry_matches(entry, group_id):
+            return str(entry)
+    return None
+
+
+def _set_group_share_status(shared_group_ids, group_id, status):
+    updated_entries = []
+    found = False
+    for entry in shared_group_ids or []:
+        if _group_share_entry_matches(entry, group_id):
+            if not found:
+                updated_entries.append(f"{group_id},{status}")
+                found = True
+            continue
+        updated_entries.append(entry)
+
+    if not found:
+        updated_entries.append(f"{group_id},{status}")
+
+    return updated_entries
+
+
+def _remove_group_share_entries(shared_group_ids, group_id):
+    return [
+        entry
+        for entry in shared_group_ids or []
+        if not _group_share_entry_matches(entry, group_id)
+    ]
+
+
+def _get_group_name(group_doc, fallback='Unknown Group'):
+    return str((group_doc or {}).get('name') or fallback).strip()
+
+
+def _get_group_share_reviewer_user_ids(group_doc):
+    reviewer_ids = []
+
+    owner_id = str((group_doc or {}).get('owner', {}).get('id') or '').strip()
+    if owner_id:
+        reviewer_ids.append(owner_id)
+
+    for role_key in ('admins', 'documentManagers'):
+        for user_id in (group_doc or {}).get(role_key, []) or []:
+            normalized_user_id = str(user_id or '').strip()
+            if normalized_user_id and normalized_user_id not in reviewer_ids:
+                reviewer_ids.append(normalized_user_id)
+
+    return reviewer_ids
+
+
+def _get_group_share_details(document_item):
+    details = document_item.get('document_share_details') if isinstance(document_item, dict) else None
+    if not isinstance(details, dict):
+        details = {}
+
+    group_details = details.get('groups')
+    if not isinstance(group_details, dict):
+        group_details = {}
+
+    details['groups'] = group_details
+    return details, group_details
+
+
+def _get_group_share_detail(document_item, target_group_id):
+    _, group_details = _get_group_share_details(document_item)
+    detail = group_details.get(target_group_id)
+    return detail if isinstance(detail, dict) else {}
+
+
+def _set_group_share_detail(document_item, target_group_id, updates):
+    details, group_details = _get_group_share_details(document_item)
+    existing_detail = group_details.get(target_group_id)
+    if not isinstance(existing_detail, dict):
+        existing_detail = {}
+
+    existing_detail.update(updates)
+    group_details[target_group_id] = existing_detail
+    details['groups'] = group_details
+    return details
+
+
+def _clear_group_document_share_pending_notifications(document_id, target_group_id):
+    delete_notifications_by_metadata(
+        metadata_filters={
+            'share_scope': 'group',
+            'document_id': document_id,
+            'target_group_id': target_group_id,
+        },
+        notification_types=GROUP_DOCUMENT_SHARE_PENDING_NOTIFICATION_TYPES,
+    )
+
+
+def _create_group_document_share_pending_notifications(
+    document_item,
+    source_group,
+    target_group,
+    shared_by_user_id,
+):
+    document_name = _get_group_document_display_name(document_item)
+    source_group_id = (source_group or {}).get('id')
+    target_group_id = (target_group or {}).get('id')
+    source_group_name = _get_group_name(source_group, 'the owning group')
+    target_group_name = _get_group_name(target_group, 'your group')
+    created_notifications = []
+
+    for reviewer_user_id in _get_group_share_reviewer_user_ids(target_group):
+        notification = create_notification(
+            user_id=reviewer_user_id,
+            notification_type='group_document_share_pending',
+            title='Group document share needs approval',
+            message=(
+                f'"{document_name}" was shared from {source_group_name} to '
+                f'{target_group_name} and needs approval before it can be searched.'
+            ),
+            link_url='/group_workspaces',
+            link_context={
+                'workspace_type': 'group',
+                'group_id': target_group_id,
+                'document_id': document_item.get('id'),
+            },
+            metadata={
+                'share_scope': 'group',
+                'document_id': document_item.get('id'),
+                'document_name': document_name,
+                'source_group_id': source_group_id,
+                'source_group_name': source_group_name,
+                'target_group_id': target_group_id,
+                'target_group_name': target_group_name,
+                'shared_by_user_id': shared_by_user_id,
+            },
+        )
+        if notification:
+            created_notifications.append(notification)
+
+    return created_notifications
+
+
+def _create_group_document_share_decision_notification(
+    document_item,
+    target_group_id,
+    decision,
+    decided_by_user_id,
+):
+    share_detail = _get_group_share_detail(document_item, target_group_id)
+    recipient_user_id = str(share_detail.get('shared_by_user_id') or '').strip()
+    source_group = find_group_by_id(document_item.get('group_id'))
+    target_group = find_group_by_id(target_group_id)
+
+    if not recipient_user_id:
+        recipient_user_id = str((source_group or {}).get('owner', {}).get('id') or '').strip()
+    if not recipient_user_id:
+        return None
+
+    normalized_decision = 'approved' if decision == 'approved' else 'denied'
+    document_name = _get_group_document_display_name(document_item)
+    target_group_name = _get_group_name(target_group, 'the receiving group')
+
+    return create_notification(
+        user_id=recipient_user_id,
+        notification_type=f'group_document_share_{normalized_decision}',
+        title=f'Group document share {normalized_decision}',
+        message=(
+            f'{target_group_name} {normalized_decision} the shared document '
+            f'"{document_name}".'
+        ),
+        link_url='/group_workspaces',
+        link_context={
+            'workspace_type': 'group',
+            'group_id': document_item.get('group_id'),
+            'document_id': document_item.get('id'),
+        },
+        metadata={
+            'share_scope': 'group',
+            'document_id': document_item.get('id'),
+            'document_name': document_name,
+            'source_group_id': document_item.get('group_id'),
+            'target_group_id': target_group_id,
+            'target_group_name': target_group_name,
+            'decision': normalized_decision,
+            'decided_by_user_id': decided_by_user_id,
+        },
     )
 
 def register_route_backend_group_documents(app):
@@ -199,11 +407,13 @@ def register_route_backend_group_documents(app):
             requested_ids = [gid.strip() for gid in group_ids_param.split(',') if gid.strip()]
             validated_group_ids = []
             for gid in requested_ids:
-                group_doc = find_group_by_id(gid)
-                if not group_doc:
-                    continue
-                role = get_user_role_in_group(group_doc, user_id)
-                if not role:
+                try:
+                    assert_group_role(
+                        user_id,
+                        gid,
+                        allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                    )
+                except (LookupError, PermissionError):
                     continue
                 validated_group_ids.append(gid)
 
@@ -217,12 +427,15 @@ def register_route_backend_group_documents(app):
             if not active_group_id:
                 return jsonify({'error': 'No active group selected'}), 400
 
-            group_doc = find_group_by_id(group_id=active_group_id)
-            if not group_doc:
+            try:
+                assert_group_role(
+                    user_id,
+                    active_group_id,
+                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                )
+            except LookupError:
                 return jsonify({'error': 'Active group not found'}), 404
-
-            role = get_user_role_in_group(group_doc, user_id)
-            if not role:
+            except PermissionError:
                 return jsonify({'error': 'You are not a member of the active group'}), 403
 
             validated_group_ids = [active_group_id]
@@ -250,17 +463,29 @@ def register_route_backend_group_documents(app):
         # --- 2) Build dynamic WHERE clause and parameters ---
         # Include documents owned by any validated group OR shared with any validated group
         if len(validated_group_ids) == 1:
-            group_condition = "(c.group_id = @group_id_0 OR ARRAY_CONTAINS(c.shared_group_ids, @group_id_0))"
-            query_params = [{"name": "@group_id_0", "value": validated_group_ids[0]}]
+            group_condition = (
+                "(c.group_id = @group_id_0 "
+                "OR ARRAY_CONTAINS(c.shared_group_ids, @group_id_0) "
+                "OR EXISTS(SELECT VALUE s FROM s IN c.shared_group_ids WHERE STARTSWITH(s, @group_id_0_prefix)))"
+            )
+            query_params = [
+                {"name": "@group_id_0", "value": validated_group_ids[0]},
+                {"name": "@group_id_0_prefix", "value": f"{validated_group_ids[0]},"},
+            ]
         else:
             own_parts = []
             shared_parts = []
             query_params = []
             for i, gid in enumerate(validated_group_ids):
                 param_name = f"@group_id_{i}"
+                prefix_param_name = f"@group_id_{i}_prefix"
                 own_parts.append(f"c.group_id = {param_name}")
-                shared_parts.append(f"ARRAY_CONTAINS(c.shared_group_ids, {param_name})")
+                shared_parts.append(
+                    f"ARRAY_CONTAINS(c.shared_group_ids, {param_name}) "
+                    f"OR EXISTS(SELECT VALUE s FROM s IN c.shared_group_ids WHERE STARTSWITH(s, {prefix_param_name}))"
+                )
                 query_params.append({"name": param_name, "value": gid})
+                query_params.append({"name": prefix_param_name, "value": f"{gid},"})
             group_condition = f"(({' OR '.join(own_parts)}) OR ({' OR '.join(shared_parts)}))"
 
         query_conditions = [group_condition]
@@ -331,6 +556,33 @@ def register_route_backend_group_documents(app):
             )
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
+
+            group_name_cache = {}
+            for doc in docs:
+                owner_group_id = doc.get('group_id')
+                doc['owner_group_id'] = owner_group_id
+                if owner_group_id in validated_group_ids:
+                    doc['shared_approval_status'] = 'owner'
+                    continue
+
+                matched_group_id = None
+                matched_status = 'none'
+                for group_id in validated_group_ids:
+                    shared_entry = _find_group_share_entry(doc.get('shared_group_ids', []), group_id)
+                    if shared_entry:
+                        matched_group_id = group_id
+                        matched_status = _get_group_share_status(shared_entry)
+                        break
+
+                doc['shared_group_active_id'] = matched_group_id
+                doc['shared_approval_status'] = matched_status
+                if owner_group_id:
+                    if owner_group_id not in group_name_cache:
+                        group_name_cache[owner_group_id] = _get_group_name(
+                            find_group_by_id(owner_group_id),
+                            'Unknown Group',
+                        )
+                    doc['owner_group_name'] = group_name_cache[owner_group_id]
         except Exception as e:
             print(f"Error fetching group documents: {e}")
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
@@ -397,18 +649,16 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-
-        if not active_group_id:
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        except ValueError:
             return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
+        except LookupError:
             return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if not role:
+        except PermissionError:
             return jsonify({'error': 'You are not a member of the active group'}), 403
 
         return get_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
@@ -636,6 +886,16 @@ def register_route_backend_group_documents(app):
         if role not in ["Owner", "Admin", "DocumentManager"]:
             return jsonify({'error': 'You do not have permission to delete documents in this group'}), 403
 
+        try:
+            document_item = cosmos_group_documents_container.read_item(
+                item=document_id,
+                partition_key=document_id,
+            )
+            if document_item.get('group_id') != active_group_id:
+                return jsonify({'error': 'Shared documents can be removed from this group, not deleted'}), 403
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Document not found'}), 404
+
         delete_mode = request.args.get('delete_mode', 'all_versions')
         if delete_mode not in {'all_versions', 'current_only'}:
             return jsonify({'error': 'Invalid delete mode'}), 400
@@ -764,19 +1024,17 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-
-        if not active_group_id:
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=GROUP_DOCUMENT_SHARE_MANAGER_ROLES,
+            )
+        except ValueError:
             return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
+        except LookupError:
             return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if not role:
-            return jsonify({'error': 'You are not a member of the active group'}), 403
+        except PermissionError:
+            return jsonify({'error': 'Insufficient permissions'}), 403
 
         # Get the document
         try:
@@ -784,9 +1042,8 @@ def register_route_backend_group_documents(app):
             if not document:
                 return jsonify({'error': 'Document not found'}), 404
                 
-            # Check if user has permission to view shared groups
-            if document.get('group_id') != active_group_id and active_group_id not in document.get('shared_group_ids', []):
-                return jsonify({'error': 'You do not have access to this document'}), 403
+            if document.get('group_id') != active_group_id:
+                return jsonify({'error': 'Only the owning group can view document sharing'}), 403
                 
             # Get the list of shared group IDs
             shared_group_ids = document.get('shared_group_ids', [])
@@ -831,10 +1088,17 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-        if not active_group_id:
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=GROUP_DOCUMENT_SHARE_MANAGER_ROLES,
+            )
+        except ValueError:
             return jsonify({'error': 'No active group selected'}), 400
+        except LookupError:
+            return jsonify({'error': 'Active group not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Insufficient permissions'}), 403
 
         try:
             # Get the document
@@ -842,23 +1106,48 @@ def register_route_backend_group_documents(app):
             if not document_item:
                 return jsonify({'error': 'Document not found or access denied'}), 404
             shared_group_ids = document_item.get('shared_group_ids', [])
+            shared_entry = _find_group_share_entry(shared_group_ids, active_group_id)
+            if not shared_entry or document_item.get('group_id') == active_group_id:
+                return jsonify({'error': 'This document is not awaiting approval for the active group'}), 400
+
             updated = False
-            new_shared_group_ids = []
-            for entry in shared_group_ids:
-                if entry.startswith(f"{active_group_id},"):
-                    if entry != f"{active_group_id},approved":
-                        new_shared_group_ids.append(f"{active_group_id},approved")
-                        updated = True
-                    else:
-                        new_shared_group_ids.append(entry)
-                else:
-                    new_shared_group_ids.append(entry)
+            new_shared_group_ids = shared_group_ids
+            if _get_group_share_status(shared_entry) != 'approved':
+                new_shared_group_ids = _set_group_share_status(
+                    shared_group_ids,
+                    active_group_id,
+                    'approved',
+                )
+                updated = True
+
             if updated:
+                document_share_details = _set_group_share_detail(
+                    document_item,
+                    active_group_id,
+                    {
+                        'status': 'approved',
+                        'decided_by_user_id': user_id,
+                        'decided_at': datetime.now(timezone.utc).isoformat(),
+                    },
+                )
                 update_document(
                     document_id=document_id,
                     group_id=document_item.get('group_id'),
                     user_id=user_id,
-                    shared_group_ids=new_shared_group_ids
+                    shared_group_ids=new_shared_group_ids,
+                    document_share_details=document_share_details,
+                )
+                _clear_group_document_share_pending_notifications(document_id, active_group_id)
+                refreshed_document = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    group_id=active_group_id,
+                ) or document_item
+                _create_group_document_share_decision_notification(
+                    refreshed_document,
+                    active_group_id,
+                    'approved',
+                    user_id,
                 )
                 # Invalidate cache for the group that approved
                 invalidate_group_search_cache(active_group_id)
@@ -1138,19 +1427,19 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-
-        if not active_group_id:
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=GROUP_DOCUMENT_SHARE_MANAGER_ROLES,
+            )
+        except ValueError:
             return jsonify({'error': 'No active group selected'}), 400
+        except LookupError:
+            return jsonify({'error': 'Active group not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You do not have permission to share documents in this group'}), 403
 
         group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to share documents in this group'}), 403
 
         data = request.get_json()
         if not data or 'group_id' not in data:
@@ -1173,17 +1462,54 @@ def register_route_backend_group_documents(app):
             if document.get('group_id') != active_group_id:
                 return jsonify({'error': 'You can only share documents owned by your active group'}), 403
                 
+            if target_group_id == active_group_id:
+                return jsonify({'error': 'A group cannot share a document with itself'}), 400
+
             # Add target group to shared_group_ids if not already there
             shared_group_ids = document.get('shared_group_ids', [])
-            if target_group_id not in shared_group_ids:
-                shared_group_ids.append(target_group_id)
+            already_shared = bool(_find_group_share_entry(shared_group_ids, target_group_id))
+            if not already_shared:
+                shared_group_ids = _set_group_share_status(
+                    shared_group_ids,
+                    target_group_id,
+                    'not_approved',
+                )
+                shared_by_user_info = get_current_user_info() or {}
+                document_share_details = _set_group_share_detail(
+                    document,
+                    target_group_id,
+                    {
+                        'status': 'not_approved',
+                        'shared_by_user_id': user_id,
+                        'shared_by_display_name': _get_generated_artifact_actor_name(
+                            shared_by_user_info,
+                            user_id,
+                        ),
+                        'shared_at': datetime.now(timezone.utc).isoformat(),
+                        'source_group_id': active_group_id,
+                        'target_group_id': target_group_id,
+                    },
+                )
                 
                 # Update the document
                 update_document(
                     document_id=document_id,
                     group_id=active_group_id,
                     user_id=user_id,
-                    shared_group_ids=shared_group_ids
+                    shared_group_ids=shared_group_ids,
+                    document_share_details=document_share_details,
+                )
+
+                refreshed_document = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    group_id=active_group_id,
+                ) or document
+                _create_group_document_share_pending_notifications(
+                    refreshed_document,
+                    group_doc,
+                    target_group,
+                    user_id,
                 )
                 
                 # Invalidate cache for both groups
@@ -1213,18 +1539,16 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-
-        if not active_group_id:
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=GROUP_DOCUMENT_SHARE_MANAGER_ROLES,
+            )
+        except ValueError:
             return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
+        except LookupError:
             return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
+        except PermissionError:
             return jsonify({'error': 'You do not have permission to manage document sharing in this group'}), 403
 
         data = request.get_json()
@@ -1245,8 +1569,8 @@ def register_route_backend_group_documents(app):
                 
             # Remove target group from shared_group_ids if present
             shared_group_ids = document.get('shared_group_ids', [])
-            if target_group_id in shared_group_ids:
-                shared_group_ids.remove(target_group_id)
+            if _find_group_share_entry(shared_group_ids, target_group_id):
+                shared_group_ids = _remove_group_share_entries(shared_group_ids, target_group_id)
                 
                 # Update the document
                 update_document(
@@ -1255,6 +1579,7 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     shared_group_ids=shared_group_ids
                 )
+                _clear_group_document_share_pending_notifications(document_id, target_group_id)
                 
                 # Invalidate cache for both groups
                 invalidate_group_search_cache(active_group_id)
@@ -1282,10 +1607,17 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-        if not active_group_id:
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=GROUP_DOCUMENT_SHARE_MANAGER_ROLES,
+            )
+        except ValueError:
             return jsonify({'error': 'No active group selected'}), 400
+        except LookupError:
+            return jsonify({'error': 'Active group not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You do not have permission to remove shared documents in this group'}), 403
 
         # Get the document metadata
         try:
@@ -1298,18 +1630,43 @@ def register_route_backend_group_documents(app):
                 return jsonify({'error': 'Owning group cannot remove itself from its own document'}), 400
 
             shared_group_ids = document.get('shared_group_ids', [])
-            if active_group_id not in shared_group_ids:
+            shared_entry = _find_group_share_entry(shared_group_ids, active_group_id)
+            if not shared_entry:
                 return jsonify({'error': 'Group is not a shared group for this document'}), 400
 
+            was_pending = _get_group_share_status(shared_entry) == 'not_approved'
+
             # Remove the group from shared_group_ids
-            shared_group_ids = [gid for gid in shared_group_ids if gid != active_group_id]
+            shared_group_ids = _remove_group_share_entries(shared_group_ids, active_group_id)
+            document_share_details = _set_group_share_detail(
+                document,
+                active_group_id,
+                {
+                    'status': 'denied' if was_pending else 'removed',
+                    'decided_by_user_id': user_id,
+                    'decided_at': datetime.now(timezone.utc).isoformat(),
+                },
+            )
             update_document(
                 document_id=document_id,
                 group_id=document.get('group_id'),
                 user_id=user_id,
-                shared_group_ids=shared_group_ids
+                shared_group_ids=shared_group_ids,
+                document_share_details=document_share_details,
             )
-            return jsonify({'message': 'Successfully removed group from shared document'}), 200
+            _clear_group_document_share_pending_notifications(document_id, active_group_id)
+            if was_pending:
+                _create_group_document_share_decision_notification(
+                    document,
+                    active_group_id,
+                    'denied',
+                    user_id,
+                )
+            invalidate_group_search_cache(active_group_id)
+            invalidate_group_search_cache(document.get('group_id'))
+            return jsonify({
+                'message': 'Share denied' if was_pending else 'Successfully removed group from shared document'
+            }), 200
         except Exception as e:
             return jsonify({'error': f'Error removing group from shared document: {str(e)}'}), 500
 

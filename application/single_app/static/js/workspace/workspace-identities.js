@@ -6,12 +6,14 @@ function initializeWorkspaceIdentityRoot(root) {
     }
     root.dataset.workspaceIdentityInitialized = 'true';
 
-    const state = {
-        identities: [],
-    };
-
     const apiBase = root.dataset.identityApiBase || root.dataset.apiBase || '';
     const rootKey = root.id || `workspace-identities-${Math.random().toString(36).slice(2, 10)}`;
+    const permissionMessage = root.dataset.permissionMessage || 'You do not have permission to manage or view identities for this workspace.';
+    const readCanManage = () => root.dataset.canManage !== 'false';
+    const state = {
+        identities: [],
+        canManage: readCanManage(),
+    };
 
     const capabilityConfigs = {
         file_sync: {
@@ -256,6 +258,18 @@ function initializeWorkspaceIdentityRoot(root) {
         status.className = 'alert alert-info py-2 mb-3 d-none';
     };
 
+    const renderPermissionNotice = () => {
+        root.replaceChildren();
+        root.appendChild(createElement('div', {
+            className: 'alert alert-warning mb-0',
+            text: permissionMessage,
+            attributes: {
+                role: 'alert',
+                'data-workspace-identity-permission-message': 'true',
+            },
+        }));
+    };
+
     const fetchJson = async (url, options = {}) => {
         const response = await fetch(url, {
             credentials: 'same-origin',
@@ -347,6 +361,11 @@ function initializeWorkspaceIdentityRoot(root) {
     };
 
     const loadIdentities = async () => {
+        if (!state.canManage) {
+            state.identities = [];
+            renderPermissionNotice();
+            return;
+        }
         if (!apiBase) {
             setStatus('Identity API is not configured.', 'danger');
             return;
@@ -652,6 +671,9 @@ function initializeWorkspaceIdentityRoot(root) {
     };
 
     const renderTable = () => {
+        if (!state.canManage) {
+            return;
+        }
         const tableBody = root.querySelector('[data-workspace-identity-rows]');
         if (!tableBody) {
             return;
@@ -691,6 +713,10 @@ function initializeWorkspaceIdentityRoot(root) {
 
     const renderLayout = () => {
         root.replaceChildren();
+        if (!state.canManage) {
+            renderPermissionNotice();
+            return;
+        }
         const toolbar = createElement('div', { className: 'd-flex flex-wrap gap-2 justify-content-start align-items-center mb-3' });
         const addButton = createButton('btn btn-success btn-sm', 'Add Identity', 'bi bi-plus-lg');
         const status = createElement('div', { className: 'alert alert-info py-2 mb-3 d-none', attributes: { 'data-workspace-identity-status': 'true', role: 'alert' } });
@@ -712,9 +738,27 @@ function initializeWorkspaceIdentityRoot(root) {
         appendChildren(root, [toolbar, status, tableWrapper]);
     };
 
+    const refreshIdentities = () => {
+        state.canManage = readCanManage();
+        if (!state.canManage) {
+            state.identities = [];
+            renderPermissionNotice();
+            return;
+        }
+        renderLayout();
+        renderTable();
+        loadIdentities();
+    };
+
+    root.addEventListener('workspace-identities:permissions-changed', refreshIdentities);
+    root.addEventListener('workspace-identities:refresh', refreshIdentities);
+    root.workspaceIdentityRefresh = refreshIdentities;
+
     renderLayout();
-    renderTable();
-    loadIdentities();
+    if (state.canManage) {
+        renderTable();
+        loadIdentities();
+    }
 }
 
 window.initializeWorkspaceIdentityRoot = initializeWorkspaceIdentityRoot;

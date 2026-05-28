@@ -81,8 +81,8 @@ class GroupTableSorter {
             let bValue = this.getCellValue(b, sortKey);
 
             // Handle different data types
-            if (sortKey === 'members' || sortKey === 'documents') {
-                // Numeric sorting for numbers and dates
+            if (sortKey === 'members' || sortKey === 'documents' || sortKey === 'tokens') {
+                // Numeric sorting for counts and totals
                 aValue = this.parseNumericValue(aValue);
                 bValue = this.parseNumericValue(bValue);
                 
@@ -140,6 +140,9 @@ class GroupTableSorter {
                 const docMatch = docText.match(/(\d+)/);
                 value = docMatch ? docMatch[1] : '0';
                 break;
+            case 'tokens':
+                value = cell.textContent.trim();
+                break;
             default:
                 value = cell.textContent.trim();
         }
@@ -160,9 +163,10 @@ class GroupTableSorter {
     parseNumericValue(value) {
         if (!value || value === '' || value.toLowerCase() === 'never') return 0;
         
-        // Extract numeric value from string
-        const numMatch = value.match(/(\d+)/);
-        return numMatch ? parseInt(numMatch[1]) : 0;
+        // Extract numeric value from strings that may contain comma group separators.
+        const normalizedValue = value.replace(/,/g, '');
+        const numMatch = normalizedValue.match(/(\d+(?:\.\d+)?)/);
+        return numMatch ? Number.parseFloat(numMatch[1]) : 0;
     }
 }
 
@@ -1397,6 +1401,7 @@ class ControlCenter {
             'Member Count',
             'Status',
             'Total Documents',
+            'Token Total',
             'AI Search Size (MB)',
             'Storage Account Size (MB)',
             'Group ID'
@@ -1419,6 +1424,7 @@ class ControlCenter {
                 group.member_count || 0,
                 'Active',
                 docMetrics.total_documents || 0,
+                this.getGroupTokenTotal(group),
                 this.formatBytesForCSV(docMetrics.ai_search_size || 0),
                 this.formatBytesForCSV(docMetrics.storage_account_size || 0),
                 this.escapeCSVField(group.id || '')
@@ -4030,7 +4036,7 @@ class ControlCenter {
         // Show loading state like users do
         tbody.innerHTML = `
             <tr>
-                <td colspan="7" class="text-center py-4">
+                <td colspan="8" class="text-center py-4">
                     <div class="spinner-border text-primary" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>
@@ -4090,7 +4096,7 @@ class ControlCenter {
             // Show error state like users do
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="text-center py-4 text-danger">
+                    <td colspan="8" class="text-center py-4 text-danger">
                         <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
                         <div class="mt-2">Error loading groups: ${error.message}</div>
                         <button class="btn btn-sm btn-outline-primary mt-2" onclick="window.controlCenter.loadGroups()">
@@ -4111,7 +4117,7 @@ class ControlCenter {
         if (groups.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="text-center py-4">
+                    <td colspan="8" class="text-center py-4">
                         <i class="bi bi-collection" style="font-size: 2rem; color: var(--bs-secondary);"></i>
                         <div class="mt-2">No groups found</div>
                     </td>
@@ -4160,6 +4166,8 @@ class ControlCenter {
         
         // Get document metrics
         const totalDocs = group.metrics?.document_metrics?.total_documents || group.activity?.document_metrics?.total_documents || 0;
+        const tokenTotal = this.getGroupTokenTotal(group);
+        const tokenTotalFormatted = tokenTotal.toLocaleString();
         
         // Get group info
         const memberCount = group.member_count || (group.users ? group.users.length : 0);
@@ -4206,12 +4214,31 @@ class ControlCenter {
                     </div>
                 </td>
                 <td>
+                    <div class="small"><strong>${tokenTotalFormatted}</strong> token${tokenTotal === 1 ? '' : 's'}</div>
+                </td>
+                <td>
                     <button class="btn btn-outline-primary btn-sm" onclick="GroupManager.manageGroup('${group.id}')">
                         <i class="bi bi-gear me-1"></i>Manage
                     </button>
                 </td>
             </tr>
         `;
+    }
+
+    getGroupTokenTotal(group) {
+        const tokenTotal = Number(
+            group.token_total
+            ?? group.total_tokens
+            ?? group.metrics?.token_metrics?.total_tokens
+            ?? group.activity?.token_metrics?.total_tokens
+            ?? 0
+        );
+
+        if (!Number.isFinite(tokenTotal) || tokenTotal < 0) {
+            return 0;
+        }
+
+        return Math.trunc(tokenTotal);
     }
     
     formatBytes(bytes) {

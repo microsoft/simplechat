@@ -101,6 +101,9 @@ function markCollaborationConversationRead(conversationId, options = {}) {
             if (!response.ok || payload.success === false) {
                 throw new Error(payload.error || 'Failed to clear shared conversation notifications');
             }
+            if (window.chatConversations?.setConversationUnreadState) {
+                window.chatConversations.setConversationUnreadState(conversationId, false);
+            }
             return payload;
         })
         .catch(error => {

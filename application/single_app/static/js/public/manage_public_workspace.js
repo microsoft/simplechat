@@ -5,6 +5,170 @@ const workspaceId = window.workspaceId;
 const userId = window.userId;
 
 let currentUserRole = null;
+let currentStatsWindow = { days: 30, startDate: '', endDate: '' };
+let currentStatsData = null;
+
+function showStatsToast(message, type = 'info') {
+  if (typeof showPublicWorkspaceToast === 'function') {
+    showPublicWorkspaceToast(message, type);
+  }
+}
+
+function getDateInputValueDaysAgo(daysAgo) {
+  const dateValue = new Date();
+  dateValue.setDate(dateValue.getDate() - daysAgo);
+  return dateValue.toISOString().split('T')[0];
+}
+
+function formatDateInputForDisplay(dateValue) {
+  const parts = String(dateValue || '').split('-');
+  if (parts.length !== 3) {
+    return dateValue;
+  }
+
+  return `${Number(parts[1])}/${Number(parts[2])}/${parts[0]}`;
+}
+
+function setDateInputDefaults(startInputId, endInputId) {
+  const startInput = document.getElementById(startInputId);
+  const endInput = document.getElementById(endInputId);
+
+  if (startInput && !startInput.value) {
+    startInput.value = getDateInputValueDaysAgo(29);
+  }
+
+  if (endInput && !endInput.value) {
+    endInput.value = getDateInputValueDaysAgo(0);
+  }
+}
+
+function getStatsWindowLabel(windowConfig = currentStatsWindow) {
+  if (windowConfig.startDate && windowConfig.endDate) {
+    return `${formatDateInputForDisplay(windowConfig.startDate)} - ${formatDateInputForDisplay(windowConfig.endDate)}`;
+  }
+
+  return `Last ${windowConfig.days || 30} Days`;
+}
+
+function updateStatsWindowLabels(label) {
+  $('.stats-window-label').text(label);
+}
+
+function getStatsQueryString(windowConfig = currentStatsWindow) {
+  const params = new URLSearchParams();
+  if (windowConfig.startDate && windowConfig.endDate) {
+    params.set('start_date', windowConfig.startDate);
+    params.set('end_date', windowConfig.endDate);
+  } else {
+    params.set('days', windowConfig.days || 30);
+  }
+  return params.toString();
+}
+
+function setStatsWindow(days) {
+  currentStatsWindow = { days, startDate: '', endDate: '' };
+  $('[data-stats-days]').removeClass('active');
+  $(`[data-stats-days="${days}"]`).addClass('active');
+  $('#publicStatsWindowCustom').removeClass('active');
+  updateStatsWindowLabels(getStatsWindowLabel());
+  loadWorkspaceStats();
+}
+
+function applyStatsCustomRange() {
+  const startDate = $('#publicStatsStartDate').val();
+  const endDate = $('#publicStatsEndDate').val();
+
+  if (!startDate || !endDate) {
+    showStatsToast('Please select both start and end dates.', 'warning');
+    return;
+  }
+
+  if (new Date(startDate) > new Date(endDate)) {
+    showStatsToast('Start date must be before end date.', 'warning');
+    return;
+  }
+
+  const diffMs = Math.abs(new Date(endDate) - new Date(startDate));
+  currentStatsWindow = {
+    days: Math.ceil(diffMs / 86400000) + 1,
+    startDate,
+    endDate
+  };
+  $('[data-stats-days]').removeClass('active');
+  $('#publicStatsWindowCustom').addClass('active');
+  updateStatsWindowLabels(getStatsWindowLabel());
+  loadWorkspaceStats();
+}
+
+function getExportStatsWindowSelection() {
+  const selectedValue = $('input[name="publicExportTimeWindow"]:checked').val() || '30';
+  if (selectedValue === 'custom') {
+    const startDate = $('#publicExportStartDate').val();
+    const endDate = $('#publicExportEndDate').val();
+    if (!startDate || !endDate) {
+      throw new Error('Please select both start and end dates for the custom export range.');
+    }
+    if (new Date(startDate) > new Date(endDate)) {
+      throw new Error('Export start date must be before end date.');
+    }
+    const diffMs = Math.abs(new Date(endDate) - new Date(startDate));
+    return {
+      days: Math.ceil(diffMs / 86400000) + 1,
+      startDate,
+      endDate
+    };
+  }
+
+  return { days: Number(selectedValue) || 30, startDate: '', endDate: '' };
+}
+
+function toggleExportCustomDateRange() {
+  const isCustom = $('#publicExportCustom').prop('checked');
+  $('#publicExportCustomDateRange').toggleClass('d-none', !isCustom);
+  if (isCustom) {
+    setDateInputDefaults('publicExportStartDate', 'publicExportEndDate');
+  }
+}
+
+function initializeStatsWindowControls() {
+  setDateInputDefaults('publicStatsStartDate', 'publicStatsEndDate');
+  updateStatsWindowLabels(getStatsWindowLabel());
+  $('[data-stats-days]').on('click', function () {
+    setStatsWindow(Number($(this).data('stats-days')) || 30);
+  });
+  $('#publicStatsApplyCustomRange').on('click', applyStatsCustomRange);
+  $('input[name="publicExportTimeWindow"]').on('change', toggleExportCustomDateRange);
+  $('#executePublicStatsExportBtn').on('click', exportWorkspaceStats);
+}
+
+function escapeCsvValue(value) {
+  const stringValue = value === null || typeof value === 'undefined' ? '' : String(value);
+  if (/[",\n\r]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+}
+
+function appendCsvRow(rows, values) {
+  rows.push(values.map(escapeCsvValue).join(','));
+}
+
+function appendCsvSectionBreak(rows) {
+  rows.push('');
+}
+
+function downloadCsvFile(csvContent, filename) {
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.classList.add('d-none');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 function hideWorkspaceAccessAlert() {
   const accessAlert = document.getElementById('workspace-access-alert');
@@ -61,6 +225,8 @@ function toggleMemberOnlySections(isVisible) {
 
 $(document).ready(function () {
   // Initial load: workspace info, then members & pending requests
+  initializeStatsWindowControls();
+
   loadWorkspaceInfo(function () {
     loadMembers();
   });
@@ -774,8 +940,10 @@ let documentChart, storageChart, tokenChart;
 
 function loadWorkspaceStats() {
   // Load stats data
-  $.get(`/api/public_workspaces/${workspaceId}/stats`)
+  $.get(`/api/public_workspaces/${workspaceId}/stats?${getStatsQueryString()}`)
     .done(function(stats) {
+      currentStatsData = stats;
+      updateStatsWindowLabels(stats.window?.label || getStatsWindowLabel());
       updateStatCards(stats);
       updateCharts(stats);
       // Load activity timeline if user has permission
@@ -790,6 +958,106 @@ function loadWorkspaceStats() {
       $('#stat-tokens').text('N/A');
       $('#stat-members').text('N/A');
     });
+}
+
+async function exportWorkspaceStats() {
+  const includeSummary = $('#publicExportSummary').prop('checked');
+  const includeDocuments = $('#publicExportDocuments').prop('checked');
+  const includeTokens = $('#publicExportTokens').prop('checked');
+  const includeStorage = $('#publicExportStorage').prop('checked');
+
+  if (!includeSummary && !includeDocuments && !includeTokens && !includeStorage) {
+    showStatsToast('Please select at least one data type to export.', 'warning');
+    return;
+  }
+
+  let exportWindow;
+  try {
+    exportWindow = getExportStatsWindowSelection();
+  } catch (error) {
+    showStatsToast(error.message, 'warning');
+    return;
+  }
+
+  const exportButton = document.getElementById('executePublicStatsExportBtn');
+  const originalHtml = exportButton ? exportButton.innerHTML : '';
+  if (exportButton) {
+    exportButton.disabled = true;
+    exportButton.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Exporting...';
+  }
+
+  try {
+    const response = await fetch(`/api/public_workspaces/${workspaceId}/stats?${getStatsQueryString(exportWindow)}`);
+    if (!response.ok) {
+      throw new Error('Unable to load stats for export.');
+    }
+
+    const stats = await response.json();
+    const windowLabel = stats.window?.label || getStatsWindowLabel(exportWindow);
+    const rows = [];
+
+    rows.push('Public Workspace Stats Export');
+    appendCsvRow(rows, ['Export Date', new Date().toLocaleString()]);
+    appendCsvRow(rows, ['Data Period', windowLabel]);
+    appendCsvSectionBreak(rows);
+
+    if (includeSummary) {
+      rows.push('SUMMARY METRICS');
+      appendCsvRow(rows, ['Metric', 'Value']);
+      appendCsvRow(rows, ['Total Documents', stats.totalDocuments || 0]);
+      appendCsvRow(rows, ['Storage Used (bytes)', stats.storageUsed || 0]);
+      appendCsvRow(rows, ['Total Tokens', stats.totalTokens || 0]);
+      appendCsvRow(rows, ['Total Members', stats.totalMembers || 0]);
+      appendCsvSectionBreak(rows);
+    }
+
+    if (includeDocuments) {
+      rows.push(`DOCUMENT ACTIVITY (${windowLabel})`);
+      appendCsvRow(rows, ['Date', 'Uploads', 'Deletes']);
+      const labels = stats.documentActivity?.labels || [];
+      const uploads = stats.documentActivity?.uploads || [];
+      const deletes = stats.documentActivity?.deletes || [];
+      labels.forEach((label, index) => {
+        appendCsvRow(rows, [label, uploads[index] || 0, deletes[index] || 0]);
+      });
+      appendCsvSectionBreak(rows);
+    }
+
+    if (includeTokens) {
+      rows.push(`TOKEN USAGE (${windowLabel})`);
+      appendCsvRow(rows, ['Date', 'Total Tokens']);
+      const labels = stats.tokenUsage?.labels || [];
+      const tokenValues = stats.tokenUsage?.data || [];
+      labels.forEach((label, index) => {
+        appendCsvRow(rows, [label, tokenValues[index] || 0]);
+      });
+      appendCsvSectionBreak(rows);
+    }
+
+    if (includeStorage) {
+      rows.push('STORAGE USAGE');
+      appendCsvRow(rows, ['Metric', 'Bytes', 'Formatted']);
+      appendCsvRow(rows, ['AI Search', stats.storage?.ai_search_size || 0, formatBytes(stats.storage?.ai_search_size || 0)]);
+      appendCsvRow(rows, ['Blob Storage', stats.storage?.storage_account_size || 0, formatBytes(stats.storage?.storage_account_size || 0)]);
+      appendCsvSectionBreak(rows);
+    }
+
+    downloadCsvFile(rows.join('\n'), `public_workspace_stats_export_${new Date().toISOString().split('T')[0]}.csv`);
+
+    const modal = bootstrap.Modal.getInstance(document.getElementById('publicStatsExportModal'));
+    if (modal) {
+      modal.hide();
+    }
+    showStatsToast('Public workspace stats exported successfully.', 'success');
+  } catch (error) {
+    console.error('Failed to export public workspace stats:', error);
+    showStatsToast('Failed to export public workspace stats.', 'danger');
+  } finally {
+    if (exportButton) {
+      exportButton.disabled = false;
+      exportButton.innerHTML = originalHtml;
+    }
+  }
 }
 
 // Update stat cards

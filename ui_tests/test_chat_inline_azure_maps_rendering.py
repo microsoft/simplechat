@@ -1,13 +1,14 @@
 # test_chat_inline_azure_maps_rendering.py
 """
 UI test for inline Azure Maps rendering in chat.
-Version: 0.241.053
-Implemented in: 0.241.053
+Version: 0.241.116
+Implemented in: 0.241.053; local asset validation updated in 0.241.116
 
 This test ensures that assistant messages can hydrate an Azure Maps agent
 citation artifact, render the inline map card inside the chat bubble, and keep
 the standard citation button available for the same tool invocation while
-fitting the full visible feature set after the visualization container is shown.
+fitting the full visible feature set after the visualization container is shown
+without loading OpenLayers from a CDN.
 """
 
 import json
@@ -278,13 +279,18 @@ def test_chat_inline_azure_maps_rendering(playwright):
         "**/api/get_conversations",
         lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps({"conversations": []})),
     )
+    external_asset_requests = []
     page.route(
-        "https://cdn.jsdelivr.net/npm/ol@10.6.1/ol.css",
-        lambda route: route.fulfill(status=200, content_type="text/css", body=""),
+      "https://cdn.jsdelivr.net/**",
+      lambda route: (external_asset_requests.append(route.request.url), route.abort()),
     )
     page.route(
-        "https://cdn.jsdelivr.net/npm/ol@10.6.1/dist/ol.js",
-        lambda route: route.fulfill(status=200, content_type="application/javascript", body=OPENLAYERS_STUB),
+      "**/static/css/openlayers/ol.css",
+      lambda route: route.fulfill(status=200, content_type="text/css", body=""),
+    )
+    page.route(
+      "**/static/js/openlayers/ol.js",
+      lambda route: route.fulfill(status=200, content_type="application/javascript", body=OPENLAYERS_STUB),
     )
     page.route(
         "**/api/conversation/test-convo/agent-citation/assistant-msg-map-1_artifact_1",
@@ -298,6 +304,7 @@ def test_chat_inline_azure_maps_rendering(playwright):
     try:
         response = page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
         assert response is not None, "Expected a navigation response when loading /chats."
+        assert external_asset_requests == [], f"Expected no CDN asset requests, got: {external_asset_requests}"
 
         if response.status in SKIP_RESPONSE_CODES:
             pytest.skip(f"Chat page unavailable in this environment (HTTP {response.status}).")

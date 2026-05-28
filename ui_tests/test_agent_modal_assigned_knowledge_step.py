@@ -1,11 +1,11 @@
 # test_agent_modal_assigned_knowledge_step.py
 """
 UI test for the Assigned Knowledge step in the agent modal.
-Version: 0.241.087
+Version: 0.241.119
 Implemented in: 0.241.068
 
 This test ensures the agent wizard renders searchable Assigned Knowledge pickers,
-shows resolved documents, and persists selected knowledge, assigned URL sources,
+shows active documents, and persists selected knowledge, assigned URL sources,
 and user-context policy values into additional settings.
 """
 
@@ -74,11 +74,20 @@ def test_agent_modal_assigned_knowledge_step():
                             "scope": "public",
                             "source_id": "public-1",
                             "source_name": "Public One",
+                            "tags": ["Finance", "Operations"],
+                        },
+                        {
+                            "id": "finance-doc",
+                            "title": "Finance Checklist",
+                            "file_name": "Finance Checklist.pdf",
+                            "scope": "public",
+                            "source_id": "public-1",
+                            "source_name": "Public One",
                             "tags": ["Finance"],
                         }
                     ],
                     "tags": [
-                        {"name": "Finance", "count": 1},
+                        {"name": "Finance", "count": 2},
                         {"name": "Operations", "count": 1},
                     ],
                 },
@@ -88,6 +97,9 @@ def test_agent_modal_assigned_knowledge_step():
         try:
             page.goto(f"{BASE_URL}/workspace", wait_until="networkidle")
             expect(page.locator("#agentModal")).to_be_attached()
+            modal_dialog_class = page.locator("#agentModal .modal-dialog").get_attribute("class") or ""
+            assert "modal-xl" in modal_dialog_class
+            assert "agent-modal-dialog" in modal_dialog_class
             page.wait_for_function("() => window.agentModalStepper && typeof window.agentModalStepper.showModal === 'function'")
 
             page.evaluate(
@@ -121,21 +133,38 @@ def test_agent_modal_assigned_knowledge_step():
             ).click()
             expect(page.locator("#agent-assigned-knowledge-source-selected")).to_contain_text("Public One")
             expect(page.locator("#agent-assigned-knowledge-document-available")).to_contain_text("Public Guide")
+            expect(page.locator("#agent-assigned-knowledge-document-available")).to_contain_text("Finance Checklist")
+            expect(page.locator("#agent-assigned-knowledge-resolved-count")).to_contain_text("2 active documents")
+            expect(page.locator("#agent-assigned-knowledge-active-summary")).to_contain_text("Using all 2 active documents")
 
             page.locator(
                 "#agent-assigned-knowledge-tag-available "
                 ".agent-assigned-knowledge-transfer-item[data-assigned-knowledge-key='Finance'] button"
             ).click()
+            expect(page.locator("#agent-assigned-knowledge-resolved-documents")).to_contain_text("Public Guide")
+            expect(page.locator("#agent-assigned-knowledge-resolved-documents")).to_contain_text("Finance Checklist")
+
+            page.locator(
+                "#agent-assigned-knowledge-tag-available "
+                ".agent-assigned-knowledge-transfer-item[data-assigned-knowledge-key='Operations'] button"
+            ).click()
+            expect(page.locator("#agent-assigned-knowledge-resolved-documents")).to_contain_text("Public Guide")
+            expect(page.locator("#agent-assigned-knowledge-resolved-documents")).not_to_contain_text("Finance Checklist")
+            expect(page.locator("#agent-assigned-knowledge-active-summary")).to_contain_text("documents matching all 2 selected tag limits")
+
             page.locator(
                 "#agent-assigned-knowledge-document-available "
-                ".agent-assigned-knowledge-transfer-item[data-assigned-knowledge-key='public-doc'] button"
+                ".agent-assigned-knowledge-transfer-item[data-assigned-knowledge-key='finance-doc'] button"
             ).click()
 
             expect(page.locator("#agent-assigned-knowledge-tag-selected")).to_contain_text("Finance")
-            expect(page.locator("#agent-assigned-knowledge-document-selected")).to_contain_text("Public Guide")
+            expect(page.locator("#agent-assigned-knowledge-tag-selected")).to_contain_text("Operations")
+            expect(page.locator("#agent-assigned-knowledge-document-selected")).to_contain_text("Finance Checklist")
             expect(page.locator("#agent-assigned-knowledge-resolved-documents")).to_contain_text("Public Guide")
+            expect(page.locator("#agent-assigned-knowledge-resolved-documents")).to_contain_text("Finance Checklist")
             expect(page.locator("#agent-assigned-knowledge-resolved-documents")).to_contain_text("explicit")
             expect(page.locator("#agent-assigned-knowledge-resolved-documents")).to_contain_text("Finance")
+            expect(page.locator("#agent-assigned-knowledge-resolved-documents")).to_contain_text("Operations")
 
             settings = page.evaluate(
                 """
@@ -146,8 +175,8 @@ def test_agent_modal_assigned_knowledge_step():
             assert assigned_knowledge["enabled"] is True
             assert assigned_knowledge["scopes"]["personal"] is False
             assert assigned_knowledge["scopes"]["public_workspace_ids"] == ["public-1"]
-            assert assigned_knowledge["document_ids"] == ["public-doc"]
-            assert assigned_knowledge["tags"] == ["Finance"]
+            assert assigned_knowledge["document_ids"] == ["finance-doc"]
+            assert assigned_knowledge["tags"] == ["Finance", "Operations"]
             assert assigned_knowledge["web_sources"] == [
                 {"url": "https://example.com/guide", "mode": "deep_research"}
             ]
@@ -157,8 +186,8 @@ def test_agent_modal_assigned_knowledge_step():
             page.evaluate("() => window.agentModalStepper.goToStep(7)")
             expect(page.locator("#summary-assigned-knowledge-section")).to_be_visible()
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 public workspace")
-            expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 explicit document")
-            expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 dynamic tag")
+            expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 specific document")
+            expect(page.locator("#summary-assigned-knowledge")).to_contain_text("2 tag limits")
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 assigned URL")
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 Deep Research URL")
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("User context: Search, Analyze")

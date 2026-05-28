@@ -1,6 +1,6 @@
 <!-- Dynamic Agent Modal -->
 <div class="modal fade" id="agentModal" tabindex="-1" aria-labelledby="agentModalLabel" aria-hidden="true" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" autocomplete="off">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-xl agent-modal-dialog">
     <div class="modal-content">
       <div class="modal-header flex-wrap gap-2 align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
@@ -415,7 +415,23 @@
 
         <!-- Step 5: Assigned Knowledge -->
         <div class="agent-step d-none" id="agent-step-5">
-          <h6 class="mb-3">Assigned Knowledge</h6>
+          <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+            <h6 class="mb-0">Assigned Knowledge</h6>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="agent-assigned-knowledge-help-toggle" data-bs-toggle="collapse" data-bs-target="#agent-assigned-knowledge-help" aria-expanded="false" aria-controls="agent-assigned-knowledge-help" title="How Assigned Knowledge works" aria-label="How Assigned Knowledge works">
+              <i class="bi bi-question-circle" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="collapse mb-3" id="agent-assigned-knowledge-help">
+            <div class="alert alert-secondary py-2 small mb-0" role="note">
+              <div class="fw-semibold mb-1">Build the agent's knowledge in order.</div>
+              <ol class="mb-0 ps-3">
+                <li>Choose source workspaces to define the document pool.</li>
+                <li>Leave tag limits and specific documents empty to use every document from those sources.</li>
+                <li>Add tag limits or specific documents only when the agent should use a smaller active set.</li>
+                <li>Confirm Active Documents to see the final indexed documents the agent will use in chat.</li>
+              </ol>
+            </div>
+          </div>
           <div class="form-check form-switch mb-3">
             <input class="form-check-input" type="checkbox" id="agent-assigned-knowledge-enabled" />
             <label class="form-check-label" for="agent-assigned-knowledge-enabled">Restrict this agent to assigned workspace knowledge</label>
@@ -425,10 +441,13 @@
               Assigned Knowledge uses indexed workspace documents only. Web search and deep research remain separate chat controls.
             </div>
             <div class="d-flex justify-content-between align-items-center mb-3">
-              <div class="text-muted small" id="agent-assigned-knowledge-scope-help">Choose sources, documents, or tags this agent should use.</div>
+              <div class="text-muted small" id="agent-assigned-knowledge-scope-help">Choose source workspaces, optionally limit them with tags or specific documents, then confirm the active documents.</div>
               <button type="button" class="btn btn-outline-secondary btn-sm" id="agent-assigned-knowledge-refresh">
                 <i class="bi bi-arrow-clockwise me-1"></i>Refresh
               </button>
+            </div>
+            <div class="agent-assigned-knowledge-active-summary border rounded px-3 py-2 small mb-3" id="agent-assigned-knowledge-active-summary" role="status" aria-live="polite">
+              Choose at least one source workspace to set this agent's active documents.
             </div>
             <div id="agent-assigned-knowledge-loading" class="text-center py-3 d-none">
               <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>
@@ -489,20 +508,20 @@
 
               <section class="agent-assigned-knowledge-section" aria-labelledby="agent-assigned-knowledge-sources-heading">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                  <h6 class="mb-0" id="agent-assigned-knowledge-sources-heading">Sources</h6>
+                  <h6 class="mb-0" id="agent-assigned-knowledge-sources-heading">Source Workspaces</h6>
                   <span class="badge text-bg-secondary" id="agent-assigned-knowledge-source-count">0 selected</span>
                 </div>
                 <div id="agent-assigned-knowledge-sources" class="agent-assigned-knowledge-transfer" data-category="source">
                   <div class="row g-3">
                     <div class="col-lg-6">
-                      <label class="form-label small text-muted" for="agent-assigned-knowledge-source-available-search">Available Sources</label>
-                      <input type="search" class="form-control form-control-sm mb-2" id="agent-assigned-knowledge-source-available-search" placeholder="Search available sources" />
-                      <div id="agent-assigned-knowledge-source-available" class="agent-assigned-knowledge-transfer-list" data-category="source" data-list-role="available" aria-label="Available assigned knowledge sources"></div>
+                      <label class="form-label small text-muted" for="agent-assigned-knowledge-source-available-search">Available Source Workspaces</label>
+                      <input type="search" class="form-control form-control-sm mb-2" id="agent-assigned-knowledge-source-available-search" placeholder="Search available source workspaces" />
+                      <div id="agent-assigned-knowledge-source-available" class="agent-assigned-knowledge-transfer-list" data-category="source" data-list-role="available" aria-label="Available assigned knowledge source workspaces"></div>
                     </div>
                     <div class="col-lg-6">
-                      <label class="form-label small text-muted" for="agent-assigned-knowledge-source-selected-search">Selected Sources</label>
-                      <input type="search" class="form-control form-control-sm mb-2" id="agent-assigned-knowledge-source-selected-search" placeholder="Search selected sources" />
-                      <div id="agent-assigned-knowledge-source-selected" class="agent-assigned-knowledge-transfer-list" data-category="source" data-list-role="selected" aria-label="Selected assigned knowledge sources"></div>
+                      <label class="form-label small text-muted" for="agent-assigned-knowledge-source-selected-search">Selected Source Workspaces</label>
+                      <input type="search" class="form-control form-control-sm mb-2" id="agent-assigned-knowledge-source-selected-search" placeholder="Search selected source workspaces" />
+                      <div id="agent-assigned-knowledge-source-selected" class="agent-assigned-knowledge-transfer-list" data-category="source" data-list-role="selected" aria-label="Selected assigned knowledge source workspaces"></div>
                     </div>
                   </div>
                 </div>
@@ -510,7 +529,7 @@
 
               <section class="agent-assigned-knowledge-section" aria-labelledby="agent-assigned-knowledge-tags-heading">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                  <h6 class="mb-0" id="agent-assigned-knowledge-tags-heading">Tags</h6>
+                  <h6 class="mb-0" id="agent-assigned-knowledge-tags-heading">Tag Limits</h6>
                   <span class="badge text-bg-secondary" id="agent-assigned-knowledge-tag-count">0 selected</span>
                 </div>
                 <div id="agent-assigned-knowledge-tags" class="agent-assigned-knowledge-transfer" data-category="tag">
@@ -521,8 +540,8 @@
                       <div id="agent-assigned-knowledge-tag-available" class="agent-assigned-knowledge-transfer-list" data-category="tag" data-list-role="available" aria-label="Available assigned knowledge tags"></div>
                     </div>
                     <div class="col-lg-6">
-                      <label class="form-label small text-muted" for="agent-assigned-knowledge-tag-selected-search">Selected Tags</label>
-                      <input type="search" class="form-control form-control-sm mb-2" id="agent-assigned-knowledge-tag-selected-search" placeholder="Search selected tags" />
+                      <label class="form-label small text-muted" for="agent-assigned-knowledge-tag-selected-search">Selected Tag Limits</label>
+                      <input type="search" class="form-control form-control-sm mb-2" id="agent-assigned-knowledge-tag-selected-search" placeholder="Search selected tag limits" />
                       <div id="agent-assigned-knowledge-tag-selected" class="agent-assigned-knowledge-transfer-list" data-category="tag" data-list-role="selected" aria-label="Selected assigned knowledge tags"></div>
                     </div>
                   </div>
@@ -531,8 +550,8 @@
 
               <section class="agent-assigned-knowledge-section" aria-labelledby="agent-assigned-knowledge-documents-heading">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                  <h6 class="mb-0" id="agent-assigned-knowledge-documents-heading">Documents</h6>
-                  <span class="badge text-bg-secondary" id="agent-assigned-knowledge-document-count">0 selected</span>
+                  <h6 class="mb-0" id="agent-assigned-knowledge-documents-heading">Limit to Specific Documents</h6>
+                  <span class="badge text-bg-secondary" id="agent-assigned-knowledge-document-count">0 specific</span>
                 </div>
                 <select class="form-select d-none" id="agent-assigned-knowledge-documents" multiple aria-hidden="true"></select>
                 <div id="agent-assigned-knowledge-document-transfer" class="agent-assigned-knowledge-transfer" data-category="document">
@@ -543,9 +562,9 @@
                       <div id="agent-assigned-knowledge-document-available" class="agent-assigned-knowledge-transfer-list agent-assigned-knowledge-transfer-list-tall" data-category="document" data-list-role="available" aria-label="Available assigned knowledge documents"></div>
                     </div>
                     <div class="col-lg-6">
-                      <label class="form-label small text-muted" for="agent-assigned-knowledge-document-selected-search">Selected Documents</label>
-                      <input type="search" class="form-control form-control-sm mb-2" id="agent-assigned-knowledge-document-selected-search" placeholder="Search selected documents" />
-                      <div id="agent-assigned-knowledge-document-selected" class="agent-assigned-knowledge-transfer-list agent-assigned-knowledge-transfer-list-tall" data-category="document" data-list-role="selected" aria-label="Selected assigned knowledge documents"></div>
+                      <label class="form-label small text-muted" for="agent-assigned-knowledge-document-selected-search">Specific Documents</label>
+                      <input type="search" class="form-control form-control-sm mb-2" id="agent-assigned-knowledge-document-selected-search" placeholder="Search specific documents" />
+                      <div id="agent-assigned-knowledge-document-selected" class="agent-assigned-knowledge-transfer-list agent-assigned-knowledge-transfer-list-tall" data-category="document" data-list-role="selected" aria-label="Specific assigned knowledge documents"></div>
                     </div>
                   </div>
                 </div>
@@ -553,10 +572,10 @@
 
               <section class="agent-assigned-knowledge-section" aria-labelledby="agent-assigned-knowledge-resolved-heading">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                  <h6 class="mb-0" id="agent-assigned-knowledge-resolved-heading">Resolved Documents</h6>
-                  <span class="badge text-bg-info" id="agent-assigned-knowledge-resolved-count">0 current matches</span>
+                  <h6 class="mb-0" id="agent-assigned-knowledge-resolved-heading">Active Documents</h6>
+                  <span class="badge text-bg-info" id="agent-assigned-knowledge-resolved-count">0 active documents</span>
                 </div>
-                <div id="agent-assigned-knowledge-resolved-documents" class="agent-assigned-knowledge-resolved-list border rounded p-2" aria-label="Resolved assigned knowledge documents"></div>
+                <div id="agent-assigned-knowledge-resolved-documents" class="agent-assigned-knowledge-resolved-list border rounded p-2" aria-label="Active assigned knowledge documents"></div>
               </section>
             </div>
             <div id="agent-assigned-knowledge-empty" class="text-muted small mt-3 d-none">No knowledge sources are available for this agent scope.</div>
@@ -886,6 +905,10 @@
   color: #9ec5fe;
 }
 
+.agent-modal-dialog {
+  max-width: min(96vw, 1180px);
+}
+
 .agent-action-card .action-type-badge {
   position: absolute;
   top: 0.5rem;
@@ -905,6 +928,11 @@
   border: 1px solid var(--bs-border-color);
   border-radius: 0.5rem;
   padding: 1rem;
+}
+
+.agent-assigned-knowledge-active-summary {
+  background-color: var(--bs-tertiary-bg);
+  color: var(--bs-body-color);
 }
 
 .agent-assigned-knowledge-transfer-list,

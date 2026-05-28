@@ -115,9 +115,15 @@ let allConversations = []; // Store all conversations for client-side filtering
 let isLoadingConversations = false; // Prevent concurrent loads
 let showQuickSearch = false; // Track if quick search input is visible
 let quickSearchTerm = ""; // Current search term
+let quickSearchDebounceTimer = null;
+let conversationFeedNextCursor = null;
+let conversationFeedHasMore = false;
+let conversationFeedHiddenCount = 0;
 let pendingConversationCreation = null; // Reuse a single in-flight create request
 const markConversationReadRequests = new Map();
 let pendingDeleteConversationContext = null;
+const CONVERSATION_FEED_PAGE_SIZE = 20;
+const CONVERSATION_LOAD_MORE_SCROLL_THRESHOLD = 120;
 
 function createUnreadDotElement() {
   const unreadDot = document.createElement("span");
@@ -478,9 +484,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   if (searchInput) {
-    searchInput.addEventListener('keyup', (e) => {
+    searchInput.addEventListener('input', (e) => {
       quickSearchTerm = e.target.value;
-      loadConversations();
+      scheduleConversationSearchReload();
     });
     
     // Prevent conversation toggle when clicking in input
@@ -647,19 +653,12 @@ function toggleQuickSearch() {
   }
 }
 
-function applyQuickSearchFilter(conversations) {
-  if (!quickSearchTerm || quickSearchTerm.trim() === '') {
-    return conversations;
-  }
-  
-  const searchLower = quickSearchTerm.toLowerCase().trim();
-  return conversations.filter(convo => {
-    const titleLower = (convo.title || '').toLowerCase();
-    return titleLower.includes(searchLower);
-  });
-}
-
 function clearQuickSearch() {
+  if (quickSearchDebounceTimer) {
+    clearTimeout(quickSearchDebounceTimer);
+    quickSearchDebounceTimer = null;
+  }
+
   quickSearchTerm = '';
   const searchInput = document.getElementById('sidebar-search-input');
   if (searchInput) {
@@ -668,99 +667,194 @@ function clearQuickSearch() {
   loadConversations();
 }
 
-export function loadConversations(options = {}) {
-  const { syncSidebar = true } = options;
+function scheduleConversationSearchReload() {
+  if (quickSearchDebounceTimer) {
+    clearTimeout(quickSearchDebounceTimer);
+  }
 
-  if (!conversationsList) return;
-  
-  // Prevent concurrent loads
-  if (isLoadingConversations) {
-    console.log('Load already in progress, skipping...');
+  quickSearchDebounceTimer = setTimeout(() => {
+    quickSearchDebounceTimer = null;
+    loadConversations();
+  }, 250);
+}
+
+function setConversationListMessage(message, isError = false) {
+  if (!conversationsList) {
     return;
   }
-  
+
+  const messageEl = document.createElement('div');
+  messageEl.classList.add('text-center', 'p-3', isError ? 'text-danger' : 'text-muted');
+  messageEl.textContent = message;
+  conversationsList.replaceChildren(messageEl);
+}
+
+function getConversationFeedIncludeHidden() {
+  return showHiddenConversations || selectionModeActive;
+}
+
+function buildConversationFeedUrl(cursor = null) {
+  const params = new URLSearchParams();
+  params.set('page_size', String(CONVERSATION_FEED_PAGE_SIZE));
+  params.set('include_hidden', getConversationFeedIncludeHidden() ? 'true' : 'false');
+
+  const normalizedSearchTerm = quickSearchTerm.trim();
+  if (normalizedSearchTerm) {
+    params.set('search', normalizedSearchTerm);
+  }
+  if (cursor) {
+    params.set('cursor', cursor);
+  }
+
+  return `/api/conversations/feed?${params.toString()}`;
+}
+
+async function fetchConversationFeedPage(cursor = null) {
+  const response = await fetch(buildConversationFeedUrl(cursor));
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.success === false) {
+    throw new Error(payload.error || 'Failed to load conversations');
+  }
+  return payload;
+}
+
+function mergeConversationPages(existingConversations, incomingConversations) {
+  const seenIds = new Set();
+  const mergedConversations = [];
+
+  [...existingConversations, ...incomingConversations].forEach(conversation => {
+    const conversationId = String(conversation?.id || '').trim();
+    if (!conversationId || seenIds.has(conversationId)) {
+      return;
+    }
+
+    seenIds.add(conversationId);
+    mergedConversations.push(conversation);
+  });
+
+  return mergedConversations;
+}
+
+function createLoadMoreConversationsButton() {
+  const loadMoreButton = document.createElement('button');
+  loadMoreButton.type = 'button';
+  loadMoreButton.classList.add('list-group-item', 'list-group-item-action', 'text-center', 'text-primary');
+  loadMoreButton.dataset.conversationLoadMore = 'true';
+  loadMoreButton.textContent = 'Load more conversations';
+  loadMoreButton.addEventListener('click', () => {
+    void loadMoreConversations();
+  });
+  return loadMoreButton;
+}
+
+function appendConversationLoadMoreButton(container) {
+  if (!container || !conversationFeedHasMore || !conversationFeedNextCursor) {
+    return;
+  }
+
+  container.appendChild(createLoadMoreConversationsButton());
+}
+
+function setConversationLoadMoreButtonsLoading(isLoading) {
+  document.querySelectorAll('[data-conversation-load-more="true"]').forEach(button => {
+    button.disabled = isLoading;
+    button.textContent = isLoading ? 'Loading...' : 'Load more conversations';
+  });
+}
+
+function renderLoadedConversations() {
+  if (!conversationsList) {
+    return;
+  }
+
+  conversationsList.replaceChildren();
+  if (allConversations.length === 0) {
+    const searchActive = quickSearchTerm.trim() !== '';
+    const emptyMessage = searchActive
+      ? 'No matching conversations.'
+      : getConversationFeedIncludeHidden()
+        ? 'No conversations yet.'
+        : 'No visible conversations. Click the eye icon to show hidden conversations.';
+    setConversationListMessage(emptyMessage);
+    return;
+  }
+
+  allConversations.forEach(conversation => {
+    conversationsList.appendChild(createConversationItem(conversation));
+  });
+  appendConversationLoadMoreButton(conversationsList);
+}
+
+function maybeLoadMoreConversationsFromScroll(container) {
+  if (!container || isLoadingConversations || !conversationFeedHasMore || !conversationFeedNextCursor) {
+    return;
+  }
+
+  const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+  if (distanceFromBottom <= CONVERSATION_LOAD_MORE_SCROLL_THRESHOLD) {
+    void loadMoreConversations();
+  }
+}
+
+export async function loadConversations(options = {}) {
+  const { syncSidebar = true, append = false, cursor = null } = options;
+
+  if (!conversationsList) return null;
+
+  if (isLoadingConversations) {
+    console.log('Load already in progress, skipping...');
+    return null;
+  }
+
   isLoadingConversations = true;
-  conversationsList.innerHTML = '<div class="text-center p-3 text-muted">Loading conversations...</div>'; // Loading state
+  setConversationLoadMoreButtonsLoading(true);
+  if (!append) {
+    setConversationListMessage('Loading conversations...');
+  }
 
-  const legacyConversationsRequest = fetch("/api/get_conversations")
-    .then(response => response.ok ? response.json() : response.json().then(err => Promise.reject(err)));
-  const collaborationConversationsRequest = window.chatCollaboration?.fetchCollaborationConversationList
-    ? window.chatCollaboration.fetchCollaborationConversationList().catch(error => {
-        console.warn('Failed to load collaborative conversations:', error);
-        return [];
-      })
-    : Promise.resolve([]);
+  try {
+    const payload = await fetchConversationFeedPage(append ? cursor : null);
+    const incomingConversations = Array.isArray(payload.conversations) ? payload.conversations : [];
 
-  return Promise.all([legacyConversationsRequest, collaborationConversationsRequest])
-    .then(([data, collaborationConversations]) => {
-      conversationsList.innerHTML = ""; // Clear loading state
-      const mergedConversations = [
-        ...(Array.isArray(data.conversations) ? data.conversations : []),
-        ...(Array.isArray(collaborationConversations) ? collaborationConversations : []),
-      ];
+    conversationFeedNextCursor = payload.next_cursor || null;
+    conversationFeedHasMore = Boolean(payload.has_more && conversationFeedNextCursor);
+    conversationFeedHiddenCount = Number(payload.hidden_count || 0);
+    allConversations = append
+      ? mergeConversationPages(allConversations, incomingConversations)
+      : incomingConversations;
 
-      if (mergedConversations.length === 0) {
-          conversationsList.innerHTML = '<div class="text-center p-3 text-muted">No conversations yet.</div>';
-          allConversations = [];
-          updateHiddenToggleButton();
-          return;
-      }
-      
-      // Store all conversations for client-side operations
-      allConversations = mergedConversations;
-      
-      // Sort conversations: pinned first (by last_updated), then unpinned (by last_updated)
-      const sortedConversations = [...allConversations].sort((a, b) => {
-        const aPinned = a.is_pinned || false;
-        const bPinned = b.is_pinned || false;
-        
-        // If pin status differs, pinned comes first
-        if (aPinned !== bPinned) {
-          return bPinned ? 1 : -1;
-        }
-        
-        // If same pin status, sort by last_updated (most recent first)
-        const aDate = new Date(a.last_updated);
-        const bDate = new Date(b.last_updated);
-        return bDate - aDate;
+    renderLoadedConversations();
+    updateHiddenToggleButton();
+
+    if (syncSidebar && window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations({
+        conversations: allConversations,
+        hasMore: conversationFeedHasMore,
+        hiddenCount: conversationFeedHiddenCount,
       });
-      
-      // Filter conversations based on show/hide mode and selection mode
-      let filteredConversations = sortedConversations.filter(convo => {
-        const isHidden = convo.is_hidden || false;
-        // Show hidden conversations if toggle is on OR if we're in selection mode
-        return !isHidden || showHiddenConversations || selectionModeActive;
-      });
-      
-      // Apply quick search filter
-      filteredConversations = applyQuickSearchFilter(filteredConversations);
-      
-      if (filteredConversations.length === 0) {
-        conversationsList.innerHTML = '<div class="text-center p-3 text-muted">No visible conversations. Click the eye icon to show hidden conversations.</div>';
-      } else {
-        filteredConversations.forEach(convo => {
-          conversationsList.appendChild(createConversationItem(convo));
-        });
-      }
-      
-      // Update the show/hide toggle button
-      updateHiddenToggleButton();
-      
-      // Also load sidebar conversations if the sidebar exists
-      if (syncSidebar && window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
-        window.chatSidebarConversations.loadSidebarConversations({ conversations: mergedConversations });
-      }
-      
-      // Reset loading flag
-      isLoadingConversations = false;
-      
-      // Optionally, select the first conversation or highlight the active one if ID is known
-    })
-    .catch(error => {
-      console.error("Error loading conversations:", error);
-      conversationsList.innerHTML = `<div class="text-center p-3 text-danger">Error loading conversations: ${error.error || 'Unknown error'}</div>`;
-      isLoadingConversations = false; // Reset flag on error too
-    });
+    }
+
+    return payload;
+  } catch (error) {
+    console.error('Error loading conversations:', error);
+    if (append) {
+      showToast(`Error loading more conversations: ${error.message}`, 'danger');
+    } else {
+      setConversationListMessage(`Error loading conversations: ${error.message}`, true);
+    }
+    return null;
+  } finally {
+    isLoadingConversations = false;
+    setConversationLoadMoreButtonsLoading(false);
+  }
+}
+
+export function loadMoreConversations() {
+  if (!conversationFeedHasMore || !conversationFeedNextCursor) {
+    return Promise.resolve(null);
+  }
+
+  return loadConversations({ append: true, cursor: conversationFeedNextCursor });
 }
 
 // Ensure a conversation exists in the list; fetch metadata if missing
@@ -820,7 +914,11 @@ export async function ensureConversationPresent(conversationId) {
 
   // Refresh sidebar so it appears there too
   if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
-    window.chatSidebarConversations.loadSidebarConversations();
+    window.chatSidebarConversations.loadSidebarConversations({
+      conversations: allConversations,
+      hasMore: conversationFeedHasMore,
+      hiddenCount: conversationFeedHiddenCount,
+    });
   }
 
   return convoItem;
@@ -2244,7 +2342,7 @@ function updateHiddenToggleButton() {
   let toggleBtn = document.getElementById("toggle-hidden-btn");
   
   // Count hidden conversations
-  const hiddenCount = allConversations.filter(c => c.is_hidden || false).length;
+  const hiddenCount = conversationFeedHiddenCount;
   
   if (hiddenCount > 0) {
     // Create button if it doesn't exist
@@ -2268,12 +2366,22 @@ function updateHiddenToggleButton() {
     
     // Update button content based on current state
     const icon = showHiddenConversations ? "bi-eye-slash" : "bi-eye";
-    toggleBtn.innerHTML = `<i class="bi ${icon}"></i> <span class="badge bg-secondary">${hiddenCount}</span>`;
-    toggleBtn.style.display = "inline-block";
+    toggleBtn.replaceChildren();
+
+    const iconEl = document.createElement('i');
+    iconEl.classList.add('bi', icon);
+    toggleBtn.appendChild(iconEl);
+    toggleBtn.appendChild(document.createTextNode(' '));
+
+    const countBadge = document.createElement('span');
+    countBadge.classList.add('badge', 'bg-secondary');
+    countBadge.textContent = String(hiddenCount);
+    toggleBtn.appendChild(countBadge);
+    toggleBtn.classList.remove('d-none');
   } else {
     // Hide button if no hidden conversations
     if (toggleBtn) {
-      toggleBtn.style.display = "none";
+      toggleBtn.classList.add('d-none');
     }
   }
 }
@@ -2313,55 +2421,23 @@ if (exportSelectedBtn) {
   });
 }
 
+if (conversationsList) {
+  conversationsList.addEventListener('scroll', () => {
+    maybeLoadMoreConversationsFromScroll(conversationsList);
+  });
+}
+
 // Helper function to set show hidden conversations state and return a promise
 export function setShowHiddenConversations(value) {
   showHiddenConversations = value;
-  
-  // If enabling hidden conversations and the list is already loaded, just re-render
-  if (value && allConversations.length > 0) {
-    // Re-filter and render without fetching
-    const sortedConversations = [...allConversations].sort((a, b) => {
-      const aPinned = a.is_pinned || false;
-      const bPinned = b.is_pinned || false;
-      if (aPinned !== bPinned) return bPinned ? 1 : -1;
-      const aDate = new Date(a.last_updated);
-      const bDate = new Date(b.last_updated);
-      return bDate - aDate;
-    });
-    
-    let filteredConversations = sortedConversations.filter(convo => {
-      const isHidden = convo.is_hidden || false;
-      return !isHidden || showHiddenConversations || selectionModeActive;
-    });
-    
-    filteredConversations = applyQuickSearchFilter(filteredConversations);
-    
-    if (conversationsList) {
-      conversationsList.innerHTML = "";
-      if (filteredConversations.length === 0) {
-        conversationsList.innerHTML = '<div class="text-center p-3 text-muted">No visible conversations.</div>';
-      } else {
-        filteredConversations.forEach(convo => {
-          conversationsList.appendChild(createConversationItem(convo));
-        });
-      }
-    }
-    
-    updateHiddenToggleButton();
-    
-    if (syncSidebar && window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
-      window.chatSidebarConversations.loadSidebarConversations();
-    }
-  } else {
-    // Otherwise do a full reload
-    loadConversations();
-  }
+  loadConversations();
 }
 
 // Expose functions globally for sidebar integration
 window.chatConversations = {
   selectConversation,
   loadConversations,
+  loadMoreConversations,
   highlightSelectedConversation,
   addConversationToList,
   markConversationRead,
