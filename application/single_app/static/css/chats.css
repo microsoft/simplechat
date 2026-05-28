@@ -1864,11 +1864,35 @@ a.citation-link:hover {
 
 
 /* AI message bubble styling */
+.ai-message .message-content {
+  width: 100%;
+}
+
 .ai-message .message-bubble {
   background-color: #f1f0f0; /* Lighter grey for AI */
   color: black;
   border-bottom-left-radius: 0;
-  min-width: min(320px, 90%);
+  min-width: min(370px, calc(100% - 40px));
+  max-width: calc(100% - 40px) !important;
+}
+
+.ai-message .message-footer {
+  gap: 0.75rem;
+}
+
+.ai-message .message-footer > .d-flex {
+  flex: 0 0 auto;
+}
+
+.ai-message .message-footer > .d-flex:nth-child(2) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ai-message .message-actions,
+.ai-message .message-footer > .d-flex:last-child {
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .ai-message.streaming-message .message-bubble {
