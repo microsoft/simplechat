@@ -326,6 +326,7 @@
                             <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text">Workspaces</span>
                         </button>
                         {% endif %}
+                        {% if settings.enable_chat_file_uploads %}
                         <input type="file" id="file-input" accept=".txt,.pdf,.doc,.docm,.docx,.xlsx,.xlsm,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv,.xml,.yaml,.yml,.log" style="display: none"/>
                         <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, xlsx, pptx, html, images, md, json, csv, xml, yaml, yml, log)">
                             <i class="bi bi-paperclip"></i> <span class="file-btn-text">File</span>
@@ -334,6 +335,7 @@
                             </span>
                         </button>
                         <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
+                        {% endif %}
                         {% if settings.enable_web_search and settings.web_search_consent_accepted %}
                         <button
                             id="search-web-btn"
@@ -1451,6 +1453,7 @@
     window.appSettings = {
         enable_text_to_speech: {{ app_settings.enable_text_to_speech|tojson }},
         enable_speech_to_text_input: {{ app_settings.enable_speech_to_text_input|tojson }},
+        enable_chat_file_uploads: {{ settings.enable_chat_file_uploads|tojson }},
         enable_web_search_user_notice: {{ settings.enable_web_search_user_notice|tojson }},
         enable_url_access: {{ settings.enable_url_access|tojson }},
         url_access_max_chat_urls_per_turn: {{ settings.url_access_max_chat_urls_per_turn|default(10, true)|tojson }},

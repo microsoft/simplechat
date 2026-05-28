@@ -2,11 +2,12 @@
 """
 UI test for chat file upload access control.
 
-Version: 0.241.098
-Implemented in: 0.241.098
+Version: 0.241.110
+Implemented in: 0.241.110
 
 This test ensures the chat toolbar renders the file upload controls only when
-the current user's effective chat upload setting allows new uploads.
+the current user's effective chat upload setting allows new uploads and exposes
+that same setting to browser-side upload guards.
 """
 
 import os

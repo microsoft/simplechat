@@ -363,6 +363,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Clipboard files with empty names are normalized before upload so pasted screenshots still reach the existing extension-based processing path.
     *   (Ref: chat paste uploads, `chat-input-actions.js`, `test_chat_clipboard_paste_upload_support.py`, `test_chat_clipboard_paste_upload_workflow.py`, `CHAT_CLIPBOARD_PASTE_UPLOADS.md`)
 
+#### Bug Fixes
+
+*   **Chat File Upload Client Enablement**
+    *   Fixed chat file uploads so the effective per-user upload setting is serialized to the browser upload guards.
+    *   Users with chat uploads enabled no longer see the `Chat file uploads are not enabled for your account.` warning caused by a missing client-side flag.
+    *   (Ref: chat upload controls, `chats.html`, `test_chat_file_upload_access_control.py`, `CHAT_FILE_UPLOAD_CLIENT_FLAG_FIX.md`)
+
+*   **Document Auto Metadata Extraction Consistency**
+    *   Fixed upload processing so all supported file types run the same automatic final metadata extraction flow when metadata extraction is enabled.
+    *   Corrected public workspace audio and video chunk scoping so public media files participate correctly in metadata extraction and metadata-to-chunk synchronization.
+    *   Preserved final processing statuses that indicate whether metadata was extracted, yielded no new information, or completed with a metadata warning.
+    *   (Ref: document upload metadata extraction, public workspace media chunks, `functions_documents.py`, `DOCUMENT_AUTO_METADATA_EXTRACTION_FIX.md`)
+
 ### **(v0.241.109)**
 
 #### Bug Fixes

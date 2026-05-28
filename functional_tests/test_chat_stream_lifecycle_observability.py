@@ -2,7 +2,7 @@
 # test_chat_stream_lifecycle_observability.py
 """
 Functional test for chat stream lifecycle observability.
-Version: 0.241.109
+Version: 0.241.110
 Implemented in: 0.241.109
 
 This test ensures long-running chat streams persist lifecycle state for
@@ -19,6 +19,7 @@ ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
 STREAMING_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-streaming.js"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
 FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.109" / "CHAT_STREAM_LIFECYCLE_OBSERVABILITY_FIX.md"
+CURRENT_VERSION = "0.241.110"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -56,7 +57,7 @@ def test_chat_stream_lifecycle_observability() -> None:
     assert_contains(STREAMING_FILE, "void reportClientStreamEvent('stream_recovery_unavailable'")
     assert_contains(STREAMING_FILE, "void reportClientStreamEvent('stream_aborted'")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.109"')
+    assert_contains(CONFIG_FILE, f'VERSION = "{CURRENT_VERSION}"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.109**")
     assert_contains(FIX_DOC_FILE, "client-event endpoint")
     assert_contains(FIX_DOC_FILE, "detach, reattach, keepalive, queue backpressure, and terminal status")

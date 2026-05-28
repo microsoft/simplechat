@@ -3953,11 +3953,11 @@
                                 {% if settings.require_member_of_control_center_admin %}checked{% endif %}
                             >
                             <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_admin">
-                                <i class="bi bi-shield-fill-check me-1"></i> Require ControlCenterAdmin Role for Full Access
+                                <i class="bi bi-shield-fill-check me-1"></i> Require ControlCenterAdmin App Role
                             </label>
                         </div>
                         <p class="text-muted small ms-4 ps-3 mb-2">
-                            When enabled, <strong>only users with the ControlCenterAdmin role</strong> can access the Control Center and all its features (User Management, Group Management, Public Workspaces, Activity Logs). Regular Admins will lose access when this is enabled.
+                            Required app role value: <code>ControlCenterAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only users assigned this role can access the Control Center and all management features. Regular Admins will lose access.
                         </p>
                         <div class="ms-4 ps-3">
                             <span class="badge bg-success-subtle text-success-emphasis me-2">
@@ -3986,11 +3986,11 @@
                                 {% if settings.require_member_of_control_center_dashboard_reader %}checked{% endif %}
                             >
                             <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_dashboard_reader">
-                                <i class="bi bi-eye me-1"></i> Allow ControlCenterDashboardReader Role for Dashboard-Only Access
+                                <i class="bi bi-eye me-1"></i> Allow ControlCenterDashboardReader App Role
                             </label>
                         </div>
                         <p class="text-muted small ms-4 ps-3 mb-2">
-                            When enabled, users with <strong>ControlCenterDashboardReader role</strong> can view the Control Center Dashboard tab (read-only statistics and metrics only). Users with <strong>ControlCenterAdmin role</strong> can also access the dashboard in addition to all management features. Regular Admins will lose dashboard access when this is enabled.
+                            Dashboard-only app role value: <code>ControlCenterDashboardReader</code>. Assign this role to users or groups in the Enterprise App before enabling dashboard-only access. Users assigned <code>ControlCenterAdmin</code> can also access the dashboard when Control Center app-role enforcement is enabled.
                         </p>
                         <div class="ms-4 ps-3">
                             <span class="badge bg-info-subtle text-info-emphasis me-2">
@@ -4016,8 +4016,8 @@
                             <i class="bi bi-lightbulb-fill me-2"></i>Best Practices
                         </h5>
                         <ul class="text-muted small">
-                            <li><strong>ControlCenterAdmin:</strong> Grant to IT administrators who need full control over users, groups, and workspaces</li>
-                            <li><strong>ControlCenterDashboardReader:</strong> Grant to managers, compliance officers, or stakeholders who need visibility into platform usage without administrative powers</li>
+                            <li><code>ControlCenterAdmin</code>: Grant to IT administrators who need full control over users, groups, and workspaces</li>
+                            <li><code>ControlCenterDashboardReader</code>: Grant to managers, compliance officers, or stakeholders who need visibility into platform usage without administrative powers</li>
                             <li><strong>Separation of Duties:</strong> Enable role requirements if you need to restrict Control Center access from general application admins</li>
                             <li><strong>Audit Trail:</strong> All Control Center actions are logged in Activity Logs for compliance and security auditing</li>
                         </ul>
@@ -4267,9 +4267,9 @@
                                     </div>
                                     <div class="form-check form-switch mb-2">
                                         <input type="checkbox" class="form-check-input" id="file_sync_personal_require_app_role" name="file_sync_personal_require_app_role" {% if settings.file_sync_personal_require_app_role %}checked{% endif %}>
-                                        <label class="form-check-label" for="file_sync_personal_require_app_role">Require app role for personal sync</label>
+                                        <label class="form-check-label" for="file_sync_personal_require_app_role">Require PersonalFileSyncUser App Role</label>
                                     </div>
-                                    <div class="form-text mb-3">Required app role: <code>PersonalFileSyncUser</code></div>
+                                    <div class="form-text mb-3">Required app role value: <code>PersonalFileSyncUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement for personal sync.</div>
                                     <hr />
                                     <div data-file-sync-admin-target data-scope="personal" data-search-endpoint="/api/admin/file-sync/users/search" data-results-key="users" data-value-field="id" data-title-field="displayName" data-subtitle-field="email">
                                         <label class="form-label" for="file-sync-admin-personal-target-query">Manage User Sources</label>
@@ -4300,9 +4300,9 @@
                                     </div>
                                     <div class="form-check form-switch mb-2">
                                         <input type="checkbox" class="form-check-input" id="file_sync_group_require_app_role" name="file_sync_group_require_app_role" {% if settings.file_sync_group_require_app_role %}checked{% endif %}>
-                                        <label class="form-check-label" for="file_sync_group_require_app_role">Require app role for group sync</label>
+                                        <label class="form-check-label" for="file_sync_group_require_app_role">Require GroupFileSyncUser App Role</label>
                                     </div>
-                                    <div class="form-text mb-3">Required app role: <code>GroupFileSyncUser</code></div>
+                                    <div class="form-text mb-3">Required app role value: <code>GroupFileSyncUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement for group sync.</div>
                                     <hr />
                                     <div data-file-sync-admin-target data-scope="group" data-search-endpoint="/api/admin/file-sync/groups/search" data-results-key="groups" data-value-field="id" data-title-field="name" data-subtitle-field="description">
                                         <label class="form-label" for="file-sync-admin-group-target-query">Manage Group Sources</label>
@@ -4333,9 +4333,9 @@
                                     </div>
                                     <div class="form-check form-switch mb-2">
                                         <input type="checkbox" class="form-check-input" id="file_sync_public_require_app_role" name="file_sync_public_require_app_role" {% if settings.file_sync_public_require_app_role %}checked{% endif %}>
-                                        <label class="form-check-label" for="file_sync_public_require_app_role">Require app role for public sync</label>
+                                        <label class="form-check-label" for="file_sync_public_require_app_role">Require PublicWorkspaceFileSyncUser App Role</label>
                                     </div>
-                                    <div class="form-text mb-3">Required app role: <code>PublicWorkspaceFileSyncUser</code></div>
+                                    <div class="form-text mb-3">Required app role value: <code>PublicWorkspaceFileSyncUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement for public workspace sync.</div>
                                     <hr />
                                     <div data-file-sync-admin-target data-scope="public" data-search-endpoint="/api/admin/file-sync/public-workspaces/search" data-results-key="workspaces" data-value-field="id" data-title-field="name" data-subtitle-field="description">
                                         <label class="form-label" for="file-sync-admin-public-target-query">Manage Public Workspace Sources</label>
@@ -4525,10 +4525,10 @@
                             <label class="form-check-label ms-2" for="disable_group_creation">
                                 Disable Group Creation
                             </label>
-                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Prevent all users from creating new groups system-wide, regardless of role membership."></i>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Prevent all users from creating new groups system-wide, regardless of app role assignment."></i>
                         </div>
                         <p class="text-muted small mb-3">
-                            When enabled, no users will be able to create new groups, regardless of their role membership. This is a global setting that overrides the 'Require Membership to Create Groups' setting below.
+                            When enabled, no users will be able to create new groups, regardless of app role assignment. This global setting overrides the <strong>Require CreateGroups App Role</strong> setting below.
                         </p>
                         
                         <div class="form-group form-check form-switch mb-2">
@@ -4538,11 +4538,12 @@
                                 name="require_member_of_create_group"
                                 {% if settings.require_member_of_create_group %}checked{% endif %}>
                             <label class="form-check-label ms-2" for="require_member_of_create_group">
-                                Require Membership to Create Groups
+                                Require CreateGroups App Role
                             </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the CreateGroups Enterprise App role can create new groups."></i>
                         </div>
                         <p class="text-muted small mb-0">
-                            If enabled, only users who are members of the 'CreateGroups' role (defined in your App registration) can create new groups. If disabled, any authenticated user can create groups (provided 'Enable My Groups' is active).
+                            Required app role value: <code>CreateGroups</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any authenticated user can create groups while group workspaces and group creation are enabled.
                         </p>
 
                         <hr>
@@ -4594,11 +4595,12 @@
                                 name="require_member_of_create_public_workspace"
                                 {% if settings.require_member_of_create_public_workspace %}checked{% endif %}>
                             <label class="form-check-label ms-2" for="require_member_of_create_public_workspace">
-                                Require Membership to Create Public Workspaces
+                                Require CreatePublicWorkspaces App Role
                             </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the CreatePublicWorkspaces Enterprise App role can create public workspaces."></i>
                         </div>
                         <p class="text-muted small mb-0">
-                            If enabled, only users who are members of the 'CreatePublicWorkspaces' role (defined in your App registration) can create public workspaces. If disabled, any authenticated user can create public workspaces (provided 'Enable Public Workspaces' is active).
+                            Required app role value: <code>CreatePublicWorkspaces</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any authenticated user can create public workspaces while public workspaces are enabled.
                         </p>
                     </div>
                     
@@ -4654,7 +4656,7 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the ChatFileUploadUser Enterprise App role can upload files into chat."></i>
                     </div>
                     <p class="text-muted small mb-0">
-                        Required app role: <code>ChatFileUploadUser</code>. Existing chat attachments remain visible; this only controls new uploads.
+                        Required app role value: <code>ChatFileUploadUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. Existing chat attachments remain visible; this only controls new uploads.
                     </p>
                 </div>
 
@@ -5592,12 +5594,12 @@
                             name="require_member_of_safety_violation_admin"
                             {% if settings.require_member_of_safety_violation_admin %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="require_member_of_safety_violation_admin">
-                            Require Membership for Safety Violation Admin View
+                            Require SafetyViolationAdmin App Role
                         </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Restrict access to safety violation reports to users with the 'SafetyViolationAdmin' role instead of general admin access."></i>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the SafetyViolationAdmin Enterprise App role can access safety violation reports."></i>
                     </div>
                      <p class="text-muted small mb-3">
-                        If enabled, only users who are members of the 'SafetyViolationAdmin' role (defined in your App registration) can access the Safety Violations admin page. If disabled, any user with the general 'Admin' role can access it.
+                        Required app role value: <code>SafetyViolationAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any user with the general <code>Admin</code> app role can access the Safety Violations admin page.
                     </p>
 
                     
@@ -5608,12 +5610,12 @@
                             name="require_member_of_feedback_admin"
                             {% if settings.require_member_of_feedback_admin %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="require_member_of_feedback_admin">
-                            Require Membership for Feedback Admin View
+                            Require FeedbackAdmin App Role
                         </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Restrict access to user feedback reports to users with the 'FeedbackAdmin' role instead of general admin access."></i>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the FeedbackAdmin Enterprise App role can access user feedback reports."></i>
                     </div>
                      <p class="text-muted small mb-0">
-                        If enabled, only users who are members of the 'FeedbackAdmin' role (defined in your App registration) can access the User Feedback admin page. If disabled, any user with the general 'Admin' role can access it. Requires 'Enable User Feedback' to be active.
+                        Required app role value: <code>FeedbackAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any user with the general <code>Admin</code> app role can access the User Feedback admin page. Requires <strong>Enable User Feedback</strong> to be active.
                     </p>
                 </div>
                 
@@ -5809,8 +5811,8 @@
                             name="require_member_of_url_access_user"
                             {% if settings.require_member_of_url_access_user %}checked{% endif %}
                         >
-                        <label class="form-check-label ms-2" for="require_member_of_url_access_user">Require UrlAccessUser app role</label>
-                        <div class="form-text">When enabled, only users assigned the <code>UrlAccessUser</code> Enterprise App role can use URL Access in chat or enable it for workflows.</div>
+                        <label class="form-check-label ms-2" for="require_member_of_url_access_user">Require UrlAccessUser App Role</label>
+                        <div class="form-text">Required app role value: <code>UrlAccessUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only assigned users can use URL Access in chat or enable it for workflows.</div>
                     </div>
 
                     <div id="url_access_settings" class="{% if not settings.enable_url_access %}d-none{% endif %}">
@@ -5916,8 +5918,8 @@
                                 name="require_member_of_deep_research_user"
                                 {% if settings.require_member_of_deep_research_user %}checked{% endif %}
                             >
-                            <label class="form-check-label ms-2" for="require_member_of_deep_research_user">Require DeepResearchUser app role</label>
-                            <div class="form-text">When enabled, only users assigned the <code>DeepResearchUser</code> Enterprise App role can use Deep Research.</div>
+                            <label class="form-check-label ms-2" for="require_member_of_deep_research_user">Require DeepResearchUser App Role</label>
+                            <div class="form-text">Required app role value: <code>DeepResearchUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only assigned users can use Deep Research.</div>
                         </div>
 
                         <div class="form-check form-switch mb-3">

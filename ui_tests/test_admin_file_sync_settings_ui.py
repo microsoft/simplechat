@@ -2,8 +2,9 @@
 """
 UI test for Admin Settings File Sync management.
 
-Version: 0.241.073
+Version: 0.241.110
 Implemented in: 0.241.073
+Updated in: 0.241.110
 
 This test ensures the Admin Settings File Sync tab renders as its own section,
 uses app-role gate controls, stacks scope cards as separate rows, and opens the
@@ -105,9 +106,9 @@ def test_admin_file_sync_tab_and_target_manager():
         file_sync_section = page.locator("#file-sync-section")
         expect(file_sync_section).to_be_visible()
         expect(page.get_by_label("Enable File Sync")).to_be_visible()
-        expect(page.get_by_label("Require app role for personal sync")).to_be_visible()
-        expect(page.get_by_label("Require app role for group sync")).to_be_visible()
-        expect(page.get_by_label("Require app role for public sync")).to_be_visible()
+        expect(page.get_by_label("Require PersonalFileSyncUser App Role")).to_be_visible()
+        expect(page.get_by_label("Require GroupFileSyncUser App Role")).to_be_visible()
+        expect(page.get_by_label("Require PublicWorkspaceFileSyncUser App Role")).to_be_visible()
         expect(file_sync_section.get_by_text("PersonalFileSyncUser").first).to_be_visible()
         expect(file_sync_section.get_by_text("GroupFileSyncUser").first).to_be_visible()
         expect(file_sync_section.get_by_text("PublicWorkspaceFileSyncUser").first).to_be_visible()

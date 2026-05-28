@@ -25,6 +25,14 @@
   },
   {
     "allowedMemberTypes": ["User"],
+    "description": "Allows user to create public workspaces (if enabled).",
+    "displayName": "Create Public Workspace",
+    "id": "cdde6011-a59e-4b76-ae33-1dc878ea5c96",
+    "isEnabled": true,
+    "value": "CreatePublicWorkspaces"
+  },
+  {
+    "allowedMemberTypes": ["User"],
     "description": "Standard user access to chat features.",
     "displayName": "Users",
     "id": "633746c6-3d03-480f-b273-58ece728be52",
@@ -94,6 +102,30 @@
     "id": "7d42c0b7-5a95-43b6-9e38-2fb06988901e",
     "isEnabled": true,
     "value": "WorkflowUser"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Allows personal File Sync source management when the personal sync app role requirement is enabled.",
+    "displayName": "Personal File Sync User",
+    "id": "eba309b8-baf2-4171-aa8e-16b76e5ebc7d",
+    "isEnabled": true,
+    "value": "PersonalFileSyncUser"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Allows group File Sync source management when the group sync app role requirement is enabled.",
+    "displayName": "Group File Sync User",
+    "id": "1ce1805b-38d7-497c-933d-80ac9c9c3e30",
+    "isEnabled": true,
+    "value": "GroupFileSyncUser"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Allows public workspace File Sync source management when the public sync app role requirement is enabled.",
+    "displayName": "Public Workspace File Sync User",
+    "id": "bda20c0d-c305-4c81-a9b2-66e245ee2354",
+    "isEnabled": true,
+    "value": "PublicWorkspaceFileSyncUser"
   }
 
 ]

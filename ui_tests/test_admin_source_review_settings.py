@@ -1,9 +1,9 @@
 # test_admin_source_review_settings.py
 """
 UI test for Deep Research admin settings.
-Version: 0.241.094
+Version: 0.241.110
 Implemented in: 0.241.055
-Updated in: 0.241.072; 0.241.079; 0.241.081; 0.241.082; 0.241.094
+Updated in: 0.241.072; 0.241.079; 0.241.081; 0.241.082; 0.241.094; 0.241.110
 
 This test ensures the Search & Extract admin tab exposes Deep Research controls,
 shared URL Access controls, bounded review settings, query planning, ledger
@@ -128,7 +128,7 @@ def test_admin_source_review_settings():
         expect(url_access_section).to_contain_text("URL Access")
         expect(url_access_section).to_contain_text("chat and workflows")
         expect(page.locator("#require_member_of_url_access_user")).to_have_count(1)
-        expect(page.locator("label[for='require_member_of_url_access_user']")).to_contain_text("UrlAccessUser")
+        expect(page.locator("label[for='require_member_of_url_access_user']")).to_contain_text("Require UrlAccessUser App Role")
         url_access_toggle = page.locator("#enable_url_access")
         if not url_access_toggle.is_checked():
             url_access_toggle.check(force=True)
@@ -165,7 +165,7 @@ def test_admin_source_review_settings():
         expect(page.locator("#source_review_js_load_more_clicks")).to_have_attribute("max", "12")
         expect(page.locator("#source_review_js_load_more_clicks")).to_have_value("12")
         expect(page.locator("#require_member_of_deep_research_user")).to_have_count(1)
-        expect(page.locator("label[for='require_member_of_deep_research_user']")).to_contain_text("DeepResearchUser")
+        expect(page.locator("label[for='require_member_of_deep_research_user']")).to_contain_text("Require DeepResearchUser App Role")
         expect(page.locator("#source_review_allow_internal_hosts")).to_have_count(1)
         expect(page.locator("label[for='source_review_allow_internal_hosts']")).to_contain_text("internal network hostnames")
 

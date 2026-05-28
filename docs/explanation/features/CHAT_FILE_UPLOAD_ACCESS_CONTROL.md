@@ -24,6 +24,7 @@ Related config.py version update: `application/single_app/config.py` was increme
 - `enable_chat_file_uploads` globally controls new files uploaded directly into chat.
 - `require_member_of_chat_file_upload_user` optionally requires the authenticated session role claim to include `ChatFileUploadUser`.
 - The chat page receives an effective `enable_chat_file_uploads` value after evaluating global enablement and the current user's role claims.
+- The chat template serializes that effective value to `window.appSettings.enable_chat_file_uploads` so selected, pasted, and dropped files use the same client-side gate.
 - The frontend hides the paperclip controls when the effective setting is disabled and guards paste/drag-and-drop upload flows.
 - The backend rejects unauthorized `POST /upload` requests before processing or storing the uploaded file.
 
@@ -63,5 +64,7 @@ Existing chat attachments remain visible after the feature is disabled. Workspac
 Functional coverage: `functional_tests/test_chat_file_upload_access_control.py` validates settings defaults, admin persistence, backend enforcement, UI gating snippets, deployment role definitions, documentation, and version tracking.
 
 UI coverage: `ui_tests/test_chat_file_upload_access_control.py` validates that the chat toolbar file controls match the effective server-rendered setting for the authenticated test user.
+
+Related fix: `docs/explanation/fixes/CHAT_FILE_UPLOAD_CLIENT_FLAG_FIX.md` documents the client app settings serialization regression fixed in version `0.241.110`.
 
 Known limitation: Users must refresh their sign-in token after role assignment changes before the new `ChatFileUploadUser` claim appears in the session.

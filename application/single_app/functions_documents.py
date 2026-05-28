@@ -3,6 +3,7 @@
 import re
 import traceback
 from config import *
+from functions_appinsights import log_event
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
 from functions_settings import *
@@ -865,7 +866,8 @@ def save_video_chunk(
     file_name,
     user_id,
     document_id,
-    group_id
+    group_id,
+    public_workspace_id=None
 ):
     """
     Saves one 30-second video chunk to the search index, with separate fields for transcript and OCR.
@@ -881,6 +883,7 @@ def save_video_chunk(
     try:
         current_time = datetime.now(timezone.utc).isoformat()
         is_group = group_id is not None
+        is_public_workspace = public_workspace_id is not None
 
         # Convert start_time "HH:MM:SS.mmm" to integer seconds
         h, m, s = start_time.split(':')
@@ -909,7 +912,23 @@ def save_video_chunk(
         # 2) build chunk document
         try:
             debug_print(f"[VIDEO CHUNK] Retrieving document metadata")
-            meta = get_document_metadata(document_id, user_id, group_id)
+            if is_public_workspace:
+                meta = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    public_workspace_id=public_workspace_id
+                )
+            elif is_group:
+                meta = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    group_id=group_id
+                )
+            else:
+                meta = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id
+                )
             version = meta.get("version", 1) if meta else 1
             debug_print(f"[VIDEO CHUNK] Document version: {version}")
 
@@ -931,7 +950,11 @@ def save_video_chunk(
                 "document_tags":        meta.get('tags', []) if meta else []
             }
 
-            if is_group:
+            if is_public_workspace:
+                chunk["public_workspace_id"] = public_workspace_id
+                client = CLIENTS["search_client_public"]
+                debug_print(f"[VIDEO CHUNK] Using public search client for public_workspace_id: {public_workspace_id}")
+            elif is_group:
                 chunk["group_id"] = group_id
                 client = CLIENTS["search_client_group"]
                 debug_print(f"[VIDEO CHUNK] Using group search client for group_id: {group_id}")
@@ -972,7 +995,8 @@ def process_video_document(
     original_filename,
     update_callback,
     group_id,
-    public_workspace_id=None
+    public_workspace_id=None,
+    auto_extract_metadata=True
 ):
     """
     Processes a video by dividing transcript into 30-second chunks,
@@ -1110,6 +1134,7 @@ def process_video_document(
                 document_id=document_id,
                 user_id=user_id,
                 group_id=group_id,
+                public_workspace_id=public_workspace_id,
                 video_indexer_id=vid
             )
             debug_print(f"[VIDEO INDEXER] Document metadata updated successfully")
@@ -1725,7 +1750,8 @@ def process_video_document(
                 file_name=original_filename,
                 user_id=user_id,
                 document_id=document_id,
-                group_id=group_id
+                group_id=group_id,
+                public_workspace_id=public_workspace_id
             )
             debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} saved successfully")
             total += 1
@@ -1738,7 +1764,7 @@ def process_video_document(
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
-    if enable_extract_meta_data and total > 0:
+    if auto_extract_metadata and enable_extract_meta_data and total > 0:
         try:
             update_callback(status="Extracting final metadata...")
             args = {
@@ -2013,7 +2039,12 @@ def update_document(**kwargs):
         # However, it's better to only do this if the relevant fields *actually* changed.
         if update_occurred and updated_fields_requiring_chunk_sync:
             try:
-                chunks_to_update = get_all_chunks(document_id, user_id)
+                chunks_to_update = get_all_chunks(
+                    document_id,
+                    user_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id
+                )
                 for chunk in chunks_to_update:
                     chunk_updates = {}
                     if 'title' in updated_fields_requiring_chunk_sync:
@@ -2035,6 +2066,7 @@ def update_document(**kwargs):
                             'user_id': user_id,
                             'document_id': document_id,
                             'group_id': group_id,
+                            'public_workspace_id': public_workspace_id,
                             **chunk_updates
                         }
                         
@@ -4221,7 +4253,8 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         metadata = {
             "document_id": str(document_id),
             "group_id": str(group_id) if group_id is not None else None,
-            "user_id": str(user_id) if group_id is None else None
+            "public_workspace_id": str(public_workspace_id) if public_workspace_id is not None else None,
+            "user_id": str(user_id) if group_id is None and public_workspace_id is None else None
         }
 
         metadata = {k: v for k, v in metadata.items() if v is not None}
@@ -5052,7 +5085,7 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes HTML files."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5155,7 +5188,7 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
-    if enable_extract_meta_data and total_chunks_saved > 0:
+    if auto_extract_metadata and enable_extract_meta_data and total_chunks_saved > 0:
         try:
             update_callback(status="Extracting final metadata...")
             args = {
@@ -5183,7 +5216,7 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_md(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def process_md(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes Markdown files."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5292,7 +5325,7 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
-    if enable_extract_meta_data and total_chunks_saved > 0:
+    if auto_extract_metadata and enable_extract_meta_data and total_chunks_saved > 0:
         try:
             update_callback(status="Extracting final metadata...")
             args = {
@@ -5320,7 +5353,7 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_json(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def process_json(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes JSON files using RecursiveJsonSplitter."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5429,7 +5462,7 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
-    if enable_extract_meta_data and total_chunks_saved > 0:
+    if auto_extract_metadata and enable_extract_meta_data and total_chunks_saved > 0:
         try:
             update_callback(status="Extracting final metadata...")
             args = {
@@ -5709,7 +5742,7 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_tabular(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def process_tabular(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes CSV, XLSX, or XLS files using pandas."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5883,7 +5916,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
-    if enable_extract_meta_data and total_chunks_saved > 0:
+    if auto_extract_metadata and enable_extract_meta_data and total_chunks_saved > 0:
         try:
             update_callback(status="Extracting final metadata...")
             args = {
@@ -5911,7 +5944,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_visio(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def process_visio(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes Visio VSDX files as one searchable chunk per page."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5975,7 +6008,7 @@ def process_visio(document_id, user_id, temp_file_path, original_filename, enabl
 
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
-    if enable_extract_meta_data and total_chunks_saved > 0:
+    if auto_extract_metadata and enable_extract_meta_data and total_chunks_saved > 0:
         try:
             update_callback(status="Extracting final metadata...")
             args = {
@@ -6005,7 +6038,7 @@ def process_visio(document_id, user_id, temp_file_path, original_filename, enabl
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes documents supported by Azure Document Intelligence (PDF, Word, PPT, Image)."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -6318,7 +6351,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     # --- Final Metadata Extraction (Optional, moved outside loop) ---
     settings = get_settings() # Re-get in case it changed? Or pass it down.
     enable_extract_meta_data = settings.get('enable_extract_meta_data')
-    if enable_extract_meta_data and total_final_chunks_processed > 0:
+    if auto_extract_metadata and enable_extract_meta_data and total_final_chunks_processed > 0:
         try:
             update_callback(status="Extracting final metadata...")
             args = {
@@ -6448,7 +6481,8 @@ def process_audio_document(
     original_filename: str,
     update_callback,
     group_id=None,
-    public_workspace_id=None
+    public_workspace_id=None,
+    auto_extract_metadata=True
 ) -> int:
     """Transcribe an audio file via Azure Speech, splitting >10 min into WAV chunks."""
 
@@ -6680,13 +6714,14 @@ def process_audio_document(
             file_name=original_filename,
             user_id=user_id,
             document_id=document_id,
-            group_id=group_id
+            group_id=group_id,
+            public_workspace_id=public_workspace_id
         )
 
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
-    if enable_extract_meta_data and total_pages > 0:
+    if auto_extract_metadata and enable_extract_meta_data and total_pages > 0:
         try:
             update_callback(status="Extracting final metadata...")
             args = {
@@ -6716,6 +6751,88 @@ def process_audio_document(
 
     print("[Info] Audio transcription complete")
     return total_pages
+
+def _build_document_scope_args(document_id, user_id, group_id=None, public_workspace_id=None):
+    args = {
+        "document_id": document_id,
+        "user_id": user_id
+    }
+
+    if public_workspace_id:
+        args["public_workspace_id"] = public_workspace_id
+    elif group_id:
+        args["group_id"] = group_id
+
+    return args
+
+
+def _run_final_metadata_extraction(document_id, user_id, total_chunks_saved, enable_extract_meta_data, update_callback, group_id=None, public_workspace_id=None):
+    if total_chunks_saved <= 0:
+        return "skipped_no_chunks"
+
+    if not enable_extract_meta_data:
+        return "disabled"
+
+    try:
+        update_callback(status="Extracting final metadata...")
+        args = _build_document_scope_args(
+            document_id,
+            user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id
+        )
+        document_metadata = extract_document_metadata(**args)
+
+        if not document_metadata:
+            update_callback(status="Metadata extraction returned empty or failed")
+            return "returned_empty"
+
+        update_fields = {
+            key: value
+            for key, value in document_metadata.items()
+            if value is not None and value != ""
+        }
+
+        if update_fields:
+            update_fields['status'] = "Final metadata extracted"
+            update_callback(**update_fields)
+            return "extracted"
+
+        update_callback(status="Final metadata extraction yielded no new info")
+        return "no_new_info"
+    except Exception as metadata_error:
+        log_event(
+            f"[DocumentMetadataExtraction] Error extracting final metadata for document {document_id}: {metadata_error}",
+            extra={
+                "document_id": document_id,
+                "group_id": group_id,
+                "public_workspace_id": public_workspace_id
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True
+        )
+        update_callback(status="Processing complete (metadata extraction warning)")
+        return "warning"
+
+
+def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_extensions, tabular_extensions, metadata_extraction_result):
+    if total_chunks_saved == 0:
+        if file_ext in image_extensions:
+            return "Processing complete - no text found in image"
+        if file_ext in tabular_extensions:
+            return "Processing complete - no data rows found or file empty"
+        return "Processing complete - no content indexed"
+
+    if metadata_extraction_result == "extracted":
+        return "Processing complete - final metadata extracted"
+    if metadata_extraction_result == "no_new_info":
+        return "Processing complete - metadata extraction yielded no new info"
+    if metadata_extraction_result == "returned_empty":
+        return "Processing complete - metadata extraction returned empty or failed"
+    if metadata_extraction_result == "warning":
+        return "Processing complete (metadata extraction warning)"
+
+    return "Processing complete"
 
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None):
     """
@@ -6798,6 +6915,11 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         elif is_group:
             args["group_id"] = group_id
 
+        processor_args_without_auto_metadata = {
+            **args,
+            "auto_extract_metadata": False
+        }
+
         if file_ext == '.txt':
             result = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
             # Handle tuple return (chunks, tokens, model_name)
@@ -6830,31 +6952,31 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             else:
                 total_chunks_saved = result
         elif file_ext == '.html':
-            result = process_html(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_html(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
                 total_chunks_saved = result
         elif file_ext == '.md':
-            result = process_md(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_md(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
                 total_chunks_saved = result
         elif file_ext == '.json':
-            result = process_json(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_json(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
                 total_chunks_saved = result
         elif file_ext in tabular_extensions:
-            result = process_tabular(**args)
+            result = process_tabular(**processor_args_without_auto_metadata)
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
                 total_chunks_saved = result
         elif file_ext in visio_extensions:
-            result = process_visio(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_visio(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
@@ -6867,7 +6989,8 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 original_filename=original_filename,
                 update_callback=update_doc_callback,
                 group_id=group_id,
-                public_workspace_id=public_workspace_id
+                public_workspace_id=public_workspace_id,
+                auto_extract_metadata=False
             )
         elif file_ext in audio_extensions:
             total_chunks_saved = process_audio_document(
@@ -6877,10 +7000,11 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 original_filename=original_filename,
                 update_callback=update_doc_callback,
                 group_id=group_id,
-                public_workspace_id=public_workspace_id
+                public_workspace_id=public_workspace_id,
+                auto_extract_metadata=False
             )
         elif file_ext in di_supported_extensions or file_ext == '.doc':
-            result = process_di_document(**args)
+            result = process_di_document(**processor_args_without_auto_metadata)
             # Handle tuple return (chunks, tokens, model_name)
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
@@ -6890,16 +7014,24 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             raise ValueError(f"Unsupported file type for processing: {file_ext}")
 
 
-        # --- 2. Final Status Update ---
-        final_status = "Processing complete"
-        if total_chunks_saved == 0:
-             # Provide more specific status if no chunks were saved
-             if file_ext in image_extensions:
-                 final_status = "Processing complete - no text found in image"
-             elif file_ext in tabular_extensions:
-                 final_status = "Processing complete - no data rows found or file empty"
-             else:
-                 final_status = "Processing complete - no content indexed"
+        # --- 2. Final Metadata Extraction and Status Update ---
+        metadata_extraction_result = _run_final_metadata_extraction(
+            document_id,
+            user_id,
+            total_chunks_saved,
+            enable_extract_meta_data,
+            update_doc_callback,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id
+        )
+
+        final_status = _resolve_processing_complete_status(
+            total_chunks_saved,
+            file_ext,
+            image_extensions,
+            tabular_extensions,
+            metadata_extraction_result
+        )
 
         # Final update uses the total chunks saved across all steps/sheets
         # For DI types, number_of_pages might have been updated during DI processing,

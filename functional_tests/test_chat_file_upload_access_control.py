@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # test_chat_file_upload_access_control.py
 """
-Functional test for chat file upload access control.
-Version: 0.241.098
-Implemented in: 0.241.098
+Functional test for chat file upload access control and client enablement.
+Version: 0.241.110
+Implemented in: 0.241.110
 
 This test ensures chat follow-up uploads can be globally disabled or limited to
 users with the ChatFileUploadUser app role, while workspace uploads remain under
-their existing controls.
+their existing controls. It also prevents regression where the chat page omitted
+the effective upload setting from the frontend app settings object.
 """
 
 import os
@@ -34,8 +35,17 @@ FEATURE_DOC_FILE = os.path.join(
     "features",
     "CHAT_FILE_UPLOAD_ACCESS_CONTROL.md",
 )
+FIX_DOC_FILE = os.path.join(
+    REPO_ROOT,
+    "docs",
+    "explanation",
+    "fixes",
+    "CHAT_FILE_UPLOAD_CLIENT_FLAG_FIX.md",
+)
 
-EXPECTED_VERSION = "0.241.098"
+CURRENT_VERSION = "0.241.110"
+ACCESS_CONTROL_VERSION = "0.241.098"
+CLIENT_FLAG_FIX_VERSION = "0.241.110"
 
 
 def read_file(path):
@@ -154,6 +164,24 @@ def test_chat_ui_hides_and_guards_upload_controls():
     print("Chat UI gates passed")
 
 
+def test_chat_ui_exposes_effective_upload_flag_to_client():
+    """Verify the server-rendered effective setting reaches chat upload JavaScript."""
+    print("Testing chat UI app settings upload flag exposure...")
+
+    chat_template_source = read_file(CHAT_TEMPLATE_FILE)
+    chat_js_source = read_file(CHAT_INPUT_ACTIONS_FILE)
+
+    expected_template_snippet = "enable_chat_file_uploads: {{ settings.enable_chat_file_uploads|tojson }},"
+    assert expected_template_snippet in chat_template_source
+    assert "Boolean(window.appSettings?.enable_chat_file_uploads)" in chat_js_source
+
+    app_settings_index = chat_template_source.index("window.appSettings = {")
+    upload_flag_index = chat_template_source.index(expected_template_snippet)
+    assert upload_flag_index > app_settings_index, "Upload flag must be serialized inside window.appSettings."
+
+    print("Chat UI app settings upload flag exposure passed")
+
+
 def test_app_role_definitions_and_versions_are_updated():
     """Verify app role definitions, feature documentation, and version tracking were updated."""
     print("Testing app role definitions and version tracking...")
@@ -161,15 +189,17 @@ def test_app_role_definitions_and_versions_are_updated():
     app_roles_source = read_file(APP_ROLES_FILE)
     terraform_source = read_file(TERRAFORM_FILE)
     feature_doc_source = read_file(FEATURE_DOC_FILE)
+    fix_doc_source = read_file(FIX_DOC_FILE)
     version = read_version()
 
-    assert version == EXPECTED_VERSION, f"Expected config VERSION to be {EXPECTED_VERSION}, found {version}"
+    assert version == CURRENT_VERSION, f"Expected config VERSION to be {CURRENT_VERSION}, found {version}"
     assert '"value": "ChatFileUploadUser"' in app_roles_source
     assert '"id": "3f6ec07d-db95-4c0e-ab03-0645b95736e3"' in app_roles_source
     assert 'value                = "ChatFileUploadUser"' in terraform_source
     assert 'role_id              = "3f6ec07d-db95-4c0e-ab03-0645b95736e3"' in terraform_source
-    assert f"Implemented in version: **{EXPECTED_VERSION}**" in feature_doc_source
+    assert f"Implemented in version: **{ACCESS_CONTROL_VERSION}**" in feature_doc_source
     assert "Related config.py version update" in feature_doc_source
+    assert f"Fixed in version: **{CLIENT_FLAG_FIX_VERSION}**" in fix_doc_source
 
     print("App role definitions and version tracking passed")
 
@@ -180,6 +210,7 @@ if __name__ == "__main__":
         test_backend_upload_route_enforces_role_gate,
         test_admin_settings_persist_chat_upload_controls,
         test_chat_ui_hides_and_guards_upload_controls,
+        test_chat_ui_exposes_effective_upload_flag_to_client,
         test_app_role_definitions_and_versions_are_updated,
     ]
 
