@@ -2933,6 +2933,11 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return `Generated ${outputFormat.toUpperCase()} export`;
   }
 
+  function shouldCollapseGeneratedAnalysisPreview(outputMetadata) {
+    const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
+    return capability === 'analyze' || capability === 'comparison';
+  }
+
   function buildGeneratedArtifactDownloadUrl(outputMetadata) {
     const normalizedDocId = String(outputMetadata?.document_id || '').trim();
     const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
@@ -3785,11 +3790,6 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     if (previewRows.length || previewItems.length || previewLines.length || previewText) {
-      const previewLabel = document.createElement('div');
-      previewLabel.className = 'small fw-semibold mt-3 mb-2';
-      previewLabel.textContent = 'Preview';
-      card.appendChild(previewLabel);
-
       let previewContent = null;
       if (previewRows.length) {
         previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
@@ -3801,7 +3801,25 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         previewContent = buildGeneratedAnalysisPreviewText(previewText, outputMetadata, outputFormat);
       }
 
-      card.appendChild(previewContent);
+      if (previewContent) {
+        if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
+          const previewDetails = document.createElement('details');
+          previewDetails.className = 'generated-analysis-preview-details mt-3';
+
+          const previewSummary = document.createElement('summary');
+          previewSummary.className = 'small fw-semibold';
+          previewSummary.textContent = 'Show preview';
+          previewDetails.appendChild(previewSummary);
+          previewDetails.appendChild(previewContent);
+          card.appendChild(previewDetails);
+        } else {
+          const previewLabel = document.createElement('div');
+          previewLabel.className = 'small fw-semibold mt-3 mb-2';
+          previewLabel.textContent = 'Preview';
+          card.appendChild(previewLabel);
+          card.appendChild(previewContent);
+        }
+      }
     }
 
     const actions = document.createElement('div');
@@ -6273,11 +6291,58 @@ function formatMetadataForDrawer(metadata) {
     if (metadata.button_states.web_search !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Web Search:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.web_search)}</span></div>`;
     }
+
+    if (metadata.button_states.url_access !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">URL Access:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.url_access)}</span></div>`;
+    }
+
+    if (metadata.button_states.deep_research !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Deep Research:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.deep_research)}</span></div>`;
+    }
     
     if (metadata.button_states.document_search !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Document Search:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.document_search)}</span></div>`;
     }
     
+    content += '</div></div>';
+  }
+
+  if (metadata.capability_usage) {
+    const capabilityUsage = metadata.capability_usage;
+    const workspaceUsage = capabilityUsage.workspace || {};
+    const actionUsage = capabilityUsage.actions || {};
+    const webSearchUsage = capabilityUsage.web_search || {};
+    const deepResearchUsage = capabilityUsage.deep_research || {};
+
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-sliders me-2"></i>Capability Usage</div>';
+    content += '<div class="ms-3 small">';
+
+    if (workspaceUsage.action) {
+      content += `<div class="mb-1"><span class="text-muted">Workspace Action:</span> <span class="ms-2">${createInfoBadge(workspaceUsage.action, 'primary')}</span></div>`;
+    }
+    if (actionUsage.search !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Search Used:</span> <span class="ms-2">${createStatusBadge(Boolean(actionUsage.search))}</span></div>`;
+    }
+    if (actionUsage.analyze !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Analyze Used:</span> <span class="ms-2">${createStatusBadge(Boolean(actionUsage.analyze))}</span></div>`;
+    }
+    if (actionUsage.compare !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Compare Used:</span> <span class="ms-2">${createStatusBadge(Boolean(actionUsage.compare))}</span></div>`;
+    }
+    if (webSearchUsage.enabled !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Web Search Enabled:</span> <span class="ms-2">${createStatusBadge(Boolean(webSearchUsage.enabled))}</span></div>`;
+    }
+    if (webSearchUsage.used !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Web Search Used:</span> <span class="ms-2">${createStatusBadge(Boolean(webSearchUsage.used))}</span></div>`;
+    }
+    if (deepResearchUsage.enabled !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Deep Research Enabled:</span> <span class="ms-2">${createStatusBadge(Boolean(deepResearchUsage.enabled))}</span></div>`;
+    }
+    if (deepResearchUsage.used !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Deep Research Used:</span> <span class="ms-2">${createStatusBadge(Boolean(deepResearchUsage.used))}</span></div>`;
+    }
+
     content += '</div></div>';
   }
   
@@ -6643,6 +6708,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
         thread_attempt: metadata.thread_attempt
       };
       const historyContext = metadata.metadata?.history_context || null;
+      const capabilityUsage = metadata.metadata?.capability_usage || null;
       const collaborationInfo = metadata.metadata?.collaboration || null;
       const replyContext = metadata.metadata?.reply_context || null;
       const mentionList = Array.isArray(metadata.metadata?.mentions)
@@ -6736,6 +6802,14 @@ function loadMessageMetadataForDisplay(messageId, container) {
         if (metadata.role === 'assistant') {
           if (metadata.augmented !== undefined) html += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2 badge ${metadata.augmented ? 'bg-success' : 'bg-secondary'}">${metadata.augmented ? 'Yes' : 'No'}</span></div>`;
           if (metadata.metadata?.reasoning_effort) html += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${metadata.metadata.reasoning_effort}</code></div>`;
+          if (capabilityUsage?.workspace?.action) html += `<div class="mb-1"><span class="text-muted">Workspace Action:</span> <span class="ms-2 badge bg-primary">${escapeHtml(capabilityUsage.workspace.action)}</span></div>`;
+          if (capabilityUsage?.actions?.search !== undefined) html += `<div class="mb-1"><span class="text-muted">Search Used:</span> <span class="ms-2 badge ${capabilityUsage.actions.search ? 'bg-success' : 'bg-secondary'}">${capabilityUsage.actions.search ? 'Yes' : 'No'}</span></div>`;
+          if (capabilityUsage?.actions?.analyze !== undefined) html += `<div class="mb-1"><span class="text-muted">Analyze Used:</span> <span class="ms-2 badge ${capabilityUsage.actions.analyze ? 'bg-success' : 'bg-secondary'}">${capabilityUsage.actions.analyze ? 'Yes' : 'No'}</span></div>`;
+          if (capabilityUsage?.actions?.compare !== undefined) html += `<div class="mb-1"><span class="text-muted">Compare Used:</span> <span class="ms-2 badge ${capabilityUsage.actions.compare ? 'bg-success' : 'bg-secondary'}">${capabilityUsage.actions.compare ? 'Yes' : 'No'}</span></div>`;
+          if (capabilityUsage?.web_search?.enabled !== undefined) html += `<div class="mb-1"><span class="text-muted">Web Search Enabled:</span> <span class="ms-2 badge ${capabilityUsage.web_search.enabled ? 'bg-success' : 'bg-secondary'}">${capabilityUsage.web_search.enabled ? 'Yes' : 'No'}</span></div>`;
+          if (capabilityUsage?.web_search?.used !== undefined) html += `<div class="mb-1"><span class="text-muted">Web Search Used:</span> <span class="ms-2 badge ${capabilityUsage.web_search.used ? 'bg-success' : 'bg-secondary'}">${capabilityUsage.web_search.used ? 'Yes' : 'No'}</span></div>`;
+          if (capabilityUsage?.deep_research?.enabled !== undefined) html += `<div class="mb-1"><span class="text-muted">Deep Research Enabled:</span> <span class="ms-2 badge ${capabilityUsage.deep_research.enabled ? 'bg-success' : 'bg-secondary'}">${capabilityUsage.deep_research.enabled ? 'Yes' : 'No'}</span></div>`;
+          if (capabilityUsage?.deep_research?.used !== undefined) html += `<div class="mb-1"><span class="text-muted">Deep Research Used:</span> <span class="ms-2 badge ${capabilityUsage.deep_research.used ? 'bg-success' : 'bg-secondary'}">${capabilityUsage.deep_research.used ? 'Yes' : 'No'}</span></div>`;
           if (metadata.hybrid_citations && metadata.hybrid_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Document Citations:</span> <span class="ms-2 badge bg-info">${metadata.hybrid_citations.length}</span></div>`;
           if (metadata.web_search_citations && metadata.web_search_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Web Citations:</span> <span class="ms-2 badge bg-info">${metadata.web_search_citations.length}</span></div>`;
           if (metadata.agent_citations && metadata.agent_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${metadata.agent_citations.length}</span></div>`;

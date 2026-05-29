@@ -191,6 +191,198 @@ def _build_document_analysis_artifact_summary(document_count, output_format):
     )
 
 
+def _normalize_document_analysis_column_name(column_name):
+    return re.sub(r'[^a-z0-9]+', ' ', str(column_name or '').strip().lower()).strip()
+
+
+def _parse_document_analysis_int(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+
+    normalized_value = str(value or '').strip().replace(',', '')
+    if not re.fullmatch(r'[+-]?\d+', normalized_value):
+        return None
+    return int(normalized_value)
+
+
+def _extract_document_analysis_answer_rows(analysis_text):
+    parsed_output = _parse_json_artifact_payload(analysis_text)
+    if isinstance(parsed_output, list) and all(isinstance(item, dict) for item in parsed_output):
+        return list(parsed_output)
+    if isinstance(parsed_output, dict):
+        for row_key in ('rows', 'items', 'results', 'data'):
+            row_values = parsed_output.get(row_key)
+            if isinstance(row_values, list) and all(isinstance(item, dict) for item in row_values):
+                return list(row_values)
+        return [parsed_output]
+
+    return _extract_markdown_table_rows(analysis_text)
+
+
+def _choose_document_analysis_page_column(rows):
+    candidate_scores = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for column_name, column_value in row.items():
+            normalized_column = _normalize_document_analysis_column_name(column_name)
+            if not normalized_column:
+                continue
+            if normalized_column in {'page', 'page number', 'page no', 'page num'}:
+                score = 4
+            elif normalized_column.endswith(' page') and normalized_column not in {'start page', 'end page'}:
+                score = 2
+            else:
+                continue
+
+            if str(column_value or '').strip():
+                score += 1
+            candidate_scores[column_name] = candidate_scores.get(column_name, 0) + score
+
+    if not candidate_scores:
+        return None
+    return max(candidate_scores.items(), key=lambda item: item[1])[0]
+
+
+def _choose_document_analysis_count_column(rows):
+    candidate_scores = {}
+    excluded_columns = {
+        'window count',
+        'chunk count',
+        'source count',
+        'document count',
+        'row count',
+        'total chunks',
+        'processed chunks',
+        'failed chunks',
+        'total windows',
+        'processed windows',
+        'failed windows',
+    }
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for column_name, column_value in row.items():
+            normalized_column = _normalize_document_analysis_column_name(column_name)
+            if 'count' not in normalized_column:
+                continue
+            if normalized_column in excluded_columns:
+                continue
+
+            parsed_count = _parse_document_analysis_int(column_value)
+            if parsed_count is None:
+                continue
+
+            score = 3
+            if parsed_count > 0:
+                score += 2
+            if 'exact phrase' in normalized_column or 'phrase' in normalized_column:
+                score += 2
+            candidate_scores[column_name] = candidate_scores.get(column_name, 0) + score
+
+    if not candidate_scores:
+        return None
+    return max(candidate_scores.items(), key=lambda item: item[1])[0]
+
+
+def _format_document_analysis_metric_label(column_name):
+    metric_label = re.sub(r'\s+', ' ', str(column_name or 'Count').strip()) or 'Count'
+    if len(metric_label) > 120:
+        metric_label = f'{metric_label[:117]}...'
+    return metric_label
+
+
+def _build_document_analysis_page_count_summary(answer_rows):
+    rows = [row for row in (answer_rows or []) if isinstance(row, dict)]
+    if not rows:
+        return ''
+
+    page_column = _choose_document_analysis_page_column(rows)
+    count_column = _choose_document_analysis_count_column(rows)
+    if not page_column or not count_column:
+        return ''
+
+    page_counts = []
+    for row in rows:
+        page_value = str(row.get(page_column) or '').strip()
+        count_value = _parse_document_analysis_int(row.get(count_column))
+        if not page_value or count_value is None:
+            continue
+        page_counts.append((page_value, count_value))
+
+    if not page_counts:
+        return ''
+
+    metric_label = _format_document_analysis_metric_label(count_column)
+    total_count = sum(count_value for _, count_value in page_counts)
+    page_row_count = len(page_counts)
+    non_zero_page_counts = [
+        (page_value, count_value)
+        for page_value, count_value in page_counts
+        if count_value > 0
+    ]
+
+    if not non_zero_page_counts:
+        return (
+            f'{metric_label}: 0 total across {page_row_count} page row(s). '
+            'No matches were found in the page-level rows.'
+        )
+
+    displayed_page_counts = non_zero_page_counts[:20]
+    page_summary = ', '.join(
+        f'{page_value} ({count_value})'
+        for page_value, count_value in displayed_page_counts
+    )
+    hidden_count = len(non_zero_page_counts) - len(displayed_page_counts)
+    if hidden_count > 0:
+        page_summary = f'{page_summary}, and {hidden_count} more'
+
+    return (
+        f'{metric_label}: {total_count} total across {page_row_count} page row(s). '
+        f'Pages with matches: {page_summary}.'
+    )
+
+
+def _build_document_analysis_answer_excerpt(analysis_text):
+    excerpt_lines = []
+    for line in _strip_markdown_code_fence(analysis_text).splitlines():
+        normalized_line = str(line or '').strip()
+        if not normalized_line:
+            continue
+        if normalized_line.startswith('|'):
+            continue
+        if normalized_line.startswith('#'):
+            continue
+
+        if len(normalized_line) > 260:
+            normalized_line = f'{normalized_line[:257]}...'
+        excerpt_lines.append(normalized_line)
+        if len(excerpt_lines) >= 2:
+            break
+
+    return ' '.join(excerpt_lines).strip()
+
+
+def _build_document_analysis_answer_summary(analysis_reply, structured_rows=None):
+    answer_rows = _extract_document_analysis_answer_rows(analysis_reply)
+    page_count_summary = _build_document_analysis_page_count_summary(answer_rows)
+    if page_count_summary:
+        return page_count_summary
+
+    if answer_rows:
+        return f'The final structured answer contains {len(answer_rows)} row(s).'
+
+    structured_row_count = len([row for row in (structured_rows or []) if isinstance(row, dict)])
+    if structured_row_count:
+        return f'The retained structured analysis contains {structured_row_count} row(s).'
+
+    return _build_document_analysis_answer_excerpt(analysis_reply)
+
+
 def _coerce_document_analysis_count(value, default=0):
     try:
         return max(0, int(value))
@@ -709,7 +901,14 @@ def _upload_document_analysis_generated_artifact(
     return artifact_payload
 
 
-def _build_document_analysis_multi_artifact_reply(document_count, artifacts, row_count, raw_item_count, analysis_reply):
+def _build_document_analysis_multi_artifact_reply(
+    document_count,
+    artifacts,
+    row_count,
+    raw_item_count,
+    analysis_reply,
+    structured_rows=None,
+):
     normalized_document_count = max(0, int(document_count or 0))
     document_label = f'{normalized_document_count} source document' if normalized_document_count == 1 else f'{normalized_document_count} source documents'
     artifact_formats = []
@@ -718,27 +917,36 @@ def _build_document_analysis_multi_artifact_reply(document_count, artifacts, row
         if output_format and output_format not in artifact_formats:
             artifact_formats.append(output_format)
     artifact_label = ', '.join(artifact_formats) if artifact_formats else 'downloadable'
+    artifact_word = 'artifact' if len(artifact_formats) == 1 else 'artifacts'
 
-    lines = [
-        f'I analyzed {document_label} and saved the full {artifact_label} artifacts attached to this chat.',
-        f'The structured output has {max(0, int(row_count or 0))} row(s), and {max(0, int(raw_item_count or 0))} raw analysis note(s) were retained for auditability.',
-    ]
+    lines = [f'I analyzed {document_label}.']
+    answer_summary = _build_document_analysis_answer_summary(analysis_reply, structured_rows)
+    if answer_summary:
+        lines.append(f'Answer summary: {answer_summary}')
 
-    preview_lines = _build_document_analysis_preview_lines(analysis_reply)
-    if preview_lines:
-        lines.extend(['', 'Preview:', *[f'- {line}' for line in preview_lines]])
+    lines.append(
+        f'Full outputs: {artifact_label} {artifact_word} are attached to this chat for download and review.'
+    )
+    lines.append(
+        f'The structured output has {max(0, int(row_count or 0))} row(s), and '
+        f'{max(0, int(raw_item_count or 0))} raw analysis note(s) were retained for auditability.'
+    )
 
     return '\n'.join(lines)
 
 
-def _build_document_analysis_artifact_reply(document_count, output_format):
+def _build_document_analysis_artifact_reply(document_count, output_format, analysis_reply=''):
     normalized_document_count = max(0, int(document_count or 0))
     document_label = f'{normalized_document_count} source document' if normalized_document_count == 1 else f'{normalized_document_count} source documents'
-    return (
-        f'I analyzed {document_label} and saved the full results as a downloadable '
-        f'{str(output_format or "json").upper()} artifact attached to this chat. '
-        'The card below includes a short preview.'
+    lines = [f'I analyzed {document_label}.']
+    answer_summary = _build_document_analysis_answer_summary(analysis_reply)
+    if answer_summary:
+        lines.append(f'Answer summary: {answer_summary}')
+    lines.append(
+        'Full results are saved as a downloadable '
+        f'{str(output_format or "json").upper()} artifact attached to this chat.'
     )
+    return '\n'.join(lines)
 
 
 def _maybe_create_document_analysis_generated_artifacts(
@@ -842,6 +1050,7 @@ def _maybe_create_document_analysis_generated_artifacts(
                 len(structured_rows),
                 len(raw_analysis_items),
                 analysis_reply,
+                structured_rows=structured_rows,
             )
             if primary_tabular_outputs:
                 assistant_reply = _build_document_analysis_primary_output_reply(
@@ -909,7 +1118,7 @@ def _maybe_create_document_analysis_generated_artifacts(
 
     return {
         'artifacts': [artifact_payload],
-        'assistant_reply': _build_document_analysis_artifact_reply(document_count, output_format),
+        'assistant_reply': _build_document_analysis_artifact_reply(document_count, output_format, analysis_reply),
     }
 
 

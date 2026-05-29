@@ -374,8 +374,11 @@ def register_route_frontend_chats(app):
                 for agent in get_personal_agents(user_id):
                     chat_agent_options.append(_serialize_chat_agent_option(agent))
 
-            merge_global = settings.get('per_user_semantic_kernel', False) and settings.get('merge_global_semantic_kernel_with_workspace', False)
-            if merge_global:
+            include_global_agents = settings.get('enable_semantic_kernel', False) and (
+                not settings.get('per_user_semantic_kernel', False)
+                or settings.get('merge_global_semantic_kernel_with_workspace', False)
+            )
+            if include_global_agents:
                 for agent in get_global_agents():
                     chat_agent_options.append(_serialize_chat_agent_option(agent, is_global=True))
 

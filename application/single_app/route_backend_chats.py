@@ -140,6 +140,117 @@ ASSIGNED_KNOWLEDGE_DOCUMENT_ACTION_MAP = {
 }
 
 
+def _metadata_item_count(value):
+    if isinstance(value, (list, tuple, set)):
+        return len(value)
+    if value in (None, '', 'all'):
+        return 0
+    return 1
+
+
+def _safe_metadata_int(value):
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalize_capability_action(document_action_type):
+    normalized_action_type = str(document_action_type or DOCUMENT_ACTION_TYPE_NONE).strip().lower()
+    if normalized_action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        return ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE
+    if normalized_action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+        return ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE
+    return ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH
+
+
+def _source_review_metadata_used(source_review_result):
+    if not isinstance(source_review_result, dict):
+        return False
+    coverage = source_review_result.get('coverage') if isinstance(source_review_result.get('coverage'), dict) else {}
+    return bool(
+        source_review_result.get('system_message')
+        or source_review_result.get('citations')
+        or coverage.get('pages_reviewed')
+        or coverage.get('pages_skipped')
+    )
+
+
+def _deep_research_query_count(query_plan, web_search_runs):
+    if isinstance(query_plan, dict) and isinstance(query_plan.get('queries'), list):
+        return len(query_plan.get('queries') or [])
+    if isinstance(web_search_runs, list):
+        return len(web_search_runs)
+    return 0
+
+
+def _build_capability_usage_metadata(
+    *,
+    workspace_search_enabled=False,
+    workspace_search_used=False,
+    workspace_search_result_count=0,
+    document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+    document_scope=None,
+    selected_document_ids=None,
+    active_group_ids=None,
+    active_public_workspace_ids=None,
+    web_search_enabled=False,
+    web_search_used=False,
+    web_search_citation_count=0,
+    web_search_run_count=0,
+    url_access_enabled=False,
+    source_review_enabled=False,
+    source_review_used=False,
+    deep_research_enabled=False,
+    deep_research_used=False,
+    deep_research_query_count=0,
+):
+    action = _normalize_capability_action(document_action_type)
+    analyze_used = action == ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE
+    compare_used = action == ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE
+    search_enabled = bool(workspace_search_enabled)
+    search_used = bool(workspace_search_used)
+    workspace_used = bool(search_used or analyze_used or compare_used)
+
+    return {
+        'actions': {
+            'search': search_used,
+            'analyze': analyze_used,
+            'compare': compare_used,
+        },
+        'workspace': {
+            'enabled': bool(search_enabled or analyze_used or compare_used),
+            'used': workspace_used,
+            'action': action,
+            'document_action_type': str(document_action_type or DOCUMENT_ACTION_TYPE_NONE),
+            'search_enabled': search_enabled,
+            'search_used': search_used,
+            'result_count': _safe_metadata_int(workspace_search_result_count),
+            'document_scope': document_scope or 'all',
+            'selected_document_count': _metadata_item_count(selected_document_ids),
+            'active_group_count': _metadata_item_count(active_group_ids),
+            'active_public_workspace_count': _metadata_item_count(active_public_workspace_ids),
+        },
+        'web_search': {
+            'enabled': bool(web_search_enabled),
+            'used': bool(web_search_used),
+            'citation_count': _safe_metadata_int(web_search_citation_count),
+            'run_count': _safe_metadata_int(web_search_run_count),
+        },
+        'url_access': {
+            'enabled': bool(url_access_enabled),
+            'used': bool(source_review_used and not deep_research_enabled),
+            'source_review_enabled': bool(source_review_enabled),
+        },
+        'deep_research': {
+            'enabled': bool(deep_research_enabled),
+            'used': bool(deep_research_used),
+            'query_count': _safe_metadata_int(deep_research_query_count),
+            'source_review_enabled': bool(source_review_enabled and deep_research_enabled),
+        },
+    }
+
+
 def _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters):
     return bool(
         isinstance(assigned_knowledge_filters, dict)
@@ -10135,6 +10246,8 @@ def register_route_backend_chats(app):
                 'image_generation': False,
                 'document_search': False,
                 'web_search': False,
+                'url_access': False,
+                'deep_research': False,
             },
             'workspace_search': workspace_search,
             'model_selection': {
@@ -10157,6 +10270,23 @@ def register_route_backend_chats(app):
                 'active_group_ids': active_group_ids,
                 'active_public_workspace_id': active_public_workspace_ids,
             },
+            'compare': {
+                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON,
+                'document_ids': selected_document_ids,
+                'left_document_id': normalized_action.get('left_document_id'),
+                'right_document_ids': normalized_action.get('right_document_ids', []),
+                'doc_scope': document_scope,
+                'active_group_ids': active_group_ids,
+                'active_public_workspace_id': active_public_workspace_ids,
+            },
+            'capability_usage': _build_capability_usage_metadata(
+                workspace_search_used=True,
+                document_action_type=normalized_action.get('type'),
+                document_scope=document_scope,
+                selected_document_ids=selected_document_ids,
+                active_group_ids=active_group_ids,
+                active_public_workspace_ids=active_public_workspace_ids,
+            ),
             'document_action': normalized_action,
         }
 
@@ -10566,6 +10696,15 @@ def register_route_backend_chats(app):
             generated_analysis_artifacts=document_generated_analysis_artifacts,
             generated_tabular_outputs=document_generated_tabular_outputs,
         )
+        document_action_capability_usage = _build_capability_usage_metadata(
+            workspace_search_used=True,
+            workspace_search_result_count=len(hybrid_citations_list or []),
+            document_action_type=normalized_action.get('type'),
+            document_scope=document_scope,
+            selected_document_ids=selected_document_ids,
+            active_group_ids=active_group_ids,
+            active_public_workspace_ids=active_public_workspace_ids,
+        )
 
         assistant_doc = make_json_serializable({
             'id': assistant_message_id,
@@ -10584,6 +10723,7 @@ def register_route_backend_chats(app):
             'metadata': {
                 'token_usage': execution_result.get('token_usage'),
                 'user_info': response_message_context.get('user_info'),
+                'capability_usage': document_action_capability_usage,
                 'thread_info': {
                     'thread_id': response_message_context.get('thread_id'),
                     'previous_thread_id': response_message_context.get('previous_thread_id'),
@@ -10594,6 +10734,10 @@ def register_route_backend_chats(app):
                 'analyze': {
                     'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE,
                     'coverage': execution_result.get('analysis_coverage') or {},
+                },
+                'compare': {
+                    'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON,
+                    'document_count': len(selected_document_ids),
                 },
                 'document_action': normalized_action,
             },
@@ -11362,6 +11506,18 @@ def register_route_backend_chats(app):
                     'url_access': bool(url_access_enabled),
                     'deep_research': bool(deep_research_enabled)
                 }
+                user_metadata['capability_usage'] = _build_capability_usage_metadata(
+                    workspace_search_enabled=hybrid_search_enabled,
+                    document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+                    document_scope=effective_document_scope,
+                    selected_document_ids=effective_selected_document_ids,
+                    active_group_ids=effective_active_group_ids,
+                    active_public_workspace_ids=effective_active_public_workspace_ids,
+                    web_search_enabled=web_search_enabled,
+                    url_access_enabled=url_access_enabled,
+                    source_review_enabled=source_review_enabled,
+                    deep_research_enabled=deep_research_enabled,
+                )
                 
                 # Document search scope and selections
                 if hybrid_search_enabled:
@@ -11458,37 +11614,6 @@ def register_route_backend_chats(app):
                         'search_enabled': False
                     }
             
-                # Agent selection (if available)
-                if hasattr(g, 'kernel_agents') and g.kernel_agents:
-                    try:
-                        # Try to get selected agent info from user settings or global settings
-                        selected_agent_info = None
-                        if user_id:
-                            try:
-                                user_settings_doc = cosmos_user_settings_container.read_item(
-                                    item=user_id, partition_key=user_id
-                                )
-                                selected_agent_info = user_settings_doc.get('settings', {}).get('selected_agent')
-                            except Exception as ex:
-                                pass
-                        
-                        if not selected_agent_info:
-                            # Fallback to global selected agent
-                            selected_agent_info = settings.get('global_selected_agent')
-                        
-                        if selected_agent_info:
-                            user_metadata['agent_selection'] = {
-                                'selected_agent': selected_agent_info.get('name'),
-                                'agent_display_name': selected_agent_info.get('display_name'),
-                                'is_global': selected_agent_info.get('is_global', False),
-                                'is_group': selected_agent_info.get('is_group', False),
-                                'group_id': selected_agent_info.get('group_id'),
-                                'group_name': selected_agent_info.get('group_name'),
-                                'agent_id': selected_agent_info.get('id')
-                            }
-                    except Exception as e:
-                        debug_print(f"Error retrieving agent details: {e}")
-                
                 # Prompt selection (extract from message if available)
                 prompt_info = data.get('prompt_info')
                 if prompt_info:
@@ -12346,6 +12471,28 @@ def register_route_backend_chats(app):
                     user_metadata['chat_context']['workspace_context'] = "Public Workspace"
                 debug_print(f"Set public workspace_context: {user_metadata['chat_context'].get('workspace_context')}")
             # For personal chat type or Model, no additional context needed beyond conversation_id
+
+            source_review_used = _source_review_metadata_used(source_review_result)
+            user_metadata['capability_usage'] = _build_capability_usage_metadata(
+                workspace_search_enabled=hybrid_search_enabled or history_grounded_search_used,
+                workspace_search_used=bool(search_results),
+                workspace_search_result_count=len(search_results or []),
+                document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+                document_scope=effective_document_scope,
+                selected_document_ids=effective_selected_document_ids,
+                active_group_ids=effective_active_group_ids,
+                active_public_workspace_ids=effective_active_public_workspace_ids,
+                web_search_enabled=web_search_enabled,
+                web_search_used=bool(web_search_citations_list or deep_research_web_search_runs),
+                web_search_citation_count=len(web_search_citations_list or []),
+                web_search_run_count=len(deep_research_web_search_runs or []),
+                url_access_enabled=url_access_enabled,
+                source_review_enabled=source_review_enabled,
+                source_review_used=source_review_used,
+                deep_research_enabled=deep_research_enabled,
+                deep_research_used=bool(deep_research_enabled and (deep_research_result or deep_research_web_search_runs or source_review_used)),
+                deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
+            )
             
             # Update the user message document with the final metadata
             user_message_doc['metadata'] = user_metadata
@@ -13253,16 +13400,8 @@ def register_route_backend_chats(app):
                 agent_name_to_select = _get_chat_agent_selection_name(request_agent_info)
                 if agent_name_to_select:
                     log_event(f"[SKChat] Using agent from request agent_info: {agent_name_to_select}")
-                elif per_user_semantic_kernel:
-                    selected_agent_info = user_settings.get('selected_agent')
-                    agent_name_to_select = _get_chat_agent_selection_name(selected_agent_info)
-                    if agent_name_to_select:
-                        log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {agent_name_to_select}")
                 else:
-                    global_selected_agent_info = settings.get('global_selected_agent')
-                    agent_name_to_select = _get_chat_agent_selection_name(global_selected_agent_info)
-                    if agent_name_to_select:
-                        log_event(f"[SKChat] Global mode: selected_agent from global_selected_agent: {agent_name_to_select}")
+                    log_event("[SKChat] No explicit request agent selected; proceeding in model-only mode")
 
                 if all_agents and agent_name_to_select:
                     agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
@@ -13318,7 +13457,7 @@ def register_route_backend_chats(app):
                 ]
 
                 # --- Fallback Chain Steps ---
-                if enable_multi_agent_orchestration and all_agents and "orchestrator" in all_agents and not per_user_semantic_kernel:
+                if enable_multi_agent_orchestration and all_agents and agent_name_to_select and "orchestrator" in all_agents and not per_user_semantic_kernel:
                     def invoke_orchestrator():
                         orchestrator = all_agents["orchestrator"]
                         runtime = InProcessRuntime()
@@ -13575,7 +13714,7 @@ def register_route_backend_chats(app):
                             'on_error': agent_error
                         })
 
-                if kernel:
+                if selected_agent and kernel:
                     def invoke_kernel():
                         plugin_logger = get_plugin_logger()
                         callback_key = register_plugin_invocation_thought_callback(
@@ -13853,6 +13992,27 @@ def register_route_backend_chats(app):
                 generated_analysis_artifacts=generated_analysis_artifacts_list,
                 generated_tabular_outputs=generated_tabular_outputs_list,
             )
+            source_review_used = _source_review_metadata_used(source_review_result)
+            assistant_capability_usage = _build_capability_usage_metadata(
+                workspace_search_enabled=hybrid_search_enabled or history_grounded_search_used,
+                workspace_search_used=bool(search_results),
+                workspace_search_result_count=len(hybrid_citations_list or []),
+                document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+                document_scope=effective_document_scope,
+                selected_document_ids=effective_selected_document_ids,
+                active_group_ids=effective_active_group_ids,
+                active_public_workspace_ids=effective_active_public_workspace_ids,
+                web_search_enabled=web_search_enabled,
+                web_search_used=bool(web_search_citations_list or deep_research_web_search_runs),
+                web_search_citation_count=len(web_search_citations_list or []),
+                web_search_run_count=len(deep_research_web_search_runs or []),
+                url_access_enabled=url_access_enabled,
+                source_review_enabled=source_review_enabled,
+                source_review_used=source_review_used,
+                deep_research_enabled=deep_research_enabled,
+                deep_research_used=bool(deep_research_enabled and (deep_research_result or deep_research_web_search_runs or source_review_used)),
+                deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
+            )
 
             assistant_doc = make_json_serializable({
                 'id': assistant_message_id,
@@ -13872,6 +14032,7 @@ def register_route_backend_chats(app):
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
                     'history_context': history_debug_info,
+                    'capability_usage': assistant_capability_usage,
                     'source_review': compact_source_review_result_for_metadata(source_review_result),
                     'deep_research': deep_research_result,
                     **generated_analysis_metadata,
@@ -14526,6 +14687,29 @@ def register_route_backend_chats(app):
                     f"source_review={source_review_enabled} | "
                     f"chat_type={chat_type}"
                 )
+
+                def build_streaming_capability_usage():
+                    source_review_was_used = _source_review_metadata_used(source_review_result)
+                    return _build_capability_usage_metadata(
+                        workspace_search_enabled=hybrid_search_enabled or history_grounded_search_used,
+                        workspace_search_used=bool(search_results),
+                        workspace_search_result_count=len(hybrid_citations_list or []),
+                        document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+                        document_scope=effective_document_scope,
+                        selected_document_ids=effective_selected_document_ids,
+                        active_group_ids=effective_active_group_ids,
+                        active_public_workspace_ids=effective_active_public_workspace_ids,
+                        web_search_enabled=web_search_enabled,
+                        web_search_used=bool(web_search_citations_list or deep_research_web_search_runs),
+                        web_search_citation_count=len(web_search_citations_list or []),
+                        web_search_run_count=len(deep_research_web_search_runs or []),
+                        url_access_enabled=url_access_enabled,
+                        source_review_enabled=source_review_enabled,
+                        source_review_used=source_review_was_used,
+                        deep_research_enabled=deep_research_enabled,
+                        deep_research_used=bool(deep_research_enabled and (deep_research_result or deep_research_web_search_runs or source_review_was_used)),
+                        deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
+                    )
                 
                 # Initialize GPT client (simplified version)
                 gpt_model = ""
@@ -14684,6 +14868,18 @@ def register_route_backend_chats(app):
                     'url_access': bool(url_access_enabled),
                     'deep_research': bool(deep_research_enabled)
                 }
+                user_metadata['capability_usage'] = _build_capability_usage_metadata(
+                    workspace_search_enabled=hybrid_search_enabled,
+                    document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+                    document_scope=effective_document_scope,
+                    selected_document_ids=effective_selected_document_ids,
+                    active_group_ids=effective_active_group_ids,
+                    active_public_workspace_ids=effective_active_public_workspace_ids,
+                    web_search_enabled=web_search_enabled,
+                    url_access_enabled=url_access_enabled,
+                    source_review_enabled=source_review_enabled,
+                    deep_research_enabled=deep_research_enabled,
+                )
                 
                 # Document search scope and selections
                 if hybrid_search_enabled:
@@ -15767,6 +15963,27 @@ def register_route_backend_chats(app):
                 else:
                     message_chat_type = 'Model'
                 
+                source_review_used = _source_review_metadata_used(source_review_result)
+                user_metadata['capability_usage'] = _build_capability_usage_metadata(
+                    workspace_search_enabled=hybrid_search_enabled or history_grounded_search_used,
+                    workspace_search_used=bool(search_results),
+                    workspace_search_result_count=len(search_results or []),
+                    document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+                    document_scope=effective_document_scope,
+                    selected_document_ids=effective_selected_document_ids,
+                    active_group_ids=effective_active_group_ids,
+                    active_public_workspace_ids=effective_active_public_workspace_ids,
+                    web_search_enabled=web_search_enabled,
+                    web_search_used=bool(web_search_citations_list or deep_research_web_search_runs),
+                    web_search_citation_count=len(web_search_citations_list or []),
+                    web_search_run_count=len(deep_research_web_search_runs or []),
+                    url_access_enabled=url_access_enabled,
+                    source_review_enabled=source_review_enabled,
+                    source_review_used=source_review_used,
+                    deep_research_enabled=deep_research_enabled,
+                    deep_research_used=bool(deep_research_enabled and (deep_research_result or deep_research_web_search_runs or source_review_used)),
+                    deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
+                )
                 user_metadata['chat_context']['chat_type'] = message_chat_type
                 user_message_doc['metadata'] = user_metadata
                 cosmos_messages_container.upsert_item(user_message_doc)
@@ -16060,34 +16277,8 @@ def register_route_backend_chats(app):
                                     'agent_id': request_agent_info.get('id')
                                 }
                             debug_print(f"[Streaming] Request agent name to select: {agent_name_to_select}")
-                        elif per_user_semantic_kernel:
-                            selected_agent_info = user_settings.get('selected_agent')
-                            agent_name_to_select = _get_chat_agent_selection_name(selected_agent_info)
-                            if agent_name_to_select and isinstance(selected_agent_info, dict):
-                                selected_agent_metadata = {
-                                    'selected_agent': selected_agent_info.get('name'),
-                                    'agent_display_name': selected_agent_info.get('display_name'),
-                                    'is_global': selected_agent_info.get('is_global', False),
-                                    'is_group': selected_agent_info.get('is_group', False),
-                                    'group_id': selected_agent_info.get('group_id'),
-                                    'group_name': selected_agent_info.get('group_name'),
-                                    'agent_id': selected_agent_info.get('id')
-                                }
-                            debug_print(f"[Streaming] Per-user agent name to select: {agent_name_to_select or '<none>'}")
                         else:
-                            global_selected_agent_info = settings.get('global_selected_agent')
-                            agent_name_to_select = _get_chat_agent_selection_name(global_selected_agent_info)
-                            if agent_name_to_select and isinstance(global_selected_agent_info, dict):
-                                selected_agent_metadata = {
-                                    'selected_agent': global_selected_agent_info.get('name'),
-                                    'agent_display_name': global_selected_agent_info.get('display_name'),
-                                    'is_global': global_selected_agent_info.get('is_global', False),
-                                    'is_group': global_selected_agent_info.get('is_group', False),
-                                    'group_id': global_selected_agent_info.get('group_id'),
-                                    'group_name': global_selected_agent_info.get('group_name'),
-                                    'agent_id': global_selected_agent_info.get('id')
-                                }
-                            debug_print(f"[Streaming] Global agent name to select: {agent_name_to_select or '<none>'}")
+                            debug_print("[Streaming] No explicit request agent selected; using model-only response path")
 
                         agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
                         if agent_name_to_select:
@@ -16179,6 +16370,7 @@ def register_route_backend_chats(app):
                                 **cancel_metadata,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
+                                'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 'deep_research': deep_research_result,
                                 **generated_analysis_metadata,
@@ -16641,6 +16833,7 @@ def register_route_backend_chats(app):
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
                             'history_context': history_debug_info,
+                            'capability_usage': build_streaming_capability_usage(),
                             'source_review': compact_source_review_result_for_metadata(source_review_result),
                             'deep_research': deep_research_result,
                             **generated_analysis_metadata,
@@ -16827,6 +17020,7 @@ def register_route_backend_chats(app):
                                 'error': error_msg,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
+                                'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 'deep_research': deep_research_result,
                                 **generated_analysis_metadata,

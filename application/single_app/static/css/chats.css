@@ -2010,6 +2010,21 @@ a.citation-link:hover {
   text-decoration: underline;
 }
 
+.generated-analysis-preview-details > summary {
+  color: var(--bs-primary);
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.generated-analysis-preview-details[open] > summary {
+  margin-bottom: 0.5rem;
+}
+
+.generated-analysis-preview-details > summary:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+}
+
 .generated-analysis-markdown-preview h1,
 .generated-analysis-markdown-preview h2,
 .generated-analysis-markdown-preview h3,
