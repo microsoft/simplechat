@@ -68,6 +68,7 @@ from route_backend_group_prompts import *
 from route_backend_control_center import *
 from route_backend_notifications import *
 from route_backend_retention_policy import *
+from route_backend_governance import register_route_backend_governance
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
 from route_backend_agent_templates import bp_agent_templates
@@ -933,6 +934,9 @@ register_route_backend_notifications(app)
 
 # ------------------- API Retention Policy Routes --------
 register_route_backend_retention_policy(app)
+
+# ------------------- API Governance Routes --------------
+register_route_backend_governance(app)
 
 # ------------------- API Public Workspaces Routes -------
 register_route_backend_public_workspaces(app)

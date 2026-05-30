@@ -41,9 +41,10 @@ def register_route_backend_groups(app):
         for g in all_items:
             name = g.get("name", "").lower()
             desc = g.get("description", "").lower()
+            group_id = str(g.get("id", "")).lower()
 
             if search_query:
-                if search_query not in name and search_query not in desc:
+                if search_query not in name and search_query not in desc and search_query not in group_id:
                     continue
 
             if not show_all:

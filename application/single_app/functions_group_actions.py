@@ -17,6 +17,7 @@ from functions_keyvault import (
     keyvault_plugin_get_helper,
     keyvault_plugin_save_helper,
 )
+from functions_governance import ensure_governance_access
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -84,6 +85,9 @@ def get_group_action(
 
 def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """Create or update a group action entry."""
+    if user_id:
+        ensure_governance_access('governance_group_actions', user_id)
+
     payload = dict(action_data)
     action_id = payload.get("id") or str(uuid.uuid4())
 

@@ -19,6 +19,8 @@ _settings = None
 APP_SETTINGS_CACHE = {}
 APP_STREAM_SESSION_METADATA = {}
 APP_STREAM_SESSION_EVENTS = {}
+APP_GOVERNANCE_CACHE_VERSION = 0
+GOVERNANCE_CACHE_VERSION_KEY = 'GOVERNANCE_CACHE_VERSION'
 update_settings_cache = None
 get_settings_cache = None
 initialize_stream_session_cache = None
@@ -27,6 +29,8 @@ get_stream_session_meta = None
 append_stream_session_event = None
 get_stream_session_events = None
 delete_stream_session_cache = None
+get_governance_cache_version = None
+bump_governance_cache_version = None
 app_cache_is_using_redis = False
 _app_cache_lock = threading.Lock()
 
@@ -43,11 +47,22 @@ def _is_expired(entry):
     expires_at = entry.get('expires_at')
     return expires_at is not None and expires_at <= time.time()
 
+
+def _normalize_cache_version(value):
+    if isinstance(value, bytes):
+        value = value.decode('utf-8')
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
 def configure_app_cache(settings, redis_cache_endpoint=None):
     global _settings, update_settings_cache, get_settings_cache, APP_SETTINGS_CACHE
     global APP_STREAM_SESSION_METADATA, APP_STREAM_SESSION_EVENTS
+    global APP_GOVERNANCE_CACHE_VERSION
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
     global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
+    global get_governance_cache_version, bump_governance_cache_version
     global app_cache_is_using_redis
     # Local import to avoid circular dependency: functions_keyvault imports app_settings_cache.
     from functions_appinsights import log_event
@@ -174,6 +189,16 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
                 get_stream_session_events_key(cache_key),
             )
 
+        def get_governance_cache_version_redis():
+            cached = redis_client.get(GOVERNANCE_CACHE_VERSION_KEY)
+            if cached is None:
+                redis_client.setnx(GOVERNANCE_CACHE_VERSION_KEY, 0)
+                return 0
+            return _normalize_cache_version(cached)
+
+        def bump_governance_cache_version_redis():
+            return _normalize_cache_version(redis_client.incr(GOVERNANCE_CACHE_VERSION_KEY))
+
         update_settings_cache = update_settings_cache_redis
         get_settings_cache = get_settings_cache_redis
         initialize_stream_session_cache = initialize_stream_session_cache_redis
@@ -182,6 +207,8 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
         append_stream_session_event = append_stream_session_event_redis
         get_stream_session_events = get_stream_session_events_redis
         delete_stream_session_cache = delete_stream_session_cache_redis
+        get_governance_cache_version = get_governance_cache_version_redis
+        bump_governance_cache_version = bump_governance_cache_version_redis
 
     else:
         def update_settings_cache_mem(new_settings):
@@ -258,6 +285,16 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
                 APP_STREAM_SESSION_METADATA.pop(cache_key, None)
                 APP_STREAM_SESSION_EVENTS.pop(cache_key, None)
 
+        def get_governance_cache_version_mem():
+            with _app_cache_lock:
+                return APP_GOVERNANCE_CACHE_VERSION
+
+        def bump_governance_cache_version_mem():
+            global APP_GOVERNANCE_CACHE_VERSION
+            with _app_cache_lock:
+                APP_GOVERNANCE_CACHE_VERSION += 1
+                return APP_GOVERNANCE_CACHE_VERSION
+
         update_settings_cache = update_settings_cache_mem
         get_settings_cache = get_settings_cache_mem
         initialize_stream_session_cache = initialize_stream_session_cache_mem
@@ -266,3 +303,5 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
         append_stream_session_event = append_stream_session_event_mem
         get_stream_session_events = get_stream_session_events_mem
         delete_stream_session_cache = delete_stream_session_cache_mem
+        get_governance_cache_version = get_governance_cache_version_mem
+        bump_governance_cache_version = bump_governance_cache_version_mem

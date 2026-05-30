@@ -796,6 +796,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
       role="tabpanel"
       aria-labelledby="group-agents-tab-btn"
     >
+      {% if settings.allow_group_agents %}
+      {% if workspace_governance.group_agents %}
       <div class="card p-3 my-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <div class="d-flex align-items-center gap-2">
@@ -847,6 +849,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <div id="group-agents-grid-view" class="row g-3 d-none"></div>
       </div>
       <div id="group-agents-error"></div>
+      {% else %}
+      <div class="alert alert-warning text-center my-4">
+        Group agents are disabled by governance for your account. Please contact your admin.
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="alert alert-warning text-center my-4">
+        Group agents are currently disabled. Please ask your admin to enable agents for group workspaces.
+      </div>
+      {% endif %}
     </div>
     <!-- End GROUP AGENTS TAB -->
 
@@ -858,6 +870,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       role="tabpanel"
       aria-labelledby="group-plugins-tab-btn"
     >
+      {% if workspace_governance.group_actions %}
       <div id="group-plugins-permission-warning" class="alert alert-warning d-none mt-3">
         You do not have permission to manage group actions.
       </div>
@@ -905,6 +918,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div id="group-plugins-grid-view" class="row g-3 d-none"></div>
         </div>
       </template>
+      {% else %}
+      <div class="alert alert-warning text-center my-4">
+        Group actions are disabled by governance for your account. Please contact your admin.
+      </div>
+      {% endif %}
     </div>
     <!-- End GROUP ACTIONS TAB -->
     {% endif %}
@@ -917,6 +935,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       role="tabpanel"
       aria-labelledby="group-endpoints-tab-btn"
     >
+      {% if workspace_governance.group_endpoints %}
       <!-- Group Model Endpoints -->
       <div class="card p-3 my-3" id="group-multi-endpoint-configuration">
         <h6 class="mb-2"><i class="bi bi-hdd-network me-2"></i>Group Model Endpoints</h6>
@@ -951,6 +970,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
         <input type="hidden" id="model_endpoints_json" />
       </div>
+      {% else %}
+      <div class="alert alert-warning text-center my-4">
+        Group endpoints are disabled by governance for your account. Please contact your admin.
+      </div>
+      {% endif %}
     </div>
     <!-- End GROUP ENDPOINTS TAB -->
     {% endif %}
@@ -1032,7 +1056,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 <!-- End Container -->
 
+{% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints and workspace_governance.group_endpoints %}
 {% include '_multiendpoint_modal.html' %}
+{% endif %}
 <!-- Item View Modal (shared by agents & actions grid/list view buttons) -->
 <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-title" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -1250,10 +1276,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 
-{% if settings.enable_semantic_kernel and (settings.allow_group_agents or settings.allow_group_plugins) %}
+{% set load_group_agent_modal = settings.enable_semantic_kernel and settings.allow_group_agents and workspace_governance.group_agents %}
+{% set load_group_action_modal = settings.enable_semantic_kernel and settings.allow_group_plugins and workspace_governance.group_actions %}
+{% if load_group_agent_modal or load_group_action_modal %}
 <div>
+  {% if load_group_agent_modal %}
   {% include "_agent_modal.html" %}
+  {% endif %}
+  {% if load_group_action_modal %}
   {% include "_plugin_modal.html" %}
+  {% endif %}
 </div>
 {% endif %}
 
@@ -1530,7 +1562,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.workspaceModelEndpoints = {{ group_model_endpoints|default([], true)|tojson|safe }};
   window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson|safe }};
 </script>
-{% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+{% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints and workspace_governance.group_endpoints %}
 <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
 {% endif %}
 
@@ -5777,11 +5809,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
   })();
 
 </script>
-{% if settings.enable_semantic_kernel and settings.allow_group_agents %}
+{% if settings.enable_semantic_kernel and settings.allow_group_agents and workspace_governance.group_agents %}
 <script type="module" src="/static/js/agents_common.js"></script>
 <script type="module" src="/static/js/workspace/group_agents.js"></script>
 {% endif %}
-{% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+{% if settings.enable_semantic_kernel and settings.allow_group_plugins and workspace_governance.group_actions %}
 <script type="module" src="/static/js/plugin_modal_stepper.js"></script>
 <script type="module" src="/static/js/workspace/group_plugins.js"></script>
 {% endif %}

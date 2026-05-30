@@ -42,8 +42,27 @@ from functions_activity_logging import (
     log_agent_deletion,
     log_general_admin_action,
 )
+from functions_governance import ensure_governance_access, upsert_item_policy
 
 bpa = Blueprint('admin_agents', __name__)
+
+
+def _is_agent_allowed_for_user_selection(user_id, agent):
+    try:
+        if agent.get('is_global'):
+            ensure_governance_access(
+                'governance_global_agents_usage',
+                user_id,
+                item_entity_type='global_agent',
+                item_id=str(agent.get('id') or agent.get('name') or ''),
+            )
+        elif agent.get('is_group'):
+            ensure_governance_access('governance_group_agents', user_id)
+        else:
+            ensure_governance_access('governance_user_agents', user_id)
+        return True
+    except PermissionError:
+        return False
 
 
 def _build_user_selectable_agents(user_id, requested_agent=None):
@@ -545,6 +564,8 @@ def get_user_agents():
         agent['is_group'] = False
         agent.setdefault('agent_type', 'local')
 
+    agents = [agent for agent in agents if _is_agent_allowed_for_user_selection(user_id, agent)]
+
     # Check global/merge toggles
     per_user = settings.get('per_user_semantic_kernel', False)
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
@@ -556,6 +577,8 @@ def get_user_agents():
             agent['is_global'] = True
             agent['is_group'] = False
             agent.setdefault('agent_type', 'local')
+
+        global_agents = [agent for agent in global_agents if _is_agent_allowed_for_user_selection(user_id, agent)]
         
         # Merge agents using ID as key to avoid name conflicts
         # This allows both personal and global agents with same name to coexist
@@ -626,6 +649,11 @@ def set_user_agents():
     current_agent_names = set(agent['name'] for agent in current_agents)
     
     # Save new/updated agents to personal_agents container
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
     for agent in filtered_agents:
         save_personal_agent(user_id, agent)
     
@@ -714,6 +742,12 @@ def get_group_agents_route():
         return jsonify({'error': str(exc)}), 403
 
     agents = get_group_agents(active_group)
+    for agent in agents:
+        if isinstance(agent, dict):
+            agent['is_global'] = False
+            agent['is_group'] = True
+            agent['group_id'] = active_group
+    agents = [agent for agent in agents if isinstance(agent, dict) and _is_agent_allowed_for_user_selection(user_id, agent)]
     return jsonify({'agents': agents}), 200
 
 
@@ -789,6 +823,8 @@ def create_group_agent_route():
 
     try:
         saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
     except Exception as exc:
         debug_print('Failed to save group agent: %s', exc)
         return jsonify({'error': 'Unable to save agent'}), 500
@@ -858,6 +894,8 @@ def update_group_agent_route(agent_id):
 
     try:
         saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
     except Exception as exc:
         debug_print('Failed to update group agent %s: %s', agent_id, exc)
         return jsonify({'error': 'Unable to update agent'}), 500
@@ -916,6 +954,21 @@ def set_user_selected_agent():
     matched_agent = _find_matching_user_selected_agent(candidates, selected_agent)
     if not matched_agent:
         return jsonify({'error': 'Selected agent is not available for this user or scope.'}), 400
+
+    try:
+        if matched_agent.get('is_global'):
+            ensure_governance_access(
+                'governance_global_agents_usage',
+                user_id,
+                item_entity_type='global_agent',
+                item_id=str(matched_agent.get('id') or matched_agent.get('name') or ''),
+            )
+        elif matched_agent.get('is_group'):
+            ensure_governance_access('governance_group_agents', user_id)
+        else:
+            ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
 
     user_settings = get_user_settings(user_id)
     settings_to_update = user_settings.get('settings', {})
@@ -1201,6 +1254,8 @@ def add_agent():
         except AgentPayloadError as exc:
             log_event("Add agent failed: payload error", level=logging.WARNING, extra={"action": "add", "error": str(exc)})
             return jsonify({'error': str(exc)}), 400
+
+        governance_policy_payload = cleaned_agent.pop('governance_policy', None)
         cleaned_agent['is_global'] = True
         cleaned_agent['is_group'] = False
         validation_error = validate_agent(cleaned_agent)
@@ -1223,6 +1278,15 @@ def add_agent():
         result = save_global_agent(cleaned_agent, user_id=str(get_current_user_id()))
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
+
+        if isinstance(governance_policy_payload, dict):
+            upsert_item_policy(
+                entity_type='global_agent',
+                item_id=str(cleaned_agent.get('id') or ''),
+                payload=governance_policy_payload,
+                actor_user_id=str(get_current_user_id() or ''),
+                actor_email=str((session.get('user') or {}).get('email') or ''),
+            )
 
         log_agent_creation(user_id=str(get_current_user_id()), agent_id=cleaned_agent.get('id', ''), agent_name=cleaned_agent.get('name', ''), agent_display_name=cleaned_agent.get('display_name', ''), scope='global')
         log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in cleaned_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
@@ -1307,6 +1371,8 @@ def edit_agent(agent_name):
         except AgentPayloadError as exc:
             log_event("Edit agent failed: payload error", level=logging.WARNING, extra={"action": "edit", "agent_name": agent_name, "error": str(exc)})
             return jsonify({'error': str(exc)}), 400
+
+        governance_policy_payload = cleaned_agent.pop('governance_policy', None)
         cleaned_agent['is_global'] = True
         cleaned_agent['is_group'] = False
         validation_error = validate_agent(cleaned_agent)
@@ -1335,6 +1401,15 @@ def edit_agent(agent_name):
         result = save_global_agent(cleaned_agent, user_id=str(get_current_user_id()))
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
+
+        if isinstance(governance_policy_payload, dict):
+            upsert_item_policy(
+                entity_type='global_agent',
+                item_id=str(cleaned_agent.get('id') or ''),
+                payload=governance_policy_payload,
+                actor_user_id=str(get_current_user_id() or ''),
+                actor_email=str((session.get('user') or {}).get('email') or ''),
+            )
 
         log_agent_update(user_id=str(get_current_user_id()), agent_id=cleaned_agent.get('id', ''), agent_name=agent_name, agent_display_name=cleaned_agent.get('display_name', ''), scope='global')
         log_event(
@@ -1457,20 +1532,28 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
 
     if group_id:
         if allow_group_custom_endpoints:
-            group_endpoints = get_group_model_endpoints(group_id)
-            for endpoint in group_endpoints:
-                enriched = dict(endpoint)
-                enriched["scope"] = "group"
-                enriched["group_id"] = group_id
-                endpoints.append(enriched)
+            try:
+                ensure_governance_access("governance_group_endpoints", user_id)
+                group_endpoints = get_group_model_endpoints(group_id)
+                for endpoint in group_endpoints:
+                    enriched = dict(endpoint)
+                    enriched["scope"] = "group"
+                    enriched["group_id"] = group_id
+                    endpoints.append(enriched)
+            except PermissionError:
+                pass
     elif user_id:
         if allow_user_custom_endpoints:
-            user_settings = get_user_settings(user_id)
-            personal = user_settings.get("settings", {}).get("personal_model_endpoints", [])
-            for endpoint in personal:
-                enriched = dict(endpoint)
-                enriched["scope"] = "user"
-                endpoints.append(enriched)
+            try:
+                ensure_governance_access("governance_user_endpoints", user_id)
+                user_settings = get_user_settings(user_id)
+                personal = user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                for endpoint in personal:
+                    enriched = dict(endpoint)
+                    enriched["scope"] = "user"
+                    endpoints.append(enriched)
+            except PermissionError:
+                pass
 
     return sanitize_model_endpoints_for_frontend(endpoints)
 

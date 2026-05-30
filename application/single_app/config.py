@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.007"
+VERSION = "0.242.011"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -475,6 +475,18 @@ cosmos_global_agents_container = cosmos_database.create_container_if_not_exists(
 cosmos_global_actions_container_name = "global_actions"
 cosmos_global_actions_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_global_actions_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_governance_policies_container_name = "governance_policies"
+cosmos_governance_policies_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_governance_policies_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_governance_item_policies_container_name = "governance_item_policies"
+cosmos_governance_item_policies_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_governance_item_policies_container_name,
     partition_key=PartitionKey(path="/id")
 )
 

@@ -2,6 +2,7 @@
 
 from config import *
 from functions_authentication import *
+from functions_governance import filter_governed_model_endpoints, is_governance_access_allowed
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -51,10 +52,19 @@ def register_route_frontend_workspace(app):
         ))
         allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
         
+        workspace_governance = {
+            "user_agents": is_governance_access_allowed("governance_user_agents", user_id),
+            "user_actions": is_governance_access_allowed("governance_user_actions", user_id),
+            "user_endpoints": is_governance_access_allowed("governance_user_endpoints", user_id),
+            "global_endpoints": is_governance_access_allowed("governance_global_endpoints", user_id),
+        }
+
         personal_endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
-        personal_model_endpoints = sanitize_model_endpoints_for_frontend(personal_endpoints)
+        personal_model_endpoints = sanitize_model_endpoints_for_frontend(
+            filter_governed_model_endpoints(user_id, personal_endpoints, "governance_user_endpoints")
+        )
         global_model_endpoints = sanitize_model_endpoints_for_frontend(
-            settings.get("model_endpoints", [])
+            filter_governed_model_endpoints(user_id, settings.get("model_endpoints", []), "governance_global_endpoints")
         )
 
         return render_template(
@@ -68,7 +78,8 @@ def register_route_frontend_workspace(app):
             legacy_docs_count=legacy_count,
             allowed_extensions=allowed_extensions_str,
             personal_model_endpoints=personal_model_endpoints,
-            global_model_endpoints=global_model_endpoints
+            global_model_endpoints=global_model_endpoints,
+            workspace_governance=workspace_governance
         )
 
     

@@ -5,7 +5,7 @@ from functions_documents import *
 from functions_authentication import *
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
-from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
+from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action, log_governance_change
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
@@ -1112,6 +1112,15 @@ def register_route_frontend_admin_settings(app):
                 'enable_agent_template_gallery': form_data.get('enable_agent_template_gallery') == 'on',
                 'agent_templates_allow_user_submission': form_data.get('agent_templates_allow_user_submission') == 'on',
                 'agent_templates_require_approval': form_data.get('agent_templates_require_approval') == 'on',
+                'governance_user_endpoints': form_data.get('governance_user_endpoints') == 'on',
+                'governance_group_endpoints': form_data.get('governance_group_endpoints') == 'on',
+                'governance_global_endpoints': form_data.get('governance_global_endpoints') == 'on',
+                'governance_user_agents': form_data.get('governance_user_agents') == 'on',
+                'governance_group_agents': form_data.get('governance_group_agents') == 'on',
+                'governance_global_agents_usage': form_data.get('governance_global_agents_usage') == 'on',
+                'governance_user_actions': form_data.get('governance_user_actions') == 'on',
+                'governance_group_actions': form_data.get('governance_group_actions') == 'on',
+                'governance_global_actions_usage': form_data.get('governance_global_actions_usage') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -1621,6 +1630,27 @@ def register_route_frontend_admin_settings(app):
                     flash(f"Error processing favicon file: {e}. Existing favicon preserved.", "danger")
                     log_event(f"Error processing favicon file: {e}", level=logging.ERROR)
 
+            governance_toggle_keys = [
+                'governance_user_endpoints',
+                'governance_group_endpoints',
+                'governance_global_endpoints',
+                'governance_user_agents',
+                'governance_group_agents',
+                'governance_global_agents_usage',
+                'governance_user_actions',
+                'governance_group_actions',
+                'governance_global_actions_usage',
+            ]
+            governance_toggle_changes = {}
+            for toggle_key in governance_toggle_keys:
+                before_value = bool(settings.get(toggle_key, False))
+                after_value = bool(new_settings.get(toggle_key, False))
+                if before_value != after_value:
+                    governance_toggle_changes[toggle_key] = {
+                        'before': before_value,
+                        'after': after_value,
+                    }
+
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones
             if update_settings(new_settings):
@@ -1637,6 +1667,32 @@ def register_route_frontend_admin_settings(app):
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
+
+                if governance_toggle_changes:
+                    try:
+                        log_governance_change(
+                            admin_user_id=user_id,
+                            admin_email=admin_email,
+                            action='governance_feature_toggles_updated',
+                            scope='feature_policy',
+                            target_id='governance_feature_toggles',
+                            before_state={
+                                key: bool(settings.get(key, False))
+                                for key in governance_toggle_keys
+                            },
+                            after_state={
+                                key: bool(new_settings.get(key, False))
+                                for key in governance_toggle_keys
+                            },
+                            change_details={
+                                'changed_toggles': governance_toggle_changes
+                            },
+                        )
+                    except Exception as governance_log_error:
+                        log_event(
+                            f"Failed to log governance toggle change: {governance_log_error}",
+                            level=logging.ERROR,
+                        )
 
                 if chunk_size_changed:
                     try:

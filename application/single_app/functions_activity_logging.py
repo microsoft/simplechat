@@ -1788,6 +1788,70 @@ def log_general_admin_action(
         debug_print(f"⚠️  Warning: Failed to log admin action: {str(e)}")
 
 
+def log_governance_change(
+    admin_user_id: str,
+    admin_email: str,
+    action: str,
+    scope: str,
+    target_id: str,
+    before_state: Optional[Dict[str, Any]] = None,
+    after_state: Optional[Dict[str, Any]] = None,
+    change_details: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Log governance mutations with detailed before/after payloads."""
+    normalized_admin_user_id = coerce_activity_log_user_id(admin_user_id)
+    timestamp = datetime.utcnow().isoformat()
+    activity_record = {
+        'id': str(uuid.uuid4()),
+        'user_id': normalized_admin_user_id,
+        'activity_type': 'governance',
+        'type': 'governance',
+        'timestamp': timestamp,
+        'created_at': timestamp,
+        'admin': {
+            'user_id': normalized_admin_user_id,
+            'email': admin_email,
+        },
+        'action': action,
+        'workspace_type': 'admin',
+        'workspace_context': {
+            'action': action,
+            'scope': scope,
+            'target_id': target_id,
+        },
+        'governance_change': {
+            'scope': scope,
+            'target_id': target_id,
+            'before': before_state or {},
+            'after': after_state or {},
+            'details': change_details or {},
+        },
+    }
+
+    try:
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"Governance change logged: {action} on {scope}/{target_id}",
+            extra=activity_record,
+            level=logging.INFO,
+        )
+        debug_print(f"✅ Governance change logged: {action} on {scope}/{target_id}")
+    except Exception as e:
+        log_event(
+            message=f"Error logging governance change: {str(e)}",
+            extra={
+                'admin_user_id': normalized_admin_user_id,
+                'admin_email': admin_email,
+                'action': action,
+                'scope': scope,
+                'target_id': target_id,
+                'error': str(e),
+            },
+            level=logging.ERROR,
+        )
+        debug_print(f"⚠️  Warning: Failed to log governance change: {str(e)}")
+
+
 # === AGENT & ACTION ACTIVITY LOGGING ===
 def log_agent_creation(
     user_id: str,

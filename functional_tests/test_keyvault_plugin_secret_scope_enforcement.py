@@ -22,14 +22,8 @@ KEYVAULT_FILE = os.path.join(ROOT_DIR, "application", "single_app", "functions_k
 PLUGIN_ROUTE_FILE = os.path.join(ROOT_DIR, "application", "single_app", "route_backend_plugins.py")
 SK_LOADER_FILE = os.path.join(ROOT_DIR, "application", "single_app", "semantic_kernel_loader.py")
 CONFIG_FILE = os.path.join(ROOT_DIR, "application", "single_app", "config.py")
-FIX_DOC = os.path.join(
-    ROOT_DIR,
-    "docs",
-    "explanation",
-    "fixes",
-    "v0.241.011",
-    "KEY_VAULT_PLUGIN_SECRET_SCOPE_ENFORCEMENT_FIX.md",
-)
+FIX_DOC_ROOT = os.path.join(ROOT_DIR, "docs", "explanation", "fixes")
+FIX_DOC_NAME = "KEY_VAULT_PLUGIN_SECRET_SCOPE_ENFORCEMENT_FIX.md"
 
 
 def read_file_text(file_path):
@@ -42,6 +36,24 @@ def read_config_version():
         if line.startswith("VERSION = "):
             return line.split("=", 1)[1].strip().strip('"')
     raise AssertionError("VERSION assignment not found in config.py")
+
+
+def parse_version(version_text):
+    parts = version_text.split(".")
+    if len(parts) != 3:
+        raise AssertionError(f"Invalid version format: {version_text}")
+    try:
+        return tuple(int(part) for part in parts)
+    except ValueError as exc:
+        raise AssertionError(f"Version contains non-numeric segments: {version_text}") from exc
+
+
+def find_fix_doc_paths(root_path, file_name):
+    matching_paths = []
+    for dirpath, _, filenames in os.walk(root_path):
+        if file_name in filenames:
+            matching_paths.append(os.path.join(dirpath, file_name))
+    return sorted(matching_paths)
 
 
 def load_functions(file_path, function_names, namespace=None):
@@ -250,8 +262,15 @@ def test_fix_documentation_and_version_exist():
     """Verify the config version bump and fix documentation landed for this change."""
     print("🔍 Testing Key Vault scope enforcement documentation and version...")
 
-    assert read_config_version() == "0.241.022"
-    assert os.path.exists(FIX_DOC), f"Expected fix documentation at {FIX_DOC}"
+    current_version = read_config_version()
+    minimum_version = "0.241.022"
+    assert parse_version(current_version) >= parse_version(minimum_version), (
+        f"Expected config version >= {minimum_version}, found {current_version}"
+    )
+    matching_fix_docs = find_fix_doc_paths(FIX_DOC_ROOT, FIX_DOC_NAME)
+    assert matching_fix_docs, (
+        f"Expected fix documentation named {FIX_DOC_NAME} under {FIX_DOC_ROOT}"
+    )
 
     print("✅ Key Vault scope enforcement documentation and version passed")
 

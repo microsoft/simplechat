@@ -39,6 +39,7 @@ from functions_content import generate_embedding, generate_embeddings_batch
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_debug import debug_print
+from functions_governance import ensure_governance_access
 from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
@@ -5819,41 +5820,63 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
     user_settings = user_settings_doc.get('settings', {}) if isinstance(user_settings_doc, dict) else {}
 
     if settings.get('allow_user_custom_endpoints', False):
-        personal_endpoints, _ = normalize_model_endpoints(user_settings.get('personal_model_endpoints', []) or [])
-        endpoints.extend([
-            {**endpoint, '_endpoint_scope': 'user'}
-            for endpoint in personal_endpoints
-            if isinstance(endpoint, dict)
-        ])
-
-    if settings.get('allow_group_custom_endpoints', False):
-        seen_group_ids = set()
-        for group_id in active_group_ids:
-            group_key = str(group_id or '').strip()
-            if not group_key or group_key in seen_group_ids:
-                continue
-            seen_group_ids.add(group_key)
-
-            try:
-                group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_key) or [])
-            except Exception as group_error:
-                debug_print(
-                    f"[Streaming][Model Resolution] Failed to load group endpoints for group_id={group_key}: {group_error}"
-                )
-                continue
-
+        try:
+            ensure_governance_access('governance_user_endpoints', user_id)
+            personal_endpoints, _ = normalize_model_endpoints(user_settings.get('personal_model_endpoints', []) or [])
             endpoints.extend([
-                {**endpoint, '_endpoint_scope': 'group'}
-                for endpoint in group_endpoints
+                {**endpoint, '_endpoint_scope': 'user'}
+                for endpoint in personal_endpoints
                 if isinstance(endpoint, dict)
             ])
+        except PermissionError:
+            debug_print('[Streaming][Model Resolution] User endpoint governance policy denied access to personal endpoints.')
 
-    global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
-    endpoints.extend([
-        {**endpoint, '_endpoint_scope': 'global'}
-        for endpoint in global_endpoints
-        if isinstance(endpoint, dict)
-    ])
+    if settings.get('allow_group_custom_endpoints', False):
+        try:
+            ensure_governance_access('governance_group_endpoints', user_id)
+            seen_group_ids = set()
+            for group_id in active_group_ids:
+                group_key = str(group_id or '').strip()
+                if not group_key or group_key in seen_group_ids:
+                    continue
+                seen_group_ids.add(group_key)
+
+                try:
+                    group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_key) or [])
+                except Exception as group_error:
+                    debug_print(
+                        f"[Streaming][Model Resolution] Failed to load group endpoints for group_id={group_key}: {group_error}"
+                    )
+                    continue
+
+                endpoints.extend([
+                    {**endpoint, '_endpoint_scope': 'group'}
+                    for endpoint in group_endpoints
+                    if isinstance(endpoint, dict)
+                ])
+        except PermissionError:
+            debug_print('[Streaming][Model Resolution] Group endpoint governance policy denied access to group endpoints.')
+
+    try:
+        ensure_governance_access('governance_global_endpoints', user_id)
+        global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
+        for endpoint in global_endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_id = str(endpoint.get('id') or '').strip()
+            if endpoint_id:
+                try:
+                    ensure_governance_access(
+                        'governance_global_endpoints',
+                        user_id,
+                        item_entity_type='endpoint',
+                        item_id=endpoint_id,
+                    )
+                except PermissionError:
+                    continue
+            endpoints.append({**endpoint, '_endpoint_scope': 'global'})
+    except PermissionError:
+        debug_print('[Streaming][Model Resolution] Global endpoint governance policy denied access to global endpoints.')
 
     return endpoints
 

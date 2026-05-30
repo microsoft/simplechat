@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for admin agent default-model migration workflow.
-Version: 0.240.075
-Implemented in: 0.240.073
+Version: 0.241.022
+Implemented in: 0.240.073; 0.241.022
 
 This test ensures admin APIs and the AI Models admin page expose a preview and
 selection-driven migration workflow for legacy agents and future default-model
@@ -11,6 +11,16 @@ rebinding scenarios.
 """
 
 import os
+
+
+def parse_version(version_text):
+    parts = version_text.split(".")
+    if len(parts) != 3:
+        raise AssertionError(f"Invalid version format: {version_text}")
+    try:
+        return tuple(int(part) for part in parts)
+    except ValueError as exc:
+        raise AssertionError(f"Version contains non-numeric segments: {version_text}") from exc
 
 
 def read_file_text(file_path):
@@ -121,8 +131,15 @@ def test_admin_agent_default_model_migration_wiring():
     assert "openAdminSettingsTab" in admin_settings_js_content, (
         "Expected admin settings JS to expose a reusable tab navigation helper for cross-links."
     )
-    assert 'VERSION = "0.240.075"' in config_content, (
-        "Expected config.py version 0.240.075 after the workspace agent chat launch selection fix."
+    version_line = next(
+        (line.strip() for line in config_content.splitlines() if line.strip().startswith("VERSION = ")),
+        "",
+    )
+    assert version_line, "Expected config.py to define VERSION."
+    current_version = version_line.split("=", 1)[1].strip().strip('"')
+    minimum_version = "0.240.075"
+    assert parse_version(current_version) >= parse_version(minimum_version), (
+        f"Expected config.py version >= {minimum_version}, found {current_version}."
     )
 
     print("✅ Admin agent default-model migration wiring verified.")

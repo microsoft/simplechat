@@ -9,6 +9,7 @@ from functions_documents import *
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
 from functions_group_agents import get_group_agents
 from functions_global_agents import get_global_agents
+from functions_governance import ensure_governance_access
 from functions_personal_agents import ensure_migration_complete, get_personal_agents
 from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
@@ -44,6 +45,49 @@ def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_na
 
 def _normalize_chat_model_value(value):
     return str(value or '').strip()
+
+
+def _is_chat_agent_allowed_by_governance(user_id, agent, scope_type):
+    try:
+        if scope_type == 'global':
+            ensure_governance_access(
+                'governance_global_agents_usage',
+                user_id,
+                item_entity_type='global_agent',
+                item_id=str(agent.get('id') or agent.get('name') or ''),
+            )
+        elif scope_type == 'group':
+            ensure_governance_access('governance_group_agents', user_id)
+        else:
+            ensure_governance_access('governance_user_agents', user_id)
+        return True
+    except PermissionError:
+        return False
+
+
+def _filter_chat_model_endpoints_by_governance(user_id, endpoints, feature_key):
+    try:
+        ensure_governance_access(feature_key, user_id)
+    except PermissionError:
+        return []
+
+    allowed_endpoints = []
+    for endpoint in endpoints or []:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = str(endpoint.get('id') or '').strip()
+        if endpoint_id:
+            try:
+                ensure_governance_access(
+                    feature_key,
+                    user_id,
+                    item_entity_type='endpoint',
+                    item_id=endpoint_id,
+                )
+            except PermissionError:
+                continue
+        allowed_endpoints.append(endpoint)
+    return allowed_endpoints
 
 
 def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_id=None, preferred_model_deployment=None):
@@ -165,11 +209,16 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
                     'scope_name': scope_name,
                 })
 
-    append_models(settings.get('model_endpoints', []) or [], 'global', None, 'Global')
+    append_models(
+        _filter_chat_model_endpoints_by_governance(user_id, settings.get('model_endpoints', []) or [], 'governance_global_endpoints'),
+        'global',
+        None,
+        'Global'
+    )
 
     if settings.get('allow_user_custom_endpoints', False):
         append_models(
-            user_settings_dict.get('personal_model_endpoints', []) or [],
+            _filter_chat_model_endpoints_by_governance(user_id, user_settings_dict.get('personal_model_endpoints', []) or [], 'governance_user_endpoints'),
             'personal',
             user_id,
             'Personal'
@@ -181,7 +230,7 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
             if not group_id:
                 continue
             append_models(
-                get_group_model_endpoints(group_id),
+                _filter_chat_model_endpoints_by_governance(user_id, get_group_model_endpoints(group_id), 'governance_group_endpoints'),
                 'group',
                 group_id,
                 group_doc.get('name', 'Unnamed Group')
@@ -280,7 +329,8 @@ def register_route_frontend_chats(app):
 
         multi_endpoint_models = []
         if enable_multi_model_endpoints:
-            endpoints = public_settings.get("model_endpoints", []) or []
+            endpoints = _filter_chat_model_endpoints_by_governance(user_id, settings.get("model_endpoints", []) or [], 'governance_global_endpoints')
+            endpoints = sanitize_model_endpoints_for_frontend(endpoints)
             for endpoint in endpoints:
                 if not endpoint.get("enabled", True):
                     continue
@@ -326,12 +376,14 @@ def register_route_frontend_chats(app):
             if settings.get('allow_user_agents', False):
                 ensure_migration_complete(user_id)
                 for agent in get_personal_agents(user_id):
-                    chat_agent_options.append(_serialize_chat_agent_option(agent))
+                    if _is_chat_agent_allowed_by_governance(user_id, agent, 'personal'):
+                        chat_agent_options.append(_serialize_chat_agent_option(agent))
 
             merge_global = settings.get('per_user_semantic_kernel', False) and settings.get('merge_global_semantic_kernel_with_workspace', False)
             if merge_global:
                 for agent in get_global_agents():
-                    chat_agent_options.append(_serialize_chat_agent_option(agent, is_global=True))
+                    if _is_chat_agent_allowed_by_governance(user_id, agent, 'global'):
+                        chat_agent_options.append(_serialize_chat_agent_option(agent, is_global=True))
 
             if settings.get('enable_group_workspaces', False) and settings.get('allow_group_agents', False):
                 for group_doc in user_groups_raw:
@@ -340,14 +392,15 @@ def register_route_frontend_chats(app):
                         continue
                     group_name = group_doc.get('name', 'Unnamed Group')
                     for agent in get_group_agents(group_id):
-                        chat_agent_options.append(
-                            _serialize_chat_agent_option(
-                                agent,
-                                is_group=True,
-                                group_id=group_id,
-                                group_name=group_name,
+                        if _is_chat_agent_allowed_by_governance(user_id, agent, 'group'):
+                            chat_agent_options.append(
+                                _serialize_chat_agent_option(
+                                    agent,
+                                    is_group=True,
+                                    group_id=group_id,
+                                    group_name=group_name,
+                                )
                             )
-                        )
         except Exception as e:
             logger.warning(f"Failed to load chat agent options: {e}")
 

@@ -16,6 +16,7 @@ from functions_settings import get_user_settings, update_user_settings
 from functions_debug import debug_print
 from config import cosmos_personal_actions_container
 import logging
+from functions_governance import ensure_governance_access
 
 def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
     """
@@ -107,6 +108,7 @@ def save_personal_action(user_id, action_data):
         dict: Saved action data with ID
     """
     try:
+        ensure_governance_access('governance_user_actions', user_id)
         # Check if an action with this name already exists
         existing_action = None
         if action_data.get('id'):
