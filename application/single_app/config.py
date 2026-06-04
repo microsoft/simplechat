@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.131"
+VERSION = "0.241.144"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -336,6 +336,12 @@ cosmos_personal_workflow_runs_container_name = "personal_workflow_runs"
 cosmos_personal_workflow_runs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_personal_workflow_runs_container_name,
     partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_personal_workflow_run_items_container_name = "personal_workflow_run_items"
+cosmos_personal_workflow_run_items_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_workflow_run_items_container_name,
+    partition_key=PartitionKey(path="/run_id")
 )
 
 cosmos_group_conversations_container_name = "group_conversations"

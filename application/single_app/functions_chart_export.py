@@ -1,6 +1,8 @@
+# functions_chart_export.py
 """Helpers for rendering inline chart markdown blocks into export-friendly images."""
 
 import base64
+import csv
 import io
 import json
 import math
@@ -22,6 +24,59 @@ CSS_RGB_COLOR_REGEX = re.compile(
 )
 EXPORT_CHART_DPI = 144
 EXPORT_CHART_SIZE_INCHES = (8.2, 4.8)
+ALLOWED_CHART_KINDS = {
+    'line',
+    'bar',
+    'pie',
+    'doughnut',
+    'scatter',
+    'area',
+    'bubble',
+    'radar',
+    'stacked_bar',
+    'stacked_line',
+    'polar_area',
+}
+CHART_KIND_ALIASES = {
+    'lines': 'line',
+    'bars': 'bar',
+    'donut': 'doughnut',
+    'polararea': 'polar_area',
+    'polar area': 'polar_area',
+    'stacked bar': 'stacked_bar',
+    'stackedbar': 'stacked_bar',
+    'stacked line': 'stacked_line',
+    'stackedline': 'stacked_line',
+}
+DEFAULT_PALETTE = [
+    {'background': 'rgba(28, 110, 164, 0.18)', 'border': '#1c6ea4'},
+    {'background': 'rgba(215, 91, 53, 0.18)', 'border': '#d75b35'},
+    {'background': 'rgba(39, 123, 84, 0.18)', 'border': '#277b54'},
+    {'background': 'rgba(153, 92, 32, 0.18)', 'border': '#995c20'},
+    {'background': 'rgba(126, 77, 140, 0.18)', 'border': '#7e4d8c'},
+    {'background': 'rgba(191, 66, 112, 0.18)', 'border': '#bf4270'},
+    {'background': 'rgba(58, 141, 121, 0.18)', 'border': '#3a8d79'},
+    {'background': 'rgba(101, 120, 48, 0.18)', 'border': '#657830'},
+]
+NAMED_CHART_COLORS = {
+    'apple': '#c2410c',
+    'apples': '#c2410c',
+    'red': '#dc2626',
+    'orange': '#ea580c',
+    'oranges': '#ea580c',
+    'pear': '#16a34a',
+    'pears': '#16a34a',
+    'green': '#16a34a',
+    'blue': '#2563eb',
+    'purple': '#7c3aed',
+    'yellow': '#ca8a04',
+    'gold': '#ca8a04',
+    'brown': '#92400e',
+    'gray': '#64748b',
+    'grey': '#64748b',
+    'black': '#111827',
+    'white': '#f8fafc',
+}
 
 
 def replace_inline_chart_blocks_with_export_html(content: str) -> str:
@@ -81,21 +136,373 @@ def _build_export_chart_html_from_payload(payload_text: str) -> str:
 
 @lru_cache(maxsize=128)
 def _render_chart_payload_to_data_uri(payload_json: str) -> Tuple[str, Optional[Dict[str, Any]]]:
-    try:
-        parsed_payload = json.loads(payload_json)
-    except (TypeError, ValueError):
-        return '', None
-
+    parsed_payload = _parse_chart_payload(payload_json)
     if not isinstance(parsed_payload, dict):
         return '', None
 
-    try:
-        png_bytes = _render_chart_spec_to_png_bytes(parsed_payload)
-    except Exception:
+    chart_spec = _normalize_export_chart_spec(parsed_payload)
+    if not chart_spec:
         return '', parsed_payload
 
+    try:
+        png_bytes = _render_chart_spec_to_png_bytes(chart_spec)
+    except Exception:
+        return '', chart_spec
+
     encoded_payload = base64.b64encode(png_bytes).decode('ascii')
-    return f'data:image/png;base64,{encoded_payload}', parsed_payload
+    return f'data:image/png;base64,{encoded_payload}', chart_spec
+
+
+def _parse_chart_payload(payload_text: str) -> Optional[Dict[str, Any]]:
+    normalized_payload = str(payload_text or '').strip()
+    if not normalized_payload:
+        return None
+
+    try:
+        parsed_payload = json.loads(normalized_payload)
+        return parsed_payload if isinstance(parsed_payload, dict) else None
+    except (TypeError, ValueError):
+        return _parse_loose_chart_spec(normalized_payload)
+
+
+def _parse_loose_chart_spec(payload_text: str) -> Dict[str, Any]:
+    spec: Dict[str, Any] = {'data': {'datasets': []}, 'options': {}}
+    section = ''
+    current_dataset: Optional[Dict[str, Any]] = None
+    option_path: List[str] = []
+
+    for raw_line in str(payload_text or '').replace('\r', '').split('\n'):
+        normalized_line = raw_line.replace('\t', '    ')
+        trimmed = normalized_line.strip()
+        if not trimmed or trimmed.startswith('#'):
+            continue
+
+        indent = len(normalized_line) - len(normalized_line.lstrip(' '))
+        list_item_text = trimmed[2:].strip() if trimmed.startswith('- ') else ''
+        if list_item_text and section == 'data':
+            current_dataset = {}
+            spec['data']['datasets'].append(current_dataset)
+            list_key_value = _parse_loose_key_value(list_item_text)
+            if list_key_value:
+                current_dataset[list_key_value[0]] = _parse_loose_scalar_value(list_key_value[1])
+            continue
+
+        key_value = _parse_loose_key_value(trimmed)
+        if not key_value:
+            continue
+
+        key, value = key_value
+        if indent == 0:
+            option_path = []
+            current_dataset = None
+            if not value and key in {'data', 'options'}:
+                section = key
+                spec.setdefault(key, {} if key == 'options' else {'datasets': []})
+                continue
+            section = ''
+            spec[key] = _parse_loose_scalar_value(value)
+            continue
+
+        if section == 'data':
+            if key == 'datasets' and not value:
+                current_dataset = None
+                continue
+
+            if current_dataset is not None:
+                current_dataset[key] = _parse_loose_scalar_value(value)
+                continue
+
+            spec['data'][key] = _parse_loose_scalar_value(value)
+            continue
+
+        if section == 'options':
+            if not value:
+                if key == 'plugins':
+                    option_path = ['plugins']
+                elif key == 'legend':
+                    option_path = ['plugins', 'legend']
+                continue
+
+            _assign_loose_chart_option(spec, key, value, option_path)
+
+    return spec
+
+
+def _parse_loose_key_value(line: str) -> Optional[Tuple[str, str]]:
+    separator_index = str(line or '').find(':')
+    if separator_index < 0:
+        return None
+
+    return line[:separator_index].strip(), line[separator_index + 1:].strip()
+
+
+def _parse_loose_scalar_value(value: Any) -> Any:
+    trimmed = str(value or '').strip()
+    if not trimmed:
+        return ''
+
+    array_value = _parse_inline_array(trimmed)
+    if array_value is not None:
+        return array_value
+
+    if (trimmed.startswith('"') and trimmed.endswith('"')) or (trimmed.startswith("'") and trimmed.endswith("'")):
+        return trimmed[1:-1]
+
+    lowered = trimmed.lower()
+    if lowered == 'true':
+        return True
+    if lowered == 'false':
+        return False
+    if lowered == 'null':
+        return None
+
+    numeric_candidate = trimmed.replace(',', '')
+    if re.fullmatch(r'-?[0-9][0-9,]*(\.[0-9]+)?', trimmed):
+        numeric_value = float(numeric_candidate)
+        return int(numeric_value) if numeric_value.is_integer() else numeric_value
+
+    return trimmed
+
+
+def _parse_inline_array(value: str) -> Optional[List[Any]]:
+    trimmed = str(value or '').strip()
+    if not trimmed.startswith('[') or not trimmed.endswith(']'):
+        return None
+
+    inner = trimmed[1:-1].strip()
+    if not inner:
+        return []
+
+    try:
+        row = next(csv.reader([inner], skipinitialspace=True))
+    except (csv.Error, StopIteration):
+        row = inner.split(',')
+
+    return [_parse_loose_scalar_value(item) for item in row]
+
+
+def _assign_loose_chart_option(spec: Dict[str, Any], key: str, value: Any, option_path: Sequence[str]):
+    options = spec.setdefault('options', {})
+    parsed_value = _parse_loose_scalar_value(value)
+    if 'legend' in option_path and key in {'display', 'position'}:
+        plugins = options.setdefault('plugins', {})
+        legend = plugins.setdefault('legend', {})
+        legend[key] = parsed_value
+        return
+
+    options[key] = parsed_value
+
+
+def _normalize_export_chart_spec(raw_spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_spec, dict):
+        return None
+
+    chart_kind = _normalize_chart_kind_value(raw_spec.get('kind'))
+    if chart_kind not in ALLOWED_CHART_KINDS:
+        chart_kind = _normalize_chart_kind_value(raw_spec.get('chartType'))
+    if chart_kind not in ALLOWED_CHART_KINDS:
+        return None
+
+    raw_data = raw_spec.get('data') if isinstance(raw_spec.get('data'), dict) else {}
+    labels = [
+        _sanitize_text(label, 80)
+        for label in raw_data.get('labels', [])[:200]
+    ] if isinstance(raw_data.get('labels'), list) else []
+    datasets = _normalize_export_datasets(chart_kind, raw_data.get('datasets'), labels)
+    if not datasets:
+        return None
+
+    raw_options = raw_spec.get('options') if isinstance(raw_spec.get('options'), dict) else {}
+    raw_plugins = raw_options.get('plugins') if isinstance(raw_options.get('plugins'), dict) else {}
+    raw_legend_options = raw_plugins.get('legend') if isinstance(raw_plugins.get('legend'), dict) else {}
+    legend_position = _sanitize_text(
+        raw_options.get('legendPosition') or raw_legend_options.get('position') or 'top',
+        10,
+    ).lower()
+    if legend_position not in {'top', 'bottom', 'left', 'right'}:
+        legend_position = 'top'
+
+    normalized_options = {
+        'legendPosition': legend_position,
+        'showLegend': raw_options.get('showLegend') is not False and raw_legend_options.get('display') is not False,
+        'showDataTable': raw_options.get('showDataTable') is not False,
+        'beginAtZero': raw_options.get('beginAtZero') is not False,
+        'horizontal': bool(raw_options.get('horizontal')) and chart_kind in {'bar', 'stacked_bar'},
+        'fill': bool(raw_options.get('fill')) or chart_kind == 'area',
+        'smooth': raw_options.get('smooth') is not False,
+        'stacked': bool(raw_options.get('stacked')) or chart_kind in {'stacked_bar', 'stacked_line'},
+        'xAxisLabel': _sanitize_text(raw_options.get('xAxisLabel'), 80),
+        'yAxisLabel': _sanitize_text(raw_options.get('yAxisLabel'), 80),
+        'cutout': _sanitize_text(raw_options.get('cutout') or '60%', 20),
+    }
+
+    return {
+        'version': _coerce_int(raw_spec.get('version'), 1),
+        'chartId': _sanitize_text(raw_spec.get('chartId'), 40),
+        'kind': chart_kind,
+        'chartType': _get_base_chart_type(chart_kind),
+        'title': _sanitize_text(raw_spec.get('title'), 160),
+        'subtitle': _sanitize_text(raw_spec.get('subtitle'), 160),
+        'description': _sanitize_text(raw_spec.get('description'), 320),
+        'summary': _sanitize_text(raw_spec.get('summary'), 220),
+        'data': {
+            'labels': labels,
+            'datasets': datasets,
+        },
+        'options': normalized_options,
+        'table': _normalize_export_table(raw_spec.get('table')),
+    }
+
+
+def _normalize_export_datasets(chart_kind: str, raw_datasets: Any, labels: Sequence[str]) -> List[Dict[str, Any]]:
+    if not isinstance(raw_datasets, list):
+        return []
+
+    normalized_datasets: List[Dict[str, Any]] = []
+    for dataset_index, raw_dataset in enumerate(raw_datasets[:20]):
+        if not isinstance(raw_dataset, dict):
+            continue
+
+        palette = DEFAULT_PALETTE[dataset_index % len(DEFAULT_PALETTE)]
+        normalized_dataset: Dict[str, Any] = {
+            'label': _sanitize_text(raw_dataset.get('label') or f'Series {dataset_index + 1}', 80),
+            'borderColor': _sanitize_color(raw_dataset.get('borderColor'), palette['border']),
+            'backgroundColor': _sanitize_color(raw_dataset.get('backgroundColor'), palette['background']),
+            'borderWidth': 2,
+        }
+
+        raw_data = raw_dataset.get('data') if isinstance(raw_dataset.get('data'), list) else []
+        if chart_kind in {'scatter', 'bubble'}:
+            normalized_dataset['data'] = [
+                normalized_point
+                for point in raw_data[:200]
+                if (normalized_point := _normalize_export_point(point, chart_kind)) is not None
+            ]
+        else:
+            normalized_dataset['data'] = raw_data[:200]
+
+        if chart_kind in {'line', 'area', 'stacked_line'}:
+            normalized_dataset['fill'] = raw_dataset.get('fill') is True or chart_kind == 'area'
+            normalized_dataset['tension'] = 0 if raw_dataset.get('tension') == 0 else 0.35
+
+        if chart_kind == 'radar':
+            normalized_dataset['fill'] = raw_dataset.get('fill') is True
+
+        if chart_kind in {'pie', 'doughnut', 'polar_area'} and labels:
+            normalized_dataset['backgroundColor'] = _sanitize_color_list(
+                raw_dataset.get('backgroundColor'),
+                len(labels),
+                lambda color_index: DEFAULT_PALETTE[color_index % len(DEFAULT_PALETTE)]['background'],
+            )
+            normalized_dataset['borderColor'] = _sanitize_color_list(
+                raw_dataset.get('borderColor'),
+                len(labels),
+                lambda color_index: DEFAULT_PALETTE[color_index % len(DEFAULT_PALETTE)]['border'],
+            )
+
+        if raw_dataset.get('type') in {'line', 'bar'}:
+            normalized_dataset['type'] = raw_dataset.get('type')
+
+        if normalized_dataset['data']:
+            normalized_datasets.append(normalized_dataset)
+
+    return normalized_datasets
+
+
+def _normalize_export_point(point: Any, chart_kind: str) -> Optional[Dict[str, float]]:
+    if not isinstance(point, dict):
+        return None
+
+    x_value = _coerce_float(point.get('x'))
+    y_value = _coerce_float(point.get('y'))
+    if x_value is None or y_value is None:
+        return None
+
+    normalized_point = {'x': x_value, 'y': y_value}
+    if chart_kind == 'bubble':
+        radius = _coerce_float(point.get('r'))
+        if radius is None:
+            return None
+        normalized_point['r'] = radius
+
+    return normalized_point
+
+
+def _normalize_export_table(raw_table: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_table, dict):
+        return None
+
+    columns = [
+        _sanitize_text(column, 80)
+        for column in raw_table.get('columns', [])[:12]
+    ] if isinstance(raw_table.get('columns'), list) else []
+    rows = [
+        row[:len(columns) or 12]
+        for row in raw_table.get('rows', [])[:500]
+        if isinstance(row, list) and row
+    ] if isinstance(raw_table.get('rows'), list) else []
+    if not columns or not rows:
+        return None
+    return {'columns': columns, 'rows': rows}
+
+
+def _normalize_chart_kind_value(value: Any) -> str:
+    normalized_value = _sanitize_text(value, 40).lower().replace('-', '_')
+    normalized_value = re.sub(r'\s+', '_', normalized_value)
+    if normalized_value in {'', 'chart'}:
+        return ''
+    return CHART_KIND_ALIASES.get(normalized_value, normalized_value)
+
+
+def _get_base_chart_type(chart_kind: str) -> str:
+    if chart_kind in {'area', 'stacked_line'}:
+        return 'line'
+    if chart_kind == 'stacked_bar':
+        return 'bar'
+    if chart_kind == 'polar_area':
+        return 'polarArea'
+    return chart_kind
+
+
+def _sanitize_text(value: Any, max_length: int) -> str:
+    return str(value or '').strip()[:max_length]
+
+
+def _sanitize_color(value: Any, fallback: str) -> Any:
+    if isinstance(value, list):
+        return [_sanitize_color(item, fallback) for item in value]
+    if not isinstance(value, str):
+        return fallback
+
+    trimmed = value.strip()
+    if not trimmed or len(trimmed) > 40:
+        return fallback
+    named_color = NAMED_CHART_COLORS.get(trimmed.lower())
+    if named_color:
+        return named_color
+    if trimmed.startswith(('#', 'rgb(', 'rgba(', 'hsl(', 'hsla(')):
+        return trimmed
+    return fallback
+
+
+def _sanitize_color_list(value: Any, target_length: int, fallback_resolver) -> List[Any]:
+    if not isinstance(value, list) or not value:
+        return [fallback_resolver(index) for index in range(target_length)]
+
+    colors = [
+        _sanitize_color(item, fallback_resolver(index))
+        for index, item in enumerate(value[:target_length])
+    ]
+    while len(colors) < target_length:
+        colors.append(fallback_resolver(len(colors)))
+    return colors
+
+
+def _coerce_int(value: Any, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _build_chart_alt_text(chart_spec: Dict[str, Any]) -> str:

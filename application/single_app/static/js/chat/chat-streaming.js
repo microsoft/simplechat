@@ -5,7 +5,8 @@ import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './
 import { showToast } from './chat-toast.js';
 import { applyScopeLock } from './chat-documents.js';
 import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
-import { hydrateInlineCharts } from './chat-inline-charts.js';
+import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
+import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
 
 let currentStreamController = null;
@@ -862,7 +863,7 @@ export async function reattachStreamingConversation(conversationId, options = {}
     }
 }
 
-function updateStreamingMessage(messageId, content) {
+export function updateStreamingMessage(messageId, content) {
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
 
@@ -872,9 +873,12 @@ function updateStreamingMessage(messageId, content) {
     if (contentElement) {
         // Render markdown during streaming for proper formatting
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+            const stableChartNodes = collectStableStreamingChartNodes(contentElement);
             const renderedContent = renderAiMessageContent(content);
             contentElement.innerHTML = renderedContent.htmlContent;
+            restoreStableStreamingChartNodes(contentElement, stableChartNodes);
             hydrateInlineCharts(messageElement);
+            hydrateInlineImageProposals(messageElement);
         } else {
             contentElement.textContent = content;
         }
@@ -887,6 +891,66 @@ function updateStreamingMessage(messageId, content) {
             contentElement.appendChild(cursor);
         }
     }
+}
+
+function getStreamingChartInstance(chartContainer) {
+    const canvas = chartContainer?.querySelector('canvas');
+    if (!canvas) {
+        return null;
+    }
+
+    if (chartContainer._chartInstance) {
+        return chartContainer._chartInstance;
+    }
+
+    if (typeof window.Chart !== 'undefined' && typeof window.Chart.getChart === 'function') {
+        return window.Chart.getChart(canvas);
+    }
+
+    return null;
+}
+
+function collectStableStreamingChartNodes(contentElement) {
+    const stableChartNodes = new Map();
+    contentElement.querySelectorAll('.sc-inline-chart:not([data-chart-hydrated="status"])').forEach(chartContainer => {
+        const chartSpec = chartContainer.getAttribute('data-chart-spec') || '';
+        if (!chartSpec || chartContainer.getAttribute('data-chart-hydrated') !== 'true') {
+            return;
+        }
+
+        if (!getStreamingChartInstance(chartContainer)) {
+            return;
+        }
+
+        if (!stableChartNodes.has(chartSpec)) {
+            stableChartNodes.set(chartSpec, []);
+        }
+        stableChartNodes.get(chartSpec).push(chartContainer);
+    });
+    return stableChartNodes;
+}
+
+function restoreStableStreamingChartNodes(contentElement, stableChartNodes) {
+    const reusedChartNodes = new Set();
+    contentElement.querySelectorAll('.sc-inline-chart:not([data-chart-hydrated="status"])').forEach(newChartContainer => {
+        const chartSpec = newChartContainer.getAttribute('data-chart-spec') || '';
+        const matchingChartNodes = chartSpec ? stableChartNodes.get(chartSpec) : null;
+        const stableChartNode = matchingChartNodes?.shift();
+        if (!stableChartNode) {
+            return;
+        }
+
+        newChartContainer.replaceWith(stableChartNode);
+        reusedChartNodes.add(stableChartNode);
+    });
+
+    stableChartNodes.forEach(chartNodes => {
+        chartNodes.forEach(chartNode => {
+            if (!reusedChartNodes.has(chartNode)) {
+                destroyInlineCharts(chartNode);
+            }
+        });
+    });
 }
 
 function appendStoppedResponseBanner(messageElement, hasPartialContent) {

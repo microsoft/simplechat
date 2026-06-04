@@ -11,27 +11,39 @@ from datetime import datetime, timedelta, timezone
 from azure.cosmos import exceptions
 
 from config import (
+    cosmos_personal_workflow_run_items_container,
     cosmos_personal_workflow_runs_container,
     cosmos_personal_workflows_container,
 )
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_document_actions import (
+    DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
     build_analyze_config,
     get_document_action_max_documents_by_type,
     get_enabled_document_action_types,
     normalize_document_action_config,
 )
+from functions_file_sync import (
+    FILE_SYNC_SCOPE_GROUP,
+    FILE_SYNC_SCOPE_PERSONAL,
+    FILE_SYNC_SCOPE_PUBLIC,
+    get_authorized_sync_source,
+    sanitize_file_sync_source,
+)
 from functions_global_agents import get_global_agents
 from functions_personal_agents import get_personal_agents
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
 
 
-WORKFLOW_TRIGGER_TYPES = {'manual', 'interval'}
+WORKFLOW_TRIGGER_TYPES = {'manual', 'interval', 'file_sync'}
 WORKFLOW_RUNNER_TYPES = {'agent', 'model'}
 WORKFLOW_SCHEDULE_UNITS = {'seconds', 'minutes', 'hours'}
 WORKFLOW_ALERT_PRIORITIES = {'none', 'low', 'medium', 'high'}
+WORKFLOW_FILE_SYNC_WAIT_MODES = {'complete', 'queued'}
+WORKFLOW_FILE_SYNC_CONTINUE_MODES = {'always', 'changed'}
+WORKFLOW_FILE_SYNC_MAX_SOURCES = 10
 
 
 def _utc_now():
@@ -93,12 +105,33 @@ def _normalize_alert_priority(value):
     return normalized
 
 
-def _normalize_document_action_config(workflow_data, existing_workflow=None):
+def _normalize_document_action_config(workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
     settings = get_settings()
+    action_payload = workflow_data.get('document_action')
+    if allow_empty_file_sync_targets and isinstance(action_payload, dict):
+        action_type = str(action_payload.get('type') or '').strip().lower()
+        document_ids = action_payload.get('document_ids') if isinstance(action_payload.get('document_ids'), list) else []
+        if action_type == DOCUMENT_ACTION_TYPE_ANALYZE and not document_ids:
+            action_payload = dict(action_payload)
+            action_payload['document_ids'] = ['__dynamic_file_sync_document__']
+
+            normalized_action = normalize_document_action_config(
+                action_payload=action_payload,
+                existing_action=existing_workflow.get('document_action'),
+                legacy_analyze=workflow_data.get('analyze') or existing_workflow.get('analyze'),
+                max_documents_by_type=get_document_action_max_documents_by_type(
+                    DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+                    settings=settings,
+                ),
+                allowed_action_types=get_enabled_document_action_types(settings=settings),
+            )
+            normalized_action['document_ids'] = []
+            return normalized_action
+
     return normalize_document_action_config(
-        action_payload=workflow_data.get('document_action'),
+        action_payload=action_payload,
         existing_action=existing_workflow.get('document_action'),
         legacy_analyze=workflow_data.get('analyze') or existing_workflow.get('analyze'),
         max_documents_by_type=get_document_action_max_documents_by_type(
@@ -107,6 +140,71 @@ def _normalize_document_action_config(workflow_data, existing_workflow=None):
         ),
         allowed_action_types=get_enabled_document_action_types(settings=settings),
     )
+
+
+def _normalize_file_sync_config(user_id, workflow_data, existing_workflow=None):
+    workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
+    existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
+    existing_config = existing_workflow.get('file_sync') if isinstance(existing_workflow.get('file_sync'), dict) else {}
+    payload = workflow_data.get('file_sync') if isinstance(workflow_data.get('file_sync'), dict) else existing_config
+    payload = payload if isinstance(payload, dict) else {}
+
+    enabled = _normalize_bool(payload.get('enabled', existing_config.get('enabled', False)), default=False)
+    wait_mode = _normalize_text(payload.get('wait_mode', existing_config.get('wait_mode', 'complete')), 'File Sync wait mode').lower() or 'complete'
+    if wait_mode not in WORKFLOW_FILE_SYNC_WAIT_MODES:
+        raise ValueError('File Sync wait mode must be complete or queued.')
+
+    continue_mode = _normalize_text(payload.get('continue_mode', existing_config.get('continue_mode', 'always')), 'File Sync continue mode').lower() or 'always'
+    if continue_mode not in WORKFLOW_FILE_SYNC_CONTINUE_MODES:
+        raise ValueError('File Sync continue mode must be always or changed.')
+    if wait_mode == 'queued' and continue_mode == 'changed':
+        raise ValueError('File Sync must wait for completion before a workflow can continue only when changes are found.')
+
+    use_changed_documents = _normalize_bool(
+        payload.get('use_changed_documents', existing_config.get('use_changed_documents', True)),
+        default=True,
+    )
+
+    raw_sources = payload.get('sources') if isinstance(payload.get('sources'), list) else []
+    normalized_sources = []
+    seen_source_keys = set()
+    for raw_source in raw_sources[:WORKFLOW_FILE_SYNC_MAX_SOURCES]:
+        if not isinstance(raw_source, dict):
+            continue
+
+        scope_type = _normalize_text(raw_source.get('scope_type'), 'File Sync scope').lower()
+        source_id = _normalize_text(raw_source.get('source_id') or raw_source.get('id'), 'File Sync source id')
+        scope_id = _normalize_text(raw_source.get('scope_id'), 'File Sync scope id')
+        if scope_type == FILE_SYNC_SCOPE_PERSONAL:
+            scope_id = user_id
+        if scope_type not in {FILE_SYNC_SCOPE_PERSONAL, FILE_SYNC_SCOPE_GROUP, FILE_SYNC_SCOPE_PUBLIC} or not source_id:
+            continue
+
+        source_key = f'{scope_type}:{scope_id}:{source_id}'
+        if source_key in seen_source_keys:
+            continue
+
+        source = get_authorized_sync_source(scope_type, source_id, user_id, scope_id=scope_id)
+        sanitized_source = sanitize_file_sync_source(source)
+        normalized_sources.append({
+            'scope_type': scope_type,
+            'scope_id': scope_id,
+            'source_id': source_id,
+            'name': sanitized_source.get('name') or source_id,
+            'source_type': sanitized_source.get('source_type') or '',
+        })
+        seen_source_keys.add(source_key)
+
+    if enabled and not normalized_sources:
+        raise ValueError('Select at least one File Sync source for this workflow.')
+
+    return {
+        'enabled': enabled,
+        'wait_mode': wait_mode,
+        'continue_mode': continue_mode,
+        'use_changed_documents': use_changed_documents,
+        'sources': normalized_sources,
+    }
 
 
 def _build_schedule_delta(schedule_payload):
@@ -290,9 +388,9 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
 
 
 def compute_next_run_at(workflow, from_time=None):
-    """Return the next scheduled run timestamp for an interval workflow."""
+    """Return the next scheduled run timestamp for a scheduled workflow."""
     workflow = workflow if isinstance(workflow, dict) else {}
-    if workflow.get('trigger_type') != 'interval' or not workflow.get('is_enabled', False):
+    if workflow.get('trigger_type') not in {'interval', 'file_sync'} or not workflow.get('is_enabled', False):
         return None
 
     schedule = workflow.get('schedule') if isinstance(workflow.get('schedule'), dict) else {}
@@ -349,20 +447,20 @@ def get_personal_workflow(user_id, workflow_id):
 
 
 def get_due_personal_workflows(limit=20):
-    """Return interval workflows whose next run timestamp is due."""
+    """Return scheduled workflows whose next run timestamp is due."""
     now_iso = _utc_now_iso()
     try:
         items = list(cosmos_personal_workflows_container.query_items(
             query=(
                 'SELECT * FROM c '
-                'WHERE c.trigger_type = @trigger_type '
+                'WHERE ARRAY_CONTAINS(@trigger_types, c.trigger_type) '
                 'AND c.is_enabled = true '
                 'AND IS_DEFINED(c.next_run_at) '
                 'AND c.next_run_at != null '
                 'AND c.next_run_at <= @now_iso'
             ),
             parameters=[
-                {'name': '@trigger_type', 'value': 'interval'},
+                {'name': '@trigger_types', 'value': ['interval', 'file_sync']},
                 {'name': '@now_iso', 'value': now_iso},
             ],
             enable_cross_partition_query=True,
@@ -398,7 +496,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
     trigger_type = _normalize_text(workflow_data.get('trigger_type'), 'Trigger type', required=True).lower()
     if trigger_type not in WORKFLOW_TRIGGER_TYPES:
-        raise ValueError('Trigger type must be manual or interval.')
+        raise ValueError('Trigger type must be manual, interval, or file_sync.')
 
     is_enabled = bool(workflow_data.get('is_enabled', existing_workflow.get('is_enabled', True) if existing_workflow else True))
     url_access_enabled = _normalize_bool(
@@ -418,7 +516,20 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     alert_priority = _normalize_alert_priority(
         workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
     )
-    document_action = _normalize_document_action_config(workflow_data, existing_workflow=existing_workflow)
+    file_sync = _normalize_file_sync_config(user_id, workflow_data, existing_workflow=existing_workflow)
+    allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
+    document_action = _normalize_document_action_config(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+    )
+    if trigger_type == 'file_sync':
+        if not file_sync.get('enabled'):
+            raise ValueError('Monitor File Sync Changes workflows require File Sync before run.')
+        if file_sync.get('wait_mode') != 'complete':
+            raise ValueError('Monitor File Sync Changes workflows must wait for sync completion.')
+        if file_sync.get('continue_mode') != 'changed':
+            raise ValueError('Monitor File Sync Changes workflows must continue only when changes are found.')
     analyze = build_analyze_config(document_action)
     selected_agent = {}
     model_binding_summary = None
@@ -444,7 +555,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
             model_provider = str(model_binding_summary.get('provider') or '').strip().lower()
 
     schedule = {}
-    if trigger_type == 'interval':
+    if trigger_type in {'interval', 'file_sync'}:
         schedule = _normalize_schedule(workflow_data.get('schedule'))
 
     workflow = {
@@ -470,6 +581,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'schedule': schedule,
         'document_action': document_action,
         'analyze': analyze,
+        'file_sync': file_sync,
         'selected_agent': selected_agent,
         'model_endpoint_id': model_endpoint_id,
         'model_id': model_id,
@@ -494,10 +606,10 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'run_count': int((existing_workflow or {}).get('run_count') or 0),
     }
 
-    if trigger_type == 'interval' and is_enabled:
+    if trigger_type in {'interval', 'file_sync'} and is_enabled:
         schedule_changed = (
             not existing_workflow
-            or existing_workflow.get('trigger_type') != 'interval'
+            or existing_workflow.get('trigger_type') != trigger_type
             or not existing_workflow.get('is_enabled', False)
             or existing_workflow.get('schedule') != schedule
         )
@@ -614,6 +726,55 @@ def save_personal_workflow_run(user_id, run_record):
     return _strip_cosmos_metadata(result)
 
 
+def save_personal_workflow_run_item(user_id, item_record):
+    """Create or update a per-item workflow run record."""
+    item_record = item_record if isinstance(item_record, dict) else {}
+    item_record['user_id'] = user_id
+    item_record.setdefault('id', str(uuid.uuid4()))
+    result = cosmos_personal_workflow_run_items_container.upsert_item(body=item_record)
+    return _strip_cosmos_metadata(result)
+
+
+def get_personal_workflow_run_item(run_id, item_id):
+    """Fetch a workflow run item by id."""
+    try:
+        item = cosmos_personal_workflow_run_items_container.read_item(item=item_id, partition_key=run_id)
+        return _strip_cosmos_metadata(item)
+    except exceptions.CosmosResourceNotFoundError:
+        return None
+    except Exception as exc:
+        log_event(
+            f'[WorkflowStore] Error fetching workflow run item {item_id}: {exc}',
+            extra={'run_id': run_id, 'item_id': item_id},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return None
+
+
+def list_personal_workflow_run_items(run_id, limit=1000):
+    """List per-item workflow run records for a run."""
+    try:
+        items = list(cosmos_personal_workflow_run_items_container.query_items(
+            query=(
+                'SELECT * FROM c '
+                'WHERE c.run_id = @run_id '
+                'ORDER BY c.created_at ASC'
+            ),
+            parameters=[{'name': '@run_id', 'value': run_id}],
+            partition_key=run_id,
+        ))
+        return [_strip_cosmos_metadata(item) for item in items[:limit]]
+    except Exception as exc:
+        log_event(
+            f'[WorkflowStore] Error fetching workflow run items for {run_id}: {exc}',
+            extra={'run_id': run_id},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return []
+
+
 def delete_personal_workflow(user_id, workflow_id):
     """Delete a workflow and its run history."""
     workflow = get_personal_workflow(user_id, workflow_id)
@@ -624,6 +785,18 @@ def delete_personal_workflow(user_id, workflow_id):
 
     runs = list_personal_workflow_runs(user_id, workflow_id, limit=500)
     for run in runs:
+        run_id = run.get('id')
+        for item in list_personal_workflow_run_items(run_id, limit=1000):
+            try:
+                cosmos_personal_workflow_run_items_container.delete_item(item=item.get('id'), partition_key=run_id)
+            except exceptions.CosmosResourceNotFoundError:
+                continue
+            except Exception as exc:
+                log_event(
+                    f"[WorkflowStore] Error deleting workflow run item {item.get('id')}: {exc}",
+                    extra={'user_id': user_id, 'workflow_id': workflow_id, 'run_id': run_id},
+                    level=logging.WARNING,
+                )
         try:
             cosmos_personal_workflow_runs_container.delete_item(item=run.get('id'), partition_key=user_id)
         except exceptions.CosmosResourceNotFoundError:

@@ -34,6 +34,25 @@ DEFAULT_COLORS = [
 ]
 
 SAFE_COLOR_PREFIXES = ('#', 'rgb(', 'rgba(', 'hsl(', 'hsla(')
+NAMED_CHART_COLORS = {
+    'apple': '#c2410c',
+    'apples': '#c2410c',
+    'red': '#dc2626',
+    'orange': '#ea580c',
+    'oranges': '#ea580c',
+    'pear': '#16a34a',
+    'pears': '#16a34a',
+    'green': '#16a34a',
+    'blue': '#2563eb',
+    'purple': '#7c3aed',
+    'yellow': '#ca8a04',
+    'gold': '#ca8a04',
+    'brown': '#92400e',
+    'gray': '#64748b',
+    'grey': '#64748b',
+    'black': '#111827',
+    'white': '#f8fafc',
+}
 
 
 class ChartPlugin(BasePlugin):
@@ -162,8 +181,24 @@ class ChartPlugin(BasePlugin):
                 'explicit_datasets': {
                     'labels': ['Q1', 'Q2', 'Q3', 'Q4'],
                     'datasets': [
-                        {'label': 'Revenue', 'data': [120, 132, 141, 168]},
+                        {
+                            'label': 'Revenue',
+                            'data': [120, 132, 141, 168],
+                            'backgroundColor': '#1c6ea4',
+                            'borderColor': '#1c6ea4',
+                        },
                         {'label': 'Target', 'data': [110, 128, 139, 160], 'type': 'line'},
+                    ],
+                },
+                'pie_with_slice_colors': {
+                    'labels': ['Apples', 'Oranges', 'Pears'],
+                    'datasets': [
+                        {
+                            'label': 'Share',
+                            'data': [33, 33, 34],
+                            'backgroundColor': ['red', 'orange', 'green'],
+                            'borderColor': ['apple', 'oranges', 'pears'],
+                        },
                     ],
                 },
             },
@@ -304,6 +339,9 @@ class ChartPlugin(BasePlugin):
             return None
         if len(candidate) > 40:
             return None
+        named_color = NAMED_CHART_COLORS.get(candidate.lower())
+        if named_color:
+            return named_color
         if candidate.startswith(SAFE_COLOR_PREFIXES):
             return candidate
         return None
@@ -483,6 +521,11 @@ class ChartPlugin(BasePlugin):
                 for color_index, color in enumerate(dataset.get('backgroundColor'))
             ]
             normalized['backgroundColor'] = normalized_colors
+            if isinstance(dataset.get('borderColor'), list):
+                normalized['borderColor'] = [
+                    self._sanitize_color(color) or self._get_palette(color_index)['border']
+                    for color_index, color in enumerate(dataset.get('borderColor'))
+                ]
         elif chart_kind in {'pie', 'doughnut', 'polar_area'}:
             normalized['backgroundColor'] = [
                 self._get_palette(color_index)['background']

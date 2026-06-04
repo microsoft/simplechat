@@ -1512,6 +1512,45 @@
             </div>
           </div>
 
+          <div class="card p-3 mb-3" id="workflow-file-sync-card">
+            <div class="d-flex flex-wrap gap-2 justify-content-between align-items-start mb-3">
+              <div>
+                <label class="form-label mb-0" for="workflow-file-sync-enabled">File Sync Before Run</label>
+                <div class="form-text mt-1" id="workflow-file-sync-help">Trigger selected sync sources before this workflow runs.</div>
+              </div>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="workflow-file-sync-enabled" />
+                <label class="form-check-label ms-2" for="workflow-file-sync-enabled">Enabled</label>
+              </div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="workflow-file-sync-sources" class="form-label">Sync Sources</label>
+                <select class="form-select" id="workflow-file-sync-sources" multiple size="5"></select>
+              </div>
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label for="workflow-file-sync-wait-mode" class="form-label">Wait</label>
+                  <select class="form-select" id="workflow-file-sync-wait-mode">
+                    <option value="complete">Until sync completes</option>
+                    <option value="queued">Queue only</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label for="workflow-file-sync-continue-mode" class="form-label">Continue</label>
+                  <select class="form-select" id="workflow-file-sync-continue-mode">
+                    <option value="always">Always continue</option>
+                    <option value="changed">Only when files changed</option>
+                  </select>
+                </div>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="workflow-file-sync-use-changed-documents" checked />
+                  <label class="form-check-label ms-2" for="workflow-file-sync-use-changed-documents">Use changed files as Analyze targets</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div id="workflow-agent-fields" class="card p-3 mb-3 d-none">
             <div class="mb-0">
               <label for="workflow-agent-select" class="form-label">Selected Agent</label>
@@ -1565,6 +1604,7 @@
                 <select class="form-select" id="workflow-trigger-type">
                   <option value="manual">Manual</option>
                   <option value="interval">Interval Schedule</option>
+                  <option value="file_sync">Monitor File Sync Changes</option>
                 </select>
               </div>
               <div class="col-md-4 d-none" id="workflow-schedule-value-group">

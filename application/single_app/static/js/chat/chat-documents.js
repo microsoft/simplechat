@@ -142,6 +142,28 @@ function getAssignedKnowledgeScopes(assignedKnowledge = {}) {
   };
 }
 
+function getAssignedKnowledgeScopeSelection(agent = {}, assignedKnowledge = {}) {
+  const scopes = getAssignedKnowledgeScopes(assignedKnowledge);
+  const groupIds = [...scopes.groupIds];
+  const publicWorkspaceIds = [...scopes.publicWorkspaceIds];
+  let personal = scopes.personal;
+
+  if (agent?.is_group && agent?.group_id) {
+    const ownerGroupId = String(agent.group_id || '').trim();
+    if (ownerGroupId && !groupIds.includes(ownerGroupId)) {
+      groupIds.push(ownerGroupId);
+    }
+  } else if (!agent?.is_global) {
+    personal = true;
+  }
+
+  return {
+    personal,
+    groupIds,
+    publicWorkspaceIds,
+  };
+}
+
 function syncAssignedKnowledgeButtonState() {
   if (!searchDocumentsBtn) {
     return;
@@ -267,10 +289,16 @@ export async function applyAssignedKnowledgeLock(agent = null) {
     )
   );
   userWorkspaceContextActive = false;
+  await setEffectiveScopes(
+    getAssignedKnowledgeScopeSelection(agent || {}, assignedKnowledge),
+    {
+      source: 'assigned-knowledge',
+      reload: false,
+    }
+  );
   hideSearchDocumentsPanel();
   setAssignedKnowledgeControlState(true);
   syncDropdownButtonText();
-  setAssignedKnowledgeControlState(true);
   return true;
 }
 

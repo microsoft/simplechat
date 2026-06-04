@@ -50,6 +50,7 @@ from functions_document_actions import (
     DOCUMENT_ACTION_TYPE_COMPARISON,
     DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_NONE,
+    build_analyze_config,
     get_document_action_config,
     get_document_action_max_documents,
     get_document_action_max_documents_by_type,
@@ -58,6 +59,7 @@ from functions_document_actions import (
 from functions_document_comparison import run_document_comparison
 from functions_debug import debug_print
 from functions_document_analysis import run_document_analysis
+from functions_file_sync import get_authorized_sync_source, queue_file_sync_source_run
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_tool_label,
@@ -65,7 +67,7 @@ from functions_message_artifacts import (
     make_json_serializable,
 )
 from functions_notifications import create_workflow_priority_notification
-from functions_personal_workflows import save_personal_workflow_run
+from functions_personal_workflows import save_personal_workflow_run, save_personal_workflow_run_item
 from functions_search_service import resolve_document_context
 from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, normalize_model_endpoints
@@ -3535,6 +3537,297 @@ def _get_document_action_config(workflow):
     )
 
 
+def _get_workflow_file_sync_config(workflow):
+    config = workflow.get('file_sync') if isinstance(workflow.get('file_sync'), dict) else {}
+    sources = config.get('sources') if isinstance(config.get('sources'), list) else []
+    return {
+        'enabled': bool(config.get('enabled')),
+        'wait_mode': str(config.get('wait_mode') or 'complete').strip().lower() or 'complete',
+        'continue_mode': str(config.get('continue_mode') or 'always').strip().lower() or 'always',
+        'use_changed_documents': config.get('use_changed_documents') is not False,
+        'sources': [source for source in sources if isinstance(source, dict)],
+    }
+
+
+def _merge_file_sync_counts(base_counts, run_counts):
+    merged_counts = dict(base_counts or {})
+    for key, value in (run_counts or {}).items():
+        if isinstance(value, (int, float)):
+            merged_counts[key] = merged_counts.get(key, 0) + int(value)
+    return merged_counts
+
+
+def _summarize_file_sync_run(run):
+    run = run if isinstance(run, dict) else {}
+    changed_documents = list(run.get('changed_documents') or [])
+    return {
+        'run_id': str(run.get('id') or run.get('run_id') or '').strip(),
+        'source_id': str(run.get('source_id') or '').strip(),
+        'source_name': str(run.get('source_name') or '').strip(),
+        'scope_type': str(run.get('scope_type') or '').strip(),
+        'trigger': str(run.get('trigger') or '').strip(),
+        'status': str(run.get('status') or '').strip(),
+        'started_at': run.get('started_at'),
+        'completed_at': run.get('completed_at'),
+        'counts': dict(run.get('counts') or {}),
+        'changed_documents': changed_documents,
+        'changed_document_ids': [str(item.get('document_id') or '').strip() for item in changed_documents if item.get('document_id')],
+        'error_message': str(run.get('error_message') or '').strip(),
+    }
+
+
+def _execute_workflow_file_sync(workflow, run_id, trigger_source):
+    config = _get_workflow_file_sync_config(workflow)
+    if not config.get('enabled'):
+        return {
+            'enabled': False,
+            'runs': [],
+            'counts': {},
+            'changed_documents': [],
+            'changed_document_ids': [],
+            'should_continue': True,
+        }
+
+    user_id = str(workflow.get('user_id') or '').strip()
+    wait_mode = config.get('wait_mode') or 'complete'
+    runs = []
+    aggregate_counts = {}
+    changed_documents = []
+    changed_document_ids = []
+    seen_document_ids = set()
+
+    for source_config in config.get('sources') or []:
+        source = get_authorized_sync_source(
+            source_config.get('scope_type'),
+            source_config.get('source_id'),
+            user_id,
+            scope_id=source_config.get('scope_id'),
+        )
+        run = queue_file_sync_source_run(
+            source,
+            triggered_by=user_id,
+            trigger='workflow',
+            run_inline=wait_mode == 'complete',
+        )
+        run_summary = _summarize_file_sync_run(run)
+        run_summary['workflow_run_id'] = run_id
+        run_summary['trigger_source'] = trigger_source
+        runs.append(run_summary)
+        aggregate_counts = _merge_file_sync_counts(aggregate_counts, run_summary.get('counts'))
+        if run_summary.get('status') == 'failed':
+            error_message = run_summary.get('error_message') or 'File Sync source failed before workflow execution.'
+            source_name = run_summary.get('source_name') or run_summary.get('source_id') or 'File Sync source'
+            raise RuntimeError(f'{source_name}: {error_message}')
+
+        for changed_document in run_summary.get('changed_documents') or []:
+            document_id = str(changed_document.get('document_id') or '').strip()
+            if not document_id or document_id in seen_document_ids:
+                continue
+            enriched_document = dict(changed_document)
+            enriched_document['source_id'] = run_summary.get('source_id')
+            enriched_document['source_name'] = run_summary.get('source_name')
+            enriched_document['scope_type'] = run_summary.get('scope_type')
+            enriched_document['scope_id'] = source_config.get('scope_id')
+            changed_documents.append(enriched_document)
+            changed_document_ids.append(document_id)
+            seen_document_ids.add(document_id)
+
+    should_continue = config.get('continue_mode') != 'changed' or bool(changed_document_ids)
+    return {
+        'enabled': True,
+        'wait_mode': wait_mode,
+        'continue_mode': config.get('continue_mode'),
+        'use_changed_documents': config.get('use_changed_documents'),
+        'runs': runs,
+        'counts': aggregate_counts,
+        'changed_documents': changed_documents,
+        'changed_document_ids': changed_document_ids,
+        'should_continue': should_continue,
+    }
+
+
+def _format_workflow_file_sync_context(file_sync_result):
+    if not isinstance(file_sync_result, dict) or not file_sync_result.get('enabled'):
+        return ''
+
+    counts = file_sync_result.get('counts') if isinstance(file_sync_result.get('counts'), dict) else {}
+    changed_documents = file_sync_result.get('changed_documents') if isinstance(file_sync_result.get('changed_documents'), list) else []
+    lines = [
+        'File Sync context for this workflow run:',
+        (
+            f"Scanned: {counts.get('scanned', 0)} | "
+            f"Created: {counts.get('created', 0)} | "
+            f"Updated: {counts.get('updated', 0)} | "
+            f"Unchanged: {counts.get('unchanged', 0)} | "
+            f"Skipped: {counts.get('skipped', 0)} | "
+            f"Failed: {counts.get('failed', 0)}"
+        ),
+    ]
+
+    if not changed_documents:
+        lines.append('No new or changed synced documents were detected.')
+        return '\n'.join(lines)
+
+    lines.append('New or changed synced documents:')
+    for index, document in enumerate(changed_documents[:50], start=1):
+        label = str(document.get('relative_path') or document.get('file_name') or document.get('document_id') or '').strip()
+        action = str(document.get('action') or 'changed').strip()
+        source_name = str(document.get('source_name') or '').strip()
+        lines.append(
+            f"{index}. {label} | action={action} | document_id={document.get('document_id')} | source={source_name}"
+        )
+    if len(changed_documents) > 50:
+        lines.append(f'Additional changed documents omitted from prompt context: {len(changed_documents) - 50}')
+    return '\n'.join(lines)
+
+
+def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
+    if not isinstance(file_sync_result, dict) or not file_sync_result.get('enabled'):
+        return workflow
+
+    prepared_workflow = dict(workflow)
+    file_sync_context = _format_workflow_file_sync_context(file_sync_result)
+    if file_sync_context:
+        prepared_workflow['task_prompt'] = f"{workflow.get('task_prompt', '')}\n\n{file_sync_context}".strip()
+
+    config = _get_workflow_file_sync_config(workflow)
+    changed_document_ids = list(file_sync_result.get('changed_document_ids') or [])
+    if not config.get('use_changed_documents'):
+        return prepared_workflow
+
+    action_config = _get_document_action_config(workflow)
+    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
+        return prepared_workflow
+
+    if not changed_document_ids:
+        prepared_workflow['document_action'] = {'type': DOCUMENT_ACTION_TYPE_NONE}
+        prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
+        return prepared_workflow
+
+    group_ids = []
+    public_workspace_ids = []
+    for source_config in config.get('sources') or []:
+        scope_type = str(source_config.get('scope_type') or '').strip().lower()
+        scope_id = str(source_config.get('scope_id') or '').strip()
+        if scope_type == 'group' and scope_id and scope_id not in group_ids:
+            group_ids.append(scope_id)
+        elif scope_type == 'public' and scope_id and scope_id not in public_workspace_ids:
+            public_workspace_ids.append(scope_id)
+
+    updated_action_config = dict(action_config)
+    updated_action_config.update({
+        'document_ids': changed_document_ids,
+        'doc_scope': 'all',
+        'active_group_ids': group_ids,
+        'active_public_workspace_id': public_workspace_ids,
+    })
+    prepared_workflow['document_action'] = updated_action_config
+    prepared_workflow['analyze'] = build_analyze_config(updated_action_config)
+    return prepared_workflow
+
+
+def _document_run_item_id(run_id, document_id):
+    normalized_document_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(document_id or '').strip())
+    return f'{run_id}:document:{normalized_document_id}'
+
+
+def _file_sync_document_details(file_sync_result, document_id):
+    for document in file_sync_result.get('changed_documents') or []:
+        if str(document.get('document_id') or '').strip() == document_id:
+            return dict(document)
+    return {}
+
+
+def _document_label_from_file_sync(file_sync_result, document_id):
+    document_details = _file_sync_document_details(file_sync_result, document_id)
+    return str(document_details.get('relative_path') or document_details.get('file_name') or document_id).strip()
+
+
+def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_result=None, error='', output_summary=''):
+    user_id = str(workflow.get('user_id') or '').strip()
+    document_id = str(document_id or '').strip()
+    if not user_id or not run_id or not document_id:
+        return None
+
+    now_iso = _utc_now_iso()
+    file_sync_document = _file_sync_document_details(file_sync_result or {}, document_id)
+    item = {
+        'id': _document_run_item_id(run_id, document_id),
+        'type': 'workflow_run_item',
+        'item_type': 'document',
+        'run_id': run_id,
+        'workflow_id': workflow.get('id'),
+        'workflow_name': workflow.get('name'),
+        'document_id': document_id,
+        'label': _document_label_from_file_sync(file_sync_result or {}, document_id),
+        'source': 'file_sync' if file_sync_document else 'workflow',
+        'scope_type': file_sync_document.get('scope_type'),
+        'scope_id': file_sync_document.get('scope_id'),
+        'file_sync_source_id': file_sync_document.get('source_id'),
+        'file_sync_source_name': file_sync_document.get('source_name'),
+        'file_sync_action': file_sync_document.get('action'),
+        'relative_path': file_sync_document.get('relative_path'),
+        'file_name': file_sync_document.get('file_name'),
+        'status': status,
+        'error': str(error or '')[:2000],
+        'output_summary': str(output_summary or '')[:4000],
+        'updated_at': now_iso,
+    }
+    if status == 'queued':
+        item['created_at'] = now_iso
+    if status == 'running':
+        item['started_at'] = now_iso
+    if status in {'succeeded', 'failed', 'skipped'}:
+        item['completed_at'] = now_iso
+    return save_personal_workflow_run_item(user_id, item)
+
+
+def _initialize_document_run_items(workflow, run_id, action_config, file_sync_result=None):
+    document_ids = []
+    if action_config.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON:
+        document_ids = [action_config.get('left_document_id'), *list(action_config.get('right_document_ids') or [])]
+    elif action_config.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE:
+        document_ids = list(action_config.get('document_ids') or [])
+
+    seen_document_ids = set()
+    for document_id in document_ids:
+        normalized_document_id = str(document_id or '').strip()
+        if not normalized_document_id or normalized_document_id in seen_document_ids:
+            continue
+        _save_document_run_item(workflow, run_id, normalized_document_id, 'queued', file_sync_result=file_sync_result)
+        seen_document_ids.add(normalized_document_id)
+
+
+def _build_run_item_activity_callback(workflow, run_id, file_sync_result=None):
+    if not run_id:
+        return None
+
+    def callback(event):
+        event = event if isinstance(event, dict) else {}
+        event_type = str(event.get('type') or '').strip().lower()
+        document_id = str(event.get('document_id') or '').strip()
+        if not document_id:
+            return
+
+        if event_type in {'document_started', 'comparison_started'}:
+            _save_document_run_item(workflow, run_id, document_id, 'running', file_sync_result=file_sync_result)
+        elif event_type in {'document_completed', 'comparison_completed'}:
+            failed_windows = int(event.get('failed_windows') or 0)
+            status = 'failed' if failed_windows else 'succeeded'
+            _save_document_run_item(workflow, run_id, document_id, status, file_sync_result=file_sync_result)
+        elif event_type == 'window_failed':
+            _save_document_run_item(
+                workflow,
+                run_id,
+                document_id,
+                'failed',
+                file_sync_result=file_sync_result,
+                error=event.get('error') or 'A document analysis window failed.',
+            )
+
+    return callback
+
+
 def _build_document_action_activity_callback(workflow, run_id, thought_tracker=None):
     if not thought_tracker or not run_id:
         return None
@@ -4448,10 +4741,56 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
 
     conversation = None
     thought_tracker = None
+    execution_workflow = workflow
+    file_sync_result = None
     try:
-        conversation = _ensure_workflow_conversation(workflow)
+        file_sync_result = _execute_workflow_file_sync(workflow, run_id, trigger_source)
+        if file_sync_result and file_sync_result.get('enabled'):
+            run_record['file_sync'] = file_sync_result
+            save_personal_workflow_run(user_id, run_record)
+
+            if not file_sync_result.get('should_continue', True):
+                completed_at = _utc_now_iso()
+                response_preview = 'No new or changed files were detected by File Sync.'
+                run_record.update({
+                    'status': 'skipped',
+                    'success': True,
+                    'completed_at': completed_at,
+                    'response_preview': response_preview,
+                    'error': '',
+                })
+                save_personal_workflow_run(user_id, run_record)
+                log_workflow_run(
+                    user_id=user_id,
+                    workflow_id=workflow_id,
+                    workflow_name=workflow.get('name', ''),
+                    status='skipped',
+                    trigger_source=trigger_source,
+                    run_id=run_id,
+                    conversation_id=run_record.get('conversation_id'),
+                    runner_type=workflow.get('runner_type'),
+                )
+                return {
+                    'success': True,
+                    'run': run_record,
+                    'notification': None,
+                    'workflow_updates': {
+                        'last_run_started_at': started_at,
+                        'last_run_at': completed_at,
+                        'last_run_status': 'skipped',
+                        'last_run_error': '',
+                        'last_run_response_preview': response_preview,
+                        'last_run_trigger_source': trigger_source,
+                        'run_count': int(workflow.get('run_count') or 0) + 1,
+                        'conversation_id': run_record.get('conversation_id'),
+                    },
+                }
+
+            execution_workflow = _apply_file_sync_context_to_workflow(workflow, file_sync_result)
+
+        conversation = _ensure_workflow_conversation(execution_workflow)
         run_record['conversation_id'] = conversation.get('id')
-        user_message_doc = _create_user_message(conversation.get('id'), workflow, trigger_source, run_id)
+        user_message_doc = _create_user_message(conversation.get('id'), execution_workflow, trigger_source, run_id)
         assistant_message_id, thought_tracker = _initialize_workflow_assistant_tracking(
             conversation.get('id'),
             user_id,
@@ -4463,7 +4802,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
 
         _add_workflow_activity_thought(
             thought_tracker,
-            workflow,
+            execution_workflow,
             run_id,
             step_type='workflow',
             content='Workflow run started',
@@ -4475,26 +4814,38 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
         )
 
         url_access_context = _prepare_workflow_url_access_context(
-            workflow,
+            execution_workflow,
             settings,
             conversation.get('id'),
             run_id,
             thought_tracker=thought_tracker,
             user_roles=user_roles,
         )
-        document_action = _get_document_action_config(workflow)
+        document_action = _get_document_action_config(execution_workflow)
         if document_action.get('type') != DOCUMENT_ACTION_TYPE_NONE:
+            run_item_callback = _build_run_item_activity_callback(
+                execution_workflow,
+                run_id,
+                file_sync_result=file_sync_result or {},
+            )
+            _initialize_document_run_items(
+                execution_workflow,
+                run_id,
+                document_action,
+                file_sync_result=file_sync_result or {},
+            )
             execution_result = _execute_document_action_workflow(
-                workflow,
+                execution_workflow,
                 settings,
                 conversation_id=conversation.get('id'),
                 run_id=run_id,
                 thought_tracker=thought_tracker,
+                external_activity_callback=run_item_callback,
                 url_access_context=url_access_context,
             )
-        elif workflow.get('runner_type') == 'agent':
+        elif execution_workflow.get('runner_type') == 'agent':
             execution_result = _execute_agent_workflow(
-                workflow,
+                execution_workflow,
                 settings,
                 conversation_id=conversation.get('id'),
                 run_id=run_id,
@@ -4503,7 +4854,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             )
         else:
             execution_result = _execute_model_workflow(
-                workflow,
+                execution_workflow,
                 settings,
                 run_id=run_id,
                 thought_tracker=thought_tracker,
@@ -4513,7 +4864,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
 
         assistant_doc = _create_assistant_message(
             conversation,
-            workflow,
+            execution_workflow,
             execution_result,
             trigger_source,
             run_id,
@@ -4521,14 +4872,14 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             assistant_message_id=assistant_message_id,
         )
         _mirror_workflow_visualizations_to_created_conversations(
-            workflow,
+            execution_workflow,
             assistant_doc,
             execution_result,
         )
 
         _add_workflow_activity_thought(
             thought_tracker,
-            workflow,
+            execution_workflow,
             run_id,
             step_type='workflow',
             content='Workflow run completed',
@@ -4553,6 +4904,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             'analysis_coverage': execution_result.get('analysis_coverage') or {},
             'url_access': execution_result.get('url_access') or {},
             'source_review': execution_result.get('source_review') or {},
+            'file_sync': file_sync_result or {},
             'response_preview': _build_response_preview(execution_result.get('reply')),
             'error': '',
         })
@@ -4568,7 +4920,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             runner_type=workflow.get('runner_type'),
         )
         alert_notification = _create_workflow_priority_alert(
-            workflow,
+            execution_workflow,
             run_record,
             conversation,
             execution_result=execution_result,
@@ -4593,7 +4945,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
         if thought_tracker:
             _add_workflow_activity_thought(
                 thought_tracker,
-                workflow,
+                execution_workflow,
                 run_id,
                 step_type='workflow',
                 content='Workflow run failed',
@@ -4609,6 +4961,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             'success': False,
             'completed_at': completed_at,
             'error': str(exc),
+            'file_sync': file_sync_result or {},
             'response_preview': '',
         })
         save_personal_workflow_run(user_id, run_record)
@@ -4635,7 +4988,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             exceptionTraceback=True,
         )
         alert_notification = _create_workflow_priority_alert(
-            workflow,
+            execution_workflow,
             run_record,
             conversation,
         )

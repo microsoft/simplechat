@@ -2725,6 +2725,91 @@ ol {
   font-size: 0.9rem;
 }
 
+.sc-inline-image-proposal-card {
+  background: var(--bs-body-bg);
+  border-color: rgba(28, 110, 164, 0.26) !important;
+  box-shadow: 0 0.35rem 1rem rgba(15, 23, 42, 0.08);
+  max-width: 42rem;
+  overflow: hidden;
+}
+
+.sc-inline-image-proposal-title {
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.sc-inline-image-proposal-description,
+.sc-inline-image-proposal-meta-badge,
+.sc-inline-image-proposal-prompt-panel,
+.sc-inline-image-proposal-status-title,
+.sc-inline-image-proposal-status-text {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sc-inline-image-proposal-status {
+  max-width: 42rem;
+}
+
+.sc-inline-image-proposal-meta-badge {
+  max-width: 100%;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.sc-inline-image-proposal-prompt-preview {
+  max-height: 9rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.sc-inline-image-proposal-prompt-editor {
+  min-height: 8.5rem;
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
+
+.sc-inline-image-proposal-result {
+  margin: 0;
+}
+
+.sc-inline-image-proposal-result-image {
+  display: block;
+  width: 100%;
+  max-width: min(100%, 28rem);
+  height: auto;
+  max-height: 34rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  object-fit: contain;
+  cursor: pointer;
+}
+
+.sc-inline-image-proposal-approved .sc-inline-image-proposal-card {
+  border-color: rgba(39, 123, 84, 0.38) !important;
+}
+
+.sc-inline-image-proposal-cancelled .sc-inline-image-proposal-card {
+  opacity: 0.72;
+}
+
+.sc-inline-image-proposal-bulk-actions {
+  max-width: 42rem;
+  width: 100%;
+}
+
+[data-bs-theme="dark"] .sc-inline-image-proposal-card {
+  background: #1f2937;
+  border-color: rgba(125, 211, 252, 0.28) !important;
+  box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.28);
+}
+
+[data-bs-theme="dark"] .sc-inline-image-proposal-prompt-preview {
+  background: #111827 !important;
+  border-color: rgba(148, 163, 184, 0.32) !important;
+}
+
 .inline-image-gallery-card {
   border: 1px solid rgba(14, 116, 144, 0.16);
   border-radius: 1rem;

@@ -1,23 +1,19 @@
 # test_chat_inline_chart_rendering.py
 """
 UI test for inline chart rendering in chat.
-Version: 0.241.126
-Implemented in: 0.241.047; YAML and pending-source rendering fixed in 0.241.126
+Version: 0.241.141
+Implemented in: 0.241.047; YAML and pending-source rendering fixed in 0.241.126; final metadata rendering fixed in 0.241.134; streaming chart stability fixed in 0.241.141
 
 This test ensures that assistant messages can render inline Chart.js visualizations
 in the chat page, that the optional data table is accessible in desktop and mobile layouts,
-and that YAML-style chart blocks do not leak raw chart source while streaming.
+that YAML-style chart blocks do not leak raw chart source while streaming, and that
+final assistant metadata rendering does not blank hydrated chart canvases.
 """
 
 import os
 import time
 
 import pytest
-
-
-playwright_sync_api = pytest.importorskip('playwright.sync_api')
-expect = playwright_sync_api.expect
-sync_playwright = playwright_sync_api.sync_playwright
 
 
 def _get_chat_test_url():
@@ -28,19 +24,26 @@ def _get_chat_test_url():
 
 
 def _create_context(browser, viewport):
-    context_kwargs = {'viewport': viewport}
+    context_kwargs = {'viewport': viewport, 'ignore_https_errors': True}
     storage_state_path = os.getenv('SIMPLECHAT_PLAYWRIGHT_STORAGE_STATE', '').strip()
     if storage_state_path:
         context_kwargs['storage_state'] = storage_state_path
     return browser.new_context(**context_kwargs)
 
 
-def _append_custom_ai_message(page, message_id, chart_message):
-    page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
+def _get_playwright_helpers():
+    playwright_sync_api = pytest.importorskip('playwright.sync_api')
+    return playwright_sync_api.expect, playwright_sync_api.sync_playwright
+
+
+def _append_custom_ai_message(page, message_id, chart_message, full_message_object=None):
     page.evaluate(
         """
-        ({ messageId, content }) => {
-            window.chatMessages.appendMessage(
+        async ({ messageId, content, fullMessageObject }) => {
+            const chatMessages = window.chatMessages && typeof window.chatMessages.appendMessage === 'function'
+                ? window.chatMessages
+                : await import('/static/js/chat/chat-messages.js');
+            chatMessages.appendMessage(
                 'AI',
                 content,
                 'chart-inline-test',
@@ -51,12 +54,12 @@ def _append_custom_ai_message(page, message_id, chart_message):
                 [],
                 null,
                 null,
-                null,
+                fullMessageObject,
                 false
             );
         }
         """,
-        {'messageId': message_id, 'content': chart_message},
+        {'messageId': message_id, 'content': chart_message, 'fullMessageObject': full_message_object},
     )
 
 
@@ -106,10 +109,62 @@ def _append_pending_inline_chart_message(page, message_id):
     _append_custom_ai_message(page, message_id, chart_message)
 
 
+def _build_streaming_inline_chart_message(suffix=''):
+    return (
+        'Population growth transformed colonial society.\n\n'
+        '```simplechart\n'
+        '{"version":1,"kind":"bar","chartType":"bar","chartId":"ui-stream-stable-chart","title":"Approximate Colonial Population Growth","summary":"The chart shows strong population growth in British North America from 1700 to 1750.","options":{"legendPosition":"top","showLegend":false,"showDataTable":false,"beginAtZero":true,"xAxisLabel":"Year","yAxisLabel":"Population"},"data":{"labels":["1700","1725","1750"],"datasets":[{"label":"Population","data":[50000,100000,275000],"borderColor":"#1c6ea4","backgroundColor":"rgba(28,110,164,0.18)"}]}}\n'
+        '```'
+        f'{suffix}'
+    )
+
+
+def _get_inline_chart_pixel_stats(page, message_id):
+    return page.evaluate(
+        """
+        (messageId) => {
+            const message = document.querySelector(`[data-message-id="${messageId}"]`);
+            const chart = message?.querySelector('.sc-inline-chart');
+            const canvas = chart?.querySelector('canvas');
+            const chartInstance = canvas && window.Chart ? window.Chart.getChart(canvas) : null;
+            if (!canvas) {
+                return { hasCanvas: false };
+            }
+
+            const context = canvas.getContext('2d');
+            const imageData = context.getImageData(0, 0, canvas.width, canvas.height).data;
+            let nonTransparent = 0;
+            let nonWhite = 0;
+            for (let index = 0; index < imageData.length; index += 16) {
+                const alpha = imageData[index + 3];
+                if (alpha > 0) {
+                    nonTransparent += 1;
+                }
+                if (alpha > 0 && !(imageData[index] > 245 && imageData[index + 1] > 245 && imageData[index + 2] > 245)) {
+                    nonWhite += 1;
+                }
+            }
+
+            return {
+                hasCanvas: true,
+                hasChartInstance: Boolean(chartInstance),
+                hydrated: chart?.getAttribute('data-chart-hydrated') || '',
+                width: canvas.width,
+                height: canvas.height,
+                nonTransparent,
+                nonWhite,
+            };
+        }
+        """,
+        message_id,
+    )
+
+
 @pytest.mark.ui
 def test_chat_inline_chart_rendering_desktop():
     """Validate desktop inline chart rendering and data-table toggling inside chat."""
     chat_url = _get_chat_test_url()
+    expect, sync_playwright = _get_playwright_helpers()
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -139,6 +194,7 @@ def test_chat_inline_chart_rendering_desktop():
 def test_chat_inline_chart_rendering_mobile():
     """Validate that inline charts still render in a mobile viewport."""
     chat_url = _get_chat_test_url()
+    expect, sync_playwright = _get_playwright_helpers()
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -166,6 +222,7 @@ def test_chat_inline_chart_rendering_mobile():
 def test_chat_inline_chart_yaml_and_pending_source_rendering():
     """Validate YAML-style chart blocks render and pending chart source stays hidden."""
     chat_url = _get_chat_test_url()
+    expect, sync_playwright = _get_playwright_helpers()
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -190,6 +247,140 @@ def test_chat_inline_chart_yaml_and_pending_source_rendering():
         expect(pending_message.locator('.sc-inline-chart')).to_be_visible()
         expect(pending_message.get_by_text('Preparing chart...')).to_be_visible()
         expect(pending_message.get_by_text('version: 1')).not_to_be_visible()
+
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_inline_chart_final_metadata_keeps_canvas_rendered():
+    """Validate final assistant metadata rendering keeps Chart.js canvases hydrated."""
+    chat_url = _get_chat_test_url()
+    expect, sync_playwright = _get_playwright_helpers()
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = _create_context(browser, {'width': 1280, 'height': 820})
+        page = context.new_page()
+        page.goto(chat_url, wait_until='domcontentloaded')
+
+        if 'login' in page.url.lower():
+            pytest.skip('Inline chart UI test requires an authenticated chat session.')
+
+        message_id = f'inline-chart-final-metadata-{int(time.time())}'
+        chart_message = (
+            'Fruit distribution chart.\n\n'
+            '```simplechart\n'
+            '{"version":1,"kind":"pie","chartType":"pie","chartId":"ui-final-chart","title":"Fruit Share","description":"Final metadata chart regression test.","summary":"Pie with 3 segments.","options":{"legendPosition":"top","showLegend":true,"showDataTable":true},"data":{"labels":["Apples","Oranges","Pears"],"datasets":[{"label":"Fruit Share","data":[33,33,34]}]},"table":{"columns":["Label","Fruit Share"],"rows":[["Apples",33],["Oranges",33],["Pears",34]]}}\n'
+            '```'
+        )
+        _append_custom_ai_message(
+            page,
+            message_id,
+            chart_message,
+            {
+                'id': message_id,
+                'role': 'assistant',
+                'content': chart_message,
+                'metadata': {'reasoning_effort': None},
+            },
+        )
+
+        chart_canvas = page.locator(f'[data-message-id="{message_id}"] .sc-inline-chart canvas')
+        expect(chart_canvas).to_be_visible()
+        expect(page.locator(f'[data-message-id="{message_id}"] .message-text')).not_to_contain_text('```simplechart')
+
+        pixel_stats = _get_inline_chart_pixel_stats(page, message_id)
+        assert pixel_stats['hasCanvas'] is True, pixel_stats
+        assert pixel_stats['hasChartInstance'] is True, pixel_stats
+        assert pixel_stats['hydrated'] == 'true', pixel_stats
+        assert pixel_stats['nonTransparent'] > 0, pixel_stats
+        assert pixel_stats['nonWhite'] > 0, pixel_stats
+
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_inline_chart_streaming_updates_keep_canvas_stable():
+    """Validate streaming updates preserve an already rendered inline chart canvas."""
+    chat_url = _get_chat_test_url()
+    expect, sync_playwright = _get_playwright_helpers()
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = _create_context(browser, {'width': 1280, 'height': 820})
+        page = context.new_page()
+        page.goto(chat_url, wait_until='domcontentloaded')
+
+        if 'login' in page.url.lower():
+            pytest.skip('Inline chart UI test requires an authenticated chat session.')
+
+        message_id = f'inline-chart-stream-stability-{int(time.time())}'
+        first_content = _build_streaming_inline_chart_message()
+        second_content = _build_streaming_inline_chart_message(
+            '\n\nAdditional streamed narration after the chart should not recreate the canvas.'
+        )
+
+        stability = page.evaluate(
+            """
+            async ({ messageId, firstContent, secondContent }) => {
+                const chatMessages = window.chatMessages && typeof window.chatMessages.appendMessage === 'function'
+                    ? window.chatMessages
+                    : await import('/static/js/chat/chat-messages.js');
+                const streamingModule = await import('/static/js/chat/chat-streaming.js');
+                chatMessages.appendMessage(
+                    'AI',
+                    'Preparing chart...',
+                    'chart-inline-test',
+                    messageId,
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    { id: messageId, role: 'assistant', content: '', conversation_id: 'ui-chart-stream-stability' },
+                    false
+                );
+
+                streamingModule.updateStreamingMessage(messageId, firstContent);
+                await new Promise(resolve => requestAnimationFrame(resolve));
+                const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+                const firstCanvas = messageElement?.querySelector('.sc-inline-chart canvas');
+                const firstChart = firstCanvas && window.Chart ? window.Chart.getChart(firstCanvas) : null;
+                if (firstCanvas) {
+                    firstCanvas.dataset.stabilityMarker = 'preserved';
+                }
+
+                streamingModule.updateStreamingMessage(messageId, secondContent);
+                await new Promise(resolve => requestAnimationFrame(resolve));
+                const secondCanvas = messageElement?.querySelector('.sc-inline-chart canvas');
+                const secondChart = secondCanvas && window.Chart ? window.Chart.getChart(secondCanvas) : null;
+
+                return {
+                    hasCanvas: Boolean(secondCanvas),
+                    sameCanvas: firstCanvas === secondCanvas,
+                    sameChart: firstChart === secondChart,
+                    marker: secondCanvas?.dataset?.stabilityMarker || '',
+                    hydrated: secondCanvas?.closest('.sc-inline-chart')?.getAttribute('data-chart-hydrated') || '',
+                    rawSourceVisible: messageElement?.innerText?.includes('```simplechart') || false,
+                };
+            }
+            """,
+            {
+                'messageId': message_id,
+                'firstContent': first_content,
+                'secondContent': second_content,
+            },
+        )
+
+        assert stability['hasCanvas'] is True, stability
+        assert stability['sameCanvas'] is True, stability
+        assert stability['sameChart'] is True, stability
+        assert stability['marker'] == 'preserved', stability
+        assert stability['hydrated'] == 'true', stability
+        assert stability['rawSourceVisible'] is False, stability
 
         context.close()
         browser.close()

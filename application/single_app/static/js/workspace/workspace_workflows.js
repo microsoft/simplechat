@@ -40,6 +40,13 @@ const workflowScheduleUnitSelect = document.getElementById("workflow-schedule-un
 const workflowEnabledGroup = document.getElementById("workflow-enabled-group");
 const workflowEnabledToggle = document.getElementById("workflow-enabled");
 const workflowTriggerHelp = document.getElementById("workflow-trigger-help");
+const workflowFileSyncCard = document.getElementById("workflow-file-sync-card");
+const workflowFileSyncEnabledToggle = document.getElementById("workflow-file-sync-enabled");
+const workflowFileSyncSourcesSelect = document.getElementById("workflow-file-sync-sources");
+const workflowFileSyncWaitModeSelect = document.getElementById("workflow-file-sync-wait-mode");
+const workflowFileSyncContinueModeSelect = document.getElementById("workflow-file-sync-continue-mode");
+const workflowFileSyncUseChangedDocumentsToggle = document.getElementById("workflow-file-sync-use-changed-documents");
+const workflowFileSyncHelp = document.getElementById("workflow-file-sync-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
 const DOCUMENT_ACTION_NONE = "none";
 const DOCUMENT_ACTION_ANALYZE = "analyze";
@@ -178,7 +185,9 @@ const workflowDeleteConfirmBtn = document.getElementById("workflow-delete-confir
 let workflows = [];
 let filteredWorkflows = [];
 let agentOptions = [];
+let fileSyncSourceOptions = [];
 let agentsLoaded = false;
+let fileSyncSourcesLoaded = false;
 let workflowPendingDelete = null;
 let currentHistoryWorkflowId = "";
 let currentEditingWorkflow = null;
@@ -258,6 +267,8 @@ function buildStatusBadge(status) {
         ? "success"
         : normalizedStatus === "failed"
             ? "danger"
+            : normalizedStatus === "skipped"
+                ? "warning"
             : normalizedStatus === "running"
                 ? "primary"
                 : "secondary";
@@ -287,6 +298,13 @@ function getWorkflowRunnerLabel(workflow) {
 function getWorkflowTriggerLabel(workflow) {
     if (!workflow || typeof workflow !== "object") {
         return "Manual";
+    }
+
+    if (workflow.trigger_type === "file_sync") {
+        const schedule = workflow.schedule && typeof workflow.schedule === "object" ? workflow.schedule : {};
+        const value = Number(schedule.value || 0);
+        const unit = normalizeText(schedule.unit) || "minutes";
+        return `Monitor File Sync every ${value} ${unit}`;
     }
 
     if (workflow.trigger_type !== "interval") {
@@ -331,6 +349,79 @@ function getSelectedValues(selectElement) {
     return Array.from(selectElement.selectedOptions || [])
         .map((option) => normalizeText(option.value))
         .filter(Boolean);
+}
+
+function getFileSyncSourceKey(source) {
+    if (!source || typeof source !== "object") {
+        return "";
+    }
+    return [source.scope_type, source.scope_id, source.source_id]
+        .map((value) => normalizeText(value))
+        .join(":");
+}
+
+function getSelectedFileSyncSources() {
+    const selectedKeys = new Set(getSelectedValues(workflowFileSyncSourcesSelect));
+    return fileSyncSourceOptions
+        .filter((source) => selectedKeys.has(getFileSyncSourceKey(source)))
+        .map((source) => ({
+            scope_type: normalizeText(source.scope_type),
+            scope_id: normalizeText(source.scope_id),
+            source_id: normalizeText(source.source_id),
+        }));
+}
+
+function populateFileSyncSourceSelect(selectedSources = []) {
+    if (!workflowFileSyncSourcesSelect) {
+        return;
+    }
+
+    const selectedKeys = new Set((selectedSources || []).map(getFileSyncSourceKey).filter(Boolean));
+    workflowFileSyncSourcesSelect.replaceChildren();
+
+    if (!fileSyncSourceOptions.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No File Sync sources available";
+        option.disabled = true;
+        workflowFileSyncSourcesSelect.appendChild(option);
+        workflowFileSyncSourcesSelect.disabled = true;
+        return;
+    }
+
+    workflowFileSyncSourcesSelect.disabled = false;
+    fileSyncSourceOptions.forEach((source) => {
+        const option = document.createElement("option");
+        const sourceKey = getFileSyncSourceKey(source);
+        option.value = sourceKey;
+        option.textContent = normalizeText(source.label || source.name) || "File Sync Source";
+        option.selected = selectedKeys.has(sourceKey);
+        workflowFileSyncSourcesSelect.appendChild(option);
+    });
+}
+
+async function loadFileSyncSourceOptions(force = false) {
+    if (fileSyncSourcesLoaded && !force) {
+        return fileSyncSourceOptions;
+    }
+
+    try {
+        const response = await fetch("/api/user/workflows/file-sync-sources", {
+            credentials: "same-origin",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data.error || "Unable to load File Sync sources.");
+        }
+        fileSyncSourceOptions = Array.isArray(data.sources) ? data.sources : [];
+        fileSyncSourcesLoaded = true;
+    } catch (error) {
+        fileSyncSourceOptions = [];
+        fileSyncSourcesLoaded = true;
+        showToast(escapeHtml(error.message || "Unable to load File Sync sources."), "warning");
+    }
+
+    return fileSyncSourceOptions;
 }
 
 function getSelectedWorkflowComparisonTargetIds() {
@@ -836,11 +927,11 @@ function refreshWorkflowSummary(items) {
     }
 
     const totalCount = workflows.length;
-    const scheduledCount = workflows.filter((workflow) => workflow.trigger_type === "interval").length;
-    const activeCount = workflows.filter((workflow) => workflow.trigger_type === "interval" && workflow.is_enabled).length;
+    const scheduledCount = workflows.filter((workflow) => ["interval", "file_sync"].includes(workflow.trigger_type)).length;
+    const activeCount = workflows.filter((workflow) => ["interval", "file_sync"].includes(workflow.trigger_type) && workflow.is_enabled).length;
     const visibleCount = items.length;
 
-    workflowsSummary.textContent = `${visibleCount} shown of ${totalCount} workflows. ${scheduledCount} scheduled, ${activeCount} active.`;
+    workflowsSummary.textContent = `${visibleCount} shown of ${totalCount} workflows. ${scheduledCount} scheduled or monitored, ${activeCount} active.`;
 }
 
 function renderWorkflowEmptyState(message) {
@@ -889,7 +980,7 @@ function renderWorkflowTable(items) {
             : normalizeText(workflow.last_run_error)
                 ? `<div class="workflow-meta text-danger mt-1">${escapeHtml(truncateDescription(workflow.last_run_error, 120))}</div>`
                 : "";
-        const nextRunMeta = workflow.trigger_type === "interval" && workflow.next_run_at
+        const nextRunMeta = ["interval", "file_sync"].includes(workflow.trigger_type) && workflow.next_run_at
             ? `<div class="workflow-meta mt-1">Next run: ${escapeHtml(formatDateTime(workflow.next_run_at))}</div>`
             : "";
         const alertMeta = `<div class="workflow-meta mt-1">Alert: ${escapeHtml(getWorkflowAlertLabel(workflow))}</div>`;
@@ -900,7 +991,7 @@ function renderWorkflowTable(items) {
         const conversationMeta = workflow.conversation_id
             ? '<div class="workflow-meta mt-1"><i class="bi bi-chat-left-text me-1"></i>Conversation ready</div>'
             : "";
-        const disabledMeta = workflow.trigger_type === "interval" && !workflow.is_enabled
+        const disabledMeta = ["interval", "file_sync"].includes(workflow.trigger_type) && !workflow.is_enabled
             ? '<div class="workflow-meta mt-1 text-warning">Scheduled runs are paused.</div>'
             : "";
         const runnerMeta = workflow.runner_type === "agent"
@@ -1224,23 +1315,69 @@ function updateScheduleConstraints() {
 
 function updateTriggerFields() {
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
-    const isInterval = triggerType === "interval";
+    const isScheduled = triggerType === "interval" || triggerType === "file_sync";
+    const isFileSyncMonitor = triggerType === "file_sync";
 
-    setElementVisibility(workflowScheduleValueGroup, isInterval);
-    setElementVisibility(workflowScheduleUnitGroup, isInterval);
-    setElementVisibility(workflowEnabledGroup, isInterval);
+    setElementVisibility(workflowScheduleValueGroup, isScheduled);
+    setElementVisibility(workflowScheduleUnitGroup, isScheduled);
+    setElementVisibility(workflowEnabledGroup, isScheduled);
 
-    if (workflowEnabledToggle && !isInterval) {
+    if (workflowEnabledToggle && !isScheduled) {
         workflowEnabledToggle.checked = true;
     }
 
+    if (isFileSyncMonitor) {
+        if (workflowFileSyncEnabledToggle) {
+            workflowFileSyncEnabledToggle.checked = true;
+        }
+        if (workflowFileSyncWaitModeSelect) {
+            workflowFileSyncWaitModeSelect.value = "complete";
+        }
+        if (workflowFileSyncContinueModeSelect) {
+            workflowFileSyncContinueModeSelect.value = "changed";
+        }
+    }
+
     if (workflowTriggerHelp) {
-        workflowTriggerHelp.textContent = isInterval
-            ? "Interval workflows are picked up by the scheduler when the next run time is due."
-            : "Manual workflows run only when you trigger them from the workspace.";
+        workflowTriggerHelp.textContent = isFileSyncMonitor
+            ? "Monitor workflows check File Sync sources on this interval and run only when files changed."
+            : isScheduled
+                ? "Interval workflows are picked up by the scheduler when the next run time is due."
+                : "Manual workflows run only when you trigger them from the workspace.";
     }
 
     updateScheduleConstraints();
+    updateFileSyncFields();
+}
+
+function updateFileSyncFields() {
+    const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
+    const isFileSyncMonitor = triggerType === "file_sync";
+    const fileSyncEnabled = Boolean(workflowFileSyncEnabledToggle?.checked) || isFileSyncMonitor;
+
+    if (workflowFileSyncEnabledToggle && isFileSyncMonitor) {
+        workflowFileSyncEnabledToggle.checked = true;
+    }
+    if (workflowFileSyncWaitModeSelect) {
+        workflowFileSyncWaitModeSelect.disabled = !fileSyncEnabled || isFileSyncMonitor;
+    }
+    if (workflowFileSyncContinueModeSelect) {
+        workflowFileSyncContinueModeSelect.disabled = !fileSyncEnabled || isFileSyncMonitor;
+    }
+    if (workflowFileSyncSourcesSelect) {
+        workflowFileSyncSourcesSelect.disabled = !fileSyncEnabled || fileSyncSourceOptions.length === 0;
+    }
+    if (workflowFileSyncUseChangedDocumentsToggle) {
+        workflowFileSyncUseChangedDocumentsToggle.disabled = !fileSyncEnabled;
+    }
+    if (workflowFileSyncCard) {
+        workflowFileSyncCard.classList.toggle("border-primary", fileSyncEnabled);
+    }
+    if (workflowFileSyncHelp) {
+        workflowFileSyncHelp.textContent = fileSyncEnabled
+            ? "Selected sources are triggered before the workflow prompt runs."
+            : "Trigger selected sync sources before this workflow runs.";
+    }
 }
 
 function resetWorkflowForm() {
@@ -1273,6 +1410,19 @@ function resetWorkflowForm() {
     if (workflowTriggerTypeSelect) {
         workflowTriggerTypeSelect.value = "manual";
     }
+    if (workflowFileSyncEnabledToggle) {
+        workflowFileSyncEnabledToggle.checked = false;
+    }
+    if (workflowFileSyncWaitModeSelect) {
+        workflowFileSyncWaitModeSelect.value = "complete";
+    }
+    if (workflowFileSyncContinueModeSelect) {
+        workflowFileSyncContinueModeSelect.value = "always";
+    }
+    if (workflowFileSyncUseChangedDocumentsToggle) {
+        workflowFileSyncUseChangedDocumentsToggle.checked = true;
+    }
+    populateFileSyncSourceSelect([]);
     if (workflowScheduleValueInput) {
         workflowScheduleValueInput.value = "10";
     }
@@ -1334,6 +1484,7 @@ function resetWorkflowForm() {
     populateModelSelect(normalizeText(workflowModelEndpointSelect?.value), "");
     updateRunnerFields();
     updateTriggerFields();
+    updateFileSyncFields();
     updateDocumentActionFields();
 }
 
@@ -1343,6 +1494,7 @@ async function openWorkflowModal(workflow = null) {
     }
 
     await loadAgentOptions(true);
+    await loadFileSyncSourceOptions(true);
     resetWorkflowForm();
     currentEditingWorkflow = workflow;
 
@@ -1374,6 +1526,20 @@ async function openWorkflowModal(workflow = null) {
         if (workflowAlertPrioritySelect) {
             workflowAlertPrioritySelect.value = normalizeText(workflow.alert_priority).toLowerCase() || "none";
         }
+        const fileSyncConfig = workflow.file_sync && typeof workflow.file_sync === "object" ? workflow.file_sync : {};
+        if (workflowFileSyncEnabledToggle) {
+            workflowFileSyncEnabledToggle.checked = Boolean(fileSyncConfig.enabled);
+        }
+        if (workflowFileSyncWaitModeSelect) {
+            workflowFileSyncWaitModeSelect.value = normalizeText(fileSyncConfig.wait_mode) || "complete";
+        }
+        if (workflowFileSyncContinueModeSelect) {
+            workflowFileSyncContinueModeSelect.value = normalizeText(fileSyncConfig.continue_mode) || "always";
+        }
+        if (workflowFileSyncUseChangedDocumentsToggle) {
+            workflowFileSyncUseChangedDocumentsToggle.checked = fileSyncConfig.use_changed_documents !== false;
+        }
+        populateFileSyncSourceSelect(Array.isArray(fileSyncConfig.sources) ? fileSyncConfig.sources : []);
         const documentAction = getDocumentActionConfig(workflow);
         if (workflowDocumentActionTypeSelect) {
             workflowDocumentActionTypeSelect.value = documentAction.type;
@@ -1435,6 +1601,7 @@ async function openWorkflowModal(workflow = null) {
 
     updateRunnerFields();
     updateTriggerFields();
+    updateFileSyncFields();
     updateDocumentActionFields();
     workflowModal.show();
 }
@@ -1452,6 +1619,7 @@ function buildWorkflowPayload() {
     const rawWindowSize = normalizeText(workflowAnalysisWindowSizeInput?.value);
     const rawWindowPercent = normalizeText(workflowAnalysisWindowPercentInput?.value);
     const rawRetries = normalizeText(workflowAnalysisRetriesInput?.value) || "1";
+    const fileSyncEnabled = Boolean(workflowFileSyncEnabledToggle?.checked) || triggerType === "file_sync";
     const payload = {
         id: normalizeText(workflowIdInput?.value),
         name: normalizeText(workflowNameInput?.value),
@@ -1461,8 +1629,15 @@ function buildWorkflowPayload() {
         runner_type: runnerType,
         trigger_type: triggerType,
         alert_priority: normalizeText(workflowAlertPrioritySelect?.value).toLowerCase() || "none",
-        is_enabled: triggerType === "interval" ? Boolean(workflowEnabledToggle?.checked) : true,
+        is_enabled: ["interval", "file_sync"].includes(triggerType) ? Boolean(workflowEnabledToggle?.checked) : true,
         schedule: {},
+        file_sync: {
+            enabled: fileSyncEnabled,
+            wait_mode: normalizeText(workflowFileSyncWaitModeSelect?.value) || "complete",
+            continue_mode: normalizeText(workflowFileSyncContinueModeSelect?.value) || "always",
+            use_changed_documents: workflowFileSyncUseChangedDocumentsToggle?.checked !== false,
+            sources: fileSyncEnabled ? getSelectedFileSyncSources() : [],
+        },
         selected_agent: {},
         model_endpoint_id: "",
         model_id: "",
@@ -1507,7 +1682,8 @@ function buildWorkflowPayload() {
             throw new Error(`URL Access workflows support up to ${maxWorkflowUrls} URLs per run.`);
         }
     }
-    if (documentActionType === DOCUMENT_ACTION_ANALYZE && !payload.document_action.document_ids.length) {
+    const usesDynamicFileSyncTargets = payload.file_sync.enabled && payload.file_sync.use_changed_documents;
+    if (documentActionType === DOCUMENT_ACTION_ANALYZE && !payload.document_action.document_ids.length && !usesDynamicFileSyncTargets) {
         throw new Error("Add one or more document ids for analysis.");
     }
     if (documentActionType === DOCUMENT_ACTION_COMPARISON && payload.document_action.document_ids.length < 2) {
@@ -1541,6 +1717,20 @@ function buildWorkflowPayload() {
     if (documentActionType !== DOCUMENT_ACTION_NONE && (!Number.isInteger(payload.document_action.max_retries_per_window) || payload.document_action.max_retries_per_window < 0 || payload.document_action.max_retries_per_window > 5)) {
         throw new Error("Retries per window must be between 0 and 5.");
     }
+    if (payload.file_sync.enabled && !payload.file_sync.sources.length) {
+        throw new Error("Select at least one File Sync source for this workflow.");
+    }
+    if (payload.file_sync.wait_mode === "queued" && payload.file_sync.continue_mode === "changed") {
+        throw new Error("File Sync must wait for completion before continuing only when files changed.");
+    }
+    if (triggerType === "file_sync") {
+        if (!payload.file_sync.enabled) {
+            throw new Error("Monitor File Sync Changes requires File Sync before run.");
+        }
+        if (payload.file_sync.wait_mode !== "complete" || payload.file_sync.continue_mode !== "changed") {
+            throw new Error("Monitor File Sync Changes must wait for completion and continue only when files changed.");
+        }
+    }
 
     if (runnerType === "agent") {
         const selectedAgent = getSelectedAgentOption();
@@ -1562,7 +1752,7 @@ function buildWorkflowPayload() {
         payload.model_id = modelId;
     }
 
-    if (triggerType === "interval") {
+    if (["interval", "file_sync"].includes(triggerType)) {
         const scheduleValue = Number(workflowScheduleValueInput?.value || 0);
         const scheduleUnit = normalizeText(workflowScheduleUnitSelect?.value) || "seconds";
         if (!Number.isInteger(scheduleValue) || scheduleValue < 1) {
@@ -1654,6 +1844,11 @@ function renderRunHistory(runs) {
         const conversationId = normalizeText(run.conversation_id);
         const conversationUrl = buildWorkflowConversationUrl(conversationId);
         const activityUrl = buildWorkflowActivityUrl(conversationId, normalizeText(run.id), currentHistoryWorkflowId);
+        const failedWindows = Number(run.analysis_coverage?.failed_windows || 0);
+        const canResumeFailed = normalizeText(run.status).toLowerCase() === "failed" || failedWindows > 0;
+        const resumeFailedButton = canResumeFailed
+            ? `<button type="button" class="btn btn-sm btn-outline-warning" data-resume-run-id="${escapeHtml(normalizeText(run.id))}"><i class="bi bi-arrow-clockwise me-1"></i>Resume failed</button>`
+            : "";
         const details = normalizeText(run.error)
             ? `<div class="text-danger small">${escapeHtml(run.error)}</div>`
             : normalizeText(run.response_preview)
@@ -1664,10 +1859,11 @@ function renderRunHistory(runs) {
                 <div class="d-flex flex-wrap gap-2">
                     <a class="btn btn-sm btn-outline-primary" href="${escapeHtml(conversationUrl)}"><i class="bi bi-chat-dots-fill me-1"></i>Open workflow conversation</a>
                     <a class="btn btn-sm btn-outline-info" href="${escapeHtml(activityUrl)}" target="_blank" rel="noopener"><i class="bi bi-activity me-1"></i>Open activity view</a>
+                    ${resumeFailedButton}
                 </div>
                 <div class="small text-muted mt-1">${escapeHtml(conversationId)}</div>
             `
-            : '<div class="text-muted small">Not created yet.</div>';
+            : resumeFailedButton || '<div class="text-muted small">Not created yet.</div>';
 
         return `
             <tr>
@@ -1682,6 +1878,38 @@ function renderRunHistory(runs) {
             </tr>
         `;
     }).join("");
+}
+
+async function resumeFailedWorkflowRun(runId) {
+    const normalizedRunId = normalizeText(runId);
+    if (!currentHistoryWorkflowId || !normalizedRunId) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/user/workflows/${encodeURIComponent(currentHistoryWorkflowId)}/runs/${encodeURIComponent(normalizedRunId)}/resume-failed`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({}),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+            throw new Error(data.run?.error || data.error || "Unable to resume failed workflow items.");
+        }
+
+        showToast(`Resumed ${data.resumed_item_count || 0} failed item(s).`, "success");
+        window.dispatchEvent(new CustomEvent("workflow-alert-refresh-requested"));
+        await fetchUserWorkflows();
+        const refreshedWorkflow = workflows.find((item) => normalizeText(item.id) === currentHistoryWorkflowId);
+        if (refreshedWorkflow) {
+            await openHistoryModalForWorkflow(refreshedWorkflow);
+        }
+    } catch (error) {
+        showToast(escapeHtml(error.message || "Unable to resume failed workflow items."), "danger");
+    }
 }
 
 async function openHistoryModalForWorkflow(workflow) {
@@ -1760,7 +1988,8 @@ async function runWorkflow(workflow) {
             throw new Error(data.run?.error || data.error || "Workflow run failed.");
         }
 
-        showToast("Workflow run completed.", "success");
+        const runStatus = normalizeText(data.run?.status).toLowerCase();
+        showToast(runStatus === "skipped" ? "Workflow skipped; no File Sync changes were found." : "Workflow run completed.", "success");
         window.dispatchEvent(new CustomEvent("workflow-alert-refresh-requested"));
         await fetchUserWorkflows();
 
@@ -1936,6 +2165,16 @@ function initializeWorkflowEvents() {
     workflowsGridView?.addEventListener("keydown", handleWorkflowGridKeydown);
     workflowForm?.addEventListener("submit", saveWorkflow);
     workflowDeleteConfirmBtn?.addEventListener("click", deleteWorkflow);
+    workflowHistoryBody?.addEventListener("click", (event) => {
+        const resumeButton = event.target.closest("button[data-resume-run-id]");
+        if (!resumeButton || resumeButton.disabled) {
+            return;
+        }
+        resumeButton.disabled = true;
+        resumeFailedWorkflowRun(resumeButton.getAttribute("data-resume-run-id")).finally(() => {
+            resumeButton.disabled = false;
+        });
+    });
     workflowRunnerTypeSelect?.addEventListener("change", updateRunnerFields);
     workflowModelSourceSelect?.addEventListener("change", updateRunnerFields);
     workflowModelEndpointSelect?.addEventListener("change", () => {
@@ -1945,6 +2184,9 @@ function initializeWorkflowEvents() {
     workflowModelSelect?.addEventListener("change", updateModelHelpText);
     workflowTriggerTypeSelect?.addEventListener("change", updateTriggerFields);
     workflowScheduleUnitSelect?.addEventListener("change", updateScheduleConstraints);
+    workflowFileSyncEnabledToggle?.addEventListener("change", updateFileSyncFields);
+    workflowFileSyncWaitModeSelect?.addEventListener("change", updateFileSyncFields);
+    workflowFileSyncContinueModeSelect?.addEventListener("change", updateFileSyncFields);
     workflowDocumentActionTypeSelect?.addEventListener("change", updateDocumentActionFields);
     workflowComparisonRightDocumentIdsInput?.addEventListener("change", () => {
         syncWorkflowComparisonLeftOptions();

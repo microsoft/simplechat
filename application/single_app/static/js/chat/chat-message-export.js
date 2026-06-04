@@ -323,7 +323,7 @@ export async function openInEmail(messageDiv, messageId, role) {
         const mailtoUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         if (downloadedAttachmentCount > 0) {
             showToast(
-                `${downloadedAttachmentCount} chart PNG ${downloadedAttachmentCount === 1 ? 'file' : 'files'} downloaded for the email draft.`,
+                `${downloadedAttachmentCount} visual PNG ${downloadedAttachmentCount === 1 ? 'file' : 'files'} downloaded for the email draft.`,
                 'success'
             );
         }

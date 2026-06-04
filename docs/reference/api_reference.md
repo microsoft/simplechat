@@ -53,6 +53,18 @@ Use this page when you need to answer a concrete API question: what route exists
 		<p>Use the live Swagger endpoints when you need the currently deployed route set, auth requirements, or generated schemas. Use the repository artifact at <code>artifacts/open_api/openapi.yaml</code> when you are reviewing frontend dependencies or discussing API shape in a pull request without relying on a running environment.</p>
 </div>
 
+## Admin-controlled availability
+
+The live API documentation and external health routes are controlled from **Admin Settings > General**.
+
+| Area | Admin setting | Routes |
+| :--- | :--- | :--- |
+| Swagger/OpenAPI | **Enable Swagger/OpenAPI Documentation (/swagger)** | <code>/swagger</code>, <code>/swagger.json</code>, <code>/swagger.yaml</code> |
+| Protected health check | **Enable /external/healthcheck** | <code>/external/healthcheck</code> |
+| Unauthenticated health check | **Enable /external/healthcheckz** | <code>/external/healthcheckz</code> |
+
+For the full operator workflow, see [Configure Branding, Home Page, and Support Settings]({{ '/how-to/admin_ui_settings/' | relative_url }}).
+
 ## Documentation endpoints
 
 | Endpoint | Use it for | Notes |

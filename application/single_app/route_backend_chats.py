@@ -85,6 +85,13 @@ from functions_chart_operations import (
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
+from functions_image_generation import (
+    build_image_proposal_guidance_message,
+    generate_chat_image_message,
+    image_generation_is_enabled,
+    normalize_image_proposal,
+    user_request_supports_image_proposals,
+)
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_notifications import create_chat_response_notification
@@ -1360,6 +1367,57 @@ def _has_chat_agent_selection(agent_selection):
         selected_id = str(agent_selection.get('id') or '').strip()
         return bool(selected_id or _get_chat_agent_selection_name(agent_selection))
     return bool(_get_chat_agent_selection_name(agent_selection))
+
+
+def _build_agent_selection_metadata(agent_info, assigned_knowledge_filters=None):
+    """Build trusted conversation metadata for a selected chat agent."""
+    if not agent_info:
+        return None
+
+    if isinstance(agent_info, str):
+        agent_name = agent_info.strip()
+        if not agent_name:
+            return None
+        metadata = {
+            'selected_agent': agent_name,
+            'agent_display_name': None,
+            'is_global': False,
+            'is_group': False,
+            'group_id': None,
+            'group_name': None,
+            'agent_id': None,
+        }
+        assigned_knowledge_enabled = bool(assigned_knowledge_filters)
+    elif isinstance(agent_info, dict):
+        metadata = {
+            'selected_agent': agent_info.get('name') or agent_info.get('selected_agent'),
+            'agent_display_name': agent_info.get('display_name') or agent_info.get('agent_display_name'),
+            'is_global': agent_info.get('is_global', False),
+            'is_group': agent_info.get('is_group', False),
+            'group_id': agent_info.get('group_id'),
+            'group_name': agent_info.get('group_name'),
+            'agent_id': agent_info.get('id') or agent_info.get('agent_id'),
+        }
+        assigned_knowledge_enabled = bool(
+            assigned_knowledge_filters
+            or agent_info.get('assigned_knowledge_enabled')
+        )
+    else:
+        metadata = {
+            'selected_agent': getattr(agent_info, 'name', None),
+            'agent_display_name': getattr(agent_info, 'display_name', None),
+            'is_global': getattr(agent_info, 'is_global', False),
+            'is_group': getattr(agent_info, 'is_group', False),
+            'group_id': getattr(agent_info, 'group_id', None),
+            'group_name': getattr(agent_info, 'group_name', None),
+            'agent_id': getattr(agent_info, 'id', None),
+        }
+        assigned_knowledge_enabled = bool(assigned_knowledge_filters)
+
+    if assigned_knowledge_enabled:
+        metadata['assigned_knowledge_enabled'] = True
+
+    return metadata
 
 
 def _set_authorized_chat_request_context(user_id, conversation_id, scope_context):
@@ -4143,6 +4201,11 @@ def build_chart_tool_usage_system_message():
     return build_proactive_chart_guidance_message()
 
 
+def build_image_proposal_system_message():
+    """Instruct final generation to emit opt-in image proposal cards."""
+    return build_image_proposal_guidance_message()
+
+
 def insert_system_message_after_existing_system_messages(conversation_history, system_message_content):
     """Insert a system message after existing system messages while avoiding duplicates."""
     if not isinstance(conversation_history, list):
@@ -4186,6 +4249,21 @@ def maybe_append_chart_tool_system_message(conversation_history, user_message, s
     return insert_system_message_after_existing_system_messages(
         conversation_history,
         build_chart_tool_usage_system_message(),
+    )
+
+
+def maybe_append_image_proposal_system_message(conversation_history, user_message, settings, selected_agent=None):
+    """Add image proposal guidance when image generation is available and useful."""
+    del selected_agent
+    if not image_generation_is_enabled(settings):
+        return conversation_history
+
+    if not user_request_supports_image_proposals(user_message):
+        return conversation_history
+
+    return insert_system_message_after_existing_system_messages(
+        conversation_history,
+        build_image_proposal_system_message(),
     )
 
 
@@ -10273,6 +10351,7 @@ def register_route_backend_chats(app):
         previous_thread_id,
         normalized_action,
         request_agent_info,
+        assigned_knowledge_filters=None,
         streaming_enabled=False,
     ):
         timestamp = datetime.utcnow().isoformat()
@@ -10404,16 +10483,12 @@ def register_route_backend_chats(app):
         if user_metadata['chat_context']['chat_type'] == 'public' and active_public_workspace_ids:
             user_metadata['chat_context']['workspace_context'] = active_public_workspace_ids[0]
 
-        if request_agent_info:
-            user_metadata['agent_selection'] = {
-                'selected_agent': request_agent_info.get('name'),
-                'agent_display_name': request_agent_info.get('display_name'),
-                'is_global': request_agent_info.get('is_global', False),
-                'is_group': request_agent_info.get('is_group', False),
-                'group_id': request_agent_info.get('group_id'),
-                'group_name': request_agent_info.get('group_name'),
-                'agent_id': request_agent_info.get('id'),
-            }
+        agent_selection_metadata = _build_agent_selection_metadata(
+            request_agent_info,
+            assigned_knowledge_filters,
+        )
+        if agent_selection_metadata:
+            user_metadata['agent_selection'] = agent_selection_metadata
 
         return user_metadata
 
@@ -10643,6 +10718,7 @@ def register_route_backend_chats(app):
             previous_thread_id=previous_thread_id,
             normalized_action=normalized_action,
             request_agent_info=request_agent_info,
+            assigned_knowledge_filters=assigned_knowledge_filters,
             streaming_enabled=callable(publish_background_event),
         )
         user_message_doc = make_json_serializable({
@@ -10904,7 +10980,10 @@ def register_route_backend_chats(app):
                 image_gen_enabled=False,
                 selected_documents=execution_result.get('analysis_result', {}).get('documents', []),
                 selected_agent=execution_result.get('agent_name'),
-                selected_agent_details=request_agent_info,
+                selected_agent_details=_build_agent_selection_metadata(
+                    request_agent_info,
+                    assigned_knowledge_filters,
+                ),
                 search_results=None,
                 conversation_item=conversation_item,
                 active_public_workspace_id=active_public_workspace_ids[0] if active_public_workspace_ids else None,
@@ -11082,6 +11161,110 @@ def register_route_backend_chats(app):
                 yield f"data: {json.dumps({'error': str(analysis_error), 'conversation_id': conversation_id})}\n\n"
 
         return build_background_stream_response(generate_analyze_response, stream_session=stream_session)
+
+    @app.route('/api/chat/image-proposals/generate', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def generate_image_from_proposal():
+        """Approve a model-authored image proposal and persist the generated image."""
+        data = request.get_json(silent=True) or {}
+        try:
+            settings = get_settings()
+            if not image_generation_is_enabled(settings):
+                return jsonify({'error': 'Image generation is not enabled'}), 403
+
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            if not conversation_id:
+                return jsonify({'error': 'conversation_id is required'}), 400
+
+            conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
+
+            proposal_payload = data.get('proposal') if isinstance(data.get('proposal'), dict) else dict(data)
+            if data.get('prompt'):
+                proposal_payload = dict(proposal_payload)
+                proposal_payload['prompt'] = data.get('prompt')
+            proposal = normalize_image_proposal(proposal_payload)
+
+            source_assistant_message_id = str(
+                data.get('assistant_message_id')
+                or data.get('source_assistant_message_id')
+                or ''
+            ).strip()
+            if source_assistant_message_id:
+                try:
+                    source_message = cosmos_messages_container.read_item(
+                        item=source_assistant_message_id,
+                        partition_key=conversation_id,
+                    )
+                    if source_message.get('conversation_id') != conversation_id:
+                        return jsonify({'error': 'Source message does not belong to this conversation'}), 403
+                    if source_message.get('role') != 'assistant':
+                        return jsonify({'error': 'Source message must be an assistant message'}), 400
+                except CosmosResourceNotFoundError:
+                    source_assistant_message_id = ''
+
+            image_result = generate_chat_image_message(
+                settings=settings,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                prompt=proposal['prompt'],
+                user_info=get_current_user_info(),
+                proposal=proposal,
+                source_assistant_message_id=source_assistant_message_id or None,
+                store_in_blob=True,
+            )
+
+            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            cosmos_conversations_container.upsert_item(conversation_item)
+
+            image_doc = image_result.pop('image_message', {}) or {}
+            image_doc_metadata = image_doc.get('metadata') if isinstance(image_doc.get('metadata'), dict) else {}
+            response_metadata = {}
+            if isinstance(image_doc_metadata.get('image_proposal'), dict):
+                response_metadata['image_proposal'] = image_doc_metadata['image_proposal']
+            image_result.update({
+                'conversation_title': conversation_item.get('title'),
+                'image_message': {
+                    'id': image_doc.get('id') or image_result.get('message_id'),
+                    'conversation_id': conversation_id,
+                    'role': 'image',
+                    'content': image_result.get('image_url'),
+                    'prompt': image_doc.get('prompt') or proposal['prompt'],
+                    'created_at': image_doc.get('created_at'),
+                    'timestamp': image_doc.get('timestamp'),
+                    'model_deployment_name': image_result.get('model_deployment_name'),
+                    'metadata': response_metadata,
+                },
+            })
+
+            return jsonify(image_result), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation or source message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as exc:
+            error_message = str(exc)
+            status_code = 500
+            if 'safety system' in error_message.lower() or 'moderation_blocked' in error_message:
+                error_message = 'Image generation was blocked by content safety policies. Please edit the prompt and try again.'
+                status_code = 400
+            elif '400' in error_message and 'BadRequestError' in str(type(exc)):
+                status_code = 400
+
+            log_event(
+                f'[ImageGeneration] Proposal approval failed: {exc}',
+                extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': error_message}), status_code
 
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -11734,19 +11917,12 @@ def register_route_backend_chats(app):
                     }
                 
                 # Agent selection (from frontend if available, override settings-based selection)
-                agent_info = data.get('agent_info')
-                if agent_info:
-                    user_metadata['agent_selection'] = {
-                        'selected_agent': agent_info.get('name'),
-                        'agent_display_name': agent_info.get('display_name'),
-                        'is_global': agent_info.get('is_global', False),
-                        'is_group': agent_info.get('is_group', False),
-                        'group_id': agent_info.get('group_id'),
-                        'group_name': agent_info.get('group_name'),
-                        'agent_id': agent_info.get('id')
-                    }
-                if assigned_knowledge_filters and 'agent_selection' in user_metadata:
-                    user_metadata['agent_selection']['assigned_knowledge_enabled'] = True
+                agent_selection_metadata = _build_agent_selection_metadata(
+                    request_agent_info,
+                    assigned_knowledge_filters,
+                )
+                if agent_selection_metadata:
+                    user_metadata['agent_selection'] = agent_selection_metadata
                 
                 # Model selection information
                 user_metadata['model_selection'] = {
@@ -13557,6 +13733,12 @@ def register_route_backend_chats(app):
                     user_message,
                     selected_agent,
                 )
+                conversation_history_for_api = maybe_append_image_proposal_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    settings,
+                    selected_agent,
+                )
 
                 agent_message_history = [
                     ChatMessageContent(
@@ -13923,6 +14105,12 @@ def register_route_backend_chats(app):
             conversation_history_for_api = maybe_append_chart_tool_system_message(
                 conversation_history_for_api,
                 user_message,
+                selected_agent,
+            )
+            conversation_history_for_api = maybe_append_image_proposal_system_message(
+                conversation_history_for_api,
+                user_message,
+                settings,
                 selected_agent,
             )
 
@@ -15115,18 +15303,12 @@ def register_route_backend_chats(app):
                     'streaming': 'Enabled'
                 }
 
-                if request_agent_info and isinstance(request_agent_info, dict):
-                    user_metadata['agent_selection'] = {
-                        'selected_agent': request_agent_info.get('name'),
-                        'agent_display_name': request_agent_info.get('display_name'),
-                        'is_global': request_agent_info.get('is_global', False),
-                        'is_group': request_agent_info.get('is_group', False),
-                        'group_id': request_agent_info.get('group_id'),
-                        'group_name': request_agent_info.get('group_name'),
-                        'agent_id': request_agent_info.get('id')
-                    }
-                    if assigned_knowledge_filters:
-                        user_metadata['agent_selection']['assigned_knowledge_enabled'] = True
+                agent_selection_metadata = _build_agent_selection_metadata(
+                    request_agent_info,
+                    assigned_knowledge_filters,
+                )
+                if agent_selection_metadata:
+                    user_metadata['agent_selection'] = agent_selection_metadata
                 
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
@@ -16412,16 +16594,10 @@ def register_route_backend_chats(app):
                     if all_agents:
                         agent_name_to_select = _get_chat_agent_selection_name(request_agent_info)
                         if agent_name_to_select:
-                            if isinstance(request_agent_info, dict):
-                                selected_agent_metadata = {
-                                    'selected_agent': request_agent_info.get('name'),
-                                    'agent_display_name': request_agent_info.get('display_name'),
-                                    'is_global': request_agent_info.get('is_global', False),
-                                    'is_group': request_agent_info.get('is_group', False),
-                                    'group_id': request_agent_info.get('group_id'),
-                                    'group_name': request_agent_info.get('group_name'),
-                                    'agent_id': request_agent_info.get('id')
-                                }
+                            selected_agent_metadata = _build_agent_selection_metadata(
+                                request_agent_info,
+                                assigned_knowledge_filters,
+                            )
                             debug_print(f"[Streaming] Request agent name to select: {agent_name_to_select}")
                         else:
                             debug_print("[Streaming] No explicit request agent selected; using model-only response path")
@@ -16446,15 +16622,10 @@ def register_route_backend_chats(app):
                             agent_name_used = getattr(selected_agent, 'name', 'agent')
                             agent_display_name_used = getattr(selected_agent, 'display_name', agent_name_used)
                             if not selected_agent_metadata:
-                                selected_agent_metadata = {
-                                    'selected_agent': agent_name_used,
-                                    'agent_display_name': agent_display_name_used,
-                                    'is_global': getattr(selected_agent, 'is_global', False),
-                                    'is_group': getattr(selected_agent, 'is_group', False),
-                                    'group_id': getattr(selected_agent, 'group_id', None),
-                                    'group_name': getattr(selected_agent, 'group_name', None),
-                                    'agent_id': getattr(selected_agent, 'id', None)
-                                }
+                                selected_agent_metadata = _build_agent_selection_metadata(
+                                    selected_agent,
+                                    assigned_knowledge_filters,
+                                )
                             actual_model_used = getattr(selected_agent, 'deployment_name', None) or gpt_model
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
@@ -16466,6 +16637,12 @@ def register_route_backend_chats(app):
                 conversation_history_for_api = maybe_append_chart_tool_system_message(
                     conversation_history_for_api,
                     user_message,
+                    selected_agent,
+                )
+                conversation_history_for_api = maybe_append_image_proposal_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    settings,
                     selected_agent,
                 )
 

@@ -22,7 +22,8 @@ import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
-import { extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
@@ -1623,6 +1624,38 @@ function createCitationDetailsSectionHtml(
     </div>`;
 }
 
+export function getGeneratedImageProposalMetadata(message) {
+  const metadata = message?.metadata && typeof message.metadata === 'object'
+    ? message.metadata
+    : {};
+  const proposalMetadata = metadata.image_proposal;
+  return proposalMetadata && typeof proposalMetadata === 'object' ? proposalMetadata : null;
+}
+
+export function getGeneratedImageProposalSourceMessageId(message) {
+  return String(getGeneratedImageProposalMetadata(message)?.source_assistant_message_id || '').trim();
+}
+
+export function groupGeneratedImageProposalMessages(messages = []) {
+  const groupedMessages = new Map();
+  (Array.isArray(messages) ? messages : []).forEach((message) => {
+    if (message?.role !== 'image') {
+      return;
+    }
+
+    const sourceAssistantMessageId = getGeneratedImageProposalSourceMessageId(message);
+    if (!sourceAssistantMessageId) {
+      return;
+    }
+
+    if (!groupedMessages.has(sourceAssistantMessageId)) {
+      groupedMessages.set(sourceAssistantMessageId, []);
+    }
+    groupedMessages.get(sourceAssistantMessageId).push(message);
+  });
+  return groupedMessages;
+}
+
 export function loadMessages(conversationId) {
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
@@ -1651,6 +1684,12 @@ export function loadMessages(conversationId) {
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
       updateComparisonChatUploadCatalog(Array.isArray(data.messages) ? data.messages : []);
+      const generatedImageProposalMessages = groupGeneratedImageProposalMessages(data.messages);
+      const assistantMessageIds = new Set(
+        (Array.isArray(data.messages) ? data.messages : [])
+          .filter(message => message?.role === 'assistant' && message?.id)
+          .map(message => String(message.id))
+      );
       data.messages.forEach((msg) => {
         // Skip deleted messages (when conversation archiving is enabled)
         if (msg.metadata && msg.metadata.is_deleted === true) {
@@ -1662,6 +1701,9 @@ export function loadMessages(conversationId) {
         if (msg.role === "user") {
           appendMessage("You", msg.content, null, msg.id, false, [], [], [], null, null, msg);
         } else if (msg.role === "assistant") {
+          if (generatedImageProposalMessages.has(msg.id)) {
+            msg.generated_image_proposals = generatedImageProposalMessages.get(msg.id);
+          }
           console.log(`  [loadMessages Loop] Full Assistant msg object:`, JSON.stringify(msg)); // Stringify to see exact keys
           console.log(`  [loadMessages Loop] Checking keys: msg.id=${msg.id}, msg.augmented=${msg.augmented}, msg.hybrid_citations exists=${'hybrid_citations' in msg}, msg.web_search_citations exists=${'web_search_citations' in msg}, msg.agent_citations exists=${'agent_citations' in msg}`);
           const senderType = msg.role === "user" ? "You" :
@@ -1688,6 +1730,11 @@ export function loadMessages(conversationId) {
           // Pass file message with proper parameters including message ID
           appendMessage("File", msg, null, msg.id, false, [], [], [], null, null, msg);
         } else if (msg.role === "image") {
+          const sourceAssistantMessageId = getGeneratedImageProposalSourceMessageId(msg);
+          if (sourceAssistantMessageId && assistantMessageIds.has(sourceAssistantMessageId)) {
+            console.log(`[loadMessages] Folding generated proposal image ${msg.id} into source assistant card.`);
+            return;
+          }
           // Validate image URL before calling appendMessage
           if (msg.content && msg.content !== 'null' && msg.content.trim() !== '') {
             // Debug logging for image message metadata
@@ -2104,18 +2151,24 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
-    const withInlineCitations = parseCitations(chartExtraction.markdown);
+    const imageProposalExtraction = extractInlineImageProposalBlocks(chartExtraction.markdown);
+    const withInlineCitations = parseCitations(imageProposalExtraction.markdown);
     const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
     const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
     const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
+    const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithCharts, imageProposalExtraction.blocks);
+    const copyMarkdown = restoreInlineChartTokens(
+      restoreInlineImageProposalTokens(withInlineCitations, imageProposalExtraction.blocks),
+      chartExtraction.blocks,
+    );
 
     return {
-      htmlContent: addTargetBlankToExternalLinks(htmlWithCharts),
-      copyMarkdown: restoreInlineChartTokens(withInlineCitations, chartExtraction.blocks),
-      previewMarkdown: chartExtraction.markdown,
+      htmlContent: addTargetBlankToExternalLinks(htmlWithImageProposals),
+      copyMarkdown,
+      previewMarkdown: imageProposalExtraction.markdown,
       followUpSuggestions: followUpRenderModel.suggestions,
     };
   }
@@ -4298,13 +4351,13 @@ export function appendMessage(
     chatbox.appendChild(messageDiv); // Append AI message
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
+    attachGeneratedImageProposalResults(messageDiv, fullMessageObject?.generated_image_proposals || []);
     
     // Auto-play TTS if enabled (only for new messages, not when loading history)
     if (isNewMessage && typeof autoplayTTSIfEnabled === 'function') {
       autoplayTTSIfEnabled(messageId, renderedAiContent.previewMarkdown || messageContent);
     }
 
-    hydrateInlineCharts(messageDiv);
     void (async () => {
       await renderInlineVideoGalleries(
         messageDiv,
@@ -4343,6 +4396,9 @@ export function appendMessage(
     // Apply masked state if message has masking
     if (fullMessageObject?.metadata) {
       applyMaskedState(messageDiv, fullMessageObject.metadata);
+    } else {
+      hydrateInlineCharts(messageDiv);
+      hydrateInlineImageProposals(messageDiv);
     }
 
     // --- Attach Event Listeners specifically for AI message ---
@@ -7077,6 +7133,7 @@ function captureMessageMaskingOriginalContent(messageDiv) {
 
 function restoreMessageMaskingOriginalContent(messageDiv, messageText) {
   captureMessageMaskingOriginalContent(messageDiv);
+  destroyInlineCharts(messageText);
   const originalNodes = Array.isArray(messageDiv._maskingOriginalNodes)
     ? messageDiv._maskingOriginalNodes.map(node => node.cloneNode(true))
     : [];
@@ -7239,6 +7296,8 @@ function applyMaskedState(messageDiv, metadata = {}) {
     applyMaskedRangesToMessageText(messageText, maskedRanges);
   }
 
+  hydrateInlineCharts(messageDiv);
+  hydrateInlineImageProposals(messageDiv);
   updateMaskControls(messageDiv, nextMetadata);
 }
 
@@ -7556,6 +7615,7 @@ function executeMessageDeletion(deleteThread = false) {
 window.chatMessages = {
   applyMaskedState,
   applySearchHighlight,
+  appendMessage,
   clearSearchHighlight,
   extractSuggestedFollowUpPrompts,
   scrollToMessageSmooth

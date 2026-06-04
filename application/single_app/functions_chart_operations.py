@@ -226,6 +226,7 @@ def build_proactive_chart_guidance_message():
         "Place each chart immediately after the paragraph, table, section, or finding it supports; do not collect charts only at the end unless the user asks for an appendix. "
         "Choose chart types from the discovered data shape: line or area for time trends; bar for category comparisons; stacked bar or stacked line for category composition over groups or time; "
         "doughnut or pie only for small part-to-whole splits; scatter or bubble for relationships between numeric measures; radar for compact multi-metric profiles. "
+        "When the user asks for specific colors, or when labels have obvious semantic colors, set dataset backgroundColor and borderColor explicitly; for pie, doughnut, and polar-area charts use one color per slice in array order. "
         "Use tool-backed tabular results, computed aggregates, or explicitly cited source values as chart data. Do not invent values, and summarize omitted categories when charting top-N slices. "
         "When a chart action/tool is available, call it for each useful chart and insert the returned chart_markdown exactly where the visual belongs in the generated content. "
         f"If a chart action/tool is unavailable but inline chart blocks are supported, emit compact ```{INLINE_CHART_BLOCK_LANGUAGE}``` blocks with version 1, kind, chartType, title, data.labels, data.datasets, options, and summary fields."

@@ -1538,6 +1538,8 @@ function initializeFileSyncRoot(root) {
 
     const formatCounts = (counts = {}) => [
         `queued ${counts.queued || 0}`,
+        `created ${counts.created || 0}`,
+        `updated ${counts.updated || 0}`,
         `unchanged ${counts.unchanged || 0}`,
         `skipped ${counts.skipped || 0}`,
         `failed ${counts.failed || 0}`,

@@ -2,7 +2,7 @@
 # test_chat_backend_inline_chart_handoff.py
 """
 Functional test for chat backend inline chart handoff.
-Version: 0.241.126
+Version: 0.241.134
 Implemented in: 0.241.124
 
 This test ensures normal chat requests can receive inline chart guidance, explicit
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / 'application' / 'single_app'
 ROUTE_FILE = APP_ROOT / 'route_backend_chats.py'
 CONFIG_FILE = APP_ROOT / 'config.py'
-EXPECTED_VERSION = '0.241.126'
+EXPECTED_VERSION = '0.241.134'
 
 TARGET_FUNCTIONS = {
     '_append_inline_chart_blocks_to_message',

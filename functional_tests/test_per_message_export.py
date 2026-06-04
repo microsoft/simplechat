@@ -2,7 +2,7 @@
 # test_per_message_export.py
 """
 Functional tests for the per-message export feature and export route regressions.
-Version: 0.241.019
+Version: 0.241.143
 Implemented in: 0.241.019
 
 Covers:
@@ -19,10 +19,12 @@ Covers:
 import ast
 import base64
 import io
+import json
 import os
 import re
 import sys
-from typing import Any, Dict, List, Optional
+from html import escape as _escape_html
+from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(
     0,
@@ -154,6 +156,7 @@ def _load_email_export_helpers():
     try:
         import markdown2
         from bs4 import BeautifulSoup, NavigableString, Tag
+        from PIL import Image
     except ImportError as exc:
         return None, exc
 
@@ -171,8 +174,22 @@ def _load_email_export_helpers():
     tree = ast.parse(source)
     helper_names = {
         '_message_to_email_draft_payload',
+        '_image_bytes_to_png_data_uri',
+        '_render_message_export_content',
+        '_get_message_export_image_assets',
+        '_normalize_export_image_asset',
+        '_replace_inline_image_proposal_blocks_with_export_html',
+        '_parse_inline_image_proposal_payload',
+        '_find_export_image_asset_for_proposal',
+        '_build_export_inline_image_html',
+        '_build_missing_export_inline_image_html',
+        '_clean_export_visual_text',
+        '_normalize_export_visual_id',
+        '_normalize_export_prompt',
         '_extract_email_chart_png_attachments',
         '_safe_email_chart_attachment_filename',
+        '_safe_email_image_attachment_filename',
+        '_safe_email_visual_attachment_filename',
         '_format_email_chart_attachment_reference',
         '_render_markdown_to_email_lines',
         '_append_html_block_to_email_lines',
@@ -204,15 +221,26 @@ def _load_email_export_helpers():
         'Dict': Dict,
         'List': List,
         'Optional': Optional,
+        'Tuple': Tuple,
+        'base64': base64,
+        'io': io,
+        'json': json,
         're': re,
+        '_escape_html': _escape_html,
         'markdown2': markdown2,
         'BeautifulSoup': BeautifulSoup,
         'NavigableString': NavigableString,
         'Tag': Tag,
+        'Image': Image,
         'DOCX_MARKDOWN_EXTRAS': ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike'],
         'EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX': 'message_chart',
+        'EMAIL_IMAGE_ATTACHMENT_FILENAME_PREFIX': 'message_image',
         'EMAIL_SUBJECT_CHAR_LIMIT': 120,
         'EMAIL_SUBJECT_SOURCE_CHAR_LIMIT': 12000,
+        'INLINE_IMAGE_PROPOSAL_EXPORT_REGEX': re.compile(
+            r"```simpleimage\s*([\s\S]*?)```",
+            re.IGNORECASE,
+        ),
         '_normalize_content': _normalize_content,
         'replace_inline_chart_blocks_with_export_html': lambda content: content,
         'decode_base64_image_data_uri': _decode_base64_image_data_uri,
@@ -560,6 +588,72 @@ def test_email_export_converts_inline_charts_to_png_download_payload():
     return True
 
 
+def test_email_export_converts_inline_generated_images_to_png_download_payload():
+    """Email export should convert approved inline image proposals to PNG payloads."""
+    print("🔍 Testing email export converts inline generated images to PNG payloads...")
+
+    helpers, import_error = _load_email_export_helpers()
+    if import_error is not None:
+        print(f"  ⚠️  Required email formatter dependency missing, skipping check: {import_error}")
+        print("✅ test_email_export_converts_inline_generated_images_to_png_download_payload skipped (dependency missing)")
+        return True
+
+    sample_image_data_uri = (
+        'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+    )
+    image_proposal = {
+        'version': 1,
+        'visualId': 'colonial_map_1700',
+        'title': 'Map of British North American Colonies',
+        'description': 'A classroom map of British North America around 1700.',
+        'prompt': 'Create a labeled classroom map of British North America around 1700.',
+        'visualType': 'map',
+        'slideNumber': 1,
+        'context': 'Introductory overview of colonial North America.',
+    }
+    image_block = '```simpleimage\n' + json.dumps(image_proposal) + '\n```'
+
+    draft = helpers['_message_to_email_draft_payload'](
+        message={
+            'role': 'assistant',
+            'content': f'Here is the proposed visual.\n\n{image_block}\n\nUse it with the introduction slide.',
+            '_export_generated_image_assets': [
+                {
+                    'data_uri': sample_image_data_uri,
+                    'proposal': image_proposal,
+                    'title': image_proposal['title'],
+                    'caption': image_proposal['description'],
+                }
+            ],
+            'citations': [],
+        },
+        settings={},
+        summary_model_deployment=''
+    )
+
+    attachments = draft.get('attachments')
+    assert isinstance(attachments, list), draft
+    assert len(attachments) == 1, attachments
+    attachment = attachments[0]
+    assert attachment['content_type'] == 'image/png', attachment
+    assert attachment['data_uri'].startswith('data:image/png;base64,'), attachment
+    assert attachment['filename'].startswith('message_image_1_'), attachment
+    assert attachment['filename'].endswith('.png'), attachment
+    assert attachment['visual_type'] == 'image', attachment
+
+    body = draft['body']
+    assert 'Image PNG exported as' in body, body
+    assert attachment['filename'] in body, body
+    assert 'Map of British North American Colonies' in body, body
+    assert '```simpleimage' not in body, body
+    assert 'visualId' not in body, body
+    assert 'data:image/png;base64' not in body, body
+
+    print("✅ test_email_export_converts_inline_generated_images_to_png_download_payload passed!")
+    return True
+
+
 def test_happy_path_markdown_export():
     """Happy path: Markdown file content is correctly formatted."""
     print("🔍 Testing happy path – Markdown export...")
@@ -851,6 +945,7 @@ if __name__ == "__main__":
         test_email_export_uses_word_style_plain_text_and_message_subject,
         test_email_export_generates_subject_with_summary_model_helper,
         test_email_export_converts_inline_charts_to_png_download_payload,
+        test_email_export_converts_inline_generated_images_to_png_download_payload,
         test_happy_path_markdown_export,
         test_export_word_route_definition_present,
         test_export_email_route_definition_present,

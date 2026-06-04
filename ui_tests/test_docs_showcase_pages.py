@@ -1,13 +1,15 @@
 # test_docs_showcase_pages.py
 """
 UI test for docs showcase pages.
-Version: 0.241.012
+Version: 0.241.134
 Implemented in: 0.241.012
+Updated in: 0.241.134
 
 This test ensures that the redesigned docs landing pages, reference guides,
 how-to guides, tutorials, and troubleshooting pages render the shared GitHub
 Pages navigation shell, responsive sidebar, search experience, page-specific
-content blocks, and shared preview modal at desktop and mobile viewport sizes.
+content blocks, keyword-aware search results, and shared preview modal at
+desktop and mobile viewport sizes.
 """
 
 import os
@@ -53,6 +55,7 @@ PAGES = [
     pytest.param("/reference/deploy/manual_deploy/", "Manual Deployment Notes", "h2:has-text('Native Python App Service Startup Command')", id="reference-manual"),
     pytest.param("/reference/deploy/terraform_deploy/", "Terraform Deployment", "h2:has-text('Current behavior')", id="reference-terraform"),
     pytest.param("/how-to/", "How-To Guides", "a[href$='/how-to/agents/ServiceNow/']", id="howto-index"),
+    pytest.param("/how-to/admin_ui_settings/", "Configure Branding, Home Page, and Support Settings", "h2:has-text('Health Checks')", id="howto-admin-ui-settings"),
     pytest.param("/how-to/add_documents/", "Add Documents", "h2:has-text('Recommended upload flow')", id="howto-add-documents"),
     pytest.param("/how-to/create_agents/", "Create Agents", "h2:has-text('Minimum viable agent setup')", id="howto-create-agents"),
     pytest.param("/how-to/docker_customization/", "Docker Customization", "h2:has-text('Custom Certificate Authorities')", id="howto-docker"),
@@ -120,6 +123,8 @@ def test_docs_showcase_pages(playwright, viewport, path, heading, specific_selec
         if path == "/":
             page.locator("#docs-hero-search-input").fill("features")
             expect(page.locator(".docs-search-result-title", has_text="Features").first).to_be_visible()
+            page.locator("#docs-hero-search-input").fill("classification banner")
+            expect(page.locator(".docs-search-result-title", has_text="Configure Branding, Home Page, and Support Settings").first).to_be_visible()
     finally:
         context.close()
         browser.close()

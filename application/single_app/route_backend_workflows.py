@@ -19,7 +19,21 @@ from functions_activity_logging import (
     log_workflow_update,
 )
 from functions_appinsights import log_event
-from functions_authentication import get_current_user_id, login_required, user_required
+from functions_authentication import get_current_user_id, get_current_user_info, login_required, user_required
+from functions_file_sync import (
+    FILE_SYNC_MANAGER_ROLES,
+    FILE_SYNC_SCOPE_GROUP,
+    FILE_SYNC_SCOPE_PERSONAL,
+    FILE_SYNC_SCOPE_PUBLIC,
+    is_file_sync_enabled_for_group,
+    is_file_sync_enabled_for_public_workspace,
+    is_file_sync_enabled_for_user,
+    list_file_sync_sources,
+    sanitize_file_sync_source,
+)
+from functions_group import require_active_group
+from functions_public_workspaces import require_active_public_workspace
+from functions_document_actions import DOCUMENT_ACTION_TYPE_ANALYZE, build_analyze_config
 from functions_thoughts import get_thoughts_for_message
 from functions_workflow_activity import build_workflow_activity_snapshot
 from functions_personal_workflows import (
@@ -29,6 +43,7 @@ from functions_personal_workflows import (
     get_personal_workflow,
     get_personal_workflow_run,
     get_personal_workflows,
+    list_personal_workflow_run_items,
     list_personal_workflow_runs,
     save_personal_workflow,
     update_personal_workflow_runtime_fields,
@@ -56,6 +71,105 @@ def _normalize_bool(value):
     if isinstance(value, str):
         return value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
+
+
+def _serialize_workflow_file_sync_source(scope_type, scope_id, source):
+    sanitized_source = sanitize_file_sync_source(source)
+    source_name = str(sanitized_source.get('name') or sanitized_source.get('id') or '').strip()
+    scope_label = {
+        FILE_SYNC_SCOPE_PERSONAL: 'Personal',
+        FILE_SYNC_SCOPE_GROUP: 'Group',
+        FILE_SYNC_SCOPE_PUBLIC: 'Public',
+    }.get(scope_type, scope_type.title())
+    return {
+        'scope_type': scope_type,
+        'scope_id': scope_id,
+        'source_id': str(sanitized_source.get('id') or '').strip(),
+        'name': source_name,
+        'source_type': str(sanitized_source.get('source_type') or '').strip(),
+        'enabled': sanitized_source.get('enabled') is not False,
+        'label': f'{source_name} ({scope_label})' if source_name else scope_label,
+    }
+
+
+def _collect_workflow_file_sync_sources(user_id):
+    settings = get_settings()
+    user_info = get_current_user_info() or {}
+    sources = []
+
+    if is_file_sync_enabled_for_user(settings, user_id, user_info.get('email'), user_info=user_info):
+        sources.extend(
+            _serialize_workflow_file_sync_source(FILE_SYNC_SCOPE_PERSONAL, user_id, source)
+            for source in list_file_sync_sources(FILE_SYNC_SCOPE_PERSONAL, user_id)
+        )
+
+    try:
+        group_id = require_active_group(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
+        if is_file_sync_enabled_for_group(settings, group_id, user_info=user_info):
+            sources.extend(
+                _serialize_workflow_file_sync_source(FILE_SYNC_SCOPE_GROUP, group_id, source)
+                for source in list_file_sync_sources(FILE_SYNC_SCOPE_GROUP, group_id)
+            )
+    except (LookupError, PermissionError, ValueError):
+        pass
+
+    try:
+        public_workspace_id, _, _ = require_active_public_workspace(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
+        if is_file_sync_enabled_for_public_workspace(settings, public_workspace_id, user_info=user_info):
+            sources.extend(
+                _serialize_workflow_file_sync_source(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id, source)
+                for source in list_file_sync_sources(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
+            )
+    except (LookupError, PermissionError, ValueError):
+        pass
+
+    return [source for source in sources if source.get('source_id')]
+
+
+def _build_resume_failed_workflow(workflow, failed_items):
+    action_config = workflow.get('document_action') if isinstance(workflow.get('document_action'), dict) else {}
+    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
+        raise ValueError('Resume failed items currently supports Analyze workflows.')
+
+    document_ids = []
+    group_ids = []
+    public_workspace_ids = []
+    for item in failed_items:
+        document_id = _normalize_identifier(item.get('document_id'))
+        if document_id and document_id not in document_ids:
+            document_ids.append(document_id)
+        scope_type = _normalize_identifier(item.get('scope_type')).lower()
+        scope_id = _normalize_identifier(item.get('scope_id'))
+        if scope_type == FILE_SYNC_SCOPE_GROUP and scope_id and scope_id not in group_ids:
+            group_ids.append(scope_id)
+        elif scope_type == FILE_SYNC_SCOPE_PUBLIC and scope_id and scope_id not in public_workspace_ids:
+            public_workspace_ids.append(scope_id)
+
+    if not document_ids:
+        raise ValueError('No failed document items are available to resume.')
+
+    resume_workflow = dict(workflow)
+    resume_action = dict(action_config)
+    resume_action.update({
+        'document_ids': document_ids,
+        'doc_scope': 'all',
+        'active_group_ids': group_ids or list(action_config.get('active_group_ids') or []),
+        'active_public_workspace_id': public_workspace_ids or list(action_config.get('active_public_workspace_id') or []),
+    })
+    resume_workflow['document_action'] = resume_action
+    resume_workflow['analyze'] = build_analyze_config(resume_action)
+    resume_workflow['file_sync'] = {
+        'enabled': False,
+        'wait_mode': 'complete',
+        'continue_mode': 'always',
+        'use_changed_documents': False,
+        'sources': [],
+    }
+    resume_workflow['task_prompt'] = (
+        f"{workflow.get('task_prompt', '')}\n\n"
+        f"Resume only the {len(document_ids)} document(s) that failed in the previous workflow run."
+    ).strip()
+    return resume_workflow
 
 
 def _prepare_workflow_url_access_payload(payload, user_id):
@@ -214,6 +328,26 @@ def register_route_backend_workflows(app):
         return jsonify({'workflows': get_personal_workflows(user_id)})
 
 
+    @app.route('/api/user/workflows/file-sync-sources', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_file_sync_sources():
+        user_id = get_current_user_id()
+        try:
+            return jsonify({'sources': _collect_workflow_file_sync_sources(user_id)})
+        except Exception as exc:
+            log_event(
+                f'[WorkflowRoutes] Failed to load workflow File Sync sources: {exc}',
+                extra={'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Unable to load File Sync sources right now.'}), 500
+
+
     @app.route('/api/user/workflows', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -301,6 +435,98 @@ def register_route_backend_workflows(app):
             'workflow_id': workflow_id,
             'runs': list_personal_workflow_runs(user_id, workflow_id, limit=50),
         })
+
+
+    @app.route('/api/user/workflows/<workflow_id>/runs/<run_id>/items', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_run_items(workflow_id, run_id):
+        user_id = get_current_user_id()
+        workflow = get_personal_workflow(user_id, workflow_id)
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+
+        run_record = get_personal_workflow_run(user_id, run_id)
+        if not run_record or _normalize_identifier(run_record.get('workflow_id')) != _normalize_identifier(workflow_id):
+            return jsonify({'error': 'Workflow run not found.'}), 404
+
+        return jsonify({
+            'workflow_id': workflow_id,
+            'run_id': run_id,
+            'items': list_personal_workflow_run_items(run_id, limit=1000),
+        })
+
+
+    @app.route('/api/user/workflows/<workflow_id>/runs/<run_id>/resume-failed', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def resume_failed_user_workflow_items(workflow_id, run_id):
+        user_id = get_current_user_id()
+        workflow = get_personal_workflow(user_id, workflow_id)
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+
+        source_run = get_personal_workflow_run(user_id, run_id)
+        if not source_run or _normalize_identifier(source_run.get('workflow_id')) != _normalize_identifier(workflow_id):
+            return jsonify({'error': 'Workflow run not found.'}), 404
+
+        failed_items = [
+            item for item in list_personal_workflow_run_items(run_id, limit=1000)
+            if _normalize_identifier(item.get('status')).lower() == 'failed' and _normalize_identifier(item.get('document_id'))
+        ]
+        if not failed_items:
+            return jsonify({'error': 'No failed workflow items are available to resume.'}), 400
+
+        try:
+            resume_workflow = _build_resume_failed_workflow(workflow, failed_items)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+
+        lock_document = acquire_distributed_task_lock(f'workflow_run_{workflow_id}', lease_seconds=900)
+        if not lock_document:
+            return jsonify({'error': 'This workflow is already running.'}), 409
+
+        try:
+            started_at = datetime.now(timezone.utc).isoformat()
+            update_personal_workflow_runtime_fields(
+                user_id,
+                workflow_id,
+                {
+                    'status': 'running',
+                    'last_run_started_at': started_at,
+                    'last_run_trigger_source': 'resume_failed',
+                    'last_run_error': '',
+                },
+            )
+
+            result = run_personal_workflow(
+                resume_workflow,
+                trigger_source='resume_failed',
+                user_roles=(session.get('user') or {}).get('roles', []),
+            )
+            update_fields = dict(result.get('workflow_updates') or {})
+            update_fields['status'] = 'idle'
+            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and not workflow.get('next_run_at'):
+                update_fields['next_run_at'] = compute_next_run_at(workflow, from_time=datetime.now(timezone.utc))
+
+            updated_workflow = update_personal_workflow_runtime_fields(user_id, workflow_id, update_fields)
+            response_body = {
+                'success': bool(result.get('success')),
+                'workflow': updated_workflow,
+                'run': result.get('run'),
+                'resumed_item_count': len(failed_items),
+            }
+            if result.get('success'):
+                return jsonify(response_body)
+            return jsonify(response_body), 500
+        finally:
+            release_distributed_task_lock(lock_document)
 
 
     @app.route('/api/user/workflows/activity', methods=['GET'])
@@ -432,7 +658,7 @@ def register_route_backend_workflows(app):
             )
             update_fields = dict(result.get('workflow_updates') or {})
             update_fields['status'] = 'idle'
-            if workflow.get('trigger_type') == 'interval' and workflow.get('is_enabled', False) and not workflow.get('next_run_at'):
+            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and not workflow.get('next_run_at'):
                 update_fields['next_run_at'] = compute_next_run_at(workflow, from_time=datetime.now(timezone.utc))
 
             updated_workflow = update_personal_workflow_runtime_fields(user_id, workflow_id, update_fields)

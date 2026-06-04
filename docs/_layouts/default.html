@@ -98,25 +98,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
 
     <!-- App settings for JS -->
-    <script type="application/json" id="docs-search-data">
-        [
-            {% assign searchable_pages = site.pages | where_exp: "item", "item.title" | sort: "title" %}
-            {% for item in searchable_pages %}
-                {
-                    "title": {{ item.title | jsonify }},
-                    "description": {{ item.description | default: item.excerpt | strip_html | strip_newlines | truncate: 180 | jsonify }},
-                    "section": {{ item.section | default: item.collection | default: 'Docs' | jsonify }},
-                    "url": {{ item.url | relative_url | jsonify }}
-                }{% unless forloop.last %},{% endunless %}
-            {% endfor %}
-        ]
-    </script>
     <script>
         window.siteSettings = {
             title: {{ site.title | jsonify }},
             description: {{ site.description | jsonify }},
             baseurl: {{ site.baseurl | jsonify }},
             url: {{ site.url | jsonify }},
+            searchIndexUrl: {{ '/search.json' | relative_url | jsonify }},
             navigation: {{ site.navigation | jsonify }}
         };
     </script>

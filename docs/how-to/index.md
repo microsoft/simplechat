@@ -27,6 +27,12 @@ How-to guides assume you already know what area of the product you are working i
         <p><a href="{{ '/how-to/use_managed_identity/' | relative_url }}">Managed identity</a> · <a href="{{ '/how-to/azure_speech_managed_identity_manul_setup/' | relative_url }}">Azure Speech setup</a></p>
     </article>
     <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-palette"></i></div>
+        <h2>Admin UI settings</h2>
+        <p>Use this guide when you need to change branding, home page text, health checks, API docs, classification banners, Support, external links, or global system settings.</p>
+        <p><a href="{{ '/how-to/admin_ui_settings/' | relative_url }}">Configure branding and support settings</a> · <a href="{{ '/admin_configuration/' | relative_url }}">Admin overview</a></p>
+    </article>
+    <article class="latest-release-card">
         <div class="latest-release-card-icon"><i class="bi bi-diagram-3"></i></div>
         <h2>Deployment operations</h2>
         <p>Use these guides for enterprise networking, scaling, upgrades, and Docker customization once the deployment starts moving toward production operations.</p>

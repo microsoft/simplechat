@@ -2,7 +2,7 @@
 # test_per_message_powerpoint_export.py
 """
 Functional test for per-message PowerPoint export.
-Version: 0.241.033
+Version: 0.241.143
 Implemented in: 0.241.033
 
 This test ensures the message export flow exposes a PowerPoint route,
@@ -11,7 +11,8 @@ deployment for AI slide planning, and produces a valid .pptx deck with
 appendix slides for visuals, tables, code, and references. It also
 ensures already structured markdown slide decks are exported without
 AI summarization or slide-count compression. It also ensures generated
-Markdown artifacts can be used as the PowerPoint export source.
+Markdown artifacts can be used as the PowerPoint export source and that
+slide-local charts/images render as PNGs without leaking authoring labels.
 """
 
 import ast
@@ -21,6 +22,8 @@ import json
 import os
 import re
 import traceback
+import zipfile
+from html import escape as _escape_html
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
@@ -78,8 +81,8 @@ def _decode_base64_image_data_uri(data_uri: Optional[str]) -> Optional[bytes]:
         return None
 
 
-def _build_test_image_data_uri() -> str:
-    image = Image.new('RGB', (24, 16), color=(37, 99, 235))
+def _build_test_image_data_uri(color: Tuple[int, int, int] = (37, 99, 235)) -> str:
+    image = Image.new('RGB', (24, 16), color=color)
     buffer = io.BytesIO()
     image.save(buffer, format='PNG')
     encoded = base64.b64encode(buffer.getvalue()).decode('ascii')
@@ -111,6 +114,22 @@ def _collect_slide_text(presentation: Presentation) -> str:
 def _load_powerpoint_helpers():
     helper_names = {
         '_message_to_pptx_bytes',
+        '_attach_generated_image_proposal_assets',
+        '_load_generated_image_proposal_assets',
+        '_build_export_image_asset_from_message',
+        '_resolve_image_message_export_data_uri',
+        '_image_bytes_to_png_data_uri',
+        '_render_message_export_content',
+        '_get_message_export_image_assets',
+        '_normalize_export_image_asset',
+        '_replace_inline_image_proposal_blocks_with_export_html',
+        '_parse_inline_image_proposal_payload',
+        '_find_export_image_asset_for_proposal',
+        '_build_export_inline_image_html',
+        '_build_missing_export_inline_image_html',
+        '_clean_export_visual_text',
+        '_normalize_export_visual_id',
+        '_normalize_export_prompt',
         '_sanitize_powerpoint_source_content',
         '_load_powerpoint_export_message_for_user',
         '_load_generated_markdown_artifact_for_user',
@@ -122,17 +141,22 @@ def _load_powerpoint_helpers():
         '_extract_powerpoint_separator_slide_sections',
         '_match_powerpoint_slide_marker',
         '_resolve_powerpoint_slide_title_and_content',
+        '_extract_powerpoint_labeled_title',
+        '_parse_powerpoint_structured_label_line',
+        '_should_prefer_labeled_powerpoint_title',
         '_extract_powerpoint_preamble_title',
         '_is_powerpoint_slide_separator',
         '_looks_like_powerpoint_front_matter_block',
         '_is_powerpoint_title_section',
         '_build_powerpoint_title_metadata_from_section',
         '_extract_powerpoint_title_section_lines',
+        '_line_contains_powerpoint_inline_visual',
         '_build_powerpoint_slide_footer_label',
         '_trim_powerpoint_structured_section_content',
         '_is_powerpoint_non_slide_tail_marker',
         '_extract_structured_powerpoint_bullets',
         '_extract_structured_powerpoint_tables',
+        '_extract_structured_powerpoint_images',
         '_parse_powerpoint_markdown_table_block',
         '_split_powerpoint_markdown_table_line',
         '_is_powerpoint_markdown_table_separator_row',
@@ -159,6 +183,8 @@ def _load_powerpoint_helpers():
         '_extract_powerpoint_code_blocks',
         '_add_powerpoint_title_slide',
         '_add_powerpoint_content_slide',
+        '_add_powerpoint_inline_image_to_slide',
+        '_fit_powerpoint_image_within_bounds',
         '_add_powerpoint_inline_table',
         '_append_powerpoint_appendix_slides',
         '_add_powerpoint_image_slide',
@@ -236,6 +262,7 @@ def _load_powerpoint_helpers():
 
     namespace = {
         'Any': Any,
+        'base64': base64,
         'Dict': Dict,
         'List': List,
         'Optional': Optional,
@@ -243,6 +270,7 @@ def _load_powerpoint_helpers():
         'io': io,
         'json': json,
         're': re,
+        '_escape_html': _escape_html,
         'markdown2': markdown2,
         'BeautifulSoup': BeautifulSoup,
         'NavigableString': NavigableString,
@@ -266,6 +294,7 @@ def _load_powerpoint_helpers():
         'POWERPOINT_MAX_APPENDIX_IMAGES': 4,
         'POWERPOINT_MAX_APPENDIX_TABLES': 3,
         'POWERPOINT_MAX_APPENDIX_CODE_BLOCKS': 2,
+        'POWERPOINT_MAX_INLINE_IMAGES_PER_SLIDE': 2,
         'POWERPOINT_MAX_TABLE_ROWS': 8,
         'POWERPOINT_MAX_TABLE_COLS': 5,
         'POWERPOINT_TITLE_BG': RGBColor(22, 37, 66),
@@ -277,6 +306,11 @@ def _load_powerpoint_helpers():
         'POWERPOINT_TITLE_TEXT': RGBColor(255, 255, 255),
         'POWERPOINT_DATA_URI_PATTERN': re.compile(
             r"data:image\/[a-zA-Z0-9.+-]+;base64,[^\"'\s)]+",
+            re.IGNORECASE,
+        ),
+        'INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE': 'simpleimage',
+        'INLINE_IMAGE_PROPOSAL_EXPORT_REGEX': re.compile(
+            r"```simpleimage\s*([\s\S]*?)```",
             re.IGNORECASE,
         ),
         '_normalize_content': _normalize_content,
@@ -293,6 +327,10 @@ def _load_powerpoint_helpers():
         ],
         'replace_inline_chart_blocks_with_export_html': lambda content: content,
         'decode_base64_image_data_uri': _decode_base64_image_data_uri,
+        'decode_image_content': lambda image_content: ('image/png', _decode_base64_image_data_uri(image_content) or b''),
+        'get_complete_image_content': lambda *_args, **_kwargs: ({}, ''),
+        'is_blob_backed_image_message': lambda *_args, **_kwargs: False,
+        'is_external_image_url': lambda image_content: str(image_content or '').startswith(('http://', 'https://')),
         '_initialize_gpt_client': _fake_initialize_gpt_client,
         'debug_print': lambda *args, **kwargs: None,
         'log_event': lambda *args, **kwargs: None,
@@ -581,6 +619,92 @@ def test_structured_markdown_powerpoint_export_preserves_slide_count() -> bool:
     return True
 
 
+def test_structured_powerpoint_export_embeds_slide_visuals_and_strips_labels() -> bool:
+    """Structured slide exports should place PNG visuals on their source slides."""
+    print("Testing structured PowerPoint visual placement and label cleanup...")
+
+    helpers, requested_models = _load_powerpoint_helpers()
+    generated_image_data_uri = _build_test_image_data_uri((37, 99, 235))
+    chart_data_uri = _build_test_image_data_uri((215, 91, 53))
+    image_proposal = {
+        'version': 1,
+        'visualId': 'colonial_map_1700',
+        'title': 'Map of British North American Colonies',
+        'description': 'A classroom map of British North America around 1700.',
+        'prompt': 'Create a labeled classroom map of British North America around 1700.',
+        'visualType': 'map',
+        'slideNumber': 1,
+        'context': 'Introductory overview of colonial North America.',
+    }
+    image_block = '```simpleimage\n' + json.dumps(image_proposal) + '\n```'
+    chart_html = (
+        '<div class="export-inline-chart">'
+        f'<p><img src="{chart_data_uri}" alt="Regional trade chart" /></p>'
+        '<p class="export-inline-chart-caption"><em>Regional trade comparison</em></p>'
+        '</div>'
+    )
+    message = {
+        'id': 'assistant-message',
+        'role': 'assistant',
+        'timestamp': '2026-06-04T12:00:00Z',
+        'model_deployment_name': 'gpt-4o-mini',
+        'content': '\n'.join([
+            '## Slide 1: Introduction',
+            'Title: What Was Early America Like in 1700?',
+            'Bullet Points:',
+            '- Thirteen British colonies stretched along the Atlantic coast',
+            '- Indigenous nations and European empires shaped daily life',
+            'Speaker Note:',
+            'By 1700, the British colonies were growing quickly.',
+            image_block,
+            '',
+            '---',
+            '',
+            '## Slide 2: The Thirteen Colonies',
+            'Title: Regional Differences in the Colonies',
+            'Bullet Points:',
+            '- New England Colonies: small farms, fishing, shipbuilding, trade',
+            '- Middle Colonies: diverse population, farming, trade, growing cities',
+            chart_html,
+        ]),
+        '_export_generated_image_assets': [
+            {
+                'data_uri': generated_image_data_uri,
+                'proposal': image_proposal,
+                'title': image_proposal['title'],
+                'caption': image_proposal['description'],
+            }
+        ],
+        'citations': [],
+    }
+
+    pptx_bytes = helpers['_message_to_pptx_bytes'](
+        message,
+        {'gpt_model': {'selected': [{'deploymentName': 'fallback-model'}]}},
+    )
+
+    assert requested_models == [], f'Structured markdown should not call AI planning, found {requested_models}'
+    presentation = Presentation(io.BytesIO(pptx_bytes))
+    slide_titles = _collect_slide_titles(presentation)
+    slide_text = _collect_slide_text(presentation)
+
+    with zipfile.ZipFile(io.BytesIO(pptx_bytes), 'r') as archive:
+        media_names = [name for name in archive.namelist() if name.startswith('ppt/media/')]
+
+    assert len(presentation.slides) == 2, f'Expected two source slides, found {len(presentation.slides)}'
+    assert slide_titles[0] == 'What Was Early America Like in 1700?', slide_titles
+    assert slide_titles[1] == 'The Thirteen Colonies', slide_titles
+    assert len(media_names) >= 2, f'Expected generated image and chart PNG media, found {media_names}'
+    assert 'Title:' not in slide_text, slide_text
+    assert 'Bullet Points:' not in slide_text, slide_text
+    assert 'simpleimage' not in slide_text, slide_text
+    assert 'visualId' not in slide_text, slide_text
+    assert 'Regional Differences in the Colonies' not in slide_text, slide_text
+
+    print("PASS: structured PowerPoint export embeds slide visuals and strips labels")
+    return True
+
+
 def test_powerpoint_slide_count_request_validation() -> bool:
     """Optional slide_count should accept bounded integers and reject invalid values."""
     print("Testing PowerPoint slide count request validation...")
@@ -611,6 +735,7 @@ if __name__ == '__main__':
         test_powerpoint_export_can_use_generated_markdown_artifact_source,
         test_powerpoint_export_prefers_message_model_and_renders_appendix,
         test_structured_markdown_powerpoint_export_preserves_slide_count,
+        test_structured_powerpoint_export_embeds_slide_visuals_and_strips_labels,
         test_powerpoint_slide_count_request_validation,
     ]
 

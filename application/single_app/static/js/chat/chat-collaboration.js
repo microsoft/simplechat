@@ -1,7 +1,16 @@
 // chat-collaboration.js
 
-import { appendMessage, getCollaborativeTagSuggestions, updateSendButtonVisibility, updateUserMessageId, userInput } from './chat-messages.js';
+import {
+    appendMessage,
+    getCollaborativeTagSuggestions,
+    getGeneratedImageProposalSourceMessageId,
+    groupGeneratedImageProposalMessages,
+    updateSendButtonVisibility,
+    updateUserMessageId,
+    userInput,
+} from './chat-messages.js';
 import { applyConversationMetadataUpdate } from './chat-conversations.js';
+import { attachGeneratedImageProposalResults } from './chat-inline-image-proposals.js';
 import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
 import { sendMessageWithStreaming } from './chat-streaming.js';
@@ -863,6 +872,39 @@ function reconcilePendingCollaborativeUserMessage(message, preferredTempId = nul
     return Boolean(existingRealMessage);
 }
 
+function getRenderedMessageElement(messageId) {
+    const normalizedMessageId = String(messageId || '').trim();
+    if (!normalizedMessageId) {
+        return null;
+    }
+
+    if (window.CSS && typeof window.CSS.escape === 'function') {
+        return document.querySelector(`[data-message-id="${window.CSS.escape(normalizedMessageId)}"]`);
+    }
+
+    return Array.from(document.querySelectorAll('[data-message-id]'))
+        .find(element => element.getAttribute('data-message-id') === normalizedMessageId) || null;
+}
+
+function foldGeneratedImageProposalIntoRenderedAssistant(message) {
+    if (message?.role !== 'image') {
+        return false;
+    }
+
+    const sourceAssistantMessageId = getGeneratedImageProposalSourceMessageId(message);
+    if (!sourceAssistantMessageId) {
+        return false;
+    }
+
+    const sourceAssistantMessage = getRenderedMessageElement(sourceAssistantMessageId);
+    if (!sourceAssistantMessage) {
+        return false;
+    }
+
+    attachGeneratedImageProposalResults(sourceAssistantMessage, [message]);
+    return true;
+}
+
 function renderCollaborationMessage(message, options = {}) {
     if (!message || !message.id) {
         return;
@@ -922,8 +964,24 @@ async function loadConversationMessages(conversationId) {
     clearMessageCache();
 
     const messages = Array.isArray(payload.messages) ? payload.messages : [];
+    const generatedImageProposalMessages = groupGeneratedImageProposalMessages(messages);
+    const assistantMessageIds = new Set(
+        messages
+            .filter(message => message?.role === 'assistant' && message?.id)
+            .map(message => String(message.id))
+    );
     messages.forEach(message => {
         const decoratedMessage = decorateReplyMessage(message);
+        if (decoratedMessage.role === 'assistant' && generatedImageProposalMessages.has(decoratedMessage.id)) {
+            decoratedMessage.generated_image_proposals = generatedImageProposalMessages.get(decoratedMessage.id);
+        }
+        if (decoratedMessage.role === 'image') {
+            const sourceAssistantMessageId = getGeneratedImageProposalSourceMessageId(decoratedMessage);
+            if (sourceAssistantMessageId && assistantMessageIds.has(sourceAssistantMessageId)) {
+                cacheCollaborationMessage(message);
+                return;
+            }
+        }
         renderCollaborationMessage(decoratedMessage);
         cacheCollaborationMessage(message);
     });
@@ -1013,6 +1071,14 @@ function handleConversationEvent(eventEnvelope = {}) {
         const decoratedMessage = decorateReplyMessage(payload.message);
         cacheCollaborationMessage(payload.message);
         if (reconcilePendingCollaborativeUserMessage(payload.message)) {
+            if (shouldClearNotifications) {
+                void markCollaborationConversationRead(eventEnvelope.conversation_id || payload.message.conversation_id, {
+                    suppressErrorToast: true,
+                }).catch(() => {});
+            }
+            return;
+        }
+        if (foldGeneratedImageProposalIntoRenderedAssistant(decoratedMessage)) {
             if (shouldClearNotifications) {
                 void markCollaborationConversationRead(eventEnvelope.conversation_id || payload.message.conversation_id, {
                     suppressErrorToast: true,

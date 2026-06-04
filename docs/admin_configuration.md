@@ -53,6 +53,11 @@ Once the application is running and you sign in with the Admin role, the Admin S
   <p>The Setup Walkthrough is the fastest way to move a fresh environment from partially configured to usable. It guides admins through the critical dependencies in the right order and skips steps that do not apply.</p>
 </div>
 
+<div class="latest-release-note-panel latest-release-accent--teal">
+  <h2>Need to change what users see first?</h2>
+  <p>Use the <a href="{{ '/how-to/admin_ui_settings/' | relative_url }}">branding, home page, and support settings how-to</a> for step-by-step guidance on logos, application title, landing page text, health checks, Swagger, classification banners, Support, external links, and system settings.</p>
+</div>
+
 ![Admin Settings page](./images/admin_settings_page.png)
 
 ## Setup Walkthrough
@@ -105,6 +110,8 @@ Key configuration sections include:
 - **Classification Banner**: Security classification banner for data sensitivity indication
 - **External Links**: Custom navigation links to external resources with configurable menu behavior
 - **System Settings**: Maximum file size, conversation history limit, default system prompt
+
+For practical operator steps, see [Configure Branding, Home Page, and Support Settings]({{ '/how-to/admin_ui_settings/' | relative_url }}).
 
 ### 2. AI Models
 - **GPT Configuration**: 

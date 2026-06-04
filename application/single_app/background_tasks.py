@@ -384,7 +384,7 @@ def run_control_center_auto_refresh_loop():
 
 
 def check_due_workflows_once():
-    """Execute interval-based personal workflows that are due."""
+    """Execute scheduled personal workflows that are due."""
     settings = get_settings()
     if not settings.get('allow_user_workflows', False):
         return []
@@ -409,8 +409,10 @@ def check_due_workflows_once():
             refreshed_workflow = get_personal_workflow(user_id, workflow_id)
             if not refreshed_workflow:
                 continue
-            if refreshed_workflow.get('trigger_type') != 'interval' or not refreshed_workflow.get('is_enabled', False):
+            trigger_type = str(refreshed_workflow.get('trigger_type') or '').strip().lower()
+            if trigger_type not in {'interval', 'file_sync'} or not refreshed_workflow.get('is_enabled', False):
                 continue
+            trigger_source = 'file_sync_monitor' if trigger_type == 'file_sync' else 'scheduled'
 
             next_run_at = refreshed_workflow.get('next_run_at')
             if next_run_at:
@@ -427,12 +429,12 @@ def check_due_workflows_once():
                 {
                     'status': 'running',
                     'last_run_started_at': started_at,
-                    'last_run_trigger_source': 'scheduled',
+                    'last_run_trigger_source': trigger_source,
                     'last_run_error': '',
                 },
             )
 
-            result = run_personal_workflow(refreshed_workflow, trigger_source='scheduled')
+            result = run_personal_workflow(refreshed_workflow, trigger_source=trigger_source)
             update_fields = dict(result.get('workflow_updates') or {})
             update_fields['status'] = 'idle'
             update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
@@ -457,7 +459,7 @@ def check_due_workflows_once():
                         'last_run_status': 'failed',
                         'last_run_error': str(exc),
                         'last_run_at': datetime.now(timezone.utc).isoformat(),
-                        'last_run_trigger_source': 'scheduled',
+                        'last_run_trigger_source': 'file_sync_monitor' if refreshed_workflow.get('trigger_type') == 'file_sync' else 'scheduled',
                         'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
                     },
                 )

@@ -1,15 +1,16 @@
 # test_chart_action_inline_rendering.py
 """
 Functional test for inline chart action rendering.
-Version: 0.241.047
-Implemented in: 0.241.047
+Version: 0.241.139
+Implemented in: 0.241.139
 
 This test ensures that the built-in chart action returns validated inline chart markdown
-and enforces action-level chart type restrictions.
+preserves explicit chart colors, and enforces action-level chart type restrictions.
 """
 
 import json
 import sys
+import types
 from pathlib import Path
 
 
@@ -17,6 +18,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = PROJECT_ROOT / 'application' / 'single_app'
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
+sys.modules.setdefault(
+    'olefile',
+    types.SimpleNamespace(isOleFile=lambda *_args, **_kwargs: False, OleFileIO=None),
+)
 
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
 
@@ -77,10 +82,34 @@ def test_chart_plugin_blocks_disabled_chart_types():
     assert 'not enabled for this action' in result['error']
 
 
+def test_chart_plugin_preserves_semantic_pie_slice_colors():
+    """Validate pie slice colors can follow user/model color requests."""
+    plugin = ChartPlugin({'chart_capabilities': {'pie': True}})
+    result = plugin.create_chart(
+        chart_type='pie',
+        chart_data_json=json.dumps({
+            'labels': ['Apples', 'Oranges', 'Pears'],
+            'datasets': [{
+                'label': 'Share',
+                'data': [33, 33, 34],
+                'backgroundColor': ['red', 'orange', 'green'],
+                'borderColor': ['apple', 'oranges', 'pears'],
+            }],
+        }),
+        title='Fruit Distribution',
+    )
+
+    assert result['success'] is True, result
+    dataset = result['chart_payload']['data']['datasets'][0]
+    assert dataset['backgroundColor'] == ['#dc2626', '#ea580c', '#16a34a']
+    assert dataset['borderColor'] == ['#c2410c', '#ea580c', '#16a34a']
+
+
 if __name__ == '__main__':
     tests = [
         test_chart_plugin_generates_inline_chart_markdown,
         test_chart_plugin_blocks_disabled_chart_types,
+        test_chart_plugin_preserves_semantic_pie_slice_colors,
     ]
     results = []
 

@@ -7,6 +7,7 @@
     "use strict";
 
     let cachedSearchIndex = null;
+    let searchIndexPromise = null;
 
     function createIcon(iconClass) {
         const icon = document.createElement("i");
@@ -193,32 +194,79 @@
         });
     }
 
-    function getSearchIndex() {
-        if (cachedSearchIndex) {
-            return cachedSearchIndex;
+    function normalizeSearchIndex(items) {
+        if (!Array.isArray(items)) {
+            return [];
         }
 
-        const searchDataElement = document.getElementById("docs-search-data");
-        if (searchDataElement) {
-            try {
-                cachedSearchIndex = JSON.parse(searchDataElement.textContent).filter(function(item) {
-                    return item && item.title && item.url;
-                });
-                return cachedSearchIndex;
-            } catch (error) {
-                cachedSearchIndex = [];
-            }
-        }
+        return items.filter(function(item) {
+            return item && item.title && item.url;
+        });
+    }
 
-        cachedSearchIndex = Array.from(document.querySelectorAll(".docs-sidebar-link, .docs-topbar-link")).map(function(link) {
+    function getNavigationSearchIndex() {
+        return Array.from(document.querySelectorAll(".docs-sidebar-link, .docs-topbar-link")).map(function(link) {
             return {
                 title: link.textContent.trim(),
                 description: "",
+                keywords: "",
                 section: "Navigation",
                 url: link.href
             };
         });
-        return cachedSearchIndex;
+    }
+
+    function getEmbeddedSearchIndex() {
+        const searchDataElement = document.getElementById("docs-search-data");
+        if (!searchDataElement) {
+            return [];
+        }
+
+        try {
+            return normalizeSearchIndex(JSON.parse(searchDataElement.textContent));
+        } catch (error) {
+            return [];
+        }
+    }
+
+    function getSearchIndex() {
+        if (cachedSearchIndex) {
+            return Promise.resolve(cachedSearchIndex);
+        }
+
+        const embeddedIndex = getEmbeddedSearchIndex();
+        if (embeddedIndex.length > 0) {
+            cachedSearchIndex = embeddedIndex;
+            return Promise.resolve(cachedSearchIndex);
+        }
+
+        if (searchIndexPromise) {
+            return searchIndexPromise;
+        }
+
+        const searchIndexUrl = window.siteSettings?.searchIndexUrl;
+        if (!searchIndexUrl || typeof fetch !== "function") {
+            cachedSearchIndex = getNavigationSearchIndex();
+            return Promise.resolve(cachedSearchIndex);
+        }
+
+        searchIndexPromise = fetch(searchIndexUrl, { headers: { Accept: "application/json" } })
+            .then(function(response) {
+                if (!response.ok) {
+                    throw new Error("Search index request failed");
+                }
+                return response.json();
+            })
+            .then(function(items) {
+                cachedSearchIndex = normalizeSearchIndex(items);
+                return cachedSearchIndex;
+            })
+            .catch(function() {
+                cachedSearchIndex = getNavigationSearchIndex();
+                return cachedSearchIndex;
+            });
+
+        return searchIndexPromise;
     }
 
     function createSearchResult(item) {
@@ -254,49 +302,59 @@
             return;
         }
 
-        const matches = getSearchIndex().map(function(item) {
-            const title = item.title.toLowerCase();
-            const description = (item.description || "").toLowerCase();
-            const section = (item.section || "").toLowerCase();
-            const searchableText = `${title} ${description} ${section}`;
-            let score = 10;
-
-            if (title === query) {
-                score = 0;
-            } else if (title.startsWith(query)) {
-                score = 1;
-            } else if (title.includes(query)) {
-                score = 2;
-            } else if (section.includes(query)) {
-                score = 3;
-            } else if (description.includes(query)) {
-                score = 4;
+        getSearchIndex().then(function(searchIndex) {
+            if (searchInput.value.trim().toLowerCase() !== query) {
+                return;
             }
 
-            return { item, score, searchableText };
-        }).filter(function(result) {
-            return result.searchableText.includes(query);
-        }).sort(function(firstResult, secondResult) {
-            if (firstResult.score !== secondResult.score) {
-                return firstResult.score - secondResult.score;
-            }
-            return firstResult.item.title.localeCompare(secondResult.item.title);
-        }).slice(0, 8).map(function(result) {
-            return result.item;
-        });
+            resultsContainer.replaceChildren();
+            const matches = searchIndex.map(function(item) {
+                const title = item.title.toLowerCase();
+                const description = (item.description || "").toLowerCase();
+                const keywords = (item.keywords || "").toLowerCase();
+                const section = (item.section || "").toLowerCase();
+                const searchableText = `${title} ${description} ${keywords} ${section}`;
+                let score = 10;
 
-        if (matches.length === 0) {
-            const emptyState = document.createElement("div");
-            emptyState.className = "docs-search-empty";
-            emptyState.textContent = "No matching docs found.";
-            resultsContainer.appendChild(emptyState);
-        } else {
-            matches.forEach(function(item) {
-                resultsContainer.appendChild(createSearchResult(item));
+                if (title === query) {
+                    score = 0;
+                } else if (title.startsWith(query)) {
+                    score = 1;
+                } else if (title.includes(query)) {
+                    score = 2;
+                } else if (keywords.includes(query)) {
+                    score = 3;
+                } else if (section.includes(query)) {
+                    score = 4;
+                } else if (description.includes(query)) {
+                    score = 5;
+                }
+
+                return { item, score, searchableText };
+            }).filter(function(result) {
+                return result.searchableText.includes(query);
+            }).sort(function(firstResult, secondResult) {
+                if (firstResult.score !== secondResult.score) {
+                    return firstResult.score - secondResult.score;
+                }
+                return firstResult.item.title.localeCompare(secondResult.item.title);
+            }).slice(0, 8).map(function(result) {
+                return result.item;
             });
-        }
 
-        resultsContainer.classList.remove("d-none");
+            if (matches.length === 0) {
+                const emptyState = document.createElement("div");
+                emptyState.className = "docs-search-empty";
+                emptyState.textContent = "No matching docs found.";
+                resultsContainer.appendChild(emptyState);
+            } else {
+                matches.forEach(function(item) {
+                    resultsContainer.appendChild(createSearchResult(item));
+                });
+            }
+
+            resultsContainer.classList.remove("d-none");
+        });
     }
 
     function initSearch() {

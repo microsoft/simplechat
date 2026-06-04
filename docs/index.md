@@ -95,6 +95,20 @@ Simple Chat gives teams an Azure-native way to deploy, ground, govern, and exten
     <article class="latest-release-card latest-release-accent--teal">
       <div class="latest-release-card-shell">
         <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-palette"></i></span>
+          <span class="latest-release-card-badge">Admin UI</span>
+        </div>
+        <h3 class="latest-release-card-title"><a href="{{ '/how-to/admin_ui_settings/' | relative_url }}">Branding and Support Settings</a></h3>
+        <p class="latest-release-card-summary">Change logo, title, home page text, health checks, Swagger, classification banner, Support, external links, and system settings.</p>
+        <div class="latest-release-card-actions">
+          <a class="btn btn-primary btn-sm" href="{{ '/how-to/admin_ui_settings/' | relative_url }}">Open how-to</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="latest-release-card latest-release-accent--teal">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
           <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-collection-play"></i></span>
           <span class="latest-release-card-badge">Examples</span>
         </div>

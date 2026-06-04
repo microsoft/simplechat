@@ -31,6 +31,7 @@ from collaboration_models import (
     normalize_collaboration_user,
     refresh_personal_participant_indexes,
     remove_personal_participant,
+    translate_image_proposal_source_metadata,
     utc_now_iso,
 )
 from functions_activity_logging import log_chat_activity
@@ -839,6 +840,7 @@ def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, coll
     raw_messages = filter_assistant_artifact_items(raw_messages)
 
     copied_messages = []
+    source_to_collaboration_message_ids = {}
     for raw_message in raw_messages:
         collaboration_message = build_collaboration_message_doc_from_legacy(
             collaboration_conversation_id,
@@ -853,8 +855,17 @@ def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, coll
         metadata.setdefault('source_conversation_id', source_conversation_id)
         metadata.setdefault('source_thought_user_id', str((owner_user or {}).get('user_id') or '').strip())
 
-        cosmos_collaboration_messages_container.upsert_item(collaboration_message)
+        legacy_message_id = str(raw_message.get('id') or '').strip()
+        if legacy_message_id:
+            source_to_collaboration_message_ids[legacy_message_id] = str(collaboration_message.get('id') or '').strip()
         copied_messages.append(collaboration_message)
+
+    for collaboration_message in copied_messages:
+        translate_image_proposal_source_metadata(
+            collaboration_message.get('metadata'),
+            source_to_collaboration_message_ids,
+        )
+        cosmos_collaboration_messages_container.upsert_item(collaboration_message)
 
     return copied_messages
 
@@ -990,6 +1001,7 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
     raw_messages = filter_assistant_artifact_items(raw_messages)
 
     copied_messages = []
+    source_to_collaboration_message_ids = {}
     for raw_message in raw_messages:
         collaboration_message = build_collaboration_message_doc_from_legacy(
             collaboration_conversation_id,
@@ -1005,8 +1017,17 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
         metadata.setdefault('source_conversation_scope', 'group')
         metadata.setdefault('source_thought_user_id', str((owner_user or {}).get('user_id') or '').strip())
 
-        cosmos_collaboration_messages_container.upsert_item(collaboration_message)
+        legacy_message_id = str(raw_message.get('id') or '').strip()
+        if legacy_message_id:
+            source_to_collaboration_message_ids[legacy_message_id] = str(collaboration_message.get('id') or '').strip()
         copied_messages.append(collaboration_message)
+
+    for collaboration_message in copied_messages:
+        translate_image_proposal_source_metadata(
+            collaboration_message.get('metadata'),
+            source_to_collaboration_message_ids,
+        )
+        cosmos_collaboration_messages_container.upsert_item(collaboration_message)
 
     return copied_messages
 

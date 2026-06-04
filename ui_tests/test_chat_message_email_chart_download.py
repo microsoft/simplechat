@@ -1,10 +1,10 @@
 # test_chat_message_email_chart_download.py
 """
-UI test for per-message email chart PNG downloads.
-Version: 0.241.019
+UI test for per-message email visual PNG downloads.
+Version: 0.241.143
 Implemented in: 0.241.019
 
-This test ensures that Open in Email downloads PNG chart payloads from the
+This test ensures that Open in Email downloads PNG visual payloads from the
 backend email draft response before opening the mailto draft.
 """
 
@@ -156,7 +156,7 @@ def test_open_in_email_downloads_chart_png_attachments(playwright):
 
         assert mailto_url.startswith("mailto:?subject=Chart%20draft&body="), mailto_url
         assert "message_chart_1_revenue.png" in mailto_url, mailto_url
-        assert ["1 chart PNG file downloaded for the email draft.", "success"] in toast_messages, toast_messages
+        assert ["1 visual PNG file downloaded for the email draft.", "success"] in toast_messages, toast_messages
     finally:
         context.close()
         browser.close()

@@ -1,0 +1,17 @@
+---
+layout: null
+permalink: /search.json
+---
+[
+    {% assign searchable_pages = site.pages | where_exp: "item", "item.title" | sort: "title" %}
+    {% for item in searchable_pages %}
+        {% capture item_keywords %}{% if item.keywords %}{% for keyword in item.keywords %}{{ keyword }} {% endfor %}{% endif %}{% endcapture %}
+        {
+            "title": {{ item.title | jsonify }},
+            "description": {{ item.description | default: '' | strip_html | strip_newlines | truncate: 180 | jsonify }},
+            "keywords": {{ item_keywords | normalize_whitespace | jsonify }},
+            "section": {{ item.section | default: item.collection | default: 'Docs' | jsonify }},
+            "url": {{ item.url | relative_url | jsonify }}
+        }{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+]

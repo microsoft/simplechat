@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.133)**
+
+#### New Features
+
+*   **Workflow File Sync Triggers and Batch Resume**
+    *   Added File Sync Before Run controls so workflows can trigger selected personal, group, or public File Sync sources before the workflow prompt executes.
+    *   Added Monitor File Sync Changes mode, which checks selected sync sources on the configured interval and only runs the workflow when new or changed files are detected.
+    *   Added dynamic Analyze targeting for changed synced documents, per-document workflow run item tracking, and a Resume failed action that reruns failed document items from a previous Analyze workflow run.
+    *   (Ref: `functions_personal_workflows.py`, `functions_workflow_runner.py`, `functions_file_sync.py`, `route_backend_workflows.py`, `workspace_workflows.js`, `WORKFLOW_FILE_SYNC_TRIGGERS.md`)
+
 ### **(v0.241.129)**
 
 #### New Features

@@ -1366,12 +1366,16 @@ def _create_run(source: Dict[str, Any], triggered_by: Optional[str], trigger: st
         "counts": {
             "scanned": 0,
             "queued": 0,
+            "created": 0,
+            "updated": 0,
             "unchanged": 0,
             "skipped": 0,
             "deleted": 0,
             "failed": 0,
             "bytes_queued": 0,
         },
+        "changed_documents": [],
+        "changed_document_ids": [],
     }
     _get_runs_container(source["scope_type"]).create_item(body=run)
     return run
@@ -1383,7 +1387,7 @@ def _update_run(run: Dict[str, Any], fields: Dict[str, Any]) -> Dict[str, Any]:
     return run
 
 
-def queue_file_sync_source_run(source: Dict[str, Any], triggered_by: Optional[str], trigger: str = "manual") -> Dict[str, Any]:
+def queue_file_sync_source_run(source: Dict[str, Any], triggered_by: Optional[str], trigger: str = "manual", run_inline: bool = False) -> Dict[str, Any]:
     config = get_file_sync_config()
     if _count_active_runs() >= config["file_sync_max_concurrent_runs"]:
         raise ValueError("The configured File Sync concurrent run limit has been reached")
@@ -1391,6 +1395,9 @@ def queue_file_sync_source_run(source: Dict[str, Any], triggered_by: Optional[st
         raise ValueError("This File Sync source already has a queued or running sync")
 
     run = _create_run(source, triggered_by, trigger)
+    if run_inline:
+        return process_file_sync_run_by_id(source["scope_type"], _source_scope_id(source), source["id"], run["id"], triggered_by, trigger)
+
     if has_app_context():
         executor = current_app.extensions.get("executor")
         if executor and hasattr(executor, "submit_stored"):
@@ -1468,6 +1475,7 @@ def _process_file_sync_source(
         remote_files = _list_remote_files(source, config)
         remote_item_ids = set()
         bytes_queued = 0
+        changed_documents = []
 
         for remote_file in remote_files:
             counts["scanned"] = counts.get("scanned", 0) + 1
@@ -1507,14 +1515,33 @@ def _process_file_sync_source(
                     continue
 
                 remote_file["content_hash"] = content_hash
+                sync_action = "updated" if existing_item and existing_item.get("document_id") else "created"
                 document_id = _create_document_from_remote_file(source, remote_file, temp_file_path)
-                _upsert_synced_item(source, existing_item, remote_file, document_id, status="synced")
+                _upsert_synced_item(
+                    source,
+                    existing_item,
+                    remote_file,
+                    document_id,
+                    status="synced",
+                    run_id=run["id"],
+                    sync_action=sync_action,
+                )
                 counts["queued"] = counts.get("queued", 0) + 1
+                counts[sync_action] = counts.get(sync_action, 0) + 1
                 bytes_queued += remote_file.get("size", 0)
                 counts["bytes_queued"] = bytes_queued
+                changed_documents.append({
+                    "document_id": document_id,
+                    "action": sync_action,
+                    "file_name": remote_file.get("file_name"),
+                    "relative_path": remote_file.get("relative_path"),
+                    "remote_path": remote_file.get("remote_path"),
+                    "remote_modified_at": remote_file.get("modified_at"),
+                    "remote_size": remote_file.get("size"),
+                })
             except Exception as item_error:
                 counts["failed"] = counts.get("failed", 0) + 1
-                _upsert_failed_item(source, existing_item, remote_file, item_error)
+                _upsert_failed_item(source, existing_item, remote_file, item_error, run_id=run["id"])
                 log_event(
                     f"[FileSync] Error syncing {remote_file.get('remote_path')}: {item_error}",
                     level=logging.ERROR,
@@ -1530,6 +1557,8 @@ def _process_file_sync_source(
             {
                 "status": "completed" if counts.get("failed", 0) == 0 else "completed_with_errors",
                 "counts": counts,
+                "changed_documents": changed_documents,
+                "changed_document_ids": [item.get("document_id") for item in changed_documents if item.get("document_id")],
                 "completed_at": completed_at,
             },
         )
@@ -2467,6 +2496,8 @@ def _upsert_synced_item(
     remote_file: Dict[str, Any],
     document_id: str,
     status: str,
+    run_id: Optional[str] = None,
+    sync_action: str = "synced",
 ) -> None:
     source_id = source["id"]
     now_iso = _now_iso()
@@ -2492,6 +2523,8 @@ def _upsert_synced_item(
             "status": status,
             "ignored": False,
             "last_synced_at": now_iso,
+            "last_sync_run_id": run_id,
+            "last_sync_action": sync_action,
             "last_seen_at": now_iso,
             "updated_at": now_iso,
         }
@@ -2504,6 +2537,7 @@ def _upsert_failed_item(
     existing_item: Optional[Dict[str, Any]],
     remote_file: Dict[str, Any],
     error: Exception,
+    run_id: Optional[str] = None,
 ) -> None:
     source_id = source["id"]
     now_iso = _now_iso()
@@ -2526,6 +2560,8 @@ def _upsert_failed_item(
             "remote_web_url": remote_file.get("web_url"),
             "status": "failed",
             "error_message": str(error)[:1000],
+            "last_sync_run_id": run_id,
+            "last_sync_action": "failed",
             "last_seen_at": now_iso,
             "updated_at": now_iso,
         }

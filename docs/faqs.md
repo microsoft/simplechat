@@ -57,6 +57,17 @@ Use this page as the fast triage layer: it focuses on the recurring questions th
          </div>
       </article>
 
+      <article class="latest-release-card latest-release-accent--teal">
+         <div class="latest-release-card-shell">
+            <div class="latest-release-card-top">
+               <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-palette"></i></span>
+               <span class="latest-release-card-badge">Admin UI</span>
+            </div>
+            <h3 class="latest-release-card-title"><a href="#admin-ui-and-support">Branding, support, and docs</a></h3>
+            <p class="latest-release-card-summary">Use this section when users need to know where branding, home page text, health checks, Swagger, Support, and external links are configured.</p>
+         </div>
+      </article>
+
       <article class="latest-release-card latest-release-accent--emerald">
          <div class="latest-release-card-shell">
             <div class="latest-release-card-top">
@@ -207,6 +218,118 @@ Use this page as the fast triage layer: it focuses on the recurring questions th
    </details>
 </section>
 
+<div id="admin-ui-and-support"></div>
+
+<section class="latest-release-section">
+   <div class="latest-release-section-header">
+      <div>
+         <div class="latest-release-section-kicker">Admin UI</div>
+         <h2>Branding, support, and documentation questions</h2>
+         <p>These answers point admins to the General settings that control the parts of Simple Chat users notice first.</p>
+      </div>
+      <span class="latest-release-section-badge">User-facing settings</span>
+   </div>
+
+   <details class="latest-release-archive-panel">
+      <summary>
+         <span class="latest-release-archive-summary-copy">
+            <span class="latest-release-section-kicker">Q5</span>
+            <strong>Where do I change the application title, logo, favicon, or home page text?</strong>
+            <small>Branding and landing content are both in Admin Settings under General.</small>
+         </span>
+         <span class="latest-release-archive-toggle">
+            <span class="latest-release-archive-version">Branding</span>
+            <span class="latest-release-archive-toggle-text">Open answer</span>
+         </span>
+      </summary>
+      <div class="latest-release-archive-body">
+         <div class="latest-release-note-panel latest-release-accent--teal">
+            <h3>What to do</h3>
+            <ul>
+               <li>Open <strong>Admin Settings > General > Branding</strong> to change the application title, logo visibility, light and dark logos, home page logo size, and favicon.</li>
+               <li>Open <strong>Admin Settings > General > Home Page Text</strong> to edit the landing page Markdown and alignment.</li>
+               <li>Use <a href="{{ '/how-to/admin_ui_settings/' | relative_url }}">Configure Branding, Home Page, and Support Settings</a> for the full checklist.</li>
+            </ul>
+         </div>
+      </div>
+   </details>
+
+   <details class="latest-release-archive-panel">
+      <summary>
+         <span class="latest-release-archive-summary-copy">
+            <span class="latest-release-section-kicker">Q6</span>
+            <strong>How do I check whether the system is healthy?</strong>
+            <small>Enable one of the external health check routes before wiring a monitor to it.</small>
+         </span>
+         <span class="latest-release-archive-toggle">
+            <span class="latest-release-archive-version">Health checks</span>
+            <span class="latest-release-archive-toggle-text">Open answer</span>
+         </span>
+      </summary>
+      <div class="latest-release-archive-body">
+         <div class="latest-release-note-panel latest-release-accent--emerald">
+            <h3>What to verify</h3>
+            <ul>
+               <li>Use <strong>Admin Settings > General > Health Check</strong> to enable <code>/external/healthcheck</code> or <code>/external/healthcheckz</code>.</li>
+               <li>Use <code>/external/healthcheck</code> when the monitoring path can reach a protected route.</li>
+               <li>Use <code>/external/healthcheckz</code> only when the monitor cannot authenticate and the network path is trusted.</li>
+               <li>Test from the monitoring network path, not only from an admin workstation.</li>
+            </ul>
+         </div>
+      </div>
+   </details>
+
+   <details class="latest-release-archive-panel">
+      <summary>
+         <span class="latest-release-archive-summary-copy">
+            <span class="latest-release-section-kicker">Q7</span>
+            <strong>Where are the API docs?</strong>
+            <small>Swagger is available at /swagger when the admin toggle is enabled.</small>
+         </span>
+         <span class="latest-release-archive-toggle">
+            <span class="latest-release-archive-version">Swagger</span>
+            <span class="latest-release-archive-toggle-text">Open answer</span>
+         </span>
+      </summary>
+      <div class="latest-release-archive-body">
+         <div class="latest-release-note-panel latest-release-accent--slate">
+            <h3>What to use</h3>
+            <ul>
+               <li>Enable <strong>Admin Settings > General > API Documentation > Enable Swagger/OpenAPI Documentation (/swagger)</strong>.</li>
+               <li>Open <code>/swagger</code> for the interactive browser.</li>
+               <li>Use <code>/swagger.json</code> or <code>/swagger.yaml</code> for tooling.</li>
+               <li>See the <a href="{{ '/reference/api_reference/' | relative_url }}">API Reference</a> for endpoint details.</li>
+            </ul>
+         </div>
+      </div>
+   </details>
+
+   <details class="latest-release-archive-panel">
+      <summary>
+         <span class="latest-release-archive-summary-copy">
+            <span class="latest-release-section-kicker">Q8</span>
+            <strong>How do I show a classification banner, Support menu, or external resource links?</strong>
+            <small>These navigation and guidance features are configured from General settings.</small>
+         </span>
+         <span class="latest-release-archive-toggle">
+            <span class="latest-release-archive-version">Navigation</span>
+            <span class="latest-release-archive-toggle-text">Open answer</span>
+         </span>
+      </summary>
+      <div class="latest-release-archive-body">
+         <div class="latest-release-note-panel latest-release-accent--orange">
+            <h3>Where to go</h3>
+            <ul>
+               <li><strong>Classification Banner</strong>: set banner text, background color, and text color for the top-of-page sensitivity label.</li>
+               <li><strong>Support</strong>: enable Support, rename the menu, configure Send Feedback, and choose which Latest Features users can see.</li>
+               <li><strong>External Links</strong>: add links to policies, prompt guides, help desks, or other trusted resources.</li>
+               <li><strong>System Settings</strong>: tune maximum file size, conversation history limit, and the default system prompt.</li>
+            </ul>
+         </div>
+      </div>
+   </details>
+</section>
+
 <div id="uploads-and-search"></div>
 
 <section class="latest-release-section">
@@ -222,7 +345,7 @@ Use this page as the fast triage layer: it focuses on the recurring questions th
    <details class="latest-release-archive-panel">
       <summary>
          <span class="latest-release-archive-summary-copy">
-            <span class="latest-release-section-kicker">Q5</span>
+            <span class="latest-release-section-kicker">Q9</span>
             <strong>File uploads are failing.</strong>
             <small>Start by checking the dependent services the pipeline writes to during ingestion.</small>
          </span>
@@ -247,7 +370,7 @@ Use this page as the fast triage layer: it focuses on the recurring questions th
    <details class="latest-release-archive-panel">
       <summary>
          <span class="latest-release-archive-summary-copy">
-            <span class="latest-release-section-kicker">Q6</span>
+            <span class="latest-release-section-kicker">Q10</span>
             <strong>RAG is not returning expected results or any results.</strong>
             <small>When search quality drops, verify indexing and embeddings before tuning prompts.</small>
          </span>
@@ -285,7 +408,7 @@ Use this page as the fast triage layer: it focuses on the recurring questions th
    <details class="latest-release-archive-panel">
       <summary>
          <span class="latest-release-archive-summary-copy">
-            <span class="latest-release-section-kicker">Q7</span>
+            <span class="latest-release-section-kicker">Q11</span>
             <strong>How do I update the GPT, embedding, or DALL-E models used by the application?</strong>
             <small>Model selection is handled through admin configuration rather than code deployment.</small>
          </span>

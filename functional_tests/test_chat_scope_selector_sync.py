@@ -1,13 +1,15 @@
 # test_chat_scope_selector_sync.py
 """
 Functional test for chat scope selector synchronization.
-Version: 0.239.199
-Implemented in: 0.239.198
+Version: 0.241.133
+Implemented in: 0.239.198; updated in 0.241.133 for Assigned Knowledge scope locks
 
 This test ensures that chat scope changes synchronize the agent and model
 selectors, that explicit scoped selections can narrow the workspace context,
 and that stream-driven conversation metadata updates now refresh both the
 sidebar workspace badge and locked-scope selector filtering immediately.
+It also verifies that Assigned Knowledge keeps personal agents usable when
+their assigned sources include public workspaces.
 """
 
 import os
@@ -179,6 +181,47 @@ def test_agent_and_model_selectors_use_preloaded_scope_catalogs():
     return True
 
 
+def test_assigned_knowledge_lock_preserves_personal_agent_scope():
+    """Verify Assigned Knowledge adds the owner scope without enabling document picking."""
+    print('🔍 Testing Assigned Knowledge personal scope lock wiring...')
+
+    documents_content = read_file(CHAT_DOCUMENTS_FILE)
+    backend_chats_content = read_file(BACKEND_CHATS_FILE)
+
+    required_snippets = {
+        'chat-documents.js': [
+            'function getAssignedKnowledgeScopeSelection(agent = {}, assignedKnowledge = {})',
+            'personal = true;',
+            'await setEffectiveScopes(',
+            "source: 'assigned-knowledge'",
+            'const lockPickerControls = isActive && !assignedKnowledgeAllowsUserContext;',
+        ],
+        'route_backend_chats.py': [
+            'def _build_agent_selection_metadata(agent_info, assigned_knowledge_filters=None):',
+            "metadata['assigned_knowledge_enabled'] = True",
+            'selected_agent_details=_build_agent_selection_metadata(',
+            'selected_agent_metadata = _build_agent_selection_metadata(',
+        ],
+    }
+
+    file_map = {
+        'chat-documents.js': documents_content,
+        'route_backend_chats.py': backend_chats_content,
+    }
+
+    missing = []
+    for label, snippets in required_snippets.items():
+        content = file_map[label]
+        for snippet in snippets:
+            if snippet not in content:
+                missing.append(f'{label}: {snippet}')
+
+    assert not missing, f'Missing Assigned Knowledge scope lock snippets: {missing}'
+
+    print('✅ Assigned Knowledge personal scope lock wiring passed')
+    return True
+
+
 def test_conversation_metadata_is_returned_for_immediate_badges():
     """Verify backend and streaming responses now expose the metadata needed for immediate badge refresh."""
     print('🔍 Testing conversation metadata propagation for immediate badges...')
@@ -254,7 +297,7 @@ def test_config_version_is_bumped_for_post_response_scope_sync_fix():
     print('🔍 Testing config version bump...')
 
     config_content = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.239.199"' in config_content, 'Expected config.py version 0.239.199'
+    assert 'VERSION = "0.241.133"' in config_content, 'Expected config.py version 0.241.133'
 
     print('✅ Config version bump passed')
     return True
@@ -264,6 +307,7 @@ if __name__ == '__main__':
     tests = [
         test_scope_change_pipeline_is_exported_for_selector_sync,
         test_agent_and_model_selectors_use_preloaded_scope_catalogs,
+        test_assigned_knowledge_lock_preserves_personal_agent_scope,
         test_conversation_metadata_is_returned_for_immediate_badges,
         test_config_version_is_bumped_for_post_response_scope_sync_fix,
     ]

@@ -14,6 +14,25 @@ const DEFAULT_PALETTE = [
     { background: 'rgba(58, 141, 121, 0.18)', border: '#3a8d79' },
     { background: 'rgba(101, 120, 48, 0.18)', border: '#657830' }
 ];
+const NAMED_CHART_COLORS = Object.freeze({
+    apple: '#c2410c',
+    apples: '#c2410c',
+    red: '#dc2626',
+    orange: '#ea580c',
+    oranges: '#ea580c',
+    pear: '#16a34a',
+    pears: '#16a34a',
+    green: '#16a34a',
+    blue: '#2563eb',
+    purple: '#7c3aed',
+    yellow: '#ca8a04',
+    gold: '#ca8a04',
+    brown: '#92400e',
+    gray: '#64748b',
+    grey: '#64748b',
+    black: '#111827',
+    white: '#f8fafc'
+});
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, character => (
@@ -48,11 +67,30 @@ function sanitizeColor(value, fallback) {
         return fallback;
     }
 
+    const namedColor = NAMED_CHART_COLORS[trimmed.toLowerCase()];
+    if (namedColor) {
+        return namedColor;
+    }
+
     if (trimmed.startsWith('#') || trimmed.startsWith('rgb(') || trimmed.startsWith('rgba(') || trimmed.startsWith('hsl(') || trimmed.startsWith('hsla(')) {
         return trimmed;
     }
 
     return fallback;
+}
+
+function sanitizeColorList(value, targetLength, fallbackResolver) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return [];
+    }
+
+    const colors = value.slice(0, targetLength).map((item, colorIndex) => (
+        sanitizeColor(item, fallbackResolver(colorIndex))
+    ));
+    while (colors.length < targetLength) {
+        colors.push(fallbackResolver(colors.length));
+    }
+    return colors;
 }
 
 function getBaseChartType(kind) {
@@ -316,8 +354,16 @@ function normalizeDatasets(kind, rawDatasets, labels) {
         }
 
         if ((kind === 'pie' || kind === 'doughnut' || kind === 'polar_area') && Array.isArray(labels) && labels.length) {
-            normalized.backgroundColor = labels.map((_, colorIndex) => getPalette(colorIndex).background);
-            normalized.borderColor = labels.map((_, colorIndex) => getPalette(colorIndex).border);
+            normalized.backgroundColor = sanitizeColorList(
+                dataset?.backgroundColor,
+                labels.length,
+                colorIndex => getPalette(colorIndex).background
+            );
+            normalized.borderColor = sanitizeColorList(
+                dataset?.borderColor,
+                labels.length,
+                colorIndex => getPalette(colorIndex).border
+            );
         }
 
         if (dataset?.type === 'line' || dataset?.type === 'bar') {
@@ -613,13 +659,39 @@ export function injectInlineChartHtml(html = '', blocks = []) {
     return renderedHtml;
 }
 
+function getChartInstanceForCanvas(canvas) {
+    if (!canvas || typeof window.Chart === 'undefined' || typeof window.Chart.getChart !== 'function') {
+        return null;
+    }
+    return window.Chart.getChart(canvas);
+}
+
+export function destroyInlineCharts(root = document) {
+    const chartContainers = root.matches?.('.sc-inline-chart')
+        ? [root]
+        : root.querySelectorAll('.sc-inline-chart');
+    chartContainers.forEach(container => {
+        const canvas = container.querySelector('canvas');
+        const chartInstance = container._chartInstance || getChartInstanceForCanvas(canvas);
+        if (chartInstance && typeof chartInstance.destroy === 'function') {
+            chartInstance.destroy();
+        }
+        container._chartInstance = null;
+    });
+}
+
 export function hydrateInlineCharts(root = document) {
-    const chartContainers = root.querySelectorAll('.sc-inline-chart[data-chart-hydrated="false"]');
+    const chartContainers = root.querySelectorAll('.sc-inline-chart:not([data-chart-hydrated="status"])');
     chartContainers.forEach(container => {
         const specText = container.getAttribute('data-chart-spec');
         const stage = container.querySelector('.sc-inline-chart-stage');
         const canvas = container.querySelector('canvas');
         if (!specText || !stage || !canvas) {
+            return;
+        }
+
+        const existingChart = container._chartInstance || getChartInstanceForCanvas(canvas);
+        if (container.getAttribute('data-chart-hydrated') === 'true' && existingChart) {
             return;
         }
 
@@ -638,8 +710,8 @@ export function hydrateInlineCharts(root = document) {
             }
 
             const chartConfig = buildChartJsConfig(spec);
-            if (container._chartInstance) {
-                container._chartInstance.destroy();
+            if (existingChart && typeof existingChart.destroy === 'function') {
+                existingChart.destroy();
             }
             container._chartInstance = new window.Chart(canvas.getContext('2d'), chartConfig);
             container.setAttribute('data-chart-hydrated', 'true');

@@ -1,5 +1,6 @@
 # route_backend_conversation_export.py
 
+import base64
 import io
 import json
 import markdown2
@@ -31,6 +32,13 @@ from functions_collaboration import (
 )
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
+from functions_image_generation import INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE
+from functions_image_messages import (
+    decode_image_content,
+    get_complete_image_content,
+    is_blob_backed_image_message,
+    is_external_image_url,
+)
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     hydrate_agent_citations_from_artifacts,
@@ -56,6 +64,7 @@ DOCX_MARKDOWN_EXTRAS = ['fenced-code-blocks', 'tables', 'break-on-newline', 'cud
 EMAIL_SUBJECT_CHAR_LIMIT = 120
 EMAIL_SUBJECT_SOURCE_CHAR_LIMIT = 12000
 EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX = 'message_chart'
+EMAIL_IMAGE_ATTACHMENT_FILENAME_PREFIX = 'message_image'
 POWERPOINT_PLAN_SOURCE_CHAR_LIMIT = 24000
 POWERPOINT_DEFAULT_SLIDES = 7
 POWERPOINT_MAX_SLIDES = 30
@@ -67,6 +76,7 @@ POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT = 180
 POWERPOINT_MAX_APPENDIX_IMAGES = 4
 POWERPOINT_MAX_APPENDIX_TABLES = 3
 POWERPOINT_MAX_APPENDIX_CODE_BLOCKS = 2
+POWERPOINT_MAX_INLINE_IMAGES_PER_SLIDE = 2
 POWERPOINT_MAX_TABLE_ROWS = 8
 POWERPOINT_MAX_TABLE_COLS = 5
 
@@ -80,6 +90,10 @@ POWERPOINT_TITLE_TEXT = RGBColor(255, 255, 255)
 
 POWERPOINT_DATA_URI_PATTERN = re.compile(
     r"data:image\/[a-zA-Z0-9.+-]+;base64,[^\"'\s)]+",
+    re.IGNORECASE,
+)
+INLINE_IMAGE_PROPOSAL_EXPORT_REGEX = re.compile(
+    rf"```{re.escape(INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE)}\s*([\s\S]*?)```",
     re.IGNORECASE,
 )
 
@@ -1483,6 +1497,12 @@ def _load_export_message_for_user(user_id: str, conversation_id: str, message_id
         if hydrated_messages:
             message = hydrated_messages[0]
 
+    if message.get('role') == 'assistant':
+        message = _attach_generated_image_proposal_assets(
+            message,
+            conversation_id=conversation_id,
+        )
+
     return message
 
 
@@ -1561,6 +1581,377 @@ def _load_generated_markdown_artifact_for_user(
     return artifact_message
 
 
+def _attach_generated_image_proposal_assets(
+    message: Dict[str, Any],
+    conversation_id: str,
+) -> Dict[str, Any]:
+    message_id = str(message.get('id') or '').strip()
+    if not message_id:
+        return message
+
+    image_assets = _load_generated_image_proposal_assets(
+        conversation_id=conversation_id,
+        source_assistant_message_id=message_id,
+    )
+    if not image_assets:
+        return message
+
+    export_message = dict(message)
+    export_message['_export_generated_image_assets'] = image_assets
+    return export_message
+
+
+def _load_generated_image_proposal_assets(
+    conversation_id: str,
+    source_assistant_message_id: str,
+) -> List[Dict[str, Any]]:
+    normalized_source_id = str(source_assistant_message_id or '').strip()
+    if not normalized_source_id:
+        return []
+
+    try:
+        image_messages = list(cosmos_messages_container.query_items(
+            query=(
+                'SELECT * FROM c '
+                'WHERE c.conversation_id = @conversation_id AND c.role = @role'
+            ),
+            parameters=[
+                {'name': '@conversation_id', 'value': conversation_id},
+                {'name': '@role', 'value': 'image'},
+            ],
+            partition_key=conversation_id,
+        ))
+    except Exception as exc:
+        debug_print(f'Image proposal export lookup failed: {exc}')
+        return []
+
+    image_assets: List[Dict[str, Any]] = []
+    for image_message in image_messages:
+        metadata = image_message.get('metadata') if isinstance(image_message.get('metadata'), dict) else {}
+        proposal = metadata.get('image_proposal') if isinstance(metadata.get('image_proposal'), dict) else {}
+        proposal_source_id = str(proposal.get('source_assistant_message_id') or '').strip()
+        if proposal_source_id != normalized_source_id:
+            continue
+
+        image_asset = _build_export_image_asset_from_message(
+            conversation_id=conversation_id,
+            image_message=image_message,
+            proposal=proposal,
+        )
+        if image_asset:
+            image_assets.append(image_asset)
+
+    return image_assets
+
+
+def _build_export_image_asset_from_message(
+    conversation_id: str,
+    image_message: Dict[str, Any],
+    proposal: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    data_uri = _resolve_image_message_export_data_uri(conversation_id, image_message)
+    if not data_uri:
+        return None
+
+    title = _clean_export_visual_text(
+        proposal.get('title') or image_message.get('filename') or 'Generated image',
+        160,
+    )
+    caption = _clean_export_visual_text(
+        proposal.get('description') or proposal.get('context') or title,
+        240,
+    )
+
+    return {
+        'message_id': str(image_message.get('id') or '').strip(),
+        'data_uri': data_uri,
+        'content_type': 'image/png',
+        'proposal': proposal,
+        'title': title or 'Generated image',
+        'caption': caption,
+        'visual_id': _normalize_export_visual_id(proposal.get('visualId') or proposal.get('visual_id')),
+        'prompt': _normalize_export_prompt(proposal.get('prompt')),
+    }
+
+
+def _resolve_image_message_export_data_uri(
+    conversation_id: str,
+    image_message: Dict[str, Any],
+) -> str:
+    try:
+        if is_blob_backed_image_message(image_message):
+            image_bytes = download_blob_content(
+                image_message.get('blob_container'),
+                image_message.get('blob_path'),
+            )
+            return _image_bytes_to_png_data_uri(image_bytes)
+
+        message_id = str(image_message.get('id') or '').strip()
+        if message_id:
+            try:
+                _, complete_content = get_complete_image_content(
+                    cosmos_messages_container,
+                    conversation_id,
+                    message_id,
+                )
+            except Exception:
+                complete_content = str(image_message.get('content') or '')
+        else:
+            complete_content = str(image_message.get('content') or '')
+
+        if is_external_image_url(complete_content):
+            return ''
+
+        _, image_bytes = decode_image_content(complete_content)
+        return _image_bytes_to_png_data_uri(image_bytes)
+    except Exception as exc:
+        debug_print(f'Image proposal export data URI resolution failed: {exc}')
+        return ''
+
+
+def _image_bytes_to_png_data_uri(image_bytes: bytes) -> str:
+    if not image_bytes:
+        return ''
+
+    png_bytes = b''
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image_to_save = image
+            if image.mode not in {'RGB', 'RGBA'}:
+                image_to_save = image.convert('RGBA' if 'A' in image.getbands() else 'RGB')
+            png_buffer = io.BytesIO()
+            image_to_save.save(png_buffer, format='PNG')
+            png_bytes = png_buffer.getvalue()
+    except Exception:
+        if bytes(image_bytes).startswith(b'\x89PNG'):
+            png_bytes = bytes(image_bytes)
+
+    if not png_bytes:
+        return ''
+
+    encoded_payload = base64.b64encode(png_bytes).decode('ascii')
+    return f'data:image/png;base64,{encoded_payload}'
+
+
+def _render_message_export_content(
+    message: Dict[str, Any],
+    source_content: Optional[Any] = None,
+) -> str:
+    raw_content = message.get('content', '') if source_content is None else source_content
+    rendered_content = replace_inline_chart_blocks_with_export_html(
+        _normalize_content(raw_content)
+    )
+    return _replace_inline_image_proposal_blocks_with_export_html(
+        rendered_content,
+        _get_message_export_image_assets(message),
+    )
+
+
+def _get_message_export_image_assets(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw_assets = message.get('_export_generated_image_assets')
+    if not isinstance(raw_assets, list):
+        raw_assets = message.get('generated_image_proposals')
+    if not isinstance(raw_assets, list):
+        return []
+
+    image_assets: List[Dict[str, Any]] = []
+    for raw_asset in raw_assets:
+        image_asset = _normalize_export_image_asset(raw_asset)
+        if image_asset:
+            image_assets.append(image_asset)
+    return image_assets
+
+
+def _normalize_export_image_asset(raw_asset: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_asset, dict):
+        return None
+
+    data_uri = str(
+        raw_asset.get('data_uri')
+        or raw_asset.get('image_url')
+        or raw_asset.get('content')
+        or ''
+    ).strip()
+    image_bytes = decode_base64_image_data_uri(data_uri)
+    if not image_bytes:
+        return None
+
+    png_data_uri = _image_bytes_to_png_data_uri(image_bytes)
+    if not png_data_uri:
+        return None
+
+    raw_proposal = raw_asset.get('proposal') or raw_asset.get('image_proposal') or {}
+    if not isinstance(raw_proposal, dict):
+        raw_proposal = {}
+
+    title = _clean_export_visual_text(
+        raw_asset.get('title') or raw_proposal.get('title') or 'Generated image',
+        160,
+    )
+    caption = _clean_export_visual_text(
+        raw_asset.get('caption')
+        or raw_proposal.get('description')
+        or raw_proposal.get('context')
+        or title,
+        240,
+    )
+
+    return {
+        'message_id': str(raw_asset.get('message_id') or raw_asset.get('id') or '').strip(),
+        'data_uri': png_data_uri,
+        'content_type': 'image/png',
+        'proposal': raw_proposal,
+        'title': title or 'Generated image',
+        'caption': caption,
+        'visual_id': _normalize_export_visual_id(raw_proposal.get('visualId') or raw_proposal.get('visual_id')),
+        'prompt': _normalize_export_prompt(raw_proposal.get('prompt')),
+    }
+
+
+def _replace_inline_image_proposal_blocks_with_export_html(
+    content: str,
+    image_assets: List[Dict[str, Any]],
+) -> str:
+    rendered_content = str(content or '')
+    if INLINE_IMAGE_PROPOSAL_EXPORT_REGEX.search(rendered_content) is None:
+        return rendered_content
+
+    used_asset_indexes = set()
+
+    def replace_match(match: re.Match[str]) -> str:
+        proposal = _parse_inline_image_proposal_payload(match.group(1) or '')
+        image_asset, asset_index = _find_export_image_asset_for_proposal(
+            proposal,
+            image_assets,
+            used_asset_indexes,
+        )
+        if image_asset is not None and asset_index is not None:
+            used_asset_indexes.add(asset_index)
+            return _build_export_inline_image_html(image_asset, proposal)
+
+        return _build_missing_export_inline_image_html(proposal)
+
+    return INLINE_IMAGE_PROPOSAL_EXPORT_REGEX.sub(replace_match, rendered_content)
+
+
+def _parse_inline_image_proposal_payload(payload_text: str) -> Dict[str, Any]:
+    payload_json = str(payload_text or '').strip()
+    if not payload_json:
+        return {}
+
+    try:
+        parsed_payload = json.loads(payload_json)
+        return parsed_payload if isinstance(parsed_payload, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _find_export_image_asset_for_proposal(
+    proposal: Dict[str, Any],
+    image_assets: List[Dict[str, Any]],
+    used_asset_indexes: set,
+) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+    if not image_assets:
+        return None, None
+
+    visual_id = _normalize_export_visual_id(proposal.get('visualId') or proposal.get('visual_id'))
+    title = _clean_export_visual_text(proposal.get('title'), 160).lower()
+    prompt = _normalize_export_prompt(proposal.get('prompt'))
+
+    for index, image_asset in enumerate(image_assets):
+        if index in used_asset_indexes:
+            continue
+
+        if visual_id and visual_id == image_asset.get('visual_id'):
+            return image_asset, index
+
+        asset_proposal = image_asset.get('proposal') if isinstance(image_asset.get('proposal'), dict) else {}
+        asset_title = _clean_export_visual_text(
+            image_asset.get('title') or asset_proposal.get('title'),
+            160,
+        ).lower()
+        if title and asset_title and title == asset_title:
+            return image_asset, index
+
+        asset_prompt = image_asset.get('prompt') or _normalize_export_prompt(asset_proposal.get('prompt'))
+        if prompt and asset_prompt and prompt == asset_prompt:
+            return image_asset, index
+
+    for index, image_asset in enumerate(image_assets):
+        if index not in used_asset_indexes:
+            return image_asset, index
+
+    return None, None
+
+
+def _build_export_inline_image_html(
+    image_asset: Dict[str, Any],
+    proposal: Dict[str, Any],
+) -> str:
+    title = _clean_export_visual_text(
+        image_asset.get('title') or proposal.get('title') or 'Generated image',
+        160,
+    ) or 'Generated image'
+    caption = _clean_export_visual_text(
+        image_asset.get('caption')
+        or proposal.get('description')
+        or proposal.get('context')
+        or title,
+        240,
+    )
+    if title and caption and title != caption:
+        caption = _clean_export_visual_text(f'{title}: {caption}', 260)
+    elif title and not caption:
+        caption = title
+    caption_html = ''
+    if caption:
+        caption_html = (
+            '<p class="export-inline-image-caption">'
+            f'<em>{_escape_html(caption)}</em>'
+            '</p>'
+        )
+
+    return (
+        '\n\n'
+        '<div class="export-inline-image">'
+        f'<p><img src="{_escape_html(image_asset.get("data_uri") or "")}" alt="{_escape_html(title)}" /></p>'
+        f'{caption_html}'
+        '</div>'
+        '\n\n'
+    )
+
+
+def _build_missing_export_inline_image_html(proposal: Dict[str, Any]) -> str:
+    title = _clean_export_visual_text(proposal.get('title') or 'Image proposal', 160)
+    return (
+        '\n\n'
+        '<p><em>'
+        f'Image proposal not generated: {_escape_html(title)}'
+        '</em></p>'
+        '\n\n'
+    )
+
+
+def _clean_export_visual_text(value: Any, max_chars: int) -> str:
+    text = re.sub(r'\s+', ' ', str(value or '')).strip()
+    if max_chars and len(text) > max_chars:
+        text = text[:max_chars - 3].rstrip()
+        if ' ' in text:
+            text = text.rsplit(' ', 1)[0]
+        text = f'{text}...'
+    return text
+
+
+def _normalize_export_visual_id(value: Any) -> str:
+    normalized_value = re.sub(r'[^a-zA-Z0-9_.-]+', '_', str(value or '').strip())
+    normalized_value = normalized_value.strip('._-')
+    return normalized_value[:120]
+
+
+def _normalize_export_prompt(value: Any) -> str:
+    return str(value or '').replace('\r\n', '\n').replace('\r', '\n').strip()[:4000]
+
+
 def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
     doc = DocxDocument()
     doc.add_heading('Message Export', level=1)
@@ -1576,9 +1967,7 @@ def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
 
     doc.add_paragraph('')
 
-    content = replace_inline_chart_blocks_with_export_html(
-        _normalize_content(message.get('content', ''))
-    )
+    content = _render_message_export_content(message)
     if content:
         _add_markdown_content_to_doc(doc, content)
     else:
@@ -1604,12 +1993,9 @@ def _message_to_pptx_bytes(
     role_label = _role_to_label(message.get('role', 'unknown'))
     timestamp = str(message.get('timestamp', '') or '')
 
-    render_content = replace_inline_chart_blocks_with_export_html(
-        _normalize_content(message.get('content', ''))
-    )
-    planning_content = _sanitize_powerpoint_source_content(render_content)
+    render_content = _render_message_export_content(message)
     slide_plan = _build_message_powerpoint_plan(
-        content=planning_content,
+        content=render_content,
         message=message,
         settings=settings,
         requested_model=_extract_message_powerpoint_model(message),
@@ -1755,10 +2141,12 @@ def _build_structured_markdown_powerpoint_plan(
             max_bullets=POWERPOINT_MAX_STRUCTURED_BULLETS_PER_SLIDE,
         )
         tables = _extract_structured_powerpoint_tables(section_content)
+        images = _extract_structured_powerpoint_images(section_content)
         slides.append({
             'title': title or f'Slide {index}',
             'bullets': bullets,
             'tables': tables,
+            'images': images,
             'allow_empty_body': True,
             'bullet_char_limit': POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT,
             'footer_label': _build_powerpoint_slide_footer_label(section, index),
@@ -1913,10 +2301,17 @@ def _resolve_powerpoint_slide_title_and_content(
     content: str,
     fallback_title: str,
 ) -> Tuple[str, str]:
+    labeled_title, content_without_labeled_title = _extract_powerpoint_labeled_title(content)
     if marker_title:
-        return _clean_slide_text(marker_title, 100), str(content or '').strip()
+        resolved_marker_title = _clean_slide_text(marker_title, 100)
+        if labeled_title and _should_prefer_labeled_powerpoint_title(resolved_marker_title):
+            return _clean_slide_text(labeled_title, 100), content_without_labeled_title
+        return resolved_marker_title, content_without_labeled_title
 
-    content_lines = str(content or '').splitlines()
+    if labeled_title:
+        return _clean_slide_text(labeled_title, 100) or fallback_title, content_without_labeled_title
+
+    content_lines = content_without_labeled_title.splitlines()
     for index, line in enumerate(content_lines):
         stripped_line = line.strip()
         if not stripped_line:
@@ -1931,7 +2326,53 @@ def _resolve_powerpoint_slide_title_and_content(
             )
         break
 
-    return fallback_title, str(content or '').strip()
+    return fallback_title, content_without_labeled_title
+
+
+def _extract_powerpoint_labeled_title(content: str) -> Tuple[str, str]:
+    content_lines = str(content or '').splitlines()
+    labeled_title = ''
+    retained_lines: List[str] = []
+    removed_title = False
+
+    for line in content_lines:
+        label_name, label_value = _parse_powerpoint_structured_label_line(line)
+        if label_name == 'title' and not removed_title:
+            labeled_title = _clean_slide_text(label_value, 120)
+            removed_title = True
+            continue
+        retained_lines.append(line)
+
+    return labeled_title, '\n'.join(retained_lines).strip()
+
+
+def _parse_powerpoint_structured_label_line(line: str) -> Tuple[str, str]:
+    match = re.match(
+        r'^\s*(title|subtitle|bullet\s*points?|speaker\s*notes?|visual|image|chart)\s*:\s*(.*?)\s*$',
+        str(line or '').strip(),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return '', ''
+
+    normalized_label = re.sub(r'\s+', ' ', match.group(1).strip().lower())
+    return normalized_label, match.group(2).strip()
+
+
+def _should_prefer_labeled_powerpoint_title(marker_title: str) -> bool:
+    normalized_title = _clean_slide_text(marker_title, 100).lower()
+    if not normalized_title:
+        return True
+
+    return normalized_title in {
+        'agenda',
+        'intro',
+        'introduction',
+        'overview',
+        'section',
+        'title',
+        'title slide',
+    }
 
 
 def _extract_powerpoint_preamble_title(lines: List[str]) -> str:
@@ -2010,10 +2451,37 @@ def _extract_powerpoint_title_section_lines(content: str) -> List[str]:
             continue
         if _looks_like_markdown_table_row(stripped_line) or _looks_like_markdown_table_divider(stripped_line):
             continue
+        if _line_contains_powerpoint_inline_visual(stripped_line):
+            continue
+
+        label_name, label_value = _parse_powerpoint_structured_label_line(stripped_line)
+        if label_name in {'title', 'bullet points', 'bullet point', 'visual', 'image', 'chart'}:
+            if label_name == 'title' and label_value:
+                title_lines.append(label_value)
+            continue
+        if label_name == 'subtitle':
+            if label_value:
+                title_lines.append(label_value)
+            continue
+        if label_name in {'speaker note', 'speaker notes'}:
+            continue
 
         title_lines.append(stripped_line)
 
     return title_lines
+
+
+def _line_contains_powerpoint_inline_visual(line: str) -> bool:
+    normalized_line = str(line or '').strip().lower()
+    if not normalized_line:
+        return False
+
+    return (
+        '<img' in normalized_line
+        or 'export-inline-chart' in normalized_line
+        or 'export-inline-image' in normalized_line
+        or normalized_line.startswith('![')
+    )
 
 
 def _build_powerpoint_slide_footer_label(section: Dict[str, str], fallback_index: int) -> str:
@@ -2099,6 +2567,22 @@ def _extract_structured_powerpoint_bullets(content: str, max_bullets: int) -> Li
             flush_paragraph_lines()
             continue
 
+        if _line_contains_powerpoint_inline_visual(stripped_line):
+            flush_paragraph_lines()
+            continue
+
+        label_name, label_value = _parse_powerpoint_structured_label_line(stripped_line)
+        if label_name:
+            flush_paragraph_lines()
+            if label_name in {'speaker note', 'speaker notes'} and label_value:
+                cleaned_label_value = _clean_slide_text(
+                    label_value,
+                    POWERPOINT_STRUCTURED_BULLET_CHAR_LIMIT,
+                )
+                if cleaned_label_value and cleaned_label_value not in bullets:
+                    bullets.append(cleaned_label_value)
+            continue
+
         heading_match = re.match(r'^#{1,6}\s+(.+?)\s*$', stripped_line)
         if heading_match:
             flush_paragraph_lines()
@@ -2162,6 +2646,51 @@ def _extract_structured_powerpoint_tables(content: str) -> List[Dict[str, Any]]:
 
     flush_table_block()
     return tables[:2]
+
+
+def _extract_structured_powerpoint_images(content: str) -> List[Dict[str, Any]]:
+    if not str(content or '').strip():
+        return []
+
+    html = markdown2.markdown(content, extras=DOCX_MARKDOWN_EXTRAS)
+    soup = BeautifulSoup(f'<div>{html}</div>', 'html.parser')
+    root = soup.div if soup.div else soup
+    images: List[Dict[str, Any]] = []
+    seen_keys = set()
+
+    for image_node in root.find_all('img'):
+        image_bytes = decode_base64_image_data_uri(image_node.get('src'))
+        if not image_bytes:
+            continue
+
+        image_key = (len(image_bytes), image_bytes[:24])
+        if image_key in seen_keys:
+            continue
+        seen_keys.add(image_key)
+
+        image_wrapper = image_node.find_parent(class_='export-inline-image')
+        chart_wrapper = image_node.find_parent(class_='export-inline-chart')
+        wrapper = image_wrapper or chart_wrapper
+        caption_node = None
+        if wrapper:
+            caption_node = wrapper.find(class_='export-inline-image-caption')
+            if caption_node is None:
+                caption_node = wrapper.find(class_='export-inline-chart-caption')
+        caption = (
+            caption_node.get_text(' ', strip=True)
+            if caption_node and caption_node.get_text(' ', strip=True)
+            else image_node.get('alt') or 'Inline visual'
+        )
+
+        images.append({
+            'title': _clean_slide_text(image_node.get('alt') or f'Visual {len(images) + 1}', 100),
+            'caption': _clean_slide_text(caption, 160),
+            'image_bytes': image_bytes,
+        })
+        if len(images) >= POWERPOINT_MAX_INLINE_IMAGES_PER_SLIDE:
+            break
+
+    return images
 
 
 def _parse_powerpoint_markdown_table_block(table_block: List[str]) -> Optional[Dict[str, Any]]:
@@ -2234,17 +2763,18 @@ def _build_message_powerpoint_plan(
     if structured_plan and requested_slide_count is None:
         return structured_plan
 
+    planning_content = _sanitize_powerpoint_source_content(content)
     target_slide_count = _resolve_powerpoint_slide_count(requested_slide_count)
     fallback_plan = _build_fallback_powerpoint_plan(
-        content,
+        planning_content,
         message,
         slide_count=target_slide_count,
     )
-    if not content.strip():
+    if not planning_content.strip():
         return fallback_plan
 
     ai_plan = _generate_powerpoint_slide_plan_with_model(
-        content=content,
+        content=planning_content,
         message=message,
         settings=settings,
         requested_model=requested_model,
@@ -2855,12 +3385,58 @@ def _add_powerpoint_content_slide(
             run.font.bold = True
             run.font.color.rgb = POWERPOINT_TEXT
 
-    content_placeholder = slide.placeholders[1]
     tables = slide_spec.get('tables', []) if isinstance(slide_spec.get('tables'), list) else []
     primary_table = next(
         (table for table in tables if isinstance(table, dict) and table.get('rows')),
         None,
     )
+    images = slide_spec.get('images', []) if isinstance(slide_spec.get('images'), list) else []
+    primary_image = next(
+        (image for image in images if isinstance(image, dict) and image.get('image_bytes')),
+        None,
+    )
+
+    bullets = slide_spec.get('bullets', [])
+    if isinstance(bullets, str):
+        bullets = [bullets]
+    if not bullets:
+        bullets = [] if slide_spec.get('allow_empty_body') else ['No content recorded.']
+
+    content_placeholder = slide.placeholders[1]
+    content_left = PptxInches(0.78)
+    content_top = PptxInches(1.35)
+    content_width = presentation.slide_width - PptxInches(1.55)
+    content_height = presentation.slide_height - content_top - PptxInches(0.95)
+
+    if primary_image and (bullets or primary_table):
+        visual_left = presentation.slide_width - PptxInches(5.25)
+        visual_top = PptxInches(1.35)
+        visual_width = PptxInches(4.65)
+        visual_height = presentation.slide_height - PptxInches(2.15)
+        _add_powerpoint_inline_image_to_slide(
+            slide,
+            primary_image,
+            left=visual_left,
+            top=visual_top,
+            max_width=visual_width,
+            max_height=visual_height,
+        )
+        content_width = visual_left - content_left - PptxInches(0.3)
+    elif primary_image:
+        _add_powerpoint_inline_image_to_slide(
+            slide,
+            primary_image,
+            left=PptxInches(0.85),
+            top=PptxInches(1.25),
+            max_width=presentation.slide_width - PptxInches(1.7),
+            max_height=presentation.slide_height - PptxInches(2.15),
+        )
+        content_placeholder.left = PptxInches(0.1)
+        content_placeholder.top = PptxInches(0.1)
+        content_placeholder.width = PptxInches(0.1)
+        content_placeholder.height = PptxInches(0.1)
+        content_placeholder.text_frame.clear()
+        bullets = []
 
     if primary_table:
         table_rows = primary_table.get('rows', [])
@@ -2868,33 +3444,32 @@ def _add_powerpoint_content_slide(
             PptxInches(2.45),
             max(PptxInches(0.95), PptxInches(0.34 * max(len(table_rows), 1))),
         )
-        table_top = PptxInches(1.35)
+        table_top = content_top
         _add_powerpoint_inline_table(
             slide,
             primary_table,
-            left=PptxInches(0.75),
+            left=content_left,
             top=table_top,
-            width=presentation.slide_width - PptxInches(1.45),
+            width=content_width,
             height=table_height,
         )
 
-        content_placeholder.left = PptxInches(0.78)
+        content_placeholder.left = content_left
         content_placeholder.top = table_top + table_height + PptxInches(0.25)
-        content_placeholder.width = presentation.slide_width - PptxInches(1.55)
+        content_placeholder.width = content_width
         content_placeholder.height = max(
             PptxInches(0.45),
             presentation.slide_height - content_placeholder.top - PptxInches(0.95),
         )
+    elif bullets:
+        content_placeholder.left = content_left
+        content_placeholder.top = content_top
+        content_placeholder.width = content_width
+        content_placeholder.height = content_height
 
     text_frame = content_placeholder.text_frame
     text_frame.clear()
     text_frame.word_wrap = True
-
-    bullets = slide_spec.get('bullets', [])
-    if isinstance(bullets, str):
-        bullets = [bullets]
-    if not bullets:
-        bullets = [] if slide_spec.get('allow_empty_body') else ['No content recorded.']
 
     try:
         bullet_char_limit = int(slide_spec.get('bullet_char_limit') or POWERPOINT_BULLET_CHAR_LIMIT)
@@ -2936,6 +3511,85 @@ def _add_powerpoint_content_slide(
     for run in metadata_paragraph.runs:
         run.font.size = PptxPt(9)
         run.font.color.rgb = POWERPOINT_MUTED
+
+
+def _add_powerpoint_inline_image_to_slide(
+    slide,
+    image_asset: Dict[str, Any],
+    left: int,
+    top: int,
+    max_width: int,
+    max_height: int,
+):
+    image_bytes = image_asset.get('image_bytes')
+    if not image_bytes:
+        return
+
+    caption = _clean_slide_text(image_asset.get('caption') or '', 120)
+    caption_height = PptxInches(0.38) if caption else 0
+    image_max_height = max(PptxInches(0.8), int(max_height) - int(caption_height) - PptxInches(0.08))
+    picture_left, picture_top, picture_width, picture_height = _fit_powerpoint_image_within_bounds(
+        image_bytes,
+        left=left,
+        top=top,
+        max_width=max_width,
+        max_height=image_max_height,
+    )
+    slide.shapes.add_picture(
+        io.BytesIO(image_bytes),
+        picture_left,
+        picture_top,
+        width=picture_width,
+        height=picture_height,
+    )
+
+    if not caption:
+        return
+
+    caption_box = slide.shapes.add_textbox(
+        int(left),
+        int(top) + int(max_height) - int(caption_height),
+        int(max_width),
+        int(caption_height),
+    )
+    caption_frame = caption_box.text_frame
+    caption_frame.text = caption
+    caption_paragraph = caption_frame.paragraphs[0]
+    caption_paragraph.alignment = PP_ALIGN.CENTER
+    for run in caption_paragraph.runs:
+        run.font.size = PptxPt(10)
+        run.font.color.rgb = POWERPOINT_MUTED
+
+
+def _fit_powerpoint_image_within_bounds(
+    image_bytes: bytes,
+    left: int,
+    top: int,
+    max_width: int,
+    max_height: int,
+) -> Tuple[int, int, int, int]:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        image_width, image_height = image.size
+
+    left = int(left)
+    top = int(top)
+    max_width = int(max_width)
+    max_height = int(max_height)
+
+    if not image_width or not image_height:
+        return left, top, max_width, max_height
+
+    aspect_ratio = image_width / image_height
+    target_width = max_width
+    target_height = int(target_width / aspect_ratio)
+
+    if target_height > max_height:
+        target_height = max_height
+        target_width = int(target_height * aspect_ratio)
+
+    fitted_left = left + int((max_width - target_width) / 2)
+    fitted_top = top + int((max_height - target_height) / 2)
+    return fitted_left, fitted_top, target_width, target_height
 
 
 def _add_powerpoint_inline_table(
@@ -3176,7 +3830,10 @@ def _message_to_email_draft_payload(
         requested_model=summary_model_deployment
     )
     body_content = _strip_explicit_message_email_subject(content)
-    rendered_body_content = replace_inline_chart_blocks_with_export_html(body_content)
+    rendered_body_content = _render_message_export_content(
+        message,
+        source_content=body_content,
+    )
     chart_attachments = _extract_email_chart_png_attachments(rendered_body_content)
     image_labels_by_src = {
         attachment['data_uri']: _format_email_chart_attachment_reference(attachment)
@@ -3224,8 +3881,11 @@ def _extract_email_chart_png_attachments(rendered_content: str) -> List[Dict[str
 
     for image_node in root.find_all('img'):
         chart_wrapper = image_node.find_parent(class_='export-inline-chart')
-        if not chart_wrapper:
+        image_wrapper = image_node.find_parent(class_='export-inline-image')
+        visual_wrapper = chart_wrapper or image_wrapper
+        if not visual_wrapper:
             continue
+        visual_type = 'chart' if chart_wrapper else 'image'
 
         data_uri = str(image_node.get('src') or '').strip()
         image_bytes = decode_base64_image_data_uri(data_uri)
@@ -3237,42 +3897,80 @@ def _extract_email_chart_png_attachments(rendered_content: str) -> List[Dict[str
             continue
         seen_keys.add(image_key)
 
-        caption_node = chart_wrapper.find(class_='export-inline-chart-caption')
+        caption_node = visual_wrapper.find(class_='export-inline-chart-caption')
+        if caption_node is None:
+            caption_node = visual_wrapper.find(class_='export-inline-image-caption')
         caption = (
             caption_node.get_text(' ', strip=True)
             if caption_node and caption_node.get_text(' ', strip=True)
             else ''
         )
         alt_text = str(image_node.get('alt') or '').strip()
-        attachment_label = caption or alt_text or f'Chart {len(attachments) + 1}'
-        filename = _safe_email_chart_attachment_filename(
-            attachment_label,
-            len(attachments) + 1,
-        )
+        attachment_label = caption or alt_text or f'{visual_type.title()} {len(attachments) + 1}'
+        if visual_type == 'chart':
+            filename = _safe_email_chart_attachment_filename(
+                attachment_label,
+                len(attachments) + 1,
+            )
+        else:
+            filename = _safe_email_image_attachment_filename(
+                attachment_label,
+                len(attachments) + 1,
+            )
         attachments.append({
             'filename': filename,
             'content_type': 'image/png',
             'data_uri': data_uri,
             'caption': caption,
             'alt': alt_text or attachment_label,
+            'visual_type': visual_type,
         })
 
     return attachments
 
 
 def _safe_email_chart_attachment_filename(label: str, sequence_number: int) -> str:
+    return _safe_email_visual_attachment_filename(
+        label,
+        sequence_number,
+        EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX,
+        'chart',
+    )
+
+
+def _safe_email_image_attachment_filename(label: str, sequence_number: int) -> str:
+    return _safe_email_visual_attachment_filename(
+        label,
+        sequence_number,
+        EMAIL_IMAGE_ATTACHMENT_FILENAME_PREFIX,
+        'image',
+    )
+
+
+def _safe_email_visual_attachment_filename(
+    label: str,
+    sequence_number: int,
+    prefix: str,
+    fallback_stem: str,
+) -> str:
     stem = re.sub(r'[^A-Za-z0-9._-]+', '_', str(label or '').lower())
     stem = stem.strip('_.-')
     if len(stem) > 48:
         stem = stem[:48].strip('_.-')
     if not stem:
-        stem = f'chart_{sequence_number}'
-    return f'{EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX}_{sequence_number}_{stem}.png'
+        stem = f'{fallback_stem}_{sequence_number}'
+    return f'{prefix}_{sequence_number}_{stem}.png'
 
 
 def _format_email_chart_attachment_reference(attachment: Dict[str, str]) -> str:
-    filename = str(attachment.get('filename') or 'chart.png').strip()
+    visual_type = str(attachment.get('visual_type') or 'chart').strip().lower()
+    filename = str(attachment.get('filename') or f'{visual_type}.png').strip()
     caption = str(attachment.get('caption') or attachment.get('alt') or '').strip()
+    if visual_type == 'image':
+        if caption and caption != filename:
+            return f'Image PNG exported as {filename}: {caption}'
+        return f'Image PNG exported as {filename}'
+
     if caption and caption != filename:
         return f'Chart image exported as {filename}: {caption}'
     return f'Chart image exported as {filename}'
@@ -3326,7 +4024,10 @@ def _append_html_block_to_email_lines(
         return
 
     if tag_name == 'p':
-        if image_labels_by_src and 'export-inline-chart-caption' in (node.get('class') or []):
+        if image_labels_by_src and any(
+            class_name in {'export-inline-chart-caption', 'export-inline-image-caption'}
+            for class_name in (node.get('class') or [])
+        ):
             return
 
         paragraph_text = _extract_email_inline_text(

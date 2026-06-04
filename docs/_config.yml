@@ -107,6 +107,9 @@ navigation:
         - title: Admin Configuration
           url: /admin_configuration/
           icon: bi bi-sliders
+        - title: Admin UI Settings
+          url: /how-to/admin_ui_settings/
+          icon: bi bi-palette
         - title: Deployment Reference
           url: /reference/deploy/
           match: /reference/deploy/
@@ -232,6 +235,7 @@ defaults:
 
 # Exclude from processing
 exclude:
+  - _site/
   - .sass-cache/
   - .jekyll-cache/
   - gemfiles/

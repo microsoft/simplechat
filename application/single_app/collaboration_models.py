@@ -74,6 +74,27 @@ def normalize_collaboration_user(raw_user, fallback_user_id=None):
     }
 
 
+def translate_image_proposal_source_metadata(metadata, source_to_collaboration_message_ids):
+    if not isinstance(metadata, dict) or not isinstance(source_to_collaboration_message_ids, dict):
+        return False
+
+    image_proposal = metadata.get('image_proposal')
+    if not isinstance(image_proposal, dict):
+        return False
+
+    source_assistant_message_id = _clean_string(image_proposal.get('source_assistant_message_id'))
+    if not source_assistant_message_id:
+        return False
+
+    translated_message_id = _clean_string(source_to_collaboration_message_ids.get(source_assistant_message_id))
+    if not translated_message_id or translated_message_id == source_assistant_message_id:
+        return False
+
+    image_proposal.setdefault('legacy_source_assistant_message_id', source_assistant_message_id)
+    image_proposal['source_assistant_message_id'] = translated_message_id
+    return True
+
+
 def build_collaboration_context(scope_type, scope_id, scope_name):
     return [
         {
