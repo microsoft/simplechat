@@ -272,6 +272,22 @@ def _clear_legacy_agent_connection_override(agent):
     return agent
 
 
+def _strip_disallowed_local_custom_connection_fields(agent):
+    if not isinstance(agent, dict) or is_azure_ai_foundry_agent(agent):
+        return agent
+
+    for field_name in (
+        'azure_agent_apim_gpt_endpoint',
+        'azure_agent_apim_gpt_subscription_key',
+        'azure_agent_apim_gpt_api_revision',
+        'azure_openai_gpt_endpoint',
+        'azure_openai_gpt_key',
+        'azure_openai_gpt_api_revision',
+    ):
+        agent.pop(field_name, None)
+    return agent
+
+
 def _build_default_model_info(settings):
     default_selection = settings.get('default_model_selection', {}) or {}
     default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
@@ -634,12 +650,7 @@ def set_user_agents():
     # If custom endpoints are not allowed, strip deployment settings for endpoint, key, and api-revision
     if not settings.get('allow_user_custom_endpoints', False):
         for agent in agents:
-            # APIM fields
-            for k in ['azure_agent_apim_gpt_endpoint', 'azure_agent_apim_gpt_subscription_key', 'azure_agent_apim_gpt_api_revision']:
-                agent.pop(k, None)
-            # Non-APIM fields
-            for k in ['azure_openai_gpt_endpoint', 'azure_openai_gpt_key', 'azure_openai_gpt_api_revision']:
-                agent.pop(k, None)
+            _strip_disallowed_local_custom_connection_fields(agent)
 
     # Remove any global agents before saving
     filtered_agents = []
@@ -829,15 +840,7 @@ def create_group_agent_route():
 
     settings = get_settings()
     if not settings.get('allow_group_custom_endpoints', False):
-        for key in [
-            'azure_agent_apim_gpt_endpoint',
-            'azure_agent_apim_gpt_subscription_key',
-            'azure_agent_apim_gpt_api_revision',
-            'azure_openai_gpt_endpoint',
-            'azure_openai_gpt_key',
-            'azure_openai_gpt_api_revision'
-        ]:
-            cleaned_payload.pop(key, None)
+        _strip_disallowed_local_custom_connection_fields(cleaned_payload)
 
     for key in ('group_id', 'last_updated', 'is_global', 'is_group'):
         cleaned_payload.pop(key, None)
@@ -912,15 +915,7 @@ def update_group_agent_route(agent_id):
 
     settings = get_settings()
     if not settings.get('allow_group_custom_endpoints', False):
-        for key in [
-            'azure_agent_apim_gpt_endpoint',
-            'azure_agent_apim_gpt_subscription_key',
-            'azure_agent_apim_gpt_api_revision',
-            'azure_openai_gpt_endpoint',
-            'azure_openai_gpt_key',
-            'azure_openai_gpt_api_revision'
-        ]:
-            cleaned_payload.pop(key, None)
+        _strip_disallowed_local_custom_connection_fields(cleaned_payload)
 
     try:
         cleaned_payload = apply_assigned_knowledge_to_agent_payload(

@@ -98,7 +98,7 @@
         },
         "agent_type": {
           "type": "string",
-          "enum": ["local", "aifoundry", "new_foundry"],
+          "enum": ["local", "aifoundry", "new_foundry", "foundry_workflow"],
           "description": "Type of agent to instantiate."
         },
         "instructions": {
@@ -180,6 +180,30 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "agent_type": { "const": "foundry_workflow" }
+            }
+          },
+          "then": {
+            "required": [
+              "azure_openai_gpt_endpoint",
+              "azure_openai_gpt_api_version",
+              "other_settings"
+            ],
+            "properties": {
+              "actions_to_load": {
+                "type": "array",
+                "maxItems": 0,
+                "description": "Foundry workflow agents manage workflow execution in Azure and must not specify local plugins."
+              },
+              "other_settings": {
+                "$ref": "#/definitions/FoundryWorkflowSettingsWrapper"
+              }
+            }
+          }
         }
       ]
     },
@@ -192,6 +216,9 @@
         },
         "new_foundry": {
           "$ref": "#/definitions/NewFoundrySettings"
+        },
+        "foundry_workflow": {
+          "$ref": "#/definitions/FoundryWorkflowSettings"
         }
       }
     },
@@ -266,6 +293,55 @@
         }
       },
       "required": ["application_id", "responses_api_version"]
+    },
+    "FoundryWorkflowSettingsWrapper": {
+      "type": "object",
+      "required": ["foundry_workflow"],
+      "properties": {
+        "foundry_workflow": {
+          "$ref": "#/definitions/FoundryWorkflowSettings"
+        }
+      }
+    },
+    "FoundryWorkflowSettings": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "workflow_name": {
+          "type": "string",
+          "description": "Name of the published Foundry workflow agent to invoke through agent_reference."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Foundry project endpoint root or full /api/projects/... endpoint."
+        },
+        "project_name": {
+          "type": "string",
+          "description": "Foundry project name when endpoint does not already include /api/projects/."
+        },
+        "responses_api_version": {
+          "type": "string",
+          "description": "API version used for project OpenAI Responses workflow calls."
+        },
+        "responses_path": {
+          "type": "string",
+          "description": "Optional override for the project Responses path."
+        },
+        "include_document_context": {
+          "type": "boolean",
+          "description": "Whether selected/uploaded document context should be included in workflow prompts."
+        },
+        "max_context_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum packed SimpleChat context characters sent to the workflow."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional helper text for administrators managing Foundry workflow agents."
+        }
+      },
+      "required": ["workflow_name", "responses_api_version"]
     }
   }
 }

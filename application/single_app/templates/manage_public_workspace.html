@@ -614,7 +614,7 @@
           data-identity-api-base="/api/workspace-identities/public/{{ workspace_id }}"
           data-default-capability="file_sync"
           data-capability-options="file_sync"
-          data-auth-type-options="username_password,anonymous"
+          data-auth-type-options="username_password,anonymous,client_secret,connection_string,managed_identity"
         ></div>
       </div>
     </div>
@@ -628,7 +628,7 @@
           data-api-base="/api/file-sync/public/{{ workspace_id }}"
           data-tags-api="/api/public_workspace_documents/tags?workspace_ids={{ workspace_id|urlencode }}"
           data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
-          data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb'])|join(',') }}"
+          data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb', 'azure_files', 'onedrive'])|join(',') }}"
         ></div>
       </div>
     </div>

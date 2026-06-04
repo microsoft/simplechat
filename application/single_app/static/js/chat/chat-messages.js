@@ -2938,6 +2938,11 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return capability === 'analyze' || capability === 'comparison';
   }
 
+  function shouldRenderPreviewItemsAsRows(outputMetadata, outputFormat) {
+    const normalizedOutputFormat = String(outputFormat || outputMetadata?.output_format || '').trim().toLowerCase();
+    return ['csv', 'tsv', 'xls', 'xlsx', 'xlsm'].includes(normalizedOutputFormat);
+  }
+
   function buildGeneratedArtifactDownloadUrl(outputMetadata) {
     const normalizedDocId = String(outputMetadata?.document_id || '').trim();
     const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
@@ -3794,7 +3799,11 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       if (previewRows.length) {
         previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
       } else if (previewItems.length) {
-        previewContent = buildGeneratedTabularPreviewFallback(previewItems);
+        if (shouldRenderPreviewItemsAsRows(outputMetadata, outputFormat)) {
+          previewContent = buildGeneratedTabularPreviewTable(previewItems) || buildGeneratedTabularPreviewFallback(previewItems);
+        } else {
+          previewContent = buildGeneratedTabularPreviewFallback(previewItems);
+        }
       } else if (previewLines.length) {
         previewContent = buildGeneratedAnalysisPreviewText(previewLines.join('\n'), outputMetadata, outputFormat);
       } else if (previewText) {

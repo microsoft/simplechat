@@ -52,11 +52,11 @@ WORKSPACE_IDENTITY_USAGE_ALIASES = {
     "general": "action",
 }
 WORKSPACE_IDENTITY_USAGE_SOURCE_TYPES = {
-    "file_sync": ["smb"],
+    "file_sync": ["smb", "azure_files", "onedrive", "google_drive", "google_shared_drive"],
     "action": ["action"],
 }
 WORKSPACE_IDENTITY_USAGE_AUTH_TYPES = {
-    "file_sync": {"anonymous", "username_password"},
+    "file_sync": {"anonymous", "client_secret", "connection_string", "managed_identity", "username_password"},
     "action": {"api_key", "bearer_token", "client_secret", "connection_string", "managed_identity", "username_password"},
 }
 ACTION_IDENTITY_AUTH_TYPES = WORKSPACE_IDENTITY_USAGE_AUTH_TYPES["action"]
@@ -203,10 +203,19 @@ def _prepare_auth_payload(
     if auth_type == "anonymous":
         return prepared_auth
     if auth_type == "managed_identity":
+        managed_identity_client_id = _normalize_text(
+            raw_credentials.get("managed_identity_client_id", raw_credentials.get("client_id", existing_auth.get("managed_identity_client_id", ""))),
+            255,
+        )
+        if managed_identity_client_id:
+            prepared_auth["managed_identity_client_id"] = managed_identity_client_id
         return prepared_auth
     if auth_type == "client_secret":
         client_id = raw_credentials.get("client_id", raw_credentials.get("identity", existing_auth.get("identity", "")))
         prepared_auth["identity"] = _normalize_text(client_id, 255)
+        tenant_id = _normalize_text(raw_credentials.get("tenant_id", existing_auth.get("tenant_id", "")), 255)
+        if tenant_id:
+            prepared_auth["tenant_id"] = tenant_id
 
     if auth_type == "username_password":
         prepared_auth["username"] = _normalize_text(raw_credentials.get("username", existing_auth.get("username", "")), 255)
@@ -266,7 +275,7 @@ def _normalize_identity_payload(
         allowed_usage_contexts = {"file_sync"}
         default_usage_contexts = ["file_sync"]
     elif scope_type == WORKSPACE_IDENTITY_SCOPE_GLOBAL:
-        allowed_usage_contexts = {"action"}
+        allowed_usage_contexts = {"file_sync", "action"}
         default_usage_contexts = ["action"]
 
     usage_contexts = _normalize_list(

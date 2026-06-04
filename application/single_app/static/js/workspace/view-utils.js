@@ -271,7 +271,9 @@ function buildAgentViewHtml(agent) {
     const name = escapeHtml(agent.name || "");
     const description = escapeHtml(agent.description || "No description available.");
     const model = escapeHtml(agent.azure_openai_gpt_deployment || agent.model || "Default");
-    const agentType = agent.agent_type === "new_foundry"
+    const agentType = agent.agent_type === "foundry_workflow"
+        ? "Foundry Workflow"
+        : agent.agent_type === "new_foundry"
         ? "New Foundry"
         : agent.agent_type === "aifoundry"
             ? "Foundry (classic)"

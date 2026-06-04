@@ -10,6 +10,7 @@ from functions_file_sync import (
     FILE_SYNC_SCOPE_PUBLIC,
     FILE_SYNC_SOURCE_TYPE_SMB,
     assert_public_workspace_role,
+    browse_file_sync_source_path,
     create_file_sync_source,
     delete_file_sync_source,
     get_authorized_sync_source,
@@ -176,6 +177,13 @@ def register_route_backend_file_sync(app):
         result = test_file_sync_source_connection(scope_type, scope_id, payload, user_id, source_id=source_id)
         return jsonify({"connection": result}), 200
 
+    def _browse_source(scope_type, scope_id, user_id, source_id=None):
+        payload = _payload()
+        if not source_id:
+            _assert_new_source_type_visible(payload)
+        result = browse_file_sync_source_path(scope_type, scope_id, payload, user_id, source_id=source_id)
+        return jsonify({"browse": result}), 200
+
     @app.route('/api/admin/file-sync/users/search', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -215,6 +223,30 @@ def register_route_backend_file_sync(app):
                 return jsonify({"workspaces": []}), 200
             workspaces = [_serialize_public_workspace_target(workspace) for workspace in search_all_public_workspaces(query)[:10]]
             return jsonify({"workspaces": workspaces}), 200
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/<scope_type>/<scope_id>/sources/browse', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_source_browse_new(scope_type, scope_id):
+        try:
+            admin_user_id, target_scope_id = _require_admin_target_context(scope_type, scope_id)
+            return _browse_source(scope_type, target_scope_id, admin_user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/admin/file-sync/<scope_type>/<scope_id>/sources/<source_id>/browse', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_source_browse_existing(scope_type, scope_id, source_id):
+        try:
+            admin_user_id, target_scope_id = _require_admin_target_context(scope_type, scope_id)
+            return _browse_source(scope_type, target_scope_id, admin_user_id, source_id=source_id)
         except Exception as error:
             return _map_exception(error)
 
@@ -515,6 +547,64 @@ def register_route_backend_file_sync(app):
         try:
             user_id = _require_personal_context()
             return _list_sources(FILE_SYNC_SCOPE_PERSONAL, user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/file-sync/<scope_type>/sources/browse', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_source_browse_new(scope_type):
+        try:
+            if scope_type == FILE_SYNC_SCOPE_PERSONAL:
+                user_id = _require_personal_context()
+                return _browse_source(FILE_SYNC_SCOPE_PERSONAL, user_id, user_id)
+            if scope_type == FILE_SYNC_SCOPE_GROUP:
+                user_id, group_id = _require_group_context()
+                return _browse_source(FILE_SYNC_SCOPE_GROUP, group_id, user_id)
+            raise ValueError("Unsupported File Sync browse scope")
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/file-sync/<scope_type>/sources/<source_id>/browse', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_source_browse_existing(scope_type, source_id):
+        try:
+            if scope_type == FILE_SYNC_SCOPE_PERSONAL:
+                user_id = _require_personal_context()
+                return _browse_source(FILE_SYNC_SCOPE_PERSONAL, user_id, user_id, source_id=source_id)
+            if scope_type == FILE_SYNC_SCOPE_GROUP:
+                user_id, group_id = _require_group_context()
+                return _browse_source(FILE_SYNC_SCOPE_GROUP, group_id, user_id, source_id=source_id)
+            raise ValueError("Unsupported File Sync browse scope")
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/file-sync/public/<public_workspace_id>/sources/browse', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_public_source_browse_new(public_workspace_id):
+        try:
+            user_id, workspace_id = _require_public_context(public_workspace_id)
+            return _browse_source(FILE_SYNC_SCOPE_PUBLIC, workspace_id, user_id)
+        except Exception as error:
+            return _map_exception(error)
+
+    @app.route('/api/file-sync/public/<public_workspace_id>/sources/<source_id>/browse', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_public_source_browse_existing(public_workspace_id, source_id):
+        try:
+            user_id, workspace_id = _require_public_context(public_workspace_id)
+            return _browse_source(FILE_SYNC_SCOPE_PUBLIC, workspace_id, user_id, source_id=source_id)
         except Exception as error:
             return _map_exception(error)
 

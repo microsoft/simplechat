@@ -1502,11 +1502,18 @@ export class AgentModalStepper {
     return (agentType || '').toLowerCase() === 'new_foundry';
   }
 
+  isFoundryWorkflowType(agentType = this.currentAgentType) {
+    return (agentType || '').toLowerCase() === 'foundry_workflow';
+  }
+
   isAnyFoundryType(agentType = this.currentAgentType) {
-    return this.isClassicFoundryType(agentType) || this.isNewFoundryType(agentType);
+    return this.isClassicFoundryType(agentType) || this.isNewFoundryType(agentType) || this.isFoundryWorkflowType(agentType);
   }
 
   getCurrentFoundryProvider(agentType = this.currentAgentType) {
+    if (this.isFoundryWorkflowType(agentType)) {
+      return 'foundry_workflow';
+    }
     return this.isNewFoundryType(agentType) ? 'new_foundry' : 'aifoundry';
   }
 
@@ -1515,10 +1522,16 @@ export class AgentModalStepper {
     if (!normalizedProvider) {
       return false;
     }
+    if (this.isFoundryWorkflowType()) {
+      return ['foundry_workflow', 'new_foundry', 'aifoundry'].includes(normalizedProvider);
+    }
     return normalizedProvider === this.getCurrentFoundryProvider();
   }
 
   getAgentTypeLabel(agentType = this.currentAgentType) {
+    if (this.isFoundryWorkflowType(agentType)) {
+      return 'Foundry Workflow';
+    }
     if (this.isNewFoundryType(agentType)) {
       return 'New Foundry';
     }
@@ -1532,6 +1545,9 @@ export class AgentModalStepper {
     const otherSettings = this.currentAgent?.other_settings || {};
     if (this.isNewFoundryType(agentType)) {
       return otherSettings.new_foundry || {};
+    }
+    if (this.isFoundryWorkflowType(agentType)) {
+      return otherSettings.foundry_workflow || {};
     }
     if (this.isClassicFoundryType(agentType)) {
       return otherSettings.azure_ai_foundry || {};
@@ -1608,6 +1624,7 @@ export class AgentModalStepper {
     const isFoundry = this.isAnyFoundryType();
     const isClassicFoundry = this.isClassicFoundryType();
     const isNewFoundry = this.isNewFoundryType();
+    const isFoundryWorkflow = this.isFoundryWorkflowType();
     const foundryFields = document.getElementById('agent-foundry-fields');
     const modelGroup = document.getElementById('agent-global-model-group');
     const customToggle = document.getElementById('agent-custom-connection-toggle');
@@ -1630,6 +1647,8 @@ export class AgentModalStepper {
     const classicOnlyFields = document.getElementById('agent-classic-foundry-fields');
     const classicApiVersionGroup = document.getElementById('agent-classic-foundry-api-version-group');
     const newFoundryOnly = document.getElementById('agent-new-foundry-only');
+    const foundryWorkflowOnly = document.getElementById('agent-foundry-workflow-only');
+    const foundryWorkflowResponsesApiVersionInput = document.getElementById('agent-foundry-workflow-responses-api-version');
 
     if (foundryFields) foundryFields.classList.toggle('d-none', !isFoundry);
     if (modelGroup) modelGroup.classList.toggle('d-none', isFoundry);
@@ -1639,6 +1658,10 @@ export class AgentModalStepper {
     if (classicOnlyFields) classicOnlyFields.classList.toggle('d-none', !isClassicFoundry);
     if (classicApiVersionGroup) classicApiVersionGroup.classList.toggle('d-none', !isClassicFoundry);
     if (newFoundryOnly) newFoundryOnly.classList.toggle('d-none', !isNewFoundry);
+    if (foundryWorkflowOnly) foundryWorkflowOnly.classList.toggle('d-none', !isFoundryWorkflow);
+    if (isFoundryWorkflow && foundryWorkflowResponsesApiVersionInput && !foundryWorkflowResponsesApiVersionInput.value.trim()) {
+      foundryWorkflowResponsesApiVersionInput.value = 'v1';
+    }
 
     if (instructionsContainer) instructionsContainer.classList.toggle('d-none', isFoundry);
     if (instructionsFoundryNote) instructionsFoundryNote.classList.toggle('d-none', !isFoundry);
@@ -1675,6 +1698,8 @@ export class AgentModalStepper {
     if (helper) {
       if (isNewFoundry) {
         helper.textContent = 'New Foundry applications use the Responses protocol endpoint. Actions are disabled.';
+      } else if (isFoundryWorkflow) {
+        helper.textContent = 'Foundry workflows can use a saved connection for discovery, or manual project details below. Actions are disabled.';
       } else if (isClassicFoundry) {
         helper.textContent = 'Classic Foundry agents use Azure-managed tools. Actions are disabled.';
       } else {
@@ -1683,15 +1708,17 @@ export class AgentModalStepper {
     }
 
     if (foundryFetchBtnLabel) {
-      foundryFetchBtnLabel.textContent = isNewFoundry ? 'Fetch Applications' : 'Fetch Agents';
+      foundryFetchBtnLabel.textContent = isFoundryWorkflow ? 'Fetch Workflows' : isNewFoundry ? 'Fetch Applications' : 'Fetch Agents';
     }
 
     if (foundrySelectLabel) {
-      foundrySelectLabel.textContent = isNewFoundry ? 'New Foundry Application' : 'Foundry Agent';
+      foundrySelectLabel.textContent = isFoundryWorkflow ? 'Discovered Foundry Workflow (optional)' : isNewFoundry ? 'New Foundry Application' : 'Foundry Agent';
     }
 
     if (foundrySelectHelp) {
-      if (isNewFoundry) {
+      if (isFoundryWorkflow) {
+        foundrySelectHelp.textContent = 'Fetch requires a saved connection. If you know the workflow name, type it below instead.';
+      } else if (isNewFoundry) {
         foundrySelectHelp.textContent = 'Fetch a new Foundry application to populate the application name, version, and identifier fields.';
       } else {
         foundrySelectHelp.textContent = 'Select a classic Foundry agent to import its identity.';
@@ -1699,7 +1726,9 @@ export class AgentModalStepper {
     }
 
     if (foundryModeNote) {
-      if (isNewFoundry) {
+      if (isFoundryWorkflow) {
+        foundryModeNote.textContent = 'Saved connection is optional. Select one to fetch workflows and reuse credentials, or fill in the project details manually.';
+      } else if (isNewFoundry) {
         foundryModeNote.textContent = 'New Foundry applications are invoked through the application Responses endpoint and use Foundry-managed tools.';
       } else if (isClassicFoundry) {
         foundryModeNote.textContent = 'Classic Foundry agents use Azure-managed tools and the existing SDK-backed invocation path.';
@@ -1922,6 +1951,10 @@ export class AgentModalStepper {
     const foundryApplicationNameInput = document.getElementById('agent-new-foundry-application-name');
     const foundryApplicationVersionInput = document.getElementById('agent-new-foundry-application-version');
     const foundryActivityApiVersionInput = document.getElementById('agent-new-foundry-activity-api-version');
+    const foundryWorkflowNameInput = document.getElementById('agent-foundry-workflow-name');
+    const foundryWorkflowResponsesApiVersionInput = document.getElementById('agent-foundry-workflow-responses-api-version');
+    const foundryWorkflowIncludeContextInput = document.getElementById('agent-foundry-workflow-include-document-context');
+    const foundryWorkflowMaxContextCharsInput = document.getElementById('agent-foundry-workflow-max-context-chars');
     const foundryNotesInput = document.getElementById('agent-foundry-notes');
     const foundryStatus = document.getElementById('agent-foundry-fetch-status');
     const additionalSettings = document.getElementById('agent-additional-settings');
@@ -1946,6 +1979,10 @@ export class AgentModalStepper {
     if (foundryApplicationNameInput) foundryApplicationNameInput.value = '';
     if (foundryApplicationVersionInput) foundryApplicationVersionInput.value = '';
     if (foundryActivityApiVersionInput) foundryActivityApiVersionInput.value = '';
+    if (foundryWorkflowNameInput) foundryWorkflowNameInput.value = '';
+    if (foundryWorkflowResponsesApiVersionInput) foundryWorkflowResponsesApiVersionInput.value = 'v1';
+    if (foundryWorkflowIncludeContextInput) foundryWorkflowIncludeContextInput.checked = true;
+    if (foundryWorkflowMaxContextCharsInput) foundryWorkflowMaxContextCharsInput.value = '';
     if (foundryNotesInput) foundryNotesInput.value = '';
     if (foundryStatus) foundryStatus.textContent = '';
     if (additionalSettings) additionalSettings.value = '{}';
@@ -2004,7 +2041,7 @@ export class AgentModalStepper {
       const endpoints = Array.isArray(settings.model_endpoints) ? settings.model_endpoints : [];
       this.foundryEndpoints = endpoints.filter(endpoint => this.matchesFoundryEndpointProvider(endpoint.provider));
 
-      endpointSelect.innerHTML = '<option value="">Select a configured endpoint...</option>';
+      endpointSelect.innerHTML = '<option value="">Optional: select a saved connection...</option>';
       this.foundryEndpoints.forEach(endpoint => {
         const opt = document.createElement('option');
         opt.value = endpoint.id || '';
@@ -2020,6 +2057,7 @@ export class AgentModalStepper {
           this.currentAgent.model_endpoint_id
           || this.currentAgent.other_settings?.azure_ai_foundry?.endpoint_id
           || this.currentAgent.other_settings?.new_foundry?.endpoint_id
+          || this.currentAgent.other_settings?.foundry_workflow?.endpoint_id
         )) || '';
       if (existingEndpointId) {
         endpointSelect.value = existingEndpointId;
@@ -2041,6 +2079,8 @@ export class AgentModalStepper {
     const applicationIdInput = document.getElementById('agent-new-foundry-application-id');
     const applicationVersionInput = document.getElementById('agent-new-foundry-application-version');
     const applicationNameInput = document.getElementById('agent-new-foundry-application-name');
+    const workflowResponsesApiVersionInput = document.getElementById('agent-foundry-workflow-responses-api-version');
+    const workflowNameInput = document.getElementById('agent-foundry-workflow-name');
 
     if (!endpointSelect) {
       return;
@@ -2071,6 +2111,13 @@ export class AgentModalStepper {
           ? storedResponsesApiVersion
           : endpointResponsesApiVersion;
       }
+      if (workflowResponsesApiVersionInput) {
+        const endpointResponsesApiVersion = selected.connection?.openai_api_version || selected.connection?.api_version || '';
+        const storedResponsesApiVersion = currentFoundrySettings.responses_api_version || '';
+        workflowResponsesApiVersionInput.value = preserveCurrentSelection && storedResponsesApiVersion
+          ? storedResponsesApiVersion
+          : endpointResponsesApiVersion || 'v1';
+      }
       const agentSelect = document.getElementById('agent-foundry-agent-select');
       if (agentSelect) {
         agentSelect.innerHTML = '<option value="">Select an agent...</option>';
@@ -2084,10 +2131,15 @@ export class AgentModalStepper {
           applicationNameInput.value = '';
         }
       }
+      if (workflowNameInput) {
+        workflowNameInput.value = preserveCurrentSelection ? (currentFoundrySettings.workflow_name || workflowNameInput.value || '') : '';
+      }
       this.foundryAgents = [];
       if (statusEl) {
         statusEl.textContent = '';
       }
+    } else if (workflowResponsesApiVersionInput && this.isFoundryWorkflowType() && !workflowResponsesApiVersionInput.value.trim()) {
+      workflowResponsesApiVersionInput.value = 'v1';
     }
   }
 
@@ -2102,18 +2154,26 @@ export class AgentModalStepper {
     const endpointId = endpointSelect.value || '';
     const scope = endpointSelect.options[endpointSelect.selectedIndex]?.dataset?.scope || 'global';
     if (!endpointId) {
-      showToast(`Select a ${this.isNewFoundryType() ? 'New Foundry' : 'Foundry'} endpoint before fetching ${this.isNewFoundryType() ? 'applications' : 'agents'}.`, 'warning');
+      const runtimeLabel = this.isFoundryWorkflowType() ? 'Foundry Workflow' : this.isNewFoundryType() ? 'New Foundry' : 'Foundry';
+      const resourceLabel = this.isFoundryWorkflowType() ? 'workflows' : this.isNewFoundryType() ? 'applications' : 'agents';
+      showToast(`Select a ${runtimeLabel} endpoint before fetching ${resourceLabel}.`, 'warning');
       return;
     }
 
     try {
       if (statusEl) {
-        statusEl.textContent = 'Fetching agents...';
+        statusEl.textContent = this.isFoundryWorkflowType()
+          ? 'Fetching workflows...'
+          : this.isNewFoundryType() ? 'Fetching applications...' : 'Fetching agents...';
       }
       const response = await fetch('/api/models/foundry/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ endpoint_id: endpointId, scope })
+        body: JSON.stringify({
+          endpoint_id: endpointId,
+          scope,
+          resource_type: this.isFoundryWorkflowType() ? 'workflow' : ''
+        })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -2125,20 +2185,30 @@ export class AgentModalStepper {
       if (this.isNewFoundryType() && responsesApiVersionInput && fetchedResponsesApiVersion) {
         responsesApiVersionInput.value = fetchedResponsesApiVersion;
       }
+      const workflowResponsesApiVersionInput = document.getElementById('agent-foundry-workflow-responses-api-version');
+      if (this.isFoundryWorkflowType() && workflowResponsesApiVersionInput && fetchedResponsesApiVersion) {
+        workflowResponsesApiVersionInput.value = fetchedResponsesApiVersion;
+      }
       agentSelect.innerHTML = '<option value="">Select an agent...</option>';
       this.foundryAgents.forEach(agent => {
         const opt = document.createElement('option');
         const applicationValue = agent.application_id || agent.id || '';
-        const optionValue = this.isNewFoundryType() ? applicationValue : (agent.id || '');
+        const workflowValue = agent.workflow_name || agent.application_name || agent.name || applicationValue;
+        const optionValue = this.isFoundryWorkflowType()
+          ? workflowValue
+          : this.isNewFoundryType() ? applicationValue : (agent.id || '');
         const versionSuffix = agent.application_version ? ` (v${agent.application_version})` : '';
         opt.value = optionValue;
-        opt.textContent = this.isNewFoundryType()
+        opt.textContent = this.isFoundryWorkflowType()
+          ? (agent.display_name || agent.workflow_name || agent.application_name || agent.name || workflowValue)
+          : this.isNewFoundryType()
           ? `${agent.display_name || agent.application_name || agent.name || applicationValue}${versionSuffix}`
           : (agent.display_name || agent.name || agent.id || '');
         agentSelect.appendChild(opt);
       });
       if (statusEl) {
-        statusEl.textContent = `${this.foundryAgents.length} ${this.isNewFoundryType() ? 'application' : 'agent'}(s) found.`;
+        const foundLabel = this.isFoundryWorkflowType() ? 'workflow' : this.isNewFoundryType() ? 'application' : 'agent';
+        statusEl.textContent = `${this.foundryAgents.length} ${foundLabel}(s) found.`;
       }
     } catch (error) {
       console.error('Failed to fetch Foundry agents:', error);
@@ -2161,6 +2231,9 @@ export class AgentModalStepper {
       agentIdInput.value = selectedId;
     }
     const selected = this.foundryAgents.find(agent => {
+      if (this.isFoundryWorkflowType()) {
+        return (agent.workflow_name || agent.application_name || agent.name || agent.application_id || agent.id || '') === selectedId;
+      }
       if (this.isNewFoundryType()) {
         return (agent.application_id || agent.id || '') === selectedId;
       }
@@ -2186,6 +2259,17 @@ export class AgentModalStepper {
       }
       if (responsesApiVersionInput && selected.responses_api_version) {
         responsesApiVersionInput.value = selected.responses_api_version;
+      }
+    }
+
+    if (this.isFoundryWorkflowType()) {
+      const workflowNameInput = document.getElementById('agent-foundry-workflow-name');
+      const workflowResponsesApiVersionInput = document.getElementById('agent-foundry-workflow-responses-api-version');
+      if (workflowNameInput) {
+        workflowNameInput.value = selected.workflow_name || selected.application_name || selected.name || selectedId || '';
+      }
+      if (workflowResponsesApiVersionInput && selected.responses_api_version) {
+        workflowResponsesApiVersionInput.value = selected.responses_api_version;
       }
     }
 
@@ -2264,9 +2348,11 @@ export class AgentModalStepper {
     // Foundry-specific fields
     if (this.isAnyFoundryType(agent.agent_type)) {
       const other = agent.other_settings || {};
-      const foundry = this.isNewFoundryType(agent.agent_type)
-        ? ((other && other.new_foundry) || {})
-        : ((other && other.azure_ai_foundry) || {});
+      const foundry = this.isFoundryWorkflowType(agent.agent_type)
+        ? ((other && other.foundry_workflow) || {})
+        : this.isNewFoundryType(agent.agent_type)
+          ? ((other && other.new_foundry) || {})
+          : ((other && other.azure_ai_foundry) || {});
       const endpointEl = document.getElementById('agent-foundry-endpoint');
       const apiEl = document.getElementById('agent-foundry-api-version');
       const depEl = document.getElementById('agent-foundry-deployment');
@@ -2277,6 +2363,10 @@ export class AgentModalStepper {
       const applicationNameEl = document.getElementById('agent-new-foundry-application-name');
       const applicationVersionEl = document.getElementById('agent-new-foundry-application-version');
       const activityVersionEl = document.getElementById('agent-new-foundry-activity-api-version');
+      const workflowNameEl = document.getElementById('agent-foundry-workflow-name');
+      const workflowResponsesApiEl = document.getElementById('agent-foundry-workflow-responses-api-version');
+      const workflowIncludeContextEl = document.getElementById('agent-foundry-workflow-include-document-context');
+      const workflowMaxContextCharsEl = document.getElementById('agent-foundry-workflow-max-context-chars');
       if (endpointEl) endpointEl.value = agent.azure_openai_gpt_endpoint || '';
       if (apiEl) apiEl.value = foundry.api_version || agent.azure_openai_gpt_api_version || '';
       if (depEl) depEl.value = agent.azure_openai_gpt_deployment || '';
@@ -2286,6 +2376,10 @@ export class AgentModalStepper {
       if (applicationNameEl) applicationNameEl.value = foundry.application_name || '';
       if (applicationVersionEl) applicationVersionEl.value = foundry.application_version || '';
       if (activityVersionEl) activityVersionEl.value = foundry.activity_api_version || '';
+      if (workflowNameEl) workflowNameEl.value = foundry.workflow_name || '';
+      if (workflowResponsesApiEl) workflowResponsesApiEl.value = foundry.responses_api_version || agent.azure_openai_gpt_api_version || '';
+      if (workflowIncludeContextEl) workflowIncludeContextEl.checked = foundry.include_document_context !== false;
+      if (workflowMaxContextCharsEl) workflowMaxContextCharsEl.value = foundry.max_context_chars || '';
       if (notesEl) notesEl.value = foundry.notes || '';
       // ensure actions cleared for UI
       this.clearSelectedActions();
@@ -2567,7 +2661,7 @@ export class AgentModalStepper {
               agentId?.focus();
               return false;
             }
-          } else {
+          } else if (this.isNewFoundryType()) {
             const responsesApiVersion = document.getElementById('agent-new-foundry-responses-api-version');
             const applicationName = document.getElementById('agent-new-foundry-application-name');
             if (!responsesApiVersion || !responsesApiVersion.value.trim()) {
@@ -2577,6 +2671,19 @@ export class AgentModalStepper {
             if (!applicationName || !applicationName.value.trim()) {
               this.showError('Provide or fetch an application name for New Foundry.');
               applicationName?.focus();
+              return false;
+            }
+          } else if (this.isFoundryWorkflowType()) {
+            const responsesApiVersion = document.getElementById('agent-foundry-workflow-responses-api-version');
+            const workflowName = document.getElementById('agent-foundry-workflow-name');
+            if (!responsesApiVersion || !responsesApiVersion.value.trim()) {
+              this.showError('Select a Foundry workflow endpoint that provides a Responses API version before continuing.');
+              responsesApiVersion?.focus();
+              return false;
+            }
+            if (!workflowName || !workflowName.value.trim()) {
+              this.showError('Provide or fetch a workflow name for Foundry Workflow.');
+              workflowName?.focus();
               return false;
             }
           }
@@ -2717,6 +2824,10 @@ export class AgentModalStepper {
       const foundryDeployment = document.getElementById('agent-foundry-deployment');
       return foundryDeployment?.value?.trim() || '-';
     }
+    if (this.isFoundryWorkflowType()) {
+      const workflowName = document.getElementById('agent-foundry-workflow-name');
+      return workflowName?.value?.trim() || '-';
+    }
     if (this.isNewFoundryType()) {
       const applicationName = document.getElementById('agent-new-foundry-application-name');
       const applicationId = document.getElementById('agent-new-foundry-application-id');
@@ -2769,7 +2880,9 @@ export class AgentModalStepper {
     const typeBadge = document.getElementById('summary-agent-type-badge');
     if (typeBadge) {
       typeBadge.textContent = this.getAgentTypeLabel(agentType);
-      typeBadge.className = this.isNewFoundryType(agentType)
+      typeBadge.className = this.isFoundryWorkflowType(agentType)
+        ? 'badge bg-success'
+        : this.isNewFoundryType(agentType)
         ? 'badge bg-primary'
         : this.isClassicFoundryType(agentType)
           ? 'badge bg-warning text-dark'
@@ -3763,8 +3876,6 @@ export class AgentModalStepper {
   }
 
   async saveAgent() {
-    const errorDiv = document.getElementById('agent-modal-error');
-    
     try {
       // Get agent data from form
       const agentData = this.getAgentFormData();
@@ -3852,12 +3963,9 @@ export class AgentModalStepper {
       
     } catch (error) {
       console.error('Error saving agent:', error);
-      if (errorDiv) {
-        errorDiv.textContent = error.message;
-        errorDiv.classList.remove('d-none');
-      }
+      this.showError(error.message || 'Failed to save agent.');
       if (window.showToast) {
-        window.showToast(error.message, 'error');
+        window.showToast('Agent could not be saved. Review the error shown in the modal.', 'danger');
       }
     }
   }
@@ -3962,6 +4070,44 @@ export class AgentModalStepper {
       formData.model_endpoint_id = modelEndpointId;
       formData.model_id = '';
       formData.model_provider = 'new_foundry';
+      return formData;
+    }
+
+    if (selectedAgentType === 'foundry_workflow') {
+      formData.azure_openai_gpt_endpoint = document.getElementById('agent-foundry-endpoint')?.value?.trim() || '';
+      formData.azure_openai_gpt_deployment = document.getElementById('agent-foundry-deployment')?.value?.trim() || '';
+      formData.azure_openai_gpt_api_version = document.getElementById('agent-foundry-workflow-responses-api-version')?.value?.trim() || '';
+      formData.instructions = this.getInstructionsValue().trim() || this.foundryPlaceholderInstructions;
+
+      let otherSettingsObj = {};
+      try {
+        otherSettingsObj = JSON.parse(formData.other_settings || '{}');
+      } catch (e) {
+        otherSettingsObj = {};
+      }
+      otherSettingsObj = otherSettingsObj || {};
+
+      const notesVal = document.getElementById('agent-foundry-notes')?.value || '';
+      const workflowName = document.getElementById('agent-foundry-workflow-name')?.value?.trim() || '';
+      const includeDocumentContext = document.getElementById('agent-foundry-workflow-include-document-context')?.checked !== false;
+      const maxContextChars = document.getElementById('agent-foundry-workflow-max-context-chars')?.value?.trim() || '';
+
+      otherSettingsObj.foundry_workflow = {
+        ...(otherSettingsObj.foundry_workflow || {}),
+        workflow_name: workflowName,
+        endpoint_id: modelEndpointId || '',
+        responses_api_version: formData.azure_openai_gpt_api_version,
+        include_document_context: includeDocumentContext,
+        ...(maxContextChars ? { max_context_chars: Number.parseInt(maxContextChars, 10) } : {}),
+        ...(notesVal ? { notes: notesVal } : {}),
+      };
+      formData.other_settings = JSON.stringify(otherSettingsObj);
+
+      formData.actions_to_load = [];
+      formData.enable_agent_gpt_apim = false;
+      formData.model_endpoint_id = modelEndpointId;
+      formData.model_id = '';
+      formData.model_provider = 'foundry_workflow';
       return formData;
     }
     

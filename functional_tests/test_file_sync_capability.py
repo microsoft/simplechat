@@ -2,7 +2,7 @@
 # test_file_sync_capability.py
 """
 Functional test for File Sync capability wiring.
-Version: 0.241.095
+Version: 0.241.131
 Implemented in: 0.241.042
 
 This test ensures File Sync storage, settings, routes, scheduler hooks, and
@@ -26,7 +26,7 @@ def read_text(relative_path):
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.095"' in config_text
+    assert 'VERSION = "0.241.131"' in config_text
 
     expected_containers = [
         "personal_file_sync_sources",
@@ -126,7 +126,7 @@ def test_file_sync_service_security_shapes():
     assert "WORKSPACE_IDENTITY_USAGE_SOURCE_TYPES" in identity_text
     assert "allowed_auth_types" in identity_text
     assert "Selected authentication type is not available for the selected identity uses" in identity_text
-    assert "allowed_usage_contexts = {\"action\"}" in identity_text
+    assert "allowed_usage_contexts = {\"file_sync\", \"action\"}" in identity_text
     assert "allowed_usage_contexts = {\"file_sync\"}" in identity_text
     assert "FILE_SYNC_IDENTITY_AUTH_TYPES" in file_sync_text
     assert "WORKSPACE_IDENTITY_AUTH_TYPES" in identity_text
@@ -139,6 +139,8 @@ def test_file_sync_service_security_shapes():
     assert "GroupFileSyncUser" in file_sync_text
     assert "PublicWorkspaceFileSyncUser" in file_sync_text
     assert "FILE_SYNC_KNOWN_SOURCE_TYPES" in file_sync_text
+    assert "FILE_SYNC_SOURCE_TYPE_AZURE_FILES" in file_sync_text
+    assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
     assert "file_sync_visible_source_types" in file_sync_text
     assert "file_sync_allowed_users" not in file_sync_text
     assert "file_sync_allowed_groups" not in file_sync_text
@@ -250,6 +252,8 @@ def test_file_sync_admin_and_sidebar_discovery():
     assert "file-sync-app-role-setup-modal" in admin_template
     assert "Visible Source Types" in admin_template
     assert "file_sync_visible_source_type_smb" in admin_template
+    assert "file_sync_visible_source_type_azure_files" in admin_template
+    assert "file_sync_visible_source_type_onedrive" in admin_template
     assert "file_sync_visible_source_type_sharepoint_on_prem" in admin_template
     assert "file_sync_visible_source_type_google_workspace" in admin_template
     assert "data-file-sync-admin-target" in admin_template
@@ -379,6 +383,9 @@ def test_file_sync_recursive_and_connection_test_wiring():
     assert "Source Type" in file_sync_js
     assert "Configure Source" in file_sync_js
     assert "SMB Share" in file_sync_js
+    assert "Azure Files" in file_sync_js
+    assert "File service URL" in file_sync_js
+    assert "Share name" in file_sync_js
     assert "sharepoint_on_prem" in file_sync_js
     assert "google_workspace" in file_sync_js
     assert "visibleSourceTypeValues" in file_sync_js
@@ -442,6 +449,7 @@ def test_file_sync_document_indicator_wiring():
         assert "source_type || 'smb'" in frontend_text
         assert "bi bi-arrow-repeat me-1" in frontend_text
         assert "SMB" in frontend_text
+        assert "Azure Files" in frontend_text
         assert "m365sp" in frontend_text
         assert "M365SP" in frontend_text
         assert "one_drive" in frontend_text

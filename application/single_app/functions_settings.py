@@ -304,7 +304,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'file_sync_personal_admin_only': False,
         'file_sync_group_admin_only': False,
         'file_sync_public_admin_only': False,
-        'file_sync_visible_source_types': ['smb'],
+        'file_sync_visible_source_types': ['smb', 'azure_files', 'onedrive'],
         'file_sync_max_sources_per_scope': 10,
         'file_sync_min_schedule_interval_minutes': 15,
         'file_sync_max_files_per_run': 1000,

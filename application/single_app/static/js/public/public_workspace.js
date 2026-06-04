@@ -1007,6 +1007,7 @@ function getPublicDocumentSyncTypeConfig(doc) {
   const sourceType = String(doc?.file_sync?.source_type || 'smb').trim().toLowerCase();
   const sourceTypeMap = {
     smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Synced from SMB source' },
+    azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Synced from Azure Files' },
     m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
     m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
     m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },

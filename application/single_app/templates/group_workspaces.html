@@ -847,7 +847,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           data-api-base="/api/file-sync/group"
           data-tags-api="/api/group_documents/tags"
           data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
-          data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb'])|join(',') }}"
+          data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb', 'azure_files', 'onedrive'])|join(',') }}"
         ></div>
       </div>
     </div>
@@ -2785,6 +2785,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const sourceType = String(doc?.file_sync?.source_type || 'smb').trim().toLowerCase();
     const sourceTypeMap = {
       smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Synced from SMB source' },
+      azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Synced from Azure Files' },
       m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
       m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
       m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
@@ -3151,13 +3152,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   function syncGroupSelectionModeUI() {
     const table = document.getElementById('group-documents-table');
+    const folderCardView = document.getElementById('group-folder-documents-card-view');
     const bulkActionsBar = document.getElementById('groupBulkActionsBar');
     const toggleSelectionBtn = document.getElementById('group-toggle-selection-btn');
 
-    syncGroupSelectionUI();
-
+    getGroupSelectionTables().forEach((selectionTable) => {
+      selectionTable.classList.toggle('selection-mode', groupSelectionMode);
+    });
     table?.classList.toggle('selection-mode', groupSelectionMode);
     groupDocumentsCardView?.classList.toggle('selection-mode', groupSelectionMode);
+    folderCardView?.classList.toggle('selection-mode', groupSelectionMode);
 
     document.querySelectorAll('.document-checkbox').forEach(checkbox => {
       checkbox.classList.toggle('d-none', !groupSelectionMode);
@@ -3183,6 +3187,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       toggleSelectionBtn.setAttribute('aria-pressed', String(groupSelectionMode));
     }
 
+    syncGroupSelectionUI();
     updateGroupBulkActionButtons();
   }
 

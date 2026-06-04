@@ -2,11 +2,14 @@
 """Azure AI Foundry agent execution helpers."""
 
 import asyncio
+import base64
 import json
 import logging
+import mimetypes
 import os
+import re
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
 import requests
@@ -30,6 +33,15 @@ from functions_keyvault import (
 )
 
 _logger = logging.getLogger("foundry_agent_runtime")
+
+FOUNDRY_METADATA_VALUE_MAX_LENGTH = 512
+FOUNDRY_INTERNAL_METADATA_KEYS = {
+    "active_group_ids",
+    "active_public_workspace_ids",
+    "selected_document_ids",
+}
+FOUNDRY_FILE_SEARCHABLE_CONTEXT_MAX_CHARS = 6000
+FOUNDRY_FILE_SEARCHABLE_CONTEXT_HEADER = "Attached file searchable summary"
 
 
 @dataclass
@@ -90,6 +102,7 @@ class AzureAIFoundryChatCompletionAgent:
         self.max_completion_tokens = agent_config.get("max_completion_tokens", -1)
         self.last_run_citations: List[Dict[str, Any]] = []
         self.last_run_model: Optional[str] = None
+        self.last_run_metadata: Dict[str, Any] = {}
         self._foundry_settings = (
             (agent_config.get("other_settings") or {}).get("azure_ai_foundry") or {}
         )
@@ -141,6 +154,7 @@ class AzureAIFoundryChatCompletionAgent:
 
         self.last_run_citations = result.citations
         self.last_run_model = result.model
+        self.last_run_metadata = result.metadata
         return result.message
 
     async def invoke_stream(
@@ -158,6 +172,7 @@ class AzureAIFoundryChatCompletionAgent:
         )
         self.last_run_citations = result.citations
         self.last_run_model = result.model
+        self.last_run_metadata = result.metadata
         if result.message:
             yield result.message
 
@@ -180,6 +195,7 @@ class AzureAIFoundryNewChatCompletionAgent:
         self.max_completion_tokens = agent_config.get("max_completion_tokens", -1)
         self.last_run_citations: List[Dict[str, Any]] = []
         self.last_run_model: Optional[str] = None
+        self.last_run_metadata: Dict[str, Any] = {}
         self._new_foundry_settings = (
             (agent_config.get("other_settings") or {}).get("new_foundry") or {}
         )
@@ -209,11 +225,13 @@ class AzureAIFoundryNewChatCompletionAgent:
         )
         self.last_run_citations = result.citations
         self.last_run_model = result.model
+        self.last_run_metadata = result.metadata
         return result.message
 
     async def invoke_stream(
         self,
         messages: Iterable[ChatMessageContent],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[FoundryAgentStreamMessage]:
         """Yield incremental content for the new Foundry application runtime."""
 
@@ -221,10 +239,94 @@ class AzureAIFoundryNewChatCompletionAgent:
             foundry_settings=self._new_foundry_settings,
             global_settings=self._global_settings,
             message_history=list(messages),
-            metadata={},
+            metadata=metadata or {},
             max_completion_tokens=self.max_completion_tokens,
         ):
             if stream_message.metadata:
+                self.last_run_metadata = stream_message.metadata
+                citations = stream_message.metadata.get("citations")
+                if isinstance(citations, list):
+                    self.last_run_citations = citations
+                model_value = stream_message.metadata.get("model")
+                if isinstance(model_value, str) and model_value.strip():
+                    self.last_run_model = model_value.strip()
+            yield stream_message
+
+
+class AzureAIFoundryWorkflowAgent:
+    """Wrapper for Foundry workflow agents invoked through agent_reference."""
+
+    agent_type = "foundry_workflow"
+
+    def __init__(self, agent_config: Dict[str, Any], settings: Dict[str, Any]):
+        self.name = agent_config.get("name")
+        self.display_name = agent_config.get("display_name") or self.name
+        self.description = agent_config.get("description", "")
+        self.id = agent_config.get("id")
+        self.default_agent = agent_config.get("default_agent", False)
+        self.is_global = agent_config.get("is_global", False)
+        self.is_group = agent_config.get("is_group", False)
+        self.group_id = agent_config.get("group_id")
+        self.group_name = agent_config.get("group_name")
+        self.max_completion_tokens = agent_config.get("max_completion_tokens", -1)
+        self.last_run_citations: List[Dict[str, Any]] = []
+        self.last_run_model: Optional[str] = None
+        self.last_run_metadata: Dict[str, Any] = {}
+        self._workflow_settings = (
+            (agent_config.get("other_settings") or {}).get("foundry_workflow") or {}
+        )
+        self._global_settings = settings or {}
+
+    def _workflow_name(self) -> str:
+        return _resolve_foundry_workflow_name(self._workflow_settings, self.name)
+
+    def invoke(
+        self,
+        agent_message_history: Iterable[ChatMessageContent],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Synchronously invoke the workflow by aggregating the streaming response."""
+
+        metadata = metadata or {}
+        history = list(agent_message_history)
+        workflow_name = self._workflow_name()
+        debug_print(
+            f"[FoundryWorkflowAgent] Invoking workflow '{workflow_name}' with {len(history)} messages"
+        )
+
+        result = asyncio.run(
+            execute_foundry_workflow_agent(
+                workflow_settings=self._workflow_settings,
+                global_settings=self._global_settings,
+                message_history=history,
+                metadata=metadata,
+                workflow_name=workflow_name,
+                max_completion_tokens=self.max_completion_tokens,
+            )
+        )
+        self.last_run_citations = result.citations
+        self.last_run_model = result.model
+        self.last_run_metadata = result.metadata
+        return result.message
+
+    async def invoke_stream(
+        self,
+        messages: Iterable[ChatMessageContent],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> AsyncIterator[FoundryAgentStreamMessage]:
+        """Yield incremental content from a Foundry workflow Responses stream."""
+
+        workflow_name = self._workflow_name()
+        async for stream_message in execute_foundry_workflow_agent_stream(
+            workflow_settings=self._workflow_settings,
+            global_settings=self._global_settings,
+            message_history=list(messages),
+            metadata=metadata or {},
+            workflow_name=workflow_name,
+            max_completion_tokens=self.max_completion_tokens,
+        ):
+            if stream_message.metadata:
+                self.last_run_metadata = stream_message.metadata
                 citations = stream_message.metadata.get("citations")
                 if isinstance(citations, list):
                     self.last_run_citations = citations
@@ -363,12 +465,19 @@ async def execute_new_foundry_agent(
         f"{endpoint.rstrip('/')}/applications/{quote(application_name, safe='')}/"
         "protocols/openai/responses"
     )
+    file_inputs, file_input_metadata = _collect_foundry_response_file_inputs(
+        foundry_settings,
+        metadata,
+    )
     payload = _build_new_foundry_request_payload(
         message_history,
         metadata,
         stream=False,
         max_output_tokens=_normalize_max_completion_tokens(max_completion_tokens),
+        file_inputs=file_inputs,
     )
+    if file_input_metadata:
+        payload.setdefault("metadata", {})["attached_file_count"] = str(len(file_input_metadata))
     headers = {
         "Authorization": f"Bearer {token.token}",
         "Content-Type": "application/json",
@@ -440,16 +549,25 @@ async def execute_new_foundry_agent_stream(
         "protocols/openai/responses"
     )
     debug_print(f"Invoking new Foundry application '{application_name}' at {endpoint} with streaming to url {url} with api-version {responses_api_version}")
+    file_inputs, file_input_metadata = _collect_foundry_response_file_inputs(
+        foundry_settings,
+        metadata,
+    )
     payload = _build_new_foundry_request_payload(
         message_history,
         metadata,
         stream=True,
         max_output_tokens=_normalize_max_completion_tokens(max_completion_tokens),
+        file_inputs=file_inputs,
     )
+    if file_input_metadata:
+        payload.setdefault("metadata", {})["attached_file_count"] = str(len(file_input_metadata))
     headers = {
         "Authorization": f"Bearer {token.token}",
         "Content-Type": "application/json",
     }
+    response_params: Dict[str, str] = {}
+    conversation_params: Dict[str, str] = {}
     response: Optional[requests.Response] = None
     state = NewFoundryStreamState()
 
@@ -529,6 +647,247 @@ async def execute_new_foundry_agent_stream(
         await credential.close()
 
 
+async def execute_foundry_workflow_agent(
+    *,
+    workflow_settings: Dict[str, Any],
+    global_settings: Dict[str, Any],
+    message_history: List[ChatMessageContent],
+    metadata: Dict[str, Any],
+    workflow_name: Optional[str] = None,
+    max_completion_tokens: Optional[int] = None,
+) -> FoundryAgentInvocationResult:
+    """Invoke a Foundry workflow by consuming its streaming response."""
+
+    resolved_workflow_name = _resolve_foundry_workflow_name(
+        workflow_settings,
+        workflow_name,
+    )
+    text_parts: List[str] = []
+    final_metadata: Dict[str, Any] = {}
+
+    async for stream_message in execute_foundry_workflow_agent_stream(
+        workflow_settings=workflow_settings,
+        global_settings=global_settings,
+        message_history=message_history,
+        metadata=metadata,
+        workflow_name=resolved_workflow_name,
+        max_completion_tokens=max_completion_tokens,
+    ):
+        if stream_message.content:
+            text_parts.append(stream_message.content)
+        if stream_message.metadata:
+            final_metadata = stream_message.metadata
+
+    text = "".join(text_parts).strip()
+    if not text:
+        text = str(final_metadata.get("output_text") or "").strip()
+    if not text:
+        raise FoundryAgentInvocationError("Foundry workflow returned no assistant content.")
+
+    citations = final_metadata.get("citations")
+    return FoundryAgentInvocationResult(
+        message=text,
+        model=str(final_metadata.get("model") or resolved_workflow_name),
+        citations=citations if isinstance(citations, list) else [],
+        metadata=final_metadata,
+    )
+
+
+async def execute_foundry_workflow_agent_stream(
+    *,
+    workflow_settings: Dict[str, Any],
+    global_settings: Dict[str, Any],
+    message_history: List[ChatMessageContent],
+    metadata: Dict[str, Any],
+    workflow_name: Optional[str] = None,
+    max_completion_tokens: Optional[int] = None,
+) -> AsyncIterator[FoundryAgentStreamMessage]:
+    """Stream a Foundry workflow response through project-level OpenAI Responses."""
+
+    resolved_workflow_name = _resolve_foundry_workflow_name(
+        workflow_settings,
+        workflow_name,
+    )
+    endpoint = _resolve_endpoint(workflow_settings, global_settings)
+    responses_api_version = (
+        workflow_settings.get("responses_api_version")
+        or workflow_settings.get("api_version")
+        or global_settings.get("azure_ai_foundry_api_version")
+    )
+    if not responses_api_version:
+        raise FoundryAgentInvocationError(
+            "Foundry workflow agents require a responses_api_version or api_version setting."
+        )
+
+    credential = _build_async_credential(workflow_settings, global_settings)
+    scope = _resolve_foundry_scope(workflow_settings, global_settings)
+    token = await credential.get_token(scope)
+    configured_responses_api_version = str(responses_api_version).strip()
+    responses_api_version = _normalize_foundry_workflow_rest_protocol(
+        configured_responses_api_version
+    )
+    if responses_api_version != configured_responses_api_version:
+        debug_print(
+            f"[FoundryWorkflowAgent] Using OpenAI-compatible workflow REST protocol '{responses_api_version}' for configured value '{configured_responses_api_version}'"
+        )
+    endpoint_candidates = _build_foundry_workflow_endpoint_candidates(
+        endpoint,
+        workflow_settings,
+        responses_api_version=responses_api_version,
+    )
+    file_inputs, file_input_metadata = _collect_foundry_response_file_inputs(
+        workflow_settings,
+        metadata,
+    )
+    payload = _build_foundry_workflow_request_payload(
+        message_history,
+        metadata,
+        workflow_name=resolved_workflow_name,
+        stream=True,
+        max_output_tokens=_normalize_max_completion_tokens(max_completion_tokens),
+        max_context_chars=_normalize_max_context_chars(
+            workflow_settings.get("max_context_chars")
+        ),
+        include_document_context=workflow_settings.get("include_document_context", True),
+        file_inputs=file_inputs,
+    )
+    if file_input_metadata:
+        payload.setdefault("metadata", {})["attached_file_count"] = str(len(file_input_metadata))
+    headers = {
+        "Authorization": f"Bearer {token.token}",
+        "Content-Type": "application/json",
+    }
+    response: Optional[requests.Response] = None
+    foundry_conversation_id: Optional[str] = None
+    foundry_conversation_url: Optional[str] = None
+    state = NewFoundryStreamState()
+
+    try:
+        response_params = _build_foundry_workflow_request_params(responses_api_version)
+        conversation_params = _build_foundry_workflow_conversation_params(responses_api_version)
+        for index, candidate in enumerate(endpoint_candidates):
+            url = candidate["responses_url"]
+            foundry_conversation_url = candidate["conversations_url"]
+            foundry_conversation_id = _create_foundry_workflow_conversation(
+                foundry_conversation_url,
+                params=conversation_params,
+                headers=headers,
+            )
+            payload["conversation"] = foundry_conversation_id
+            debug_print(
+                f"[FoundryWorkflowAgent] Invoking workflow '{resolved_workflow_name}' at {url} with Foundry conversation {foundry_conversation_id}"
+            )
+            response = requests.post(
+                url,
+                params=response_params,
+                headers=headers,
+                json=payload,
+                timeout=(30, 120),
+                stream=True,
+            )
+            should_try_next_path = (
+                not _has_explicit_workflow_responses_path(workflow_settings)
+                and response.status_code in {404, 405}
+                and index < len(endpoint_candidates) - 1
+            )
+            if should_try_next_path:
+                response.close()
+                response = None
+                _delete_foundry_workflow_conversation(
+                    foundry_conversation_url,
+                    foundry_conversation_id,
+                    params=conversation_params,
+                    headers=headers,
+                )
+                foundry_conversation_id = None
+                foundry_conversation_url = None
+                payload.pop("conversation", None)
+                continue
+            break
+
+        if response is None:
+            raise FoundryAgentInvocationError(
+                "Unable to open a Foundry workflow Responses stream."
+            )
+
+        if response.status_code >= 400:
+            response_payload = _try_parse_json_response(response) or {}
+            raise FoundryAgentInvocationError(
+                _build_http_error_message("Foundry workflow stream", response, response_payload)
+            )
+
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if "text/event-stream" not in content_type:
+            response_payload = _parse_json_response(response)
+            result = _build_foundry_workflow_invocation_result(
+                response_payload=response_payload,
+                workflow_name=resolved_workflow_name,
+            )
+            result.metadata["foundry_conversation_id"] = foundry_conversation_id
+            if result.message:
+                yield FoundryAgentStreamMessage(content=result.message)
+            yield FoundryAgentStreamMessage(
+                metadata={
+                    **result.metadata,
+                    "citations": result.citations,
+                    "model": result.model,
+                    "workflow_name": resolved_workflow_name,
+                    "foundry_conversation_id": foundry_conversation_id,
+                }
+            )
+            return
+
+        for event_name, event_data in _iter_sse_events(response):
+            if event_data == "[DONE]":
+                break
+
+            event_payload = _parse_sse_json_payload(event_name, event_data)
+            event_type = str(event_payload.get("type") or event_name or "").strip()
+            if not event_type:
+                continue
+
+            if event_type in {"error", "response.error", "response.failed"}:
+                raise FoundryAgentInvocationError(
+                    _extract_new_foundry_event_error(event_payload)
+                )
+
+            delta_text = _extract_new_foundry_stream_delta(event_payload)
+            if delta_text:
+                state.text_parts.append(delta_text)
+
+            _update_new_foundry_stream_state(
+                state=state,
+                event_payload=event_payload,
+                application_name=resolved_workflow_name,
+            )
+            _record_foundry_workflow_event(state, event_type, event_payload)
+
+        final_text = _extract_new_foundry_stream_text(state)
+        if final_text:
+            state.text_parts = [final_text]
+            yield FoundryAgentStreamMessage(content=final_text)
+
+        yield FoundryAgentStreamMessage(
+            metadata=_build_foundry_workflow_stream_metadata(
+                state,
+                resolved_workflow_name,
+                payload,
+                foundry_conversation_id=foundry_conversation_id,
+            )
+        )
+    finally:
+        if response is not None:
+            response.close()
+        if foundry_conversation_url and foundry_conversation_id:
+            _delete_foundry_workflow_conversation(
+                foundry_conversation_url,
+                foundry_conversation_id,
+                params=conversation_params,
+                headers=headers,
+            )
+        await credential.close()
+
+
 def _resolve_endpoint(foundry_settings: Dict[str, Any], global_settings: Dict[str, Any]) -> str:
     endpoint = (
         foundry_settings.get("endpoint")
@@ -557,6 +916,826 @@ def _resolve_new_foundry_application_name(foundry_settings: Dict[str, Any]) -> s
             "New Foundry agents require application_name or application_id in other_settings.new_foundry."
         )
     return application_name
+
+
+def _resolve_foundry_workflow_name(
+    workflow_settings: Dict[str, Any],
+    fallback_name: Optional[str] = None,
+) -> str:
+    workflow_name = str(
+        workflow_settings.get("workflow_name")
+        or workflow_settings.get("agent_name")
+        or fallback_name
+        or ""
+    ).strip()
+    if not workflow_name:
+        raise FoundryAgentInvocationError(
+            "Foundry workflow agents require workflow_name in other_settings.foundry_workflow."
+        )
+    return workflow_name
+
+
+def _normalize_max_context_chars(value: Any) -> Optional[int]:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized > 0 else None
+
+
+def _has_explicit_workflow_responses_path(workflow_settings: Dict[str, Any]) -> bool:
+    return bool(
+        str(
+            workflow_settings.get("responses_path")
+            or workflow_settings.get("openai_responses_path")
+            or ""
+        ).strip()
+    )
+
+
+def _build_foundry_workflow_response_urls(
+    endpoint: str,
+    workflow_settings: Dict[str, Any],
+    responses_api_version: str = "",
+) -> List[str]:
+    explicit_path = str(
+        workflow_settings.get("responses_path")
+        or workflow_settings.get("openai_responses_path")
+        or ""
+    ).strip()
+    if explicit_path:
+        if explicit_path.startswith(("https://", "http://")):
+            return [explicit_path]
+        return [f"{endpoint.rstrip('/')}/{explicit_path.lstrip('/')}"]
+
+    endpoint_base = endpoint.rstrip("/")
+    protocol_version = _normalize_foundry_responses_protocol_version(responses_api_version)
+    if protocol_version:
+        return [
+            f"{endpoint_base}/openai/{protocol_version}/responses",
+            f"{endpoint_base}/openai/responses",
+            f"{endpoint_base}/responses",
+        ]
+
+    return [
+        f"{endpoint_base}/openai/responses",
+        f"{endpoint_base}/openai/v1/responses",
+        f"{endpoint_base}/responses",
+    ]
+
+
+def _derive_foundry_conversation_url(response_url: str) -> str:
+    normalized_url = str(response_url or "").rstrip("/")
+    if normalized_url.endswith("/responses"):
+        return f"{normalized_url[:-len('/responses')]}/conversations"
+    return f"{normalized_url}/conversations"
+
+
+def _build_foundry_workflow_endpoint_candidates(
+    endpoint: str,
+    workflow_settings: Dict[str, Any],
+    responses_api_version: str = "",
+) -> List[Dict[str, str]]:
+    conversation_path = str(
+        workflow_settings.get("conversations_path")
+        or workflow_settings.get("openai_conversations_path")
+        or ""
+    ).strip()
+    response_urls = _build_foundry_workflow_response_urls(
+        endpoint,
+        workflow_settings,
+        responses_api_version=responses_api_version,
+    )
+
+    candidates: List[Dict[str, str]] = []
+    for response_url in response_urls:
+        if conversation_path:
+            if conversation_path.startswith(("https://", "http://")):
+                conversation_url = conversation_path
+            else:
+                conversation_url = f"{endpoint.rstrip('/')}/{conversation_path.lstrip('/')}"
+        else:
+            conversation_url = _derive_foundry_conversation_url(response_url)
+        candidates.append(
+            {
+                "responses_url": response_url,
+                "conversations_url": conversation_url,
+            }
+        )
+    return candidates
+
+
+def _normalize_foundry_responses_protocol_version(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"v1", "v2"}:
+        return normalized
+    return ""
+
+
+def _normalize_foundry_workflow_rest_protocol(value: Any) -> str:
+    version_value = str(value or "").strip()
+    if not version_value:
+        return "v1"
+    protocol_version = _normalize_foundry_responses_protocol_version(version_value)
+    if protocol_version in {"v1", "v2"}:
+        return "v1"
+    return version_value
+
+
+def _build_foundry_workflow_request_params(responses_api_version: Any) -> Dict[str, str]:
+    version_value = str(responses_api_version or "").strip()
+    if not version_value or _normalize_foundry_responses_protocol_version(version_value):
+        return {}
+    return {"api-version": version_value}
+
+
+def _build_foundry_workflow_conversation_params(responses_api_version: Any) -> Dict[str, str]:
+    version_value = str(responses_api_version or "").strip()
+    if not version_value or _normalize_foundry_responses_protocol_version(version_value):
+        return {}
+    return {"api-version": version_value}
+
+
+def _create_foundry_workflow_conversation(
+    conversations_url: str,
+    *,
+    params: Dict[str, str],
+    headers: Dict[str, str],
+) -> str:
+    debug_print(
+        f"[FoundryWorkflowAgent] Creating Foundry conversation at {conversations_url} with params {params}"
+    )
+    response = requests.post(
+        conversations_url,
+        params=params,
+        headers=headers,
+        json={},
+        timeout=30,
+    )
+    payload = _parse_json_response(response)
+    if response.status_code >= 400:
+        raise FoundryAgentInvocationError(
+            f"{_build_http_error_message('Foundry workflow conversation create', response, payload)} at {conversations_url} with params {params}"
+        )
+    conversation_id = str(payload.get("id") or "").strip()
+    if not conversation_id:
+        raise FoundryAgentInvocationError(
+            "Foundry workflow conversation create returned no conversation id."
+        )
+    return conversation_id
+
+
+def _delete_foundry_workflow_conversation(
+    conversations_url: str,
+    conversation_id: str,
+    *,
+    params: Dict[str, str],
+    headers: Dict[str, str],
+) -> None:
+    if not conversations_url or not conversation_id:
+        return
+    try:
+        response = requests.delete(
+            f"{conversations_url.rstrip('/')}/{quote(conversation_id, safe='')}",
+            params=params,
+            headers=headers,
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            _logger.warning(
+                "Failed to delete Foundry workflow conversation %s: HTTP %s %s",
+                conversation_id,
+                response.status_code,
+                response.text[:300],
+            )
+    except Exception as cleanup_error:  # pragma: no cover - best effort cleanup
+        _logger.warning(
+            "Failed to delete Foundry workflow conversation %s: %s",
+            conversation_id,
+            cleanup_error,
+        )
+
+
+def _looks_like_document_context_message(text: str) -> bool:
+    normalized = str(text or "").lower()
+    markers = (
+        "retrieved document excerpts",
+        "(source:",
+        "document keywords",
+        "document abstract",
+        "ai vision analysis",
+        "chat-uploaded file",
+        "selected document",
+        "tabular analysis",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def _build_foundry_workflow_input_text(
+    message_history: List[ChatMessageContent],
+    max_context_chars: Optional[int] = None,
+    include_document_context: bool = True,
+) -> str:
+    parts: List[str] = []
+    for message in message_history:
+        text = _extract_message_text(message).strip()
+        if not text:
+            continue
+        if not include_document_context and _looks_like_document_context_message(text):
+            continue
+        role_value = getattr(message, "role", "user")
+        role = str(role_value).strip().lower() or "user"
+        if role.startswith("authorrole."):
+            role = role.split(".", 1)[1]
+        if role not in {"system", "developer", "user", "assistant"}:
+            role = "user"
+        parts.append(f"{role.upper()}:\n{text}")
+
+    if not parts:
+        raise FoundryAgentInvocationError(
+            "Foundry workflow invocation requires at least one message."
+        )
+
+    packed_text = "\n\n".join(parts).strip()
+    if max_context_chars and len(packed_text) > max_context_chars:
+        truncation_notice = "[Earlier SimpleChat context was truncated to fit the workflow context limit.]\n\n"
+        keep_chars = max(1, max_context_chars - len(truncation_notice))
+        packed_text = f"{truncation_notice}{packed_text[-keep_chars:]}"
+    return packed_text
+
+
+def _truncate_foundry_metadata_value(value: str) -> str:
+    if len(value) <= FOUNDRY_METADATA_VALUE_MAX_LENGTH:
+        return value
+    return f"{value[:FOUNDRY_METADATA_VALUE_MAX_LENGTH - 3]}..."
+
+
+def _build_foundry_response_metadata(
+    metadata: Dict[str, Any],
+    additional_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    normalized_metadata: Dict[str, str] = {}
+    for key, value in {**(metadata or {}), **(additional_metadata or {})}.items():
+        key_text = str(key or "").strip()
+        if not key_text or key_text in FOUNDRY_INTERNAL_METADATA_KEYS or value is None:
+            continue
+        if isinstance(value, (dict, list, tuple, set)):
+            continue
+        normalized_metadata[key_text] = _truncate_foundry_metadata_value(str(value))
+    return normalized_metadata
+
+
+def _extract_foundry_file_searchable_context(text: str) -> str:
+    if not text:
+        return ""
+
+    patterns = [
+        (
+            "image",
+            r"\[User uploaded an image named[^\n]*\.\].*?Use this image information to answer questions about the uploaded image\.",
+        ),
+        (
+            "file",
+            r"\[User uploaded a file named[^\n]*Content preview:\n.*?\]\nUse this file context if relevant\.",
+        ),
+        (
+            "tabular",
+            r"\[User uploaded a tabular data file named[^\n]*\. This is CSV format data for analysis:\n.*?\]\nThis is complete tabular data in CSV format\. You can perform calculations, analysis, and data operations on this dataset\.",
+        ),
+    ]
+    blocks: List[str] = []
+    for context_type, pattern in patterns:
+        blocks.extend(
+            _compact_foundry_upload_context_block(context_type, match.group(0))
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        )
+
+    deduped_blocks: List[str] = []
+    seen_blocks = set()
+    for block in blocks:
+        normalized_block = re.sub(r"\s+", " ", block).strip().lower()
+        if normalized_block in seen_blocks:
+            continue
+        deduped_blocks.append(block)
+        seen_blocks.add(normalized_block)
+
+    searchable_context = "\n\n".join(deduped_blocks).strip()
+    if len(searchable_context) > FOUNDRY_FILE_SEARCHABLE_CONTEXT_MAX_CHARS:
+        searchable_context = searchable_context[-FOUNDRY_FILE_SEARCHABLE_CONTEXT_MAX_CHARS:]
+    return searchable_context
+
+
+def _compact_foundry_upload_context_block(context_type: str, block: str) -> str:
+    if context_type == "image":
+        filename_match = re.search(r"\[User uploaded an image named '([^']+)'\.\]", block)
+        description_match = re.search(
+            r"Description:\s*(.*?)(?=\nObjects detected:|\nText visible in image:|\nContextual analysis:|\n\n|$)",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        objects_match = re.search(
+            r"Objects detected:\s*(.*?)(?=\nText visible in image:|\nContextual analysis:|\n\n|$)",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        visible_text_match = re.search(
+            r"Text visible in image:\s*(.*?)(?=\nContextual analysis:|\n\n|$)",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        ocr_match = re.search(
+            r"Extracted Text \(OCR\):\s*(.*?)(?=\n\nAI Vision Analysis:|\n\n=== AI Vision Analysis ===|$)",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        filename = filename_match.group(1).strip() if filename_match else "uploaded image"
+        parts = [f"Uploaded image {filename} searchable summary:"]
+        if description_match:
+            parts.append(_normalize_foundry_context_snippet(description_match.group(1), 1400))
+        if objects_match:
+            parts.append(f"Detected objects: {_normalize_foundry_context_snippet(objects_match.group(1), 800)}")
+        if visible_text_match:
+            parts.append(f"Visible text: {_normalize_foundry_context_snippet(visible_text_match.group(1), 500)}")
+        if ocr_match:
+            parts.append(f"OCR excerpt: {_normalize_foundry_context_snippet(ocr_match.group(1), 500)}")
+        return " ".join(part for part in parts if part).strip()
+
+    if context_type == "file":
+        file_match = re.search(
+            r"\[User uploaded a file named '([^']+)'\. Content preview:\n(.*?)\]\nUse this file context if relevant\.",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if file_match:
+            filename = file_match.group(1).strip()
+            preview = _normalize_foundry_context_snippet(file_match.group(2), 1800)
+            return f"Uploaded file {filename} searchable content preview: {preview}"
+
+    if context_type == "tabular":
+        table_match = re.search(
+            r"\[User uploaded a tabular data file named '([^']+)'\. This is CSV format data for analysis:\n(.*?)\]",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if table_match:
+            filename = table_match.group(1).strip()
+            preview = _normalize_foundry_context_snippet(table_match.group(2), 1800)
+            return f"Uploaded tabular file {filename} searchable CSV preview: {preview}"
+
+    return _normalize_foundry_context_snippet(block, 1800)
+
+
+def _normalize_foundry_context_snippet(value: str, max_chars: int) -> str:
+    normalized = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    return f"{normalized[:max_chars - 3]}..."
+
+
+def _append_foundry_file_searchable_context_to_text(text: str, searchable_context: str) -> str:
+    if not text or not searchable_context or FOUNDRY_FILE_SEARCHABLE_CONTEXT_HEADER in text:
+        return text
+    summary = f"{FOUNDRY_FILE_SEARCHABLE_CONTEXT_HEADER}:\n{searchable_context}\n\nOriginal user request:\n"
+    user_marker = "\n\nUSER:\n"
+    user_marker_index = text.rfind(user_marker)
+    if user_marker_index >= 0:
+        user_text_index = user_marker_index + len(user_marker)
+        return f"{text[:user_text_index]}{summary}{text[user_text_index:]}"
+    return f"{summary}{text}"
+
+
+def _build_foundry_file_attached_workflow_text(
+    message_history: List[ChatMessageContent],
+    searchable_context: str,
+) -> str:
+    latest_user_text = _extract_latest_user_message_text(message_history)
+    if not latest_user_text:
+        return f"{FOUNDRY_FILE_SEARCHABLE_CONTEXT_HEADER}:\n{searchable_context}"
+    return (
+        f"{FOUNDRY_FILE_SEARCHABLE_CONTEXT_HEADER}:\n{searchable_context}\n\n"
+        f"User request:\n{_clean_foundry_file_reference_text(latest_user_text)}"
+    )
+
+
+def _extract_latest_user_message_text(message_history: List[ChatMessageContent]) -> str:
+    for message in reversed(message_history or []):
+        role_value = getattr(message, "role", "user")
+        role = str(role_value).strip().lower() or "user"
+        if role.startswith("authorrole."):
+            role = role.split(".", 1)[1]
+        if role != "user":
+            continue
+        text = _extract_message_text(message).strip()
+        if text:
+            return text
+    return ""
+
+
+def _clean_foundry_file_reference_text(text: str) -> str:
+    cleaned_text = str(text or "")
+    replacements = [
+        (r"\b(the\s+)?file\s+(i('|’)ve|ive|have)\s+uploaded\b", "the attached file summary"),
+        (r"\b(the\s+)?image\s+(i('|’)ve|ive|have)\s+uploaded\b", "the attached image summary"),
+        (r"\b(the\s+)?document\s+(i('|’)ve|ive|have)\s+uploaded\b", "the attached document summary"),
+        (r"\buploaded\s+file\b", "attached file summary"),
+        (r"\buploaded\s+image\b", "attached image summary"),
+        (r"\buploaded\s+document\b", "attached document summary"),
+    ]
+    for pattern, replacement in replacements:
+        cleaned_text = re.sub(pattern, replacement, cleaned_text, flags=re.IGNORECASE)
+    cleaned_text = re.sub(
+        r"^\s*(okay,?\s*)?(let'?s|lets)\s+work\s+on\s+([A-Za-z0-9_-]+),?\s*evaluate\s+the\s+attached\s+(file|image|document)\s+summary\s+for\s+prior\s+art[,.]?\s*",
+        r"Run the prior art search for \3. ",
+        cleaned_text,
+        flags=re.IGNORECASE,
+    )
+    cleaned_text = re.sub(
+        r"\bevaluate\s+the\s+attached\s+(file|image|document)\s+summary\s+for\s+prior\s+art\b",
+        r"run the prior art search using the attached \1 summary",
+        cleaned_text,
+        flags=re.IGNORECASE,
+    )
+    return cleaned_text.strip()
+
+
+def _build_foundry_workflow_request_payload(
+    message_history: List[ChatMessageContent],
+    metadata: Dict[str, Any],
+    *,
+    workflow_name: str,
+    stream: bool = True,
+    max_output_tokens: Optional[int] = None,
+    max_context_chars: Optional[int] = None,
+    include_document_context: bool = True,
+    file_inputs: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    normalized_metadata = _build_foundry_response_metadata(
+        metadata,
+        additional_metadata={"workflow_name": workflow_name},
+    )
+
+    input_text = _build_foundry_workflow_input_text(
+        message_history,
+        max_context_chars=max_context_chars,
+        include_document_context=include_document_context,
+    )
+    normalized_file_inputs = [item for item in (file_inputs or []) if isinstance(item, dict)]
+    if normalized_file_inputs:
+        searchable_context = _extract_foundry_file_searchable_context(input_text)
+        if searchable_context:
+            input_text = _build_foundry_file_attached_workflow_text(
+                message_history,
+                searchable_context,
+            )
+        input_payload: Any = [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": input_text,
+                    },
+                    *normalized_file_inputs,
+                ],
+            }
+        ]
+    else:
+        input_payload = input_text
+
+    payload: Dict[str, Any] = {
+        "input": input_payload,
+        "stream": stream,
+        "agent_reference": {
+            "name": workflow_name,
+            "type": "agent_reference",
+        },
+        "metadata": normalized_metadata,
+    }
+
+    if max_output_tokens is not None:
+        payload["max_output_tokens"] = max_output_tokens
+    return payload
+
+
+def _build_foundry_workflow_invocation_result(
+    *,
+    response_payload: Dict[str, Any],
+    workflow_name: str,
+) -> FoundryAgentInvocationResult:
+    result = _build_new_foundry_invocation_result(
+        response_payload=response_payload,
+        application_name=workflow_name,
+    )
+    result.metadata["workflow_name"] = workflow_name
+    result.metadata["runtime_type"] = "foundry_workflow"
+    return result
+
+
+def _coerce_bool(value: Any, default_value: bool = True) -> bool:
+    if value is None:
+        return default_value
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default_value
+
+
+def _coerce_positive_int(value: Any, default_value: int, max_value: Optional[int] = None) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        normalized = default_value
+    if normalized <= 0:
+        normalized = default_value
+    if max_value is not None:
+        normalized = min(normalized, max_value)
+    return normalized
+
+
+def _coerce_string_list(value: Any) -> List[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        candidates = value
+    else:
+        candidates = str(value).replace(";", ",").split(",")
+    normalized: List[str] = []
+    seen = set()
+    for item in candidates:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        normalized.append(text)
+        seen.add(text)
+    return normalized
+
+
+def _download_foundry_source_blob(blob_container: str, blob_path: str) -> bytes:
+    from functions_simplechat_operations import download_blob_content
+
+    return download_blob_content(blob_container, blob_path)
+
+
+def _build_foundry_file_input_part(
+    *,
+    file_name: str,
+    file_bytes: bytes,
+    content_type: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(file_bytes, (bytes, bytearray)) or not file_bytes:
+        return None
+    normalized_file_name = str(file_name or "uploaded-file").strip() or "uploaded-file"
+    normalized_content_type = str(
+        content_type
+        or mimetypes.guess_type(normalized_file_name)[0]
+        or "application/octet-stream"
+    ).split(";", 1)[0].strip() or "application/octet-stream"
+    data_uri = f"data:{normalized_content_type};base64,{base64.b64encode(bytes(file_bytes)).decode('ascii')}"
+
+    return {
+        "type": "input_file",
+        "filename": normalized_file_name,
+        "file_data": data_uri,
+    }
+
+
+def _append_foundry_file_input(
+    file_inputs: List[Dict[str, Any]],
+    file_metadata: List[Dict[str, Any]],
+    seen_sources: set,
+    *,
+    source_key: str,
+    file_name: str,
+    blob_container: str,
+    blob_path: str,
+    content_type: Optional[str],
+    max_file_bytes: int,
+    source_type: str,
+) -> None:
+    if not blob_container or not blob_path or source_key in seen_sources:
+        return
+    seen_sources.add(source_key)
+
+    try:
+        file_bytes = _download_foundry_source_blob(blob_container, blob_path)
+    except Exception as exc:
+        log_event(
+            "[FoundryWorkflowAgent] Failed to load file input blob",
+            extra={
+                "source_type": source_type,
+                "blob_container": blob_container,
+                "blob_path": blob_path,
+                "error": str(exc),
+            },
+            level=logging.WARNING,
+        )
+        return
+
+    if len(file_bytes) > max_file_bytes:
+        log_event(
+            "[FoundryWorkflowAgent] Skipping oversized file input",
+            extra={
+                "source_type": source_type,
+                "file_name": file_name,
+                "file_size": len(file_bytes),
+                "max_file_bytes": max_file_bytes,
+            },
+            debug_only=True,
+        )
+        return
+
+    file_part = _build_foundry_file_input_part(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if not file_part:
+        return
+
+    file_inputs.append(file_part)
+    file_metadata.append(
+        {
+            "source_type": source_type,
+            "file_name": file_name,
+            "content_type": content_type or mimetypes.guess_type(file_name or "")[0] or "application/octet-stream",
+            "file_size": len(file_bytes),
+        }
+    )
+
+
+def _collect_recent_chat_upload_file_inputs(
+    *,
+    conversation_id: str,
+    file_inputs: List[Dict[str, Any]],
+    file_metadata: List[Dict[str, Any]],
+    seen_sources: set,
+    max_files: int,
+    max_file_bytes: int,
+) -> None:
+    if not conversation_id or len(file_inputs) >= max_files:
+        return
+    from config import cosmos_messages_container
+
+    try:
+        rows = list(
+            cosmos_messages_container.query_items(
+                query=(
+                    "SELECT * FROM c WHERE c.conversation_id = @conversation_id "
+                    "AND (c.role = 'file' OR c.role = 'image') ORDER BY c.timestamp DESC"
+                ),
+                parameters=[{"name": "@conversation_id", "value": conversation_id}],
+                partition_key=conversation_id,
+                enable_cross_partition_query=True,
+            )
+        )
+    except Exception as exc:
+        log_event(
+            "[FoundryWorkflowAgent] Failed to query chat upload file inputs",
+            extra={"conversation_id": conversation_id, "error": str(exc)},
+            level=logging.WARNING,
+        )
+        return
+
+    for message in rows:
+        if len(file_inputs) >= max_files:
+            break
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        if metadata.get("is_user_upload") is not True and str(message.get("file_content_source") or "").strip().lower() != "blob":
+            continue
+        file_name = str(message.get("filename") or message.get("title") or message.get("id") or "chat-upload").strip()
+        content_type = message.get("mime_type") or metadata.get("content_type") or metadata.get("mime_type")
+        blob_container = str(message.get("blob_container") or "").strip()
+        blob_path = str(message.get("blob_path") or "").strip()
+        _append_foundry_file_input(
+            file_inputs,
+            file_metadata,
+            seen_sources,
+            source_key=f"chat:{message.get('id')}",
+            file_name=file_name,
+            blob_container=blob_container,
+            blob_path=blob_path,
+            content_type=content_type,
+            max_file_bytes=max_file_bytes,
+            source_type="chat_upload",
+        )
+
+
+def _collect_selected_document_file_inputs(
+    *,
+    metadata: Dict[str, Any],
+    file_inputs: List[Dict[str, Any]],
+    file_metadata: List[Dict[str, Any]],
+    seen_sources: set,
+    max_files: int,
+    max_file_bytes: int,
+) -> None:
+    if len(file_inputs) >= max_files:
+        return
+    selected_document_ids = _coerce_string_list(metadata.get("selected_document_ids"))
+    selected_document_id = str(metadata.get("selected_document_id") or "").strip()
+    if selected_document_id and selected_document_id not in selected_document_ids:
+        selected_document_ids.append(selected_document_id)
+    if not selected_document_ids:
+        return
+
+    user_id = str(metadata.get("user_id") or "").strip()
+    document_scope = str(metadata.get("document_scope") or "all").strip() or "all"
+    conversation_id = str(metadata.get("conversation_id") or "").strip()
+    active_group_ids = _coerce_string_list(metadata.get("active_group_ids"))
+    active_public_workspace_ids = _coerce_string_list(metadata.get("active_public_workspace_ids"))
+
+    if not user_id:
+        return
+
+    from functions_documents import get_document_blob_storage_info
+    from functions_search_service import resolve_document_context
+
+    for document_id in selected_document_ids:
+        if len(file_inputs) >= max_files:
+            break
+        try:
+            context = resolve_document_context(
+                document_id=document_id,
+                user_id=user_id,
+                doc_scope=document_scope,
+                active_group_ids=active_group_ids,
+                active_public_workspace_id=active_public_workspace_ids,
+                conversation_id=conversation_id,
+            )
+        except Exception as exc:
+            log_event(
+                "[FoundryWorkflowAgent] Failed to resolve selected document file input",
+                extra={"document_id": document_id, "error": str(exc)},
+                level=logging.WARNING,
+            )
+            continue
+        if not context:
+            continue
+        if context.get("scope") == "chat":
+            continue
+        document = context.get("document") if isinstance(context.get("document"), dict) else {}
+        try:
+            blob_container, blob_path = get_document_blob_storage_info(document)
+        except Exception:
+            blob_container = document.get("blob_container")
+            blob_path = document.get("blob_path")
+        file_name = str(document.get("file_name") or document.get("title") or document_id).strip()
+        content_type = document.get("mime_type") or document.get("content_type")
+        _append_foundry_file_input(
+            file_inputs,
+            file_metadata,
+            seen_sources,
+            source_key=f"document:{document_id}",
+            file_name=file_name,
+            blob_container=str(blob_container or "").strip(),
+            blob_path=str(blob_path or "").strip(),
+            content_type=content_type,
+            max_file_bytes=max_file_bytes,
+            source_type=f"workspace_{context.get('scope') or 'document'}",
+        )
+
+
+def _collect_foundry_response_file_inputs(
+    foundry_settings: Dict[str, Any],
+    metadata: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if not _coerce_bool(foundry_settings.get("include_file_inputs"), True):
+        return [], []
+
+    max_files = _coerce_positive_int(foundry_settings.get("max_file_inputs"), 5, max_value=20)
+    max_file_bytes = _coerce_positive_int(
+        foundry_settings.get("max_file_input_bytes"),
+        8 * 1024 * 1024,
+        max_value=25 * 1024 * 1024,
+    )
+    file_inputs: List[Dict[str, Any]] = []
+    file_metadata: List[Dict[str, Any]] = []
+    seen_sources = set()
+
+    normalized_metadata = metadata if isinstance(metadata, dict) else {}
+    _collect_selected_document_file_inputs(
+        metadata=normalized_metadata,
+        file_inputs=file_inputs,
+        file_metadata=file_metadata,
+        seen_sources=seen_sources,
+        max_files=max_files,
+        max_file_bytes=max_file_bytes,
+    )
+    _collect_recent_chat_upload_file_inputs(
+        conversation_id=str(normalized_metadata.get("conversation_id") or "").strip(),
+        file_inputs=file_inputs,
+        file_metadata=file_metadata,
+        seen_sources=seen_sources,
+        max_files=max_files,
+        max_file_bytes=max_file_bytes,
+    )
+
+    return file_inputs[:max_files], file_metadata[:max_files]
 
 
 def _build_async_credential(
@@ -725,8 +1904,10 @@ def _build_new_foundry_request_payload(
     metadata: Dict[str, Any],
     stream: bool = False,
     max_output_tokens: Optional[int] = None,
+    file_inputs: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     input_items: List[Dict[str, Any]] = []
+    last_user_input_index: Optional[int] = None
     for message in message_history:
         role_value = getattr(message, "role", "user")
         role = str(role_value).strip().lower() or "user"
@@ -749,21 +1930,31 @@ def _build_new_foundry_request_payload(
                 ],
             }
         )
+        if role == "user":
+            last_user_input_index = len(input_items) - 1
 
     if not input_items:
         raise FoundryAgentInvocationError(
             "New Foundry invocation requires at least one message."
         )
 
+    normalized_file_inputs = [item for item in (file_inputs or []) if isinstance(item, dict)]
+    if normalized_file_inputs:
+        attachment_index = last_user_input_index if last_user_input_index is not None else len(input_items) - 1
+        searchable_context = _extract_foundry_file_searchable_context(
+            "\n\n".join(_extract_message_text(message) for message in message_history)
+        )
+        input_items[attachment_index]["content"][0]["text"] = _append_foundry_file_searchable_context_to_text(
+            input_items[attachment_index]["content"][0]["text"],
+            searchable_context,
+        )
+        input_items[attachment_index].setdefault("content", []).extend(normalized_file_inputs)
+
     payload: Dict[str, Any] = {
         "input": input_items,
         "stream": stream,
     }
-    normalized_metadata = {
-        key: str(value)
-        for key, value in (metadata or {}).items()
-        if value is not None
-    }
+    normalized_metadata = _build_foundry_response_metadata(metadata)
     if normalized_metadata:
         payload["metadata"] = normalized_metadata
     if max_output_tokens is not None:
@@ -994,10 +2185,28 @@ def _extract_new_foundry_event_error(event_payload: Dict[str, Any]) -> str:
     error_payload = event_payload.get("error")
     if isinstance(error_payload, dict):
         message = error_payload.get("message") or json.dumps(error_payload)
-        return f"New Foundry stream failed: {message}"
+        return f"Foundry stream failed: {message}"
     if isinstance(error_payload, str) and error_payload.strip():
-        return f"New Foundry stream failed: {error_payload.strip()}"
-    return f"New Foundry stream failed: {json.dumps(event_payload, default=str)[:500]}"
+        return f"Foundry stream failed: {error_payload.strip()}"
+
+    response_payload = event_payload.get("response")
+    if isinstance(response_payload, dict):
+        response_error = response_payload.get("error")
+        if isinstance(response_error, dict):
+            message = response_error.get("message") or json.dumps(response_error, default=str)
+            code = response_error.get("code")
+            if code:
+                return f"Foundry stream failed: {code}: {message}"
+            return f"Foundry stream failed: {message}"
+        if isinstance(response_error, str) and response_error.strip():
+            return f"Foundry stream failed: {response_error.strip()}"
+        status = str(response_payload.get("status") or "").strip()
+        response_id = str(response_payload.get("id") or "").strip()
+        if status:
+            id_suffix = f" (response {response_id})" if response_id else ""
+            return f"Foundry stream failed: response status {status}{id_suffix}"
+
+    return f"Foundry stream failed: {json.dumps(event_payload, default=str)[:500]}"
 
 
 def _extract_new_foundry_stream_delta(event_payload: Dict[str, Any]) -> str:
@@ -1064,6 +2273,15 @@ def _update_new_foundry_stream_state(
         return
 
     event_type = str(event_payload.get("type") or "").strip()
+    if event_type == "response.output_text.done":
+        text = event_payload.get("text")
+        if isinstance(text, str) and text.strip():
+            state.metadata["output_text"] = text
+            current_text = "".join(state.text_parts).strip()
+            if not current_text or len(text.strip()) >= len(current_text):
+                state.text_parts = [text]
+        return
+
     if event_type == "response.output_text.annotation.added":
         annotation = _extract_new_foundry_annotation(event_payload.get("annotation"))
         if annotation:
@@ -1080,10 +2298,12 @@ def _update_new_foundry_stream_state(
 
 def _extract_new_foundry_stream_text(state: NewFoundryStreamState) -> str:
     text = "".join(state.text_parts).strip()
-    if text:
-        return text
     metadata_text = state.metadata.get("output_text")
-    return metadata_text.strip() if isinstance(metadata_text, str) else ""
+    if isinstance(metadata_text, str) and metadata_text.strip():
+        normalized_metadata_text = metadata_text.strip()
+        if not text or len(normalized_metadata_text) >= len(text):
+            return normalized_metadata_text
+    return text
 
 
 def _build_new_foundry_stream_metadata(
@@ -1093,6 +2313,65 @@ def _build_new_foundry_stream_metadata(
     metadata = dict(state.metadata)
     metadata["citations"] = state.citations
     metadata["model"] = state.model or application_name
+    return metadata
+
+
+def _record_foundry_workflow_event(
+    state: NewFoundryStreamState,
+    event_type: str,
+    event_payload: Dict[str, Any],
+) -> None:
+    if event_type in {"response.output_text.delta", "response.completed"}:
+        return
+
+    item = event_payload.get("item") if isinstance(event_payload.get("item"), dict) else {}
+    event_name = (
+        item.get("name")
+        or item.get("tool_name")
+        or event_payload.get("name")
+        or event_payload.get("tool_name")
+        or ""
+    )
+    item_type = item.get("type") or event_payload.get("item_type") or event_payload.get("type")
+    event_summary = {
+        "type": event_type,
+        "item_type": item_type,
+        "name": event_name,
+        "status": item.get("status") or event_payload.get("status"),
+        "id": item.get("id") or event_payload.get("id"),
+    }
+    compact_summary = {
+        key: value
+        for key, value in event_summary.items()
+        if value not in (None, "", [], {})
+    }
+    if not compact_summary:
+        return
+
+    workflow_events = state.metadata.setdefault("workflow_action_events", [])
+    if isinstance(workflow_events, list) and len(workflow_events) < 50:
+        workflow_events.append(compact_summary)
+
+
+def _build_foundry_workflow_stream_metadata(
+    state: NewFoundryStreamState,
+    workflow_name: str,
+    request_payload: Dict[str, Any],
+    foundry_conversation_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    metadata = _build_new_foundry_stream_metadata(state, workflow_name)
+    metadata["workflow_name"] = workflow_name
+    metadata["runtime_type"] = "foundry_workflow"
+    metadata["foundry_conversation_id"] = foundry_conversation_id
+    metadata["source_document_count"] = str(
+        (request_payload.get("metadata") or {}).get("selected_document_count")
+        or ""
+    ).strip()
+    metadata = {
+        key: value
+        for key, value in metadata.items()
+        if value not in (None, "", [], {})
+    }
     return metadata
 
 
@@ -1282,6 +2561,24 @@ def list_new_foundry_agents_from_endpoint(foundry_settings: Dict[str, Any], glob
             global_settings=global_settings,
         )
     )
+
+
+def list_foundry_workflows_from_endpoint(foundry_settings: Dict[str, Any], global_settings: Dict[str, Any]):
+    """Synchronously list workflow-capable Foundry project entries."""
+    workflows = list_new_foundry_agents_from_endpoint(foundry_settings, global_settings)
+    normalized = []
+    for item in workflows:
+        if not isinstance(item, dict):
+            continue
+        workflow_item = dict(item)
+        workflow_item["resource_type"] = workflow_item.get("resource_type") or "workflow"
+        workflow_item["workflow_name"] = (
+            workflow_item.get("workflow_name")
+            or workflow_item.get("application_name")
+            or workflow_item.get("name")
+        )
+        normalized.append(workflow_item)
+    return normalized
 
 def resolve_foundry_project_base(endpoint, project_name):
     if not endpoint:

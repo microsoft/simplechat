@@ -1034,7 +1034,7 @@
             data-api-base="/api/file-sync/personal"
             data-tags-api="/api/documents/tags"
             data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
-            data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb'])|join(',') }}"
+            data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb', 'azure_files', 'onedrive'])|join(',') }}"
           ></div>
         </div>
       </div>

@@ -6,6 +6,7 @@ import { showToast } from './chat-toast.js';
 import { applyScopeLock } from './chat-documents.js';
 import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
 import { hydrateInlineCharts } from './chat-inline-charts.js';
+import { escapeHtml } from './chat-utils.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
@@ -29,9 +30,37 @@ function parseSseEventPayload(eventBlock) {
         .join('\n');
 }
 
-function createStreamingPlaceholder(statusLabel = 'Streaming...') {
+function getStreamingPlaceholderLabel(statusLabel) {
+    const normalizedStatusLabel = String(statusLabel || '').trim().replace(/\.+$/, '');
+
+    if (/reconnect/i.test(normalizedStatusLabel)) {
+        return 'Reconnecting';
+    }
+
+    if (normalizedStatusLabel && !/^streaming$/i.test(normalizedStatusLabel)) {
+        return normalizedStatusLabel;
+    }
+
+    return 'Thinking';
+}
+
+function createStreamingPlaceholderContent(statusLabel) {
+    const placeholderLabel = getStreamingPlaceholderLabel(statusLabel);
+    const ariaLabel = placeholderLabel === 'Reconnecting'
+        ? 'Reconnecting to the response'
+        : 'Thinking while the response starts';
+
+    return `<div class="streaming-thought-display streaming-thinking-placeholder" role="status" aria-live="polite" aria-label="${escapeHtml(ariaLabel)}">
+        <span class="streaming-thinking-chip">
+            <span class="streaming-thinking-icon" aria-hidden="true"><i class="bi bi-stars"></i></span>
+            <span class="streaming-thinking-label">${escapeHtml(placeholderLabel)}</span>
+        </span>
+    </div>`;
+}
+
+function createStreamingPlaceholder(statusLabel = 'Thinking') {
     const tempAiMessageId = `temp_ai_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-    appendMessage('AI', `<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> ${statusLabel}</span>`, null, tempAiMessageId);
+    appendMessage('AI', createStreamingPlaceholderContent(statusLabel), null, tempAiMessageId);
     beginStreamingThoughtSession(tempAiMessageId);
     return tempAiMessageId;
 }
@@ -777,7 +806,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     const { endpoint = '/api/chat/stream' } = options;
-    const tempAiMessageId = createStreamingPlaceholder('Streaming...');
+    const tempAiMessageId = createStreamingPlaceholder();
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
     return consumeStreamingResponse(

@@ -18,11 +18,11 @@ function initializeWorkspaceIdentityRoot(root) {
     const capabilityConfigs = {
         file_sync: {
             label: 'File Sync',
-            help: 'Use this identity for SMB File Sync sources.',
+            help: 'Use this identity for File Sync sources, including SMB, Azure Files, and admin-approved cloud drive connectors.',
             provider: 'smb',
-            sourceTypes: ['smb'],
+            sourceTypes: ['smb', 'azure_files', 'onedrive', 'google_drive', 'google_shared_drive'],
             usageContexts: ['file_sync'],
-            authTypes: ['username_password', 'anonymous'],
+            authTypes: ['username_password', 'anonymous', 'managed_identity', 'client_secret', 'connection_string'],
         },
         action: {
             label: 'Actions',

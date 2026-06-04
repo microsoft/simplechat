@@ -29,6 +29,7 @@ from functions_settings import get_settings, get_user_settings, is_tabular_proce
 from foundry_agent_runtime import (
     AzureAIFoundryChatCompletionAgent,
     AzureAIFoundryNewChatCompletionAgent,
+    AzureAIFoundryWorkflowAgent,
 )
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
@@ -364,7 +365,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 authority=authority,
             )
 
-        if provider in ("aifoundry", "new_foundry"):
+        if provider in ("aifoundry", "new_foundry", "foundry_workflow"):
             scope = resolve_foundry_scope(auth_settings, endpoint=endpoint)
         else:
             scope = resolve_aoai_scope()
@@ -500,10 +501,15 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         return None
 
     def resolve_foundry_endpoint_config():
-        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+        if agent_type == "foundry_workflow":
+            foundry_settings_key = "foundry_workflow"
+        else:
+            foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
         allowed_providers = {"aifoundry"}
         if agent_type == "new_foundry":
             allowed_providers.add("new_foundry")
+        elif agent_type == "foundry_workflow":
+            allowed_providers.update({"new_foundry", "foundry_workflow"})
         endpoint_id = (agent.get("model_endpoint_id") or "").strip()
         if not endpoint_id:
             foundry_settings = other_settings.get(foundry_settings_key, {}) or {}
@@ -544,14 +550,14 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
 
     def enrich_foundry_settings(foundry_settings, endpoint_cfg):
         provider = (endpoint_cfg.get("provider") or "aoai").lower() if endpoint_cfg else "aoai"
-        if provider not in {"aifoundry", "new_foundry"}:
+        if provider not in {"aifoundry", "new_foundry", "foundry_workflow"}:
             return foundry_settings
         connection = endpoint_cfg.get("connection", {}) or {}
         auth = endpoint_cfg.get("auth", {}) or {}
         foundry_settings["endpoint_id"] = endpoint_cfg.get("id") or foundry_settings.get("endpoint_id")
         foundry_settings["endpoint"] = connection.get("endpoint") or foundry_settings.get("endpoint")
         foundry_settings["project_name"] = connection.get("project_name") or foundry_settings.get("project_name")
-        if agent_type == "new_foundry":
+        if agent_type in {"new_foundry", "foundry_workflow"}:
             stored_responses_api_version = (
                 foundry_settings.get("responses_api_version")
                 or agent.get("azure_openai_gpt_api_version")
@@ -579,8 +585,11 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         return foundry_settings
 
     # If per-user mode is not enabled, ignore all user/agent-specific config fields
-    if agent_type in {"aifoundry", "new_foundry"}:
-        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+    if agent_type in {"aifoundry", "new_foundry", "foundry_workflow"}:
+        if agent_type == "foundry_workflow":
+            foundry_settings_key = "foundry_workflow"
+        else:
+            foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
         foundry_settings = other_settings.get(foundry_settings_key, {}) or {}
         endpoint_cfg = resolve_foundry_endpoint_config()
         if endpoint_cfg:
@@ -588,7 +597,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             other_settings[foundry_settings_key] = foundry_settings
             agent["azure_openai_gpt_endpoint"] = foundry_settings.get("endpoint", "")
             agent["azure_openai_gpt_api_version"] = foundry_settings.get(
-                "responses_api_version" if agent_type == "new_foundry" else "api_version",
+                "responses_api_version" if agent_type in {"new_foundry", "foundry_workflow"} else "api_version",
                 "",
             )
             agent["azure_openai_gpt_deployment"] = foundry_settings.get("project_name", agent.get("azure_openai_gpt_deployment", ""))
@@ -612,7 +621,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
     if not per_user_enabled:
         try:
             token_provider = None
-            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry"):
+            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow"):
                 auth = multi_endpoint_config.get("auth", {}) or {}
                 auth_type = (auth.get("type") or "managed_identity").lower()
                 provider = multi_endpoint_config.get("provider")
@@ -689,7 +698,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
     can_use_agent_endpoints = allow_custom_agent_endpoints
     user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
 
-    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry"):
+    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow"):
         auth = multi_endpoint_config.get("auth", {}) or {}
         auth_type = (auth.get("type") or "managed_identity").lower()
         provider = multi_endpoint_config.get("provider")
@@ -1607,8 +1616,11 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             api_version=agent_config["api_version"],
         )
 
-    if agent_type in {"aifoundry", "new_foundry"}:
-        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+    if agent_type in {"aifoundry", "new_foundry", "foundry_workflow"}:
+        if agent_type == "foundry_workflow":
+            foundry_settings_key = "foundry_workflow"
+        else:
+            foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
         foundry_settings = (agent_config.get("other_settings") or {}).get(foundry_settings_key) or {}
         endpoint = resolve_foundry_endpoint_from_settings(foundry_settings, settings)
         if not endpoint:
@@ -1625,7 +1637,9 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             )
             return kernel, None
 
-        if agent_type == "new_foundry":
+        if agent_type == "foundry_workflow":
+            foundry_agent = AzureAIFoundryWorkflowAgent(agent_config, settings)
+        elif agent_type == "new_foundry":
             foundry_agent = AzureAIFoundryNewChatCompletionAgent(agent_config, settings)
         else:
             foundry_agent = AzureAIFoundryChatCompletionAgent(agent_config, settings)
@@ -2622,7 +2636,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     agent_cfg['agent_type'] = agent_type
     if agent_type == 'local':
         kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
-    elif agent_type in ('aifoundry', 'new_foundry'):
+    elif agent_type in ('aifoundry', 'new_foundry', 'foundry_workflow'):
         kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
     else:
         log_event(
@@ -2938,6 +2952,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
             agent_type = (global_selected_agent_cfg.get('agent_type') or 'local').lower()
             global_selected_agent_cfg['agent_type'] = agent_type
             if agent_type == 'local':
+                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+            elif agent_type in ('aifoundry', 'new_foundry', 'foundry_workflow'):
                 kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
             else:
                 log_event(

@@ -169,6 +169,103 @@ def _build_last_grounded_document_refs(document_map):
     return grounded_refs
 
 
+def _add_document_metadata_entry(document_map, document_id, scope_info, chunk_id=None,
+                                 classification='None', file_name=None):
+    """Add or merge a document-level metadata entry used by conversation tagging."""
+    normalized_document_id = str(document_id or '').strip()
+    scope_info = scope_info if isinstance(scope_info, dict) else {}
+    scope_type = str(scope_info.get('scope') or '').strip()
+    scope_id = str(scope_info.get('id') or '').strip()
+    if not normalized_document_id or not scope_type or not scope_id:
+        return False
+
+    if normalized_document_id not in document_map:
+        document_map[normalized_document_id] = {
+            'scope': {
+                'scope': scope_type,
+                'id': scope_id,
+            },
+            'chunk_ids': [],
+            'classification': classification or 'None',
+            'file_name': file_name or 'Unknown Document'
+        }
+
+    normalized_chunk_id = str(chunk_id or '').strip()
+    if normalized_chunk_id and normalized_chunk_id not in document_map[normalized_document_id]['chunk_ids']:
+        document_map[normalized_document_id]['chunk_ids'].append(normalized_chunk_id)
+
+    return True
+
+
+def _determine_selected_document_scope(doc, user_id, document_scope=None, active_group_id=None,
+                                       active_group_ids=None, active_public_workspace_id=None,
+                                       active_public_workspace_ids=None):
+    """Infer workspace scope from document-action selected document summaries."""
+    if not isinstance(doc, dict):
+        return None
+
+    public_workspace_id = str(doc.get('public_workspace_id') or '').strip()
+    if public_workspace_id:
+        return {
+            "scope": "public",
+            "id": public_workspace_id
+        }
+
+    group_id = str(doc.get('group_id') or '').strip()
+    if group_id:
+        return {
+            "scope": "group",
+            "id": group_id
+        }
+
+    normalized_scope = str(doc.get('scope') or '').strip().lower()
+    normalized_scope_id = str(doc.get('scope_id') or '').strip()
+    if normalized_scope == 'group' and normalized_scope_id:
+        return {
+            "scope": "group",
+            "id": normalized_scope_id
+        }
+    if normalized_scope == 'public' and normalized_scope_id:
+        return {
+            "scope": "public",
+            "id": normalized_scope_id
+        }
+    if normalized_scope in {'personal', 'workspace'}:
+        return {
+            "scope": "personal",
+            "id": normalized_scope_id or str(doc.get('user_id') or user_id).strip()
+        }
+
+    primary_scope = _build_primary_context_from_scope_selection(
+        user_id=user_id,
+        document_scope=document_scope,
+        active_group_id=active_group_id,
+        active_group_ids=active_group_ids,
+        active_public_workspace_id=active_public_workspace_id,
+        active_public_workspace_ids=active_public_workspace_ids,
+    )
+    if primary_scope:
+        return {
+            "scope": primary_scope.get('scope'),
+            "id": primary_scope.get('id')
+        }
+
+    return None
+
+
+def _extract_selected_document_id(doc):
+    """Resolve a stable selected-document id from document-action metadata."""
+    if not isinstance(doc, dict):
+        return None
+
+    for key in ('document_id', 'id'):
+        normalized_id = str(doc.get(key) or '').strip()
+        if normalized_id:
+            return normalized_id
+
+    return None
+
+
 def collect_conversation_metadata(user_message, conversation_id, user_id, active_group_id=None, 
                                 document_scope=None, selected_document_id=None, model_deployment=None,
                                 hybrid_search_enabled=False, 
@@ -258,22 +355,41 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             classification = doc.get('document_classification', 'None')
             document_id = _extract_document_id_from_search_result(doc)
 
-            if document_id and chunk_id:
-                
-                # Initialize document entry if not exists
-                if document_id not in document_map:
-                    document_map[document_id] = {
-                        'scope': doc_scope_result,
-                        'chunk_ids': [],
-                        'classification': classification,
-                        'file_name': doc.get('file_name') or doc.get('title') or 'Unknown Document'
-                    }
-                
-                # Add chunk ID to this document
-                if chunk_id not in document_map[document_id]['chunk_ids']:
-                    document_map[document_id]['chunk_ids'].append(chunk_id)
-                
+            if _add_document_metadata_entry(
+                document_map,
+                document_id,
+                doc_scope_result,
+                chunk_id=chunk_id,
+                classification=classification,
+                file_name=doc.get('file_name') or doc.get('title') or 'Unknown Document'
+            ):
                 # Set workspace_used to the first workspace encountered (for primary context)
+                if workspace_used is None:
+                    workspace_used = doc_scope_result
+
+    if selected_documents:
+        for doc in selected_documents:
+            document_id = _extract_selected_document_id(doc)
+            doc_scope_result = _determine_selected_document_scope(
+                doc,
+                user_id,
+                document_scope=document_scope,
+                active_group_id=active_group_id,
+                active_group_ids=active_group_ids,
+                active_public_workspace_id=active_public_workspace_id,
+                active_public_workspace_ids=active_public_workspace_ids,
+            )
+            classification = doc.get('classification') or doc.get('document_classification') or 'None'
+            chunk_id = doc.get('chunk_id') or doc.get('citation_id')
+
+            if _add_document_metadata_entry(
+                document_map,
+                document_id,
+                doc_scope_result,
+                chunk_id=chunk_id,
+                classification=classification,
+                file_name=doc.get('file_name') or doc.get('title') or doc.get('document_name') or 'Unknown Document'
+            ):
                 if workspace_used is None:
                     workspace_used = doc_scope_result
     

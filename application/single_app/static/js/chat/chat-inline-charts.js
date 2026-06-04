@@ -2,6 +2,7 @@
 
 const INLINE_CHART_LANGUAGE = 'simplechart';
 const INLINE_CHART_REGEX = new RegExp(`\`\`\`${INLINE_CHART_LANGUAGE}\\s*([\\s\\S]*?)\`\`\``, 'gi');
+const INLINE_CHART_PENDING_REGEX = new RegExp(`\`\`\`${INLINE_CHART_LANGUAGE}\\b[\\s\\S]*$`, 'i');
 const ALLOWED_KINDS = new Set(['line', 'bar', 'pie', 'doughnut', 'scatter', 'area', 'bubble', 'radar', 'stacked_bar', 'stacked_line', 'polar_area']);
 const DEFAULT_PALETTE = [
     { background: 'rgba(28, 110, 164, 0.18)', border: '#1c6ea4' },
@@ -65,6 +66,196 @@ function getBaseChartType(kind) {
         return 'polarArea';
     }
     return kind;
+}
+
+function normalizeChartKindValue(value) {
+    const normalized = sanitizeText(value, 40).toLowerCase().replace(/[\s-]+/g, '_');
+    if (!normalized || normalized === 'chart') {
+        return '';
+    }
+    if (normalized === 'polararea') {
+        return 'polar_area';
+    }
+    if (normalized === 'donut') {
+        return 'doughnut';
+    }
+    return normalized;
+}
+
+function parseInlineArray(value) {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) {
+        return null;
+    }
+
+    const inner = trimmed.slice(1, -1).trim();
+    if (!inner) {
+        return [];
+    }
+
+    return inner.split(',').map(item => parseLooseScalarValue(item));
+}
+
+function parseLooseScalarValue(value) {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) {
+        return '';
+    }
+
+    const arrayValue = parseInlineArray(trimmed);
+    if (arrayValue) {
+        return arrayValue;
+    }
+
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed.slice(1, -1);
+    }
+
+    const lowered = trimmed.toLowerCase();
+    if (lowered === 'true') {
+        return true;
+    }
+    if (lowered === 'false') {
+        return false;
+    }
+    if (lowered === 'null') {
+        return null;
+    }
+
+    const numericValue = Number(trimmed.replace(/,/g, ''));
+    if (Number.isFinite(numericValue) && /^-?[0-9][0-9,]*(\.[0-9]+)?$/.test(trimmed)) {
+        return numericValue;
+    }
+
+    return trimmed;
+}
+
+function parseLooseKeyValue(line) {
+    const separatorIndex = line.indexOf(':');
+    if (separatorIndex < 0) {
+        return null;
+    }
+
+    return {
+        key: line.slice(0, separatorIndex).trim(),
+        value: line.slice(separatorIndex + 1).trim()
+    };
+}
+
+function assignLooseChartOption(spec, key, value, optionPath) {
+    if (!spec.options || typeof spec.options !== 'object') {
+        spec.options = {};
+    }
+
+    const normalizedKey = String(key || '').trim();
+    const parsedValue = parseLooseScalarValue(value);
+    const inLegendPath = optionPath.includes('legend');
+
+    if (inLegendPath && (normalizedKey === 'display' || normalizedKey === 'position')) {
+        spec.options.plugins = spec.options.plugins && typeof spec.options.plugins === 'object'
+            ? spec.options.plugins
+            : {};
+        spec.options.plugins.legend = spec.options.plugins.legend && typeof spec.options.plugins.legend === 'object'
+            ? spec.options.plugins.legend
+            : {};
+        spec.options.plugins.legend[normalizedKey] = parsedValue;
+        return;
+    }
+
+    spec.options[normalizedKey] = parsedValue;
+}
+
+function parseLooseChartSpec(payloadText) {
+    const spec = {
+        data: {
+            datasets: []
+        },
+        options: {}
+    };
+    let section = '';
+    let currentDataset = null;
+    let optionPath = [];
+
+    String(payloadText || '').replace(/\r/g, '').split('\n').forEach(rawLine => {
+        const normalizedLine = rawLine.replace(/\t/g, '    ');
+        const trimmed = normalizedLine.trim();
+        if (!trimmed || trimmed.startsWith('#')) {
+            return;
+        }
+
+        const indent = normalizedLine.length - normalizedLine.trimStart().length;
+        const listItemText = trimmed.startsWith('- ') ? trimmed.slice(2).trim() : '';
+        if (listItemText && section === 'data') {
+            currentDataset = {};
+            spec.data.datasets.push(currentDataset);
+            const listKeyValue = parseLooseKeyValue(listItemText);
+            if (listKeyValue) {
+                currentDataset[listKeyValue.key] = parseLooseScalarValue(listKeyValue.value);
+            }
+            return;
+        }
+
+        const keyValue = parseLooseKeyValue(trimmed);
+        if (!keyValue) {
+            return;
+        }
+
+        const { key, value } = keyValue;
+        if (indent === 0) {
+            optionPath = [];
+            currentDataset = null;
+            if (!value && (key === 'data' || key === 'options')) {
+                section = key;
+                return;
+            }
+            section = '';
+            spec[key] = parseLooseScalarValue(value);
+            return;
+        }
+
+        if (section === 'data') {
+            if (key === 'datasets' && !value) {
+                currentDataset = null;
+                return;
+            }
+
+            if (currentDataset) {
+                currentDataset[key] = parseLooseScalarValue(value);
+                return;
+            }
+
+            spec.data[key] = parseLooseScalarValue(value);
+            return;
+        }
+
+        if (section === 'options') {
+            if (!value) {
+                if (key === 'plugins') {
+                    optionPath = ['plugins'];
+                } else if (key === 'legend') {
+                    optionPath = ['plugins', 'legend'];
+                }
+                return;
+            }
+
+            assignLooseChartOption(spec, key, value, optionPath);
+        }
+    });
+
+    return spec;
+}
+
+function parseInlineChartPayload(payloadText) {
+    const normalizedPayload = String(payloadText || '').trim();
+    if (!normalizedPayload) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(normalizedPayload);
+    } catch (error) {
+        return parseLooseChartSpec(normalizedPayload);
+    }
 }
 
 function normalizePoint(point, kind) {
@@ -161,7 +352,10 @@ function normalizeChartSpec(rawSpec) {
         return null;
     }
 
-    const kind = sanitizeText(rawSpec.kind || rawSpec.chartType, 40).toLowerCase();
+    let kind = normalizeChartKindValue(rawSpec.kind);
+    if (!ALLOWED_KINDS.has(kind)) {
+        kind = normalizeChartKindValue(rawSpec.chartType);
+    }
     if (!ALLOWED_KINDS.has(kind)) {
         return null;
     }
@@ -183,10 +377,18 @@ function normalizeChartSpec(rawSpec) {
         ? rawSpec.options
         : {};
 
-    const legendPosition = sanitizeText(rawOptions.legendPosition || 'top', 10).toLowerCase();
+    const rawLegendOptions = rawOptions.plugins
+        && typeof rawOptions.plugins === 'object'
+        && !Array.isArray(rawOptions.plugins)
+        && rawOptions.plugins.legend
+        && typeof rawOptions.plugins.legend === 'object'
+        && !Array.isArray(rawOptions.plugins.legend)
+        ? rawOptions.plugins.legend
+        : {};
+    const legendPosition = sanitizeText(rawOptions.legendPosition || rawLegendOptions.position || 'top', 10).toLowerCase();
     const normalizedOptions = {
         legendPosition: ['top', 'bottom', 'left', 'right'].includes(legendPosition) ? legendPosition : 'top',
-        showLegend: rawOptions.showLegend !== false,
+        showLegend: rawOptions.showLegend !== false && rawLegendOptions.display !== false,
         showDataTable: rawOptions.showDataTable !== false,
         beginAtZero: rawOptions.beginAtZero !== false,
         horizontal: Boolean(rawOptions.horizontal) && (kind === 'bar' || kind === 'stacked_bar'),
@@ -264,6 +466,28 @@ function buildPlaceholderHtml(block, index) {
             </div>
         </section>
     `;
+}
+
+function buildStatusPlaceholderHtml(block, index) {
+    const title = block.pending ? 'Preparing chart...' : 'Chart unavailable';
+    const detail = block.pending
+        ? 'Rendering will start when the chart data is complete.'
+        : sanitizeText(block.error || 'The chart data could not be rendered.', 180);
+
+    return `
+        <section class="sc-inline-chart card border-0 shadow-sm my-3" data-chart-hydrated="status" aria-label="Inline chart ${index + 1}">
+            <div class="card-body p-3">
+                <div class="fw-semibold">${escapeHtml(title)}</div>
+                <div class="small text-muted mt-1">${escapeHtml(detail)}</div>
+            </div>
+        </section>
+    `;
+}
+
+function createInlineChartToken(blocks, block) {
+    const token = `SIMPLECHAT_INLINE_CHART_TOKEN_${blocks.length}__`;
+    blocks.push({ token, ...block });
+    return `\n\n${token}\n\n`;
 }
 
 function replaceAllOccurrences(source, target, replacement) {
@@ -346,22 +570,23 @@ function buildChartJsConfig(spec) {
 
 export function extractInlineChartBlocks(markdownText = '') {
     const blocks = [];
-    const markdown = String(markdownText ?? '').replace(INLINE_CHART_REGEX, (match, payload) => {
-        try {
-            const parsed = JSON.parse(String(payload || '').trim());
-            const spec = normalizeChartSpec(parsed);
-            if (!spec) {
-                return match;
-            }
-
-            const token = `SIMPLECHAT_INLINE_CHART_TOKEN_${blocks.length}__`;
-            blocks.push({ token, spec, originalBlock: match });
-            return `\n\n${token}\n\n`;
-        } catch (error) {
-            console.warn('Failed to parse inline chart block:', error);
-            return match;
+    let markdown = String(markdownText ?? '').replace(INLINE_CHART_REGEX, (match, payload) => {
+        const parsed = parseInlineChartPayload(payload);
+        const spec = normalizeChartSpec(parsed);
+        if (!spec) {
+            return createInlineChartToken(blocks, {
+                originalBlock: match,
+                error: 'The chart data format was not recognized.'
+            });
         }
+
+        return createInlineChartToken(blocks, { spec, originalBlock: match });
     });
+
+    markdown = markdown.replace(INLINE_CHART_PENDING_REGEX, match => createInlineChartToken(blocks, {
+        originalBlock: match,
+        pending: true,
+    }));
 
     return { markdown, blocks };
 }
@@ -378,7 +603,9 @@ export function injectInlineChartHtml(html = '', blocks = []) {
     let renderedHtml = String(html ?? '');
 
     blocks.forEach((block, index) => {
-        const placeholderHtml = buildPlaceholderHtml(block, index);
+        const placeholderHtml = block.spec
+            ? buildPlaceholderHtml(block, index)
+            : buildStatusPlaceholderHtml(block, index);
         renderedHtml = replaceAllOccurrences(renderedHtml, `<p>${block.token}</p>`, placeholderHtml);
         renderedHtml = replaceAllOccurrences(renderedHtml, block.token, placeholderHtml);
     });

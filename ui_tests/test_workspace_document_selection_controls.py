@@ -1,12 +1,13 @@
 # test_workspace_document_selection_controls.py
 """
 UI test for workspace document selection controls.
-Version: 0.241.087
-Implemented in: 0.241.087
+Version: 0.241.125
+Implemented in: 0.241.087; 0.241.125
 
 This test ensures personal and group workspaces expose select-all controls in
 list and folder-grid document tables, and that the 100/250 page-size options
-work through the browser-rendered experience.
+work through the browser-rendered experience. It also validates that header
+select-all checkboxes are enabled immediately after entering multi-select mode.
 """
 
 import json
@@ -120,10 +121,11 @@ def test_personal_workspace_document_selection_controls(playwright):
         assert "100" in _option_values(page, "#grid-page-size-select")
         assert "250" in _option_values(page, "#grid-page-size-select")
 
-        _open_select_action(page, "#documents-table tbody .action-dropdown button")
-
-        expect(page.locator("#docs-select-all-checkbox")).to_be_visible()
-        page.locator("#docs-select-all-checkbox").check()
+        page.locator("#workspace-toggle-selection-btn").click()
+        select_all = page.locator("#docs-select-all-checkbox")
+        expect(select_all).to_be_visible()
+        expect(select_all).to_be_enabled()
+        select_all.check()
         expect(page.locator("#selectedCount")).to_have_text("2")
 
         page.evaluate("window.toggleSelectionMode()")
@@ -149,6 +151,7 @@ def test_personal_workspace_document_selection_controls(playwright):
 
         folder_select_all = page.locator("#folder-docs-table .document-select-all-checkbox")
         expect(folder_select_all).to_be_visible()
+        expect(folder_select_all).to_be_enabled()
         folder_select_all.check()
         expect(page.locator("#selectedCount")).to_have_text("2")
     finally:
@@ -211,10 +214,11 @@ def test_group_workspace_document_selection_controls(playwright):
         assert "100" in _option_values(page, "#group-grid-page-size-select")
         assert "250" in _option_values(page, "#group-grid-page-size-select")
 
-        _open_select_action(page, "#group-documents-table tbody .action-dropdown button")
-
-        expect(page.locator("#group-docs-select-all-checkbox")).to_be_visible()
-        page.locator("#group-docs-select-all-checkbox").check()
+        page.locator("#group-toggle-selection-btn").click()
+        group_select_all = page.locator("#group-docs-select-all-checkbox")
+        expect(group_select_all).to_be_visible()
+        expect(group_select_all).to_be_enabled()
+        group_select_all.check()
         expect(page.locator("#groupSelectedCount")).to_have_text("2")
 
         page.evaluate("window.toggleGroupSelectionMode()")
@@ -240,6 +244,7 @@ def test_group_workspace_document_selection_controls(playwright):
 
         folder_select_all = page.locator("#group-folder-docs-table .document-select-all-checkbox")
         expect(folder_select_all).to_be_visible()
+        expect(folder_select_all).to_be_enabled()
         folder_select_all.check()
         expect(page.locator("#groupSelectedCount")).to_have_text("2")
     finally:

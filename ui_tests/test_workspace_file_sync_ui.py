@@ -1,7 +1,7 @@
 # test_workspace_file_sync_ui.py
 """
 UI test for workspace File Sync tab.
-Version: 0.241.094
+Version: 0.241.129
 Implemented in: 0.241.042
 
 This test ensures the workspace Sync tab renders, loads source rows, opens the
@@ -54,7 +54,7 @@ def test_workspace_file_sync_tab():
                 "source_type": "smb",
                 "enabled": True,
                 "recursive": True,
-                "connection": {"unc_path": "\\\\fileserver\\finance"},
+                "connection": {"unc_path": "\\\\fileserver\\finance", "selected_paths": ["Plans"]},
                 "credentials": {"username": "svc-sync", "domain": "CONTOSO", "password_stored": True},
                 "filters": {"include_patterns": ["*.pdf"], "exclude_patterns": [], "allowed_extensions": ["pdf"], "fixed_tags": ["finance"], "folder_tag_mode": "parent"},
                 "schedule": {"enabled": True, "interval_minutes": 60},
@@ -174,6 +174,10 @@ def test_workspace_file_sync_tab():
             expect(identity_modal.get_by_role("checkbox", name="File Sync")).to_be_visible()
             expect(identity_modal.get_by_label("Domain (optional)")).to_be_visible()
             expect(identity_modal.get_by_text("Leave this blank when the account signs in without a domain.")).to_be_visible()
+            authentication_options = identity_modal.get_by_label("Authentication").locator("option")
+            expect(authentication_options.filter(has_text="Managed identity")).to_have_count(1)
+            expect(authentication_options.filter(has_text="Client secret")).to_have_count(1)
+            expect(authentication_options.filter(has_text="Connection string")).to_have_count(1)
             assert identity_modal.locator('[data-bs-toggle="tooltip"]').count() >= 3
             if identity_modal.get_by_role("checkbox", name="Actions").count() > 0:
                 identity_modal.get_by_role("checkbox", name="Actions").check()
@@ -219,7 +223,11 @@ def test_workspace_file_sync_tab():
         expect(source_modal.get_by_label("UNC path")).to_be_visible()
         expect(source_modal.get_by_text("Identity and Authentication")).to_be_visible()
         expect(source_modal.get_by_label("Reusable identity")).to_be_visible()
+        expect(source_modal.get_by_text("Selection, Subfolders, and Filters")).to_be_visible()
+        expect(source_modal.get_by_text("Selected folders and files")).to_be_visible()
         expect(source_modal.get_by_text("Path patterns")).to_be_visible()
+        expect(source_modal.get_by_role("button", name="Browse")).to_be_visible()
+        expect(source_modal.get_by_role("button", name="Add Path")).to_be_visible()
         expect(source_modal.get_by_role("button", name="Add Pattern")).to_be_visible()
         expect(source_modal.get_by_role("button", name="Add File Type")).to_be_visible()
         expect(source_modal.get_by_role("button", name="Choose Existing Tags")).to_be_visible()

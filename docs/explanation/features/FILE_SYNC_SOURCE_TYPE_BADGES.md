@@ -2,7 +2,7 @@
 
 ## Overview
 
-File Sync synced-document indicators now render as source-type badges instead of a generic synced label. The current SMB connector displays an `SMB` badge with the sync icon, and the mapping is ready for future connectors such as Microsoft 365 SharePoint, OneDrive, Google Workspace, and on-prem SharePoint.
+File Sync synced-document indicators now render as source-type badges instead of a generic synced label. SMB sources display an `SMB` badge, Azure Files sources display an `Azure Files` badge, and the mapping is ready for future connectors such as Microsoft 365 SharePoint, OneDrive, Google Workspace, and on-prem SharePoint.
 
 Implemented in version: **0.241.088**
 
@@ -25,6 +25,7 @@ Synced document badges are driven by `doc.file_sync.source_type`. New File Sync 
 | Source type | Badge label | Badge color |
 | --- | --- | --- |
 | `smb` | `SMB` | Primary |
+| `azure_files` | `Azure Files` | Info |
 | `m365sp` / `m365_sp` / `m365_sharepoint` / `sharepoint_online` | `M365SP` | Info |
 | `onedrive` / `one_drive` | `OneDrive` | Dark |
 | `google` / `google_workspace` | `Google` | Warning |
@@ -50,6 +51,7 @@ Future sync connectors should set `doc.file_sync.source_type` to one of the mapp
 Coverage was updated in:
 
 - `functional_tests/test_file_sync_capability.py`
+- `functional_tests/test_file_sync_azure_files_identity.py`
 - `ui_tests/test_workspace_file_sync_ui.py`
 
 Validation checks confirm that synced document metadata includes `source_type`, the UI mapping includes current and planned source labels, and personal workspace UI tests expect the `SMB` badge instead of a generic synced badge.

@@ -866,6 +866,7 @@ def _upload_document_analysis_generated_artifact(
     file_content,
     output_format,
     summary,
+    preview_rows=None,
     preview_items=None,
     preview_lines=None,
 ):
@@ -894,6 +895,8 @@ def _upload_document_analysis_generated_artifact(
         'output_format': output_format,
         'summary': summary,
     }
+    if preview_rows:
+        artifact_payload['preview_rows'] = preview_rows
     if preview_items:
         artifact_payload['preview_items'] = preview_items
     if preview_lines:
@@ -992,7 +995,7 @@ def _maybe_create_document_analysis_generated_artifacts(
                 csv_output,
                 'csv',
                 csv_summary,
-                preview_items=structured_rows[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT],
+                preview_rows=structured_rows[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT],
             )
             if csv_artifact:
                 artifacts.append(csv_artifact)

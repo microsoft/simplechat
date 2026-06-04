@@ -2,12 +2,12 @@
 # test_document_analysis_answer_first_artifacts.py
 """
 Functional test for document analysis answer-first artifact replies.
-Version: 0.241.121
-Implemented in: 0.241.121
+Version: 0.241.124
+Implemented in: 0.241.124
 
 This test ensures Analyze responses lead with a concise answer summary while
 keeping full generated CSV/Markdown artifacts available behind collapsed
-preview sections in the chat UI.
+preview sections in the chat UI, with CSV artifacts previewed as rows.
 """
 
 from pathlib import Path
@@ -19,7 +19,7 @@ CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
 WORKFLOW_RUNNER_FILE = ROOT / "application" / "single_app" / "functions_workflow_runner.py"
 CHAT_MESSAGES_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-messages.js"
 CHATS_CSS_FILE = ROOT / "application" / "single_app" / "static" / "css" / "chats.css"
-EXPECTED_VERSION = "0.241.121"
+EXPECTED_VERSION = "0.241.124"
 
 
 def read_text(path: Path) -> str:
@@ -61,6 +61,9 @@ def test_backend_answer_first_reply_contract() -> None:
     assert "Small preview:" not in workflow_runner_content, (
         "Expected artifact-backed analysis replies to avoid inline preview fragments."
     )
+    assert "preview_rows=structured_rows[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT]" in workflow_runner_content, (
+        "Expected CSV analysis artifacts to expose row previews instead of JSON preview items."
+    )
 
     print("Document analysis backend reply contract checks passed")
 
@@ -85,6 +88,12 @@ def test_generated_analysis_preview_collapse_contract() -> None:
     )
     assert "Show preview" in chat_messages_content, (
         "Expected collapsed artifact cards to expose a clear preview disclosure control."
+    )
+    assert "function shouldRenderPreviewItemsAsRows(outputMetadata, outputFormat)" in chat_messages_content, (
+        "Expected CSV-like artifact preview items to render as tabular rows for existing metadata."
+    )
+    assert "buildGeneratedTabularPreviewTable(previewItems)" in chat_messages_content, (
+        "Expected CSV-like preview items to use the table preview renderer."
     )
     assert ".generated-analysis-preview-details > summary" in chats_css_content, (
         "Expected collapsed generated analysis previews to have dedicated summary styling."

@@ -19,6 +19,7 @@ function initializeFileSyncRoot(root) {
     };
 
     const apiBase = root.dataset.apiBase;
+    const scopeType = root.dataset.scope || '';
     const identityApiBase = root.dataset.identityApiBase || apiBase
         .replace('/api/admin/file-sync/', '/api/admin/workspace-identities/')
         .replace('/api/file-sync/', '/api/workspace-identities/');
@@ -30,6 +31,19 @@ function initializeFileSyncRoot(root) {
             label: 'SMB Share',
             description: 'Windows or SMB-compatible file share.',
             enabled: true,
+        },
+        {
+            value: 'azure_files',
+            label: 'Azure Files',
+            description: 'Azure Storage file share endpoint.',
+            enabled: true,
+        },
+        {
+            value: 'onedrive',
+            label: 'OneDrive',
+            description: 'Files and folders from a personal OneDrive.',
+            enabled: true,
+            scopes: ['personal'],
         },
         {
             value: 'sharepoint_on_prem',
@@ -84,13 +98,32 @@ function initializeFileSyncRoot(root) {
         .filter((item, index, allItems) => item && allItems.indexOf(item) === index);
 
     const visibleSourceTypeValues = new Set(
-        parseList(root.dataset.visibleSourceTypes === undefined ? 'smb' : root.dataset.visibleSourceTypes)
+        parseList(root.dataset.visibleSourceTypes === undefined ? 'smb,azure_files,onedrive' : root.dataset.visibleSourceTypes)
             .map((sourceTypeValue) => sourceTypeValue.toLowerCase())
             .filter((sourceTypeValue) => sourceTypes.some((sourceType) => sourceType.value === sourceTypeValue)),
     );
+    const isSourceTypeAllowedForScope = (sourceType) => !Array.isArray(sourceType.scopes) || sourceType.scopes.includes(scopeType);
     const isSourceTypeVisible = (sourceTypeValue) => visibleSourceTypeValues.has(sourceTypeValue);
-    const isSourceTypeSelectable = (sourceTypeValue) => isSourceTypeVisible(sourceTypeValue) && isSourceTypeEnabled(sourceTypeValue);
-    const getVisibleSourceTypes = () => sourceTypes.filter((sourceType) => isSourceTypeVisible(sourceType.value));
+    const isSourceTypeSelectable = (sourceTypeValue) => {
+        const sourceType = getSourceTypeDefinition(sourceTypeValue);
+        return sourceType && isSourceTypeVisible(sourceTypeValue) && isSourceTypeEnabled(sourceTypeValue) && isSourceTypeAllowedForScope(sourceType);
+    };
+    const getVisibleSourceTypes = () => sourceTypes.filter((sourceType) => isSourceTypeVisible(sourceType.value) && isSourceTypeAllowedForScope(sourceType));
+    const sourceTypeAuthTypes = {
+        smb: ['username_password', 'anonymous'],
+        azure_files: ['managed_identity', 'client_secret', 'connection_string'],
+        onedrive: ['global_identity'],
+    };
+    const authTypeLabels = {
+        anonymous: 'Anonymous',
+        client_secret: 'Service principal',
+        connection_string: 'Connection string',
+        global_identity: 'Global connector identity',
+        managed_identity: 'Managed identity',
+        username_password: 'Username and password',
+    };
+    const getSourceTypeAuthTypes = (sourceTypeValue) => sourceTypeAuthTypes[sourceTypeValue || 'smb'] || ['username_password', 'anonymous'];
+    const formatAuthType = (authType) => authTypeLabels[authType] || String(authType || '').replace(/_/g, ' ');
     const identitySupportsFileSync = (identity, sourceTypeValue) => {
         const usageContexts = Array.isArray(identity.usage_contexts) && identity.usage_contexts.length > 0
             ? identity.usage_contexts
@@ -102,7 +135,7 @@ function initializeFileSyncRoot(root) {
         const sourceType = sourceTypeValue || 'smb';
         return (usageContexts.includes('file_sync') || usageContexts.includes('general'))
             && (supportedSourceTypes.includes(sourceType) || supportedSourceTypes.includes('generic') || (identity.source_type || '') === sourceType)
-            && ['username_password', 'anonymous'].includes(authType);
+            && getSourceTypeAuthTypes(sourceType).includes(authType);
     };
     const getDefaultSourceTypeValue = () => {
         const visibleEnabledSourceType = getVisibleSourceTypes().find((sourceType) => sourceType.enabled);
@@ -629,17 +662,212 @@ function initializeFileSyncRoot(root) {
         };
     };
 
+    const normalizeSelectedPath = (value) => String(value || '')
+        .replace(/\\+/g, '/')
+        .replace(/^\/+|\/+$/g, '')
+        .split('/')
+        .map((part) => part.trim())
+        .filter((part) => part && part !== '.' && part !== '..')
+        .join('/');
+
+    const showSelectedPathEditorModal = (onSave) => {
+        const modal = createElement('div', { className: 'modal fade', attributes: { tabindex: '-1', 'aria-hidden': 'true' } });
+        const dialog = createElement('div', { className: 'modal-dialog' });
+        const content = createElement('div', { className: 'modal-content' });
+        const header = createElement('div', { className: 'modal-header' });
+        const title = createElement('h5', { className: 'modal-title', text: 'Add Folder or File' });
+        const closeButton = createElement('button', { className: 'btn-close', attributes: { type: 'button', 'data-bs-dismiss': 'modal', 'aria-label': 'Close' } });
+        const body = createElement('div', { className: 'modal-body' });
+        const pathGroup = createInput('file-sync-selected-path-value', 'Path below source root', 'text', '', { placeholder: 'Folder/Subfolder or Folder/file.pdf' });
+        const help = createElement('div', { className: 'form-text', text: 'Leave the selected-path list empty to sync the configured root.' });
+        const footer = createElement('div', { className: 'modal-footer' });
+        const saveButton = createElement('button', { className: 'btn btn-primary', text: 'Add', attributes: { type: 'button' } });
+        saveButton.addEventListener('click', () => {
+            const selectedPath = normalizeSelectedPath(pathGroup.input.value);
+            if (!selectedPath) {
+                pathGroup.input.focus();
+                return;
+            }
+            onSave(selectedPath);
+            window.bootstrap.Modal.getOrCreateInstance(modal).hide();
+        });
+        modal.addEventListener('hidden.bs.modal', () => modal.remove());
+        appendChildren(header, [title, closeButton]);
+        appendChildren(body, [pathGroup.wrapper, help]);
+        appendChildren(footer, [createElement('button', { className: 'btn btn-outline-secondary', text: 'Cancel', attributes: { type: 'button', 'data-bs-dismiss': 'modal' } }), saveButton]);
+        appendChildren(content, [header, body, footer]);
+        dialog.appendChild(content);
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        window.bootstrap.Modal.getOrCreateInstance(modal).show();
+    };
+
+    const buildSelectedPathControl = (selectedValues = [], sourceTypeValue = 'smb', getPayload = () => ({})) => {
+        const wrapper = createElement('div');
+        const header = createElement('div', { className: 'd-flex align-items-center justify-content-between gap-2 mb-2' });
+        const label = createElement('label', { className: 'form-label mb-0', text: 'Selected folders and files' });
+        const actions = createElement('div', { className: 'd-flex flex-wrap gap-2' });
+        const browseButton = createElement('button', { className: 'btn btn-outline-primary btn-sm', text: 'Browse', attributes: { type: 'button' } });
+        const addButton = createElement('button', { className: 'btn btn-outline-secondary btn-sm', text: 'Add Path', attributes: { type: 'button' } });
+        const clearButton = createElement('button', { className: 'btn btn-outline-danger btn-sm', text: 'Sync Root', attributes: { type: 'button' } });
+        const list = createElement('div', { className: 'list-group list-group-flush border rounded' });
+        const selectedPaths = Array.from(new Set((selectedValues || []).map(normalizeSelectedPath).filter(Boolean)));
+
+        const addSelectedPath = (pathValue) => {
+            const selectedPath = normalizeSelectedPath(pathValue);
+            if (selectedPath && !selectedPaths.includes(selectedPath)) {
+                selectedPaths.push(selectedPath);
+                selectedPaths.sort();
+                renderSelectedPaths();
+            }
+        };
+
+        const renderSelectedPaths = () => {
+            list.replaceChildren();
+            if (selectedPaths.length === 0) {
+                list.appendChild(createElement('div', { className: 'list-group-item text-muted small', text: 'Syncing the configured source root.' }));
+                clearButton.disabled = true;
+                return;
+            }
+            clearButton.disabled = false;
+            selectedPaths.forEach((selectedPath, index) => {
+                const row = createElement('div', { className: 'list-group-item d-flex align-items-center justify-content-between gap-2' });
+                const code = createElement('code', { text: selectedPath });
+                const removeButton = createElement('button', { className: 'btn btn-sm btn-outline-danger', text: 'Remove', attributes: { type: 'button' } });
+                removeButton.addEventListener('click', () => {
+                    selectedPaths.splice(index, 1);
+                    renderSelectedPaths();
+                });
+                appendChildren(row, [code, removeButton]);
+                list.appendChild(row);
+            });
+        };
+
+        const openBrowseModal = () => {
+            const modal = createElement('div', { className: 'modal fade', attributes: { tabindex: '-1', 'aria-hidden': 'true' } });
+            const dialog = createElement('div', { className: 'modal-dialog modal-lg modal-dialog-scrollable' });
+            const content = createElement('div', { className: 'modal-content' });
+            const header = createElement('div', { className: 'modal-header' });
+            const title = createElement('h5', { className: 'modal-title', text: `Browse ${formatSourceType(sourceTypeValue)}` });
+            const closeButton = createElement('button', { className: 'btn-close', attributes: { type: 'button', 'data-bs-dismiss': 'modal', 'aria-label': 'Close' } });
+            const body = createElement('div', { className: 'modal-body' });
+            const status = createElement('div', { className: 'alert d-none', attributes: { role: 'alert' } });
+            const navRow = createElement('div', { className: 'd-flex gap-2 mb-3' });
+            const pathInput = createElement('input', { className: 'form-control', attributes: { type: 'text', 'aria-label': 'Browse path', placeholder: 'Folder path' } });
+            const upButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Up', attributes: { type: 'button' } });
+            const loadButton = createElement('button', { className: 'btn btn-outline-primary', text: 'Load', attributes: { type: 'button' } });
+            const entriesList = createElement('div', { className: 'list-group' });
+            const footer = createElement('div', { className: 'modal-footer' });
+            let currentPath = '';
+
+            const setBrowseStatus = (message, type = 'info') => {
+                status.textContent = message;
+                status.className = `alert alert-${type}`;
+            };
+
+            const renderEntries = (entries = []) => {
+                entriesList.replaceChildren();
+                if (entries.length === 0) {
+                    entriesList.appendChild(createElement('div', { className: 'list-group-item text-muted', text: 'No folders or files found.' }));
+                    return;
+                }
+                entries.forEach((entry) => {
+                    const row = createElement('div', { className: 'list-group-item d-flex align-items-center justify-content-between gap-2' });
+                    const details = createElement('div');
+                    const name = createElement('div', { className: 'fw-semibold', text: entry.name || entry.path || '' });
+                    const meta = createElement('div', { className: 'small text-muted', text: `${entry.type || 'item'} ${entry.path || ''}`.trim() });
+                    const buttons = createElement('div', { className: 'btn-group btn-group-sm' });
+                    const selectButton = createElement('button', { className: 'btn btn-outline-primary', text: 'Select', attributes: { type: 'button' } });
+                    selectButton.addEventListener('click', () => addSelectedPath(entry.path));
+                    buttons.appendChild(selectButton);
+                    if (entry.type === 'folder') {
+                        const openButton = createElement('button', { className: 'btn btn-outline-secondary', text: 'Open', attributes: { type: 'button' } });
+                        openButton.addEventListener('click', () => loadPath(entry.path || ''));
+                        buttons.appendChild(openButton);
+                    }
+                    appendChildren(details, [name, meta]);
+                    appendChildren(row, [details, buttons]);
+                    entriesList.appendChild(row);
+                });
+            };
+
+            const loadPath = async (pathValue = '') => {
+                currentPath = normalizeSelectedPath(pathValue);
+                pathInput.value = currentPath;
+                try {
+                    loadButton.disabled = true;
+                    const browseUrl = state.editingSourceId
+                        ? `${apiBase}/sources/${state.editingSourceId}/browse`
+                        : `${apiBase}/sources/browse`;
+                    const browsePayload = { ...(getPayload() || {}), browse_path: currentPath };
+                    const payload = await fetchJson(browseUrl, {
+                        method: 'POST',
+                        body: JSON.stringify(browsePayload),
+                    });
+                    const browse = payload.browse || {};
+                    status.className = 'alert d-none';
+                    renderEntries(Array.isArray(browse.entries) ? browse.entries : []);
+                } catch (error) {
+                    setBrowseStatus(error.message, 'danger');
+                    renderEntries([]);
+                } finally {
+                    loadButton.disabled = false;
+                }
+            };
+
+            upButton.addEventListener('click', () => {
+                const parts = currentPath.split('/').filter(Boolean);
+                parts.pop();
+                loadPath(parts.join('/'));
+            });
+            loadButton.addEventListener('click', () => loadPath(pathInput.value));
+            modal.addEventListener('shown.bs.modal', () => loadPath(''));
+            modal.addEventListener('hidden.bs.modal', () => modal.remove());
+            appendChildren(header, [title, closeButton]);
+            appendChildren(navRow, [pathInput, upButton, loadButton]);
+            appendChildren(body, [status, navRow, entriesList]);
+            footer.appendChild(createElement('button', { className: 'btn btn-outline-secondary', text: 'Done', attributes: { type: 'button', 'data-bs-dismiss': 'modal' } }));
+            appendChildren(content, [header, body, footer]);
+            dialog.appendChild(content);
+            modal.appendChild(dialog);
+            document.body.appendChild(modal);
+            window.bootstrap.Modal.getOrCreateInstance(modal, { backdrop: 'static' }).show();
+        };
+
+        addButton.addEventListener('click', () => showSelectedPathEditorModal(addSelectedPath));
+        browseButton.addEventListener('click', openBrowseModal);
+        clearButton.addEventListener('click', () => {
+            selectedPaths.splice(0, selectedPaths.length);
+            renderSelectedPaths();
+        });
+
+        appendChildren(actions, [browseButton, addButton, clearButton]);
+        appendChildren(header, [label, actions]);
+        appendChildren(wrapper, [header, list]);
+        renderSelectedPaths();
+        return {
+            wrapper,
+            getValues: () => selectedPaths.slice(),
+        };
+    };
+
     const sourceToFormValues = (source = {}) => ({
         sourceType: source.source_type || 'smb',
         name: source.name || '',
         enabled: source.enabled !== false,
         recursive: source.recursive !== false && recursiveAllowed,
         uncPath: source.connection?.unc_path || '',
+        accountUrl: source.connection?.account_url || source.connection?.share_url || '',
+        shareName: source.connection?.share_name || '',
+        directoryPath: source.connection?.directory_path || '',
+        selectedPaths: source.connection?.selected_paths || [],
         identityId: source.identity_id || '',
         authType: source.credentials?.auth_type || 'username_password',
         username: source.credentials?.username || '',
         domain: source.credentials?.domain || '',
+        clientId: source.credentials?.identity || source.credentials?.managed_identity_client_id || '',
         password: '',
+        secret: '',
         scheduleEnabled: source.schedule?.enabled === true,
         intervalMinutes: source.schedule?.interval_minutes || 60,
         includePatterns: source.filters?.include_patterns || [],
@@ -737,6 +965,10 @@ function initializeFileSyncRoot(root) {
         const values = sourceToFormValues(source || { source_type: state.selectedSourceType });
         state.selectedSourceType = values.sourceType;
         const selectedSourceType = values.sourceType || 'smb';
+        if (!getSourceTypeAuthTypes(selectedSourceType).includes(values.authType)) {
+            values.authType = getSourceTypeAuthTypes(selectedSourceType)[0];
+        }
+        let buildPayload = () => ({});
         const typeSummary = createElement('div', { className: 'alert alert-light border py-2 mb-3' });
         const typeLabel = createElement('span', { className: 'fw-semibold me-2', text: 'Source Type' });
         const typeValue = createElement('span', { text: formatSourceType(selectedSourceType) });
@@ -754,6 +986,9 @@ function initializeFileSyncRoot(root) {
         const formGrid = createElement('div', { className: 'row g-3' });
         const nameField = buildLabeledInput('file-sync-source-name', 'Source name', 'text', values.name);
         const uncField = buildLabeledInput('file-sync-unc-path', 'UNC path', 'text', values.uncPath);
+        const accountUrlField = buildLabeledInput('file-sync-account-url', 'File service URL', 'url', values.accountUrl);
+        const shareNameField = buildLabeledInput('file-sync-share-name', 'Share name', 'text', values.shareName);
+        const directoryPathField = buildLabeledInput('file-sync-directory-path', 'Directory path', 'text', values.directoryPath);
         const enabledField = buildCheckbox('file-sync-enabled', 'Enabled', values.enabled);
         const recursiveField = buildCheckbox(
             'file-sync-recursive',
@@ -762,10 +997,18 @@ function initializeFileSyncRoot(root) {
         );
         recursiveField.input.disabled = !recursiveAllowed;
 
-        appendChildren(formGrid, [nameField.wrapper, uncField.wrapper]);
+        formGrid.appendChild(nameField.wrapper);
+        if (selectedSourceType === 'azure_files') {
+            appendChildren(formGrid, [accountUrlField.wrapper, shareNameField.wrapper, directoryPathField.wrapper]);
+        } else if (selectedSourceType === 'onedrive') {
+            const oneDriveSummary = createElement('div', { className: 'col-12 text-muted small', text: 'OneDrive sync uses an admin-managed global connector identity with Microsoft Graph application permissions.' });
+            formGrid.appendChild(oneDriveSummary);
+        } else {
+            formGrid.appendChild(uncField.wrapper);
+        }
 
         const generalSwitches = createElement('div', { className: 'd-flex flex-wrap gap-4 mt-3' });
-        appendChildren(generalSwitches, [enabledField.wrapper, recursiveField.wrapper]);
+        appendChildren(generalSwitches, [enabledField.wrapper]);
 
         const identityWrapper = createElement('div', { className: 'mb-3' });
         const identityHeader = createElement('div', { className: 'd-flex align-items-center justify-content-between gap-2 mb-2' });
@@ -775,43 +1018,65 @@ function initializeFileSyncRoot(root) {
         state.identities
             .filter((identity) => identitySupportsFileSync(identity, selectedSourceType))
             .forEach((identity) => {
-                const option = createElement('option', { text: identity.name || 'SMB Identity', attributes: { value: identity.id } });
+                const option = createElement('option', { text: identity.name || 'File Sync Identity', attributes: { value: identity.id } });
                 option.selected = identity.id === values.identityId;
                 identitySelect.appendChild(option);
             });
         identityHeader.appendChild(identityLabel);
         appendChildren(identityWrapper, [identityHeader, identitySelect]);
+        const globalConnectorNotice = createElement('div', {
+            className: 'alert alert-info py-2 mb-0',
+            text: 'OneDrive uses the admin-managed global File Sync connector identity. Personal users choose what to sync, not tenant credentials.',
+        });
 
         const localCredentialsWrapper = createElement('div', { className: 'row g-3' });
         const authTypeWrapper = createElement('div', { className: 'col-md-6' });
         const authTypeLabel = createElement('label', { className: 'form-label', text: 'Authentication', attributes: { for: 'file-sync-auth-type' } });
         const authTypeSelect = createElement('select', { className: 'form-select', attributes: { id: 'file-sync-auth-type' } });
-        [
-            ['username_password', 'Username and password'],
-            ['anonymous', 'Anonymous'],
-        ].forEach(([value, text]) => {
-            const option = createElement('option', { text, attributes: { value } });
+        getSourceTypeAuthTypes(selectedSourceType).forEach((value) => {
+            const option = createElement('option', { text: formatAuthType(value), attributes: { value } });
             option.selected = values.authType === value;
             authTypeSelect.appendChild(option);
         });
         appendChildren(authTypeWrapper, [authTypeLabel, authTypeSelect]);
         const usernameField = buildLabeledInput('file-sync-username', 'Username', 'text', values.username);
         const domainField = buildLabeledInput('file-sync-domain', 'Domain', 'text', values.domain);
-        const passwordField = buildLabeledInput('file-sync-password', source?.credentials?.password_stored ? 'Password (stored)' : 'Password', 'password', values.password);
-        appendChildren(localCredentialsWrapper, [authTypeWrapper, usernameField.wrapper, domainField.wrapper, passwordField.wrapper]);
+        const clientIdField = buildLabeledInput('file-sync-client-id', 'Client ID', 'text', values.clientId);
+        const passwordField = buildLabeledInput('file-sync-password', source?.credentials?.password_stored || source?.credentials?.secret_stored ? 'Secret (stored)' : 'Secret', 'password', values.password || values.secret);
+        appendChildren(localCredentialsWrapper, [authTypeWrapper, usernameField.wrapper, domainField.wrapper, clientIdField.wrapper, passwordField.wrapper]);
 
         const updateCredentialVisibility = () => {
             const usingIdentity = Boolean(identitySelect.value);
             localCredentialsWrapper.classList.toggle('d-none', usingIdentity);
-            const anonymous = authTypeSelect.value === 'anonymous';
-            usernameField.wrapper.classList.toggle('d-none', anonymous);
-            domainField.wrapper.classList.toggle('d-none', anonymous);
-            passwordField.wrapper.classList.toggle('d-none', anonymous);
+            const authType = authTypeSelect.value;
+            const usesUsernamePassword = authType === 'username_password';
+            const usesClientSecret = authType === 'client_secret';
+            const usesSecret = ['client_secret', 'connection_string'].includes(authType);
+            usernameField.wrapper.classList.toggle('d-none', !usesUsernamePassword);
+            domainField.wrapper.classList.toggle('d-none', !usesUsernamePassword);
+            clientIdField.wrapper.classList.toggle('d-none', !usesClientSecret);
+            passwordField.wrapper.classList.toggle('d-none', ['anonymous', 'managed_identity', 'global_identity'].includes(authType));
+            const passwordLabel = passwordField.wrapper.querySelector('label');
+            if (passwordLabel) {
+                if (usesUsernamePassword) {
+                    passwordLabel.textContent = source?.credentials?.password_stored ? 'Password (stored)' : 'Password';
+                } else if (usesClientSecret) {
+                    passwordLabel.textContent = source?.credentials?.secret_stored ? 'Client secret (stored)' : 'Client secret';
+                } else if (authType === 'connection_string') {
+                    passwordLabel.textContent = source?.credentials?.secret_stored ? 'Connection string (stored)' : 'Connection string';
+                } else {
+                    passwordLabel.textContent = source?.credentials?.secret_stored ? 'Secret (stored)' : 'Secret';
+                }
+            }
+            if (!usesUsernamePassword && !usesSecret) {
+                passwordField.input.value = '';
+            }
         };
         identitySelect.addEventListener('change', updateCredentialVisibility);
         authTypeSelect.addEventListener('change', updateCredentialVisibility);
         updateCredentialVisibility();
 
+        const selectedPathControl = buildSelectedPathControl(values.selectedPaths, selectedSourceType, () => buildPayload());
         const patternControl = buildPatternListControl(values.includePatterns, values.excludePatterns);
         const extensionControl = buildExtensionListControl(values.allowedExtensions);
 
@@ -857,40 +1122,75 @@ function initializeFileSyncRoot(root) {
         appendChildren(content, [
             typeSummary,
             createConfigCard('General', [formGrid, generalSwitches]),
-            createConfigCard('Identity and Authentication', [identityWrapper, localCredentialsWrapper]),
-            createConfigCard('Folders, Patterns, and Filters', [patternControl.wrapper, extensionControl.wrapper, folderGrid]),
+            createConfigCard('Identity and Authentication', selectedSourceType === 'onedrive' ? [globalConnectorNotice] : [identityWrapper, localCredentialsWrapper]),
+            createConfigCard('Selection, Subfolders, and Filters', [recursiveField.wrapper, selectedPathControl.wrapper, patternControl.wrapper, extensionControl.wrapper, folderGrid]),
             createConfigCard('Tags', [tagsField.wrapper]),
             createConfigCard('Sync Schedule', [scheduleField.wrapper, intervalField.wrapper]),
         ]);
 
-        const buildPayload = () => ({
-            name: nameField.input.value.trim(),
-            source_type: selectedSourceType,
-            enabled: enabledField.input.checked,
-            recursive: recursiveAllowed && recursiveField.input.checked,
-            identity_id: identitySelect.value,
-            connection: {
-                unc_path: uncField.input.value.trim(),
-            },
-            credentials: {
+        buildPayload = () => {
+            const credentials = {
                 auth_type: authTypeSelect.value,
                 username: usernameField.input.value.trim(),
                 domain: domainField.input.value.trim(),
                 password: passwordField.input.value,
-            },
-            filters: {
-                include_patterns: patternControl.getValues().includePatterns,
-                exclude_patterns: patternControl.getValues().excludePatterns,
-                allowed_extensions: extensionControl.getValues(),
-                fixed_tags: tagsField.getValues(),
-                folder_tag_mode: folderSelect.value,
-            },
-            schedule: {
-                enabled: scheduleField.input.checked,
-                interval_minutes: Number.parseInt(intervalField.input.value, 10) || 60,
-            },
-            remote_delete_policy: deleteSelect.value,
-        });
+                secret: passwordField.input.value,
+                client_secret: passwordField.input.value,
+                connection_string: passwordField.input.value,
+                identity: clientIdField.input.value.trim(),
+                client_id: clientIdField.input.value.trim(),
+            };
+            if (authTypeSelect.value === 'managed_identity') {
+                credentials.password = '';
+                credentials.secret = '';
+                credentials.client_secret = '';
+                credentials.connection_string = '';
+            }
+            if (selectedSourceType === 'onedrive') {
+                credentials.auth_type = 'global_identity';
+                credentials.password = '';
+                credentials.secret = '';
+                credentials.client_secret = '';
+                credentials.connection_string = '';
+            }
+            const selectedPaths = selectedPathControl.getValues();
+            const connection = selectedSourceType === 'azure_files'
+                ? {
+                    account_url: accountUrlField.input.value.trim(),
+                    share_name: shareNameField.input.value.trim(),
+                    directory_path: directoryPathField.input.value.trim(),
+                    selected_paths: selectedPaths,
+                }
+                : selectedSourceType === 'onedrive'
+                    ? {
+                        selected_paths: selectedPaths,
+                    }
+                    : {
+                        unc_path: uncField.input.value.trim(),
+                        selected_paths: selectedPaths,
+                    };
+            return {
+                name: nameField.input.value.trim(),
+                source_type: selectedSourceType,
+                enabled: enabledField.input.checked,
+                recursive: recursiveAllowed && recursiveField.input.checked,
+                identity_id: selectedSourceType === 'onedrive' ? '' : identitySelect.value,
+                connection,
+                credentials,
+                filters: {
+                    include_patterns: patternControl.getValues().includePatterns,
+                    exclude_patterns: patternControl.getValues().excludePatterns,
+                    allowed_extensions: extensionControl.getValues(),
+                    fixed_tags: tagsField.getValues(),
+                    folder_tag_mode: folderSelect.value,
+                },
+                schedule: {
+                    enabled: scheduleField.input.checked,
+                    interval_minutes: Number.parseInt(intervalField.input.value, 10) || 60,
+                },
+                remote_delete_policy: deleteSelect.value,
+            };
+        };
 
         if (!source) {
             const backButton = createElement('button', { className: 'btn btn-outline-secondary me-auto', text: 'Back', attributes: { type: 'button' } });
@@ -1046,8 +1346,7 @@ function initializeFileSyncRoot(root) {
         [
             ['username_password', 'Username and password', false],
             ['anonymous', 'Anonymous', false],
-            ['managed_identity', 'Managed identity (planned)', true],
-            ['certificate', 'Certificate / PIV (planned)', true],
+            ['managed_identity', 'Managed identity', false],
         ].forEach(([value, text, disabled]) => {
             const option = createElement('option', { text, attributes: { value } });
             option.disabled = disabled;
@@ -1139,7 +1438,7 @@ function initializeFileSyncRoot(root) {
                     appendChildren(row, [
                         createElement('td', { text: identity.name || '' }),
                         createElement('td', { text: formatSourceType(identity.source_type || 'smb') }),
-                        createElement('td', { text: credentials.auth_type === 'anonymous' ? 'Anonymous' : 'Username/password' }),
+                        createElement('td', { text: formatAuthType(credentials.auth_type || 'username_password') }),
                         createElement('td', { text: credentials.username || '' }),
                         createElement('td', { text: formatDate(identity.updated_at) }),
                         actions,
@@ -1150,10 +1449,10 @@ function initializeFileSyncRoot(root) {
             appendChildren(table, [thead, tbody]);
         };
         const updateIdentityCredentialVisibility = () => {
-            const anonymous = authSelect.value === 'anonymous';
-            usernameField.wrapper.classList.toggle('d-none', anonymous);
-            domainField.wrapper.classList.toggle('d-none', anonymous);
-            passwordField.wrapper.classList.toggle('d-none', anonymous);
+            const noSecretAuth = authSelect.value === 'anonymous' || authSelect.value === 'managed_identity';
+            usernameField.wrapper.classList.toggle('d-none', noSecretAuth);
+            domainField.wrapper.classList.toggle('d-none', noSecretAuth);
+            passwordField.wrapper.classList.toggle('d-none', noSecretAuth);
         };
 
         authSelect.addEventListener('change', updateIdentityCredentialVisibility);
@@ -1165,7 +1464,7 @@ function initializeFileSyncRoot(root) {
                 provider: 'smb',
                 source_type: 'smb',
                 usage_contexts: ['file_sync'],
-                supported_source_types: ['smb'],
+                supported_source_types: ['smb', 'azure_files'],
                 credentials: {
                     auth_type: authSelect.value,
                     username: usernameField.input.value.trim(),
@@ -1221,6 +1520,22 @@ function initializeFileSyncRoot(root) {
         return date.toLocaleString();
     };
 
+    const getSourceConnectionLabel = (source = {}) => {
+        const connection = source.connection || {};
+        const selectedPaths = Array.isArray(connection.selected_paths) ? connection.selected_paths : [];
+        const selectedPathLabel = selectedPaths.length > 0 ? ` (${selectedPaths.length} selected)` : '';
+        if ((source.source_type || 'smb') === 'onedrive') {
+            return `OneDrive${selectedPathLabel}`;
+        }
+        if ((source.source_type || 'smb') === 'azure_files') {
+            const baseLabel = connection.share_url || [connection.account_url, connection.share_name, connection.directory_path]
+                .filter(Boolean)
+                .join('/');
+            return `${baseLabel}${selectedPathLabel}`;
+        }
+        return `${connection.unc_path || ''}${selectedPathLabel}`;
+    };
+
     const formatCounts = (counts = {}) => [
         `queued ${counts.queued || 0}`,
         `unchanged ${counts.unchanged || 0}`,
@@ -1255,8 +1570,8 @@ function initializeFileSyncRoot(root) {
             },
         });
         const body = createElement('div', { className: 'modal-body' });
-        const sourceName = createElement('p', { className: 'fw-semibold mb-1', text: source.name || 'SMB Source' });
-        const sourcePath = createElement('p', { className: 'text-muted small mb-3', text: source.connection?.unc_path || '' });
+        const sourceName = createElement('p', { className: 'fw-semibold mb-1', text: source.name || 'File Sync Source' });
+        const sourcePath = createElement('p', { className: 'text-muted small mb-3', text: getSourceConnectionLabel(source) });
         const promptText = createElement('p', { className: 'mb-2', text: 'Choose what should happen to documents already synced from this source.' });
         const keepText = createElement('p', { className: 'small mb-1', text: 'Delete sync source keeps the documents in SimpleChat.' });
         const deleteText = createElement('p', { className: 'small text-danger mb-0', text: 'Delete all files removes the synced documents and then deletes the source.' });
@@ -1326,8 +1641,8 @@ function initializeFileSyncRoot(root) {
         state.sources.forEach((source) => {
             const row = createElement('tr');
             const nameCell = createElement('td');
-            const nameText = createElement('div', { className: 'fw-semibold', text: source.name || 'SMB Source' });
-            const pathText = createElement('div', { className: 'small text-muted', text: source.connection?.unc_path || '' });
+            const nameText = createElement('div', { className: 'fw-semibold', text: source.name || 'File Sync Source' });
+            const pathText = createElement('div', { className: 'small text-muted', text: getSourceConnectionLabel(source) });
             const recursionText = createElement('div', { className: 'small text-muted', text: source.recursive === false ? 'Top folder only' : 'Includes subfolders' });
             appendChildren(nameCell, [nameText, pathText, recursionText]);
 

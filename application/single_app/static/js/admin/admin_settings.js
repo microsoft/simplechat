@@ -3295,6 +3295,7 @@ function openFileSyncAdminManager(scope, targetId, targetLabel) {
     const visibleSourceTypes = getSelectedFileSyncVisibleSourceTypes();
     const root = document.createElement('div');
     root.dataset.fileSyncRoot = 'true';
+    root.dataset.scope = scope;
     root.dataset.apiBase = `/api/admin/file-sync/${encodeURIComponent(scope)}/${encodeURIComponent(targetId)}`;
     root.dataset.recursiveAllowed = recursiveAllowed ? 'true' : 'false';
     root.dataset.visibleSourceTypes = visibleSourceTypes.join(',');
@@ -3317,7 +3318,7 @@ function openFileSyncAdminManager(scope, targetId, targetLabel) {
 function getSelectedFileSyncVisibleSourceTypes() {
     const checkboxes = Array.from(document.querySelectorAll('input[name="file_sync_visible_source_types"]'));
     if (checkboxes.length === 0) {
-        return ['smb'];
+        return ['smb', 'azure_files', 'onedrive'];
     }
     return checkboxes
         .filter((checkbox) => checkbox.checked)

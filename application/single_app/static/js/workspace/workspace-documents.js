@@ -2198,13 +2198,13 @@ function updateBulkActionButtons() {
 function syncDocumentSelectionModeUI() {
     const bulkActionsBar = document.getElementById('bulkActionsBar');
     const toggleSelectionBtn = document.getElementById('workspace-toggle-selection-btn');
-
-    syncDocumentCheckboxesWithSelection();
+    const folderCardView = document.getElementById('folder-documents-card-view');
 
     getDocumentSelectionTables().forEach((table) => {
         table.classList.toggle('selection-mode', selectionModeActive);
     });
     documentsCardView?.classList.toggle('selection-mode', selectionModeActive);
+    folderCardView?.classList.toggle('selection-mode', selectionModeActive);
 
     document.querySelectorAll('.document-checkbox').forEach(checkbox => {
         checkbox.classList.toggle('d-none', !selectionModeActive);
@@ -2231,6 +2231,7 @@ function syncDocumentSelectionModeUI() {
         toggleSelectionBtn.setAttribute('aria-pressed', String(selectionModeActive));
     }
 
+    syncDocumentCheckboxesWithSelection();
     updateBulkActionButtons();
 }
 

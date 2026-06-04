@@ -34,6 +34,11 @@
               <label class="form-check-label" for="agent-type-new-foundry">New Foundry</label>
               <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="New Foundry agents use the application-based experience and are invoked through the Responses protocol endpoint."></i>
             </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="agent-type" id="agent-type-foundry-workflow" value="foundry_workflow">
+              <label class="form-check-label" for="agent-type-foundry-workflow">Foundry Workflow</label>
+              <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Foundry workflows are invoked by workflow name through the project OpenAI Responses agent reference path."></i>
+            </div>
           </div>
           <div class="form-text" id="agent-type-helper">Choose the provider for this agent. Foundry agents cannot attach local actions.</div>
         </div>
@@ -92,17 +97,17 @@
         <div class="agent-step d-none" id="agent-step-2">
           <h6 class="mb-3">Model & Connection</h6>
 
-          <!-- Foundry-specific fields (shown only when agent_type is classic or new Foundry) -->
+          <!-- Foundry-specific fields (shown only when agent_type is a Foundry runtime) -->
           <div id="agent-foundry-fields" class="d-none">
             <div class="alert alert-warning py-2 small" role="note" id="agent-foundry-mode-note">
               Foundry-managed tools are used for this agent type and local actions are disabled.
             </div>
             <div class="mb-3">
-              <label for="agent-foundry-endpoint-select" class="form-label">Foundry Endpoint</label>
+              <label for="agent-foundry-endpoint-select" class="form-label">Saved Foundry Connection (optional)</label>
               <select class="form-select" id="agent-foundry-endpoint-select">
-                <option value="">Select a configured endpoint...</option>
+                <option value="">Optional: select a saved connection...</option>
               </select>
-              <div class="form-text">Endpoints come from global and workspace configurations.</div>
+              <div class="form-text">Select a saved connection to fetch resources and reuse endpoint credentials, or enter project details manually below.</div>
             </div>
             <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
               <button type="button" class="btn btn-outline-primary btn-sm" id="agent-foundry-fetch-btn">
@@ -111,12 +116,13 @@
               <span class="text-muted small" id="agent-foundry-fetch-status"></span>
             </div>
             <div class="mb-3">
-              <label for="agent-foundry-agent-select" class="form-label" id="agent-foundry-select-label">Foundry Agent</label>
+              <label for="agent-foundry-agent-select" class="form-label" id="agent-foundry-select-label">Discovered Foundry Agent (optional)</label>
               <select class="form-select" id="agent-foundry-agent-select">
                 <option value="">Select an agent...</option>
               </select>
-              <div class="form-text" id="agent-foundry-select-help">Select a classic Foundry agent to import its identity.</div>
+              <div class="form-text" id="agent-foundry-select-help">Fetch requires a saved connection. If you already know the name or ID, enter it manually below.</div>
             </div>
+            <h6 class="mt-4 mb-3">Project Details</h6>
             <div class="mb-3">
               <label for="agent-foundry-endpoint" class="form-label">Foundry Project Endpoint <span class="text-danger" title="Required">*</span></label>
               <input type="text" class="form-control" id="agent-foundry-endpoint" placeholder="https://&lt;resource&gt;.services.ai.azure.com/ or full /api/projects/... endpoint" />
@@ -152,6 +158,27 @@
                 <label for="agent-new-foundry-activity-api-version" class="form-label">Activity Protocol API Version</label>
                 <input type="text" class="form-control" id="agent-new-foundry-activity-api-version" placeholder="Optional for phase 1" />
                 <div class="form-text">Optional for now. Phase 1 uses the Responses endpoint; activity polling can be added later.</div>
+              </div>
+            </div>
+            <div id="agent-foundry-workflow-only" class="d-none">
+              <div class="mb-3">
+                <label for="agent-foundry-workflow-name" class="form-label">Workflow Name <span class="text-danger" title="Required">*</span></label>
+                <input type="text" class="form-control" id="agent-foundry-workflow-name" placeholder="published-workflow-name" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-foundry-workflow-responses-api-version" class="form-label">Workflow Responses API Version <span class="text-danger" title="Required">*</span></label>
+                <select class="form-select" id="agent-foundry-workflow-responses-api-version">
+                  <option value="v1" selected>v1</option>
+                </select>
+                <div class="form-text">Use <code>v1</code> for the OpenAI-compatible workflow REST API, even when the Foundry project itself is the newer Foundry experience.</div>
+              </div>
+              <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="agent-foundry-workflow-include-document-context" checked />
+                <label class="form-check-label" for="agent-foundry-workflow-include-document-context">Include selected workspace and chat-upload context</label>
+              </div>
+              <div class="mb-3">
+                <label for="agent-foundry-workflow-max-context-chars" class="form-label">Maximum Context Characters</label>
+                <input type="number" class="form-control" id="agent-foundry-workflow-max-context-chars" min="1" step="1000" placeholder="24000" />
               </div>
             </div>
             <div class="mb-3">

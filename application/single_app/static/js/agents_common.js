@@ -409,6 +409,9 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 			if (agentType === 'new_foundry' && provider !== 'new_foundry') {
 				return;
 			}
+			if (agentType === 'foundry_workflow' && !['foundry_workflow', 'new_foundry', 'aifoundry'].includes(provider)) {
+				return;
+			}
 			const endpointId = endpoint.id || '';
 			const endpointModels = endpoint.models || [];
 			endpointModels.forEach(model => {

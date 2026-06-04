@@ -1,11 +1,12 @@
 # test_chat_model_dropdown_width.py
 """
-UI test for compact chat model dropdown width.
-Version: 0.241.036
-Implemented in: 0.241.036
+UI test for compact chat model and agent dropdown alignment.
+Version: 0.241.126
+Implemented in: 0.241.126
 
-This test ensures that the chat model searchable dropdown remains bounded to
-the compact model selector instead of expanding across the full browser window.
+This test ensures that the chat model and agent searchable dropdowns remain
+bounded to their compact toolbar selectors instead of expanding across the full
+browser window or detaching from their trigger buttons.
 """
 
 import os
@@ -64,6 +65,11 @@ def test_chat_model_dropdown_stays_compact_on_desktop(playwright):
                     modelContainer.style.display = 'block';
                 }
 
+                const agentContainer = document.getElementById('agent-select-container');
+                if (agentContainer) {
+                    agentContainer.style.display = 'none';
+                }
+
                 const modelModule = await import('/static/js/chat/chat-model-selector.js');
                 await modelModule.populateModelDropdown({ preserveCurrentSelection: false });
             }
@@ -90,6 +96,8 @@ def test_chat_model_dropdown_stays_compact_on_desktop(playwright):
                 return {
                     viewportWidth: window.innerWidth,
                     buttonWidth: buttonRect.width,
+                    buttonLeft: buttonRect.left,
+                    buttonRight: buttonRect.right,
                     menuWidth: menuRect.width,
                     menuLeft: menuRect.left,
                     menuRight: menuRect.right,
@@ -104,6 +112,135 @@ def test_chat_model_dropdown_stays_compact_on_desktop(playwright):
         assert metrics["menuWidth"] < metrics["viewportWidth"] * 0.5, "Expected menu not to span the browser window."
         assert metrics["menuLeft"] >= 0, "Expected menu to stay inside the left viewport edge."
         assert metrics["menuRight"] <= metrics["viewportWidth"] + 1, "Expected menu to stay inside the right viewport edge."
+        assert metrics["menuRight"] >= metrics["buttonLeft"] - 1, "Expected menu to overlap the model button horizontally."
+        assert metrics["menuLeft"] <= metrics["buttonRight"] + 1, "Expected menu to overlap the model button horizontally."
+        assert min(
+            abs(metrics["menuLeft"] - metrics["buttonLeft"]),
+            abs(metrics["menuRight"] - metrics["buttonRight"]),
+        ) <= 8, "Expected menu to stay anchored to the model button."
+        assert metrics["searchWidth"] <= metrics["menuWidth"], "Expected search input to be contained by the menu."
+        assert not page_errors, f"Expected no uncaught page errors, got: {page_errors}"
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_agent_dropdown_stays_anchored_on_desktop(playwright):
+    """Validate that the agent dropdown menu stays aligned to its toolbar selector."""
+    _require_authenticated_chat_env()
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport=DESKTOP_VIEWPORT,
+    )
+    page = context.new_page()
+    page_errors = []
+    page.on("pageerror", lambda exception: page_errors.append(str(exception)))
+
+    try:
+        response = page.goto(f"{BASE_URL}/chats", wait_until="networkidle")
+        assert response is not None and response.ok, "Expected /chats to load successfully."
+
+        setup_result = page.evaluate(
+            """
+            async () => {
+                const agentButton = document.getElementById('agent-dropdown-button');
+                const agentSelect = document.getElementById('agent-select');
+                const agentContainer = document.getElementById('agent-select-container');
+                if (!agentButton || !agentSelect || !agentContainer) {
+                    return { hasAgentSelector: false };
+                }
+
+                const modelContainer = document.getElementById('model-select-container');
+                if (modelContainer) {
+                    modelContainer.style.display = 'none';
+                }
+                agentContainer.style.display = 'block';
+
+                agentSelect.innerHTML = '';
+                ['Research Agent', 'Wildland Fire Risk'].forEach((label, index) => {
+                    const option = document.createElement('option');
+                    option.value = label.toLowerCase().replaceAll(' ', '-');
+                    option.textContent = label;
+                    option.selected = index === 1;
+                    agentSelect.appendChild(option);
+                });
+
+                if (window.bootstrap?.Dropdown) {
+                    window.bootstrap.Dropdown.getInstance(agentButton)?.dispose();
+                }
+
+                const searchableSelectModule = await import('/static/js/chat/chat-searchable-select.js');
+                if (!window.__agentDropdownAlignmentController) {
+                    window.__agentDropdownAlignmentController = searchableSelectModule.createSearchableSingleSelect({
+                        selectEl: agentSelect,
+                        dropdownEl: document.getElementById('agent-dropdown'),
+                        buttonEl: agentButton,
+                        buttonTextEl: agentButton.querySelector('.chat-searchable-select-text'),
+                        menuEl: document.getElementById('agent-dropdown-menu'),
+                        searchInputEl: document.getElementById('agent-search-input'),
+                        itemsContainerEl: document.getElementById('agent-dropdown-items'),
+                        placeholderText: 'Select an Agent',
+                        emptyMessage: 'No agents available',
+                        emptySearchMessage: 'No matching agents found',
+                        dropdownConfig: searchableSelectModule.createFloatingSearchableSelectDropdownConfig(),
+                    });
+                }
+
+                window.__agentDropdownAlignmentController?.refresh?.();
+                agentSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                return { hasAgentSelector: true };
+            }
+            """
+        )
+
+        if not setup_result["hasAgentSelector"]:
+            pytest.skip("Agents are not enabled for this environment.")
+
+        agent_button = page.locator("#agent-dropdown-button")
+        agent_menu = page.locator("#agent-dropdown-menu")
+
+        expect(agent_button).to_be_visible()
+        agent_button.click()
+        expect(agent_menu).to_be_visible()
+
+        metrics = page.evaluate(
+            """
+            () => {
+                const button = document.getElementById('agent-dropdown-button');
+                const menu = document.getElementById('agent-dropdown-menu');
+                const searchInput = document.getElementById('agent-search-input');
+                const buttonRect = button.getBoundingClientRect();
+                const menuRect = menu.getBoundingClientRect();
+                const searchRect = searchInput.getBoundingClientRect();
+
+                return {
+                    viewportWidth: window.innerWidth,
+                    buttonWidth: buttonRect.width,
+                    buttonLeft: buttonRect.left,
+                    buttonRight: buttonRect.right,
+                    menuWidth: menuRect.width,
+                    menuLeft: menuRect.left,
+                    menuRight: menuRect.right,
+                    searchWidth: searchRect.width,
+                };
+            }
+            """
+        )
+
+        assert metrics["menuWidth"] >= metrics["buttonWidth"] - 1, "Expected menu to be at least as wide as the agent button."
+        assert metrics["menuWidth"] <= 380, "Expected menu width to stay within the compact selector limit."
+        assert metrics["menuWidth"] < metrics["viewportWidth"] * 0.5, "Expected menu not to span the browser window."
+        assert metrics["menuLeft"] >= 0, "Expected menu to stay inside the left viewport edge."
+        assert metrics["menuRight"] <= metrics["viewportWidth"] + 1, "Expected menu to stay inside the right viewport edge."
+        assert metrics["menuRight"] >= metrics["buttonLeft"] - 1, "Expected menu to overlap the agent button horizontally."
+        assert metrics["menuLeft"] <= metrics["buttonRight"] + 1, "Expected menu to overlap the agent button horizontally."
+        assert min(
+            abs(metrics["menuLeft"] - metrics["buttonLeft"]),
+            abs(metrics["menuRight"] - metrics["buttonRight"]),
+        ) <= 8, "Expected menu to stay anchored to the agent button."
         assert metrics["searchWidth"] <= metrics["menuWidth"], "Expected search input to be contained by the menu."
         assert not page_errors, f"Expected no uncaught page errors, got: {page_errors}"
     finally:

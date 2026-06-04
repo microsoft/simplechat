@@ -4,6 +4,39 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.129)**
+
+#### New Features
+
+*   **OneDrive File Sync and Source Selection UX**
+    *   Added OneDrive as a personal-workspace File Sync source that pulls selected OneDrive files and folders into the existing SimpleChat document processing, chunking, embedding, and Azure AI Search indexing pipeline.
+    *   Added provider browsing and selected folder/file controls so users can sync the source root, specific folders, or specific files, with Include subfolders moved into the source-selection and filter workflow.
+    *   Added remote change-token handling for provider-native IDs and eTags/cTags before content checksum fallback, improving change detection for cloud-drive files.
+    *   (Ref: `functions_file_sync.py`, `route_backend_file_sync.py`, `workspace-file-sync.js`, `ONEDRIVE_FILE_SYNC.md`, `test_file_sync_onedrive_personal.py`)
+
+*   **Global Cloud Drive Connector Identities**
+    *   Extended global workspace identities so admins can manage File Sync cloud-drive connector credentials separately from personal user sync choices.
+    *   OneDrive File Sync now resolves an admin-managed global File Sync client-secret identity before falling back to legacy app registration configuration, keeping tenant-level Graph credentials out of the personal source setup flow.
+    *   Updated Admin Settings and workspace identity UI guidance to clarify that users choose what to sync while admins own tenant cloud-drive connector permissions.
+    *   (Ref: `functions_workspace_identities.py`, `functions_file_sync.py`, `workspace-identities.js`, `admin_settings.html`, `WORKSPACE_IDENTITIES.md`)
+
+#### User Interface Enhancements
+
+*   **File Sync Source Configuration Flow**
+    *   Reworked the File Sync source modal around a combined selection, subfolders, and filters section, including selected path summaries and a browse modal for supported providers.
+    *   OneDrive source configuration now presents a global connector identity notice instead of source-local credential fields.
+    *   (Ref: `workspace-file-sync.js`, File Sync source workflow, selected paths)
+
+### **(v0.241.127)**
+
+#### New Features
+
+*   **Azure Files File Sync Source**
+    *   Added Azure Files as a first-class File Sync source type so workspaces can sync from Azure Storage file shares using a file service URL, share name, and optional directory path.
+    *   Added Azure Files-compatible reusable identity support for managed identity, service principal client secret, and storage connection string authentication while keeping SMB sources on username/password or anonymous authentication.
+    *   Updated File Sync source selection, admin source-type visibility controls, synced-document badges, documentation, and regression coverage for the new Azure Files connector.
+    *   (Ref: `functions_file_sync.py`, `functions_workspace_identities.py`, `workspace-file-sync.js`, `workspace-identities.js`, `AZURE_FILES_FILE_SYNC.md`, `test_file_sync_azure_files_identity.py`)
+
 ### **(v0.241.112)**
 
 #### New Features

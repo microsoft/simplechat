@@ -2,9 +2,9 @@
 """
 UI test for Admin Settings File Sync management.
 
-Version: 0.241.110
+Version: 0.241.129
 Implemented in: 0.241.073
-Updated in: 0.241.110
+Updated in: 0.241.129
 
 This test ensures the Admin Settings File Sync tab renders as its own section,
 uses app-role gate controls, stacks scope cards as separate rows, and opens the
@@ -90,8 +90,12 @@ def test_admin_file_sync_tab_and_target_manager():
             return
         route.fulfill(status=200, content_type="application/json", body=json.dumps({}))
 
+    def handle_global_identities(route):
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({"identities": []}))
+
     page.route("**/api/admin/file-sync/users/search**", handle_user_search)
     page.route("**/api/admin/file-sync/personal/user-1/**", handle_admin_file_sync)
+    page.route("**/api/admin/workspace-identities/global/identities**", handle_global_identities)
     page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
 
     try:
@@ -114,8 +118,13 @@ def test_admin_file_sync_tab_and_target_manager():
         expect(file_sync_section.get_by_text("PublicWorkspaceFileSyncUser").first).to_be_visible()
         expect(file_sync_section.get_by_text("Visible Source Types")).to_be_visible()
         expect(page.get_by_label("SMB Share")).to_be_visible()
+        expect(page.get_by_label("Azure Files")).to_be_visible()
+        if not page.get_by_label("Azure Files").is_checked():
+            page.get_by_label("Azure Files").check()
+        expect(page.get_by_label("OneDrive")).to_be_visible()
         expect(page.get_by_label("On-prem SharePoint")).to_be_visible()
         expect(page.get_by_label("Google Workspace")).to_be_visible()
+        expect(file_sync_section.get_by_text("Cloud drive connector identities")).to_be_visible()
         expect(file_sync_section.get_by_text("Blocked Users")).to_have_count(0)
         expect(file_sync_section.get_by_text("Allowed Users")).to_have_count(0)
         _assert_scope_cards_are_stacked(page)
@@ -145,10 +154,16 @@ def test_admin_file_sync_tab_and_target_manager():
         source_modal = page.locator('[data-file-sync-source-modal="true"]').last
         expect(source_modal.get_by_role("heading", name="Add Sync Source")).to_be_visible()
         expect(source_modal.get_by_text("SMB Share")).to_be_visible()
+        expect(source_modal.get_by_text("Azure Files")).to_be_visible()
+        expect(source_modal.get_by_text("OneDrive")).to_be_visible()
         source_modal.get_by_role("button", name="Configure Source").click()
         expect(source_modal.get_by_label("UNC path")).to_be_visible()
         source_modal.get_by_label("Close").click()
         expect(source_modal).to_be_hidden()
+
+        if page.locator("#workspace-identities-tab").count() > 0:
+            page.locator("#workspace-identities-tab").click()
+            expect(page.locator("#global-workspace-identities-root").get_by_role("button", name="Add Identity")).to_be_visible()
         assert console_errors == []
     finally:
         context.close()

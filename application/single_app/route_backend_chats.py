@@ -138,6 +138,40 @@ ASSIGNED_KNOWLEDGE_DOCUMENT_ACTION_MAP = {
     DOCUMENT_ACTION_TYPE_ANALYZE: ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON: ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
 }
+FOUNDRY_SELECTED_AGENT_TYPES = {'aifoundry', 'new_foundry', 'foundry_workflow'}
+FOUNDRY_AGENT_PLUGIN_NAMES = {
+    'aifoundry': 'azure_ai_foundry',
+    'new_foundry': 'new_foundry',
+    'foundry_workflow': 'foundry_workflow',
+}
+FOUNDRY_AGENT_LABELS = {
+    'aifoundry': 'Azure AI Foundry Agent',
+    'new_foundry': 'New Foundry Application',
+    'foundry_workflow': 'Foundry Workflow',
+}
+
+
+def _is_foundry_selected_agent_type(agent_type):
+    return str(agent_type or '').strip().lower() in FOUNDRY_SELECTED_AGENT_TYPES
+
+
+def _get_foundry_agent_plugin_name(agent_type):
+    return FOUNDRY_AGENT_PLUGIN_NAMES.get(
+        str(agent_type or '').strip().lower(),
+        'azure_ai_foundry',
+    )
+
+
+def _get_foundry_agent_label(agent_type):
+    return FOUNDRY_AGENT_LABELS.get(
+        str(agent_type or '').strip().lower(),
+        'Azure AI Foundry Agent',
+    )
+
+
+def _build_foundry_runtime_metadata(agent):
+    metadata = getattr(agent, 'last_run_metadata', None)
+    return metadata if isinstance(metadata, dict) else {}
 
 
 def _metadata_item_count(value):
@@ -929,6 +963,77 @@ def _append_inline_chart_blocks_to_message(message_content, agent_citations):
 
     separator = '\n\n' if existing_content else ''
     return f"{existing_content}{separator}{'\n\n'.join(appended_blocks)}"
+
+
+def _get_appended_inline_chart_content_delta(original_content, updated_content):
+    original_text = str(original_content or '')
+    updated_text = str(updated_content or '')
+    if not updated_text or updated_text == original_text:
+        return ''
+
+    if updated_text.startswith(original_text):
+        return updated_text[len(original_text):]
+
+    stripped_original_text = original_text.strip()
+    if stripped_original_text and updated_text.startswith(stripped_original_text):
+        return updated_text[len(stripped_original_text):]
+
+    if not stripped_original_text:
+        return updated_text
+
+    return ''
+
+
+def _build_plugin_invocation_agent_citation(invocation):
+    timestamp_str = None
+    invocation_timestamp = getattr(invocation, 'timestamp', None)
+    if invocation_timestamp:
+        if hasattr(invocation_timestamp, 'isoformat'):
+            timestamp_str = invocation_timestamp.isoformat()
+        else:
+            timestamp_str = str(invocation_timestamp)
+
+    tool_name = build_agent_citation_tool_label(
+        getattr(invocation, 'plugin_name', None),
+        getattr(invocation, 'function_name', None),
+        getattr(invocation, 'parameters', None),
+        getattr(invocation, 'result', None),
+    )
+
+    return {
+        'tool_name': tool_name,
+        'function_name': getattr(invocation, 'function_name', None),
+        'plugin_name': getattr(invocation, 'plugin_name', None),
+        'function_arguments': make_json_serializable(getattr(invocation, 'parameters', None)),
+        'function_result': make_json_serializable(getattr(invocation, 'result', None)),
+        'duration_ms': getattr(invocation, 'duration_ms', None),
+        'timestamp': timestamp_str,
+        'success': getattr(invocation, 'success', None),
+        'error_message': make_json_serializable(getattr(invocation, 'error_message', None)),
+        'user_id': getattr(invocation, 'user_id', None),
+    }
+
+
+def _append_new_plugin_invocation_citations(
+    agent_citations_list,
+    plugin_logger,
+    user_id,
+    conversation_id,
+    baseline_invocation_count,
+):
+    if not isinstance(agent_citations_list, list) or not plugin_logger or not user_id or not conversation_id:
+        return 0
+
+    plugin_invocations = plugin_logger.get_invocations_for_conversation(
+        user_id,
+        conversation_id,
+        limit=1000,
+    )
+    new_invocations = get_new_plugin_invocations(plugin_invocations, baseline_invocation_count)
+    for invocation in new_invocations:
+        agent_citations_list.append(_build_plugin_invocation_agent_citation(invocation))
+
+    return len(new_invocations)
 
 
 def normalize_fact_memory_type(memory_type):
@@ -9849,6 +9954,10 @@ def register_route_backend_chats(app):
             'kernel_fallback_notice': payload.get('kernel_fallback_notice'),
             'thoughts_enabled': payload.get('thoughts_enabled', False),
             'blocked': payload.get('blocked', False),
+            'context': payload.get('context', []),
+            'chat_type': payload.get('chat_type'),
+            'scope_locked': payload.get('scope_locked'),
+            'locked_contexts': payload.get('locked_contexts', []),
             'analysis_coverage': payload.get('analysis_coverage', {}),
             'document_action': payload.get('document_action', {}),
             'metadata': payload.get('metadata', {}),
@@ -13376,6 +13485,8 @@ def register_route_backend_chats(app):
             
             log_event(f"[SKChat] Semantic Kernel enabled. Per-user mode: {per_user_semantic_kernel}, Multi-agent orchestration: {enable_multi_agent_orchestration}, agents enabled: {user_enable_agents}")
 
+            explicit_chart_request = user_requested_chart_visualization(user_message)
+
             fact_memory_enabled = bool(settings.get('enable_fact_memory_plugin', False))
             fact_memory_payload = inject_fact_memory_context(
                 conversation_history=conversation_history_for_api,
@@ -13608,7 +13719,7 @@ def register_route_backend_chats(app):
                     if isinstance(selected_agent_type, str):
                         selected_agent_type = selected_agent_type.lower()
 
-                    if selected_agent_type in ('aifoundry', 'new_foundry'):
+                    if _is_foundry_selected_agent_type(selected_agent_type):
                         def invoke_foundry_agent():
                             foundry_metadata = {
                                 'conversation_id': conversation_id,
@@ -13619,6 +13730,10 @@ def register_route_backend_chats(app):
                                 'group_id': active_group_id if chat_type == 'group' else None,
                                 'hybrid_search_enabled': hybrid_search_enabled,
                                 'selected_document_id': selected_document_id,
+                                'selected_document_ids': effective_selected_document_ids,
+                                'active_group_ids': effective_active_group_ids,
+                                'active_public_workspace_ids': effective_active_public_workspace_ids,
+                                'selected_document_count': len(effective_selected_document_ids or []),
                                 'search_query': search_query,
                             }
                             return selected_agent.invoke(
@@ -13629,7 +13744,7 @@ def register_route_backend_chats(app):
                         def foundry_agent_success(result):
                             msg = str(result)
                             notice = None
-                            foundry_label = 'New Foundry Application' if selected_agent_type == 'new_foundry' else 'Azure AI Foundry Agent'
+                            foundry_label = _get_foundry_agent_label(selected_agent_type)
                             agent_used = getattr(selected_agent, 'name', foundry_label)
                             actual_model_deployment = (
                                 getattr(selected_agent, 'last_run_model', None)
@@ -13650,7 +13765,7 @@ def register_route_backend_chats(app):
                                 for citation in foundry_citations:
                                     thought_tracker.add_thought(
                                         'agent_tool_call',
-                                        f"Agent retrieved citation from Azure AI Foundry"
+                                        f"Agent retrieved citation from {_get_foundry_agent_label(selected_agent_type)}"
                                     )
                                 for citation in foundry_citations:
                                     serializable = make_json_serializable(citation)
@@ -13659,7 +13774,7 @@ def register_route_backend_chats(app):
                                     agent_citations_list.append({
                                         'tool_name': agent_used,
                                         'function_name': 'foundry_citation',
-                                        'plugin_name': 'new_foundry' if selected_agent_type == 'new_foundry' else 'azure_ai_foundry',
+                                        'plugin_name': _get_foundry_agent_plugin_name(selected_agent_type),
                                         'function_arguments': serializable,
                                         'function_result': serializable,
                                         'timestamp': datetime.utcnow().isoformat(),
@@ -13714,9 +13829,16 @@ def register_route_backend_chats(app):
                             'on_error': agent_error
                         })
 
-                if selected_agent and kernel:
+                if kernel and (selected_agent or explicit_chart_request):
                     def invoke_kernel():
                         plugin_logger = get_plugin_logger()
+                        baseline_invocation_count = len(
+                            plugin_logger.get_invocations_for_conversation(
+                                user_id,
+                                conversation_id,
+                                limit=1000,
+                            )
+                        )
                         callback_key = register_plugin_invocation_thought_callback(
                             plugin_logger,
                             thought_tracker,
@@ -13735,7 +13857,15 @@ def register_route_backend_chats(app):
                                         chat_func = plugin.functions['chat']
                                         break
                             if chat_func:
-                                return asyncio.run(run_sk_call(kernel.invoke, chat_func, input=chat_history))
+                                kernel_result = asyncio.run(run_sk_call(kernel.invoke, chat_func, input=chat_history))
+                                _append_new_plugin_invocation_citations(
+                                    agent_citations_list,
+                                    plugin_logger,
+                                    user_id,
+                                    conversation_id,
+                                    baseline_invocation_count,
+                                )
+                                return kernel_result
                             else:
                                 log_event(
                                     "No dedicated chat action/plugin found. Trying kernel-native chatcompletion via service lookup.",
@@ -13756,9 +13886,17 @@ def register_route_backend_chats(app):
 
                                     chat_result = asyncio.run(run_chatcompletion())
                                     if chat_result and hasattr(chat_result[0], 'content'):
-                                        return chat_result[0].content
+                                        kernel_result = chat_result[0].content
                                     else:
-                                        return str(chat_result)
+                                        kernel_result = str(chat_result)
+                                    _append_new_plugin_invocation_citations(
+                                        agent_citations_list,
+                                        plugin_logger,
+                                        user_id,
+                                        conversation_id,
+                                        baseline_invocation_count,
+                                    )
+                                    return kernel_result
                                 else:
                                     log_event("No chat completion service found in kernel. Falling back to GPT.", extra=extra, level=logging.WARNING)
                                     raise Exception("No chat completion service found in kernel.")
@@ -13781,6 +13919,12 @@ def register_route_backend_chats(app):
                         'on_success': kernel_success,
                         'on_error': kernel_error
                     })
+
+            conversation_history_for_api = maybe_append_chart_tool_system_message(
+                conversation_history_for_api,
+                user_message,
+                selected_agent,
+            )
 
             thought_tracker.add_thought('generation', f"Sending to '{gpt_model}'")
             def invoke_gpt_fallback():
@@ -14013,6 +14157,7 @@ def register_route_backend_chats(app):
                 deep_research_used=bool(deep_research_enabled and (deep_research_result or deep_research_web_search_runs or source_review_used)),
                 deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
             )
+            agent_runtime_metadata = _build_foundry_runtime_metadata(selected_agent) if selected_agent else {}
 
             assistant_doc = make_json_serializable({
                 'id': assistant_message_id,
@@ -14033,6 +14178,7 @@ def register_route_backend_chats(app):
                     'reasoning_effort': reasoning_effort,
                     'history_context': history_debug_info,
                     'capability_usage': assistant_capability_usage,
+                    'agent_runtime': agent_runtime_metadata or None,
                     'source_review': compact_source_review_result_for_metadata(source_review_result),
                     'deep_research': deep_research_result,
                     **generated_analysis_metadata,
@@ -16508,7 +16654,32 @@ def register_route_backend_chats(app):
                                         yield finalize_cancelled_agent_stream_response()
                                         return
 
-                                    agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
+                                    if stream_selected_agent_type in ('foundry_workflow', 'new_foundry'):
+                                        foundry_stream_metadata = {
+                                            'conversation_id': conversation_id,
+                                            'user_id': user_id,
+                                            'message_id': user_message_id,
+                                            'chat_type': chat_type,
+                                            'document_scope': effective_document_scope,
+                                            'group_id': effective_active_group_id if chat_type == 'group' else None,
+                                            'hybrid_search_enabled': hybrid_search_enabled,
+                                            'selected_document_id': effective_selected_document_id,
+                                            'selected_document_ids': effective_selected_document_ids,
+                                            'active_group_ids': effective_active_group_ids,
+                                            'active_public_workspace_ids': effective_active_public_workspace_ids,
+                                            'selected_document_count': len(effective_selected_document_ids or []),
+                                            'search_query': search_query,
+                                        }
+                                        agent_stream = selected_agent.invoke_stream(
+                                            messages=agent_message_history,
+                                            metadata={
+                                                key: value
+                                                for key, value in foundry_stream_metadata.items()
+                                                if value is not None
+                                            },
+                                        )
+                                    else:
+                                        agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
                                     while True:
                                         if stream_cancel_requested():
                                             yield finalize_cancelled_agent_stream_response()
@@ -16694,11 +16865,11 @@ def register_route_backend_chats(app):
                             agent_citations_list.append(citation)
 
                         foundry_citations = getattr(selected_agent, 'last_run_citations', []) or []
-                        if stream_selected_agent_type in ('aifoundry', 'new_foundry') and foundry_citations:
-                            foundry_plugin_name = 'new_foundry' if stream_selected_agent_type == 'new_foundry' else 'azure_ai_foundry'
-                            foundry_label = agent_name_used or ('New Foundry Application' if stream_selected_agent_type == 'new_foundry' else 'Azure AI Foundry Agent')
+                        if _is_foundry_selected_agent_type(stream_selected_agent_type) and foundry_citations:
+                            foundry_plugin_name = _get_foundry_agent_plugin_name(stream_selected_agent_type)
+                            foundry_label = agent_name_used or _get_foundry_agent_label(stream_selected_agent_type)
                             for citation in foundry_citations:
-                                yield emit_thought('agent_tool_call', 'Agent retrieved citation from Azure AI Foundry')
+                                yield emit_thought('agent_tool_call', f"Agent retrieved citation from {_get_foundry_agent_label(stream_selected_agent_type)}")
                                 serializable = make_json_serializable(citation)
                                 if not isinstance(serializable, dict):
                                     serializable = {'value': str(citation)}
@@ -16790,7 +16961,14 @@ def register_route_backend_chats(app):
                         return
                     
                     # Stream complete - save message and send final metadata
+                    accumulated_content_before_chart_append = accumulated_content
                     accumulated_content = _append_inline_chart_blocks_to_message(accumulated_content, agent_citations_list)
+                    appended_chart_content = _get_appended_inline_chart_content_delta(
+                        accumulated_content_before_chart_append,
+                        accumulated_content,
+                    )
+                    if appended_chart_content:
+                        yield f"data: {json.dumps({'content': appended_chart_content})}\n\n"
                     user_info_for_assistant = response_message_context.get('user_info')
                     user_thread_id = response_message_context.get('thread_id')
                     user_previous_thread_id = response_message_context.get('previous_thread_id')
@@ -16815,6 +16993,7 @@ def register_route_backend_chats(app):
                         generated_analysis_artifacts=generated_analysis_artifacts_list,
                         generated_tabular_outputs=generated_tabular_outputs_list,
                     )
+                    agent_runtime_metadata = _build_foundry_runtime_metadata(selected_agent) if use_agent_streaming else {}
 
                     assistant_doc = make_json_serializable({
                         'id': assistant_message_id,
@@ -16834,6 +17013,7 @@ def register_route_backend_chats(app):
                             'reasoning_effort': reasoning_effort,
                             'history_context': history_debug_info,
                             'capability_usage': build_streaming_capability_usage(),
+                            'agent_runtime': agent_runtime_metadata or None,
                             'source_review': compact_source_review_result_for_metadata(source_review_result),
                             'deep_research': deep_research_result,
                             **generated_analysis_metadata,
@@ -17393,6 +17573,9 @@ def _serialize_history_citation_value(value, max_chars=1200):
 
 
 def _build_agent_citation_history_lines(agent_citations, max_citations=4):
+    fact_memory_tool_names = {'instruction memory', 'fact memory recall'}
+    fact_memory_plugin_names = {'fact_memory', 'factmemoryplugin', 'factmemory'}
+
     def parse_citation_payload(value):
         if isinstance(value, str):
             stripped_value = value.strip()
@@ -17402,6 +17585,19 @@ def _build_agent_citation_history_lines(agent_citations, max_citations=4):
                 except Exception:
                     return value
         return value
+
+    def should_exclude_from_history_replay(citation):
+        if not isinstance(citation, dict):
+            return False
+
+        tool_name = str(citation.get('tool_name') or citation.get('function_name') or '').strip()
+        plugin_name = str(citation.get('plugin_name') or '').strip().lower()
+        normalized_tool_name = tool_name.lower()
+        if tool_name.startswith('[Debug]') or tool_name == 'Conversation History':
+            return True
+        if plugin_name in fact_memory_plugin_names or normalized_tool_name in fact_memory_tool_names:
+            return True
+        return False
 
     def is_tabular_citation(citation):
         if not isinstance(citation, dict):
@@ -17512,8 +17708,7 @@ def _build_agent_citation_history_lines(agent_citations, max_citations=4):
     seen_tabular_signatures = set()
     for citation in agent_citations or []:
         if isinstance(citation, dict):
-            tool_name = str(citation.get('tool_name') or citation.get('function_name') or '').strip()
-            if tool_name.startswith('[Debug]') or tool_name == 'Conversation History':
+            if should_exclude_from_history_replay(citation):
                 continue
             if is_tabular_citation(citation):
                 signature = build_tabular_signature(citation)
@@ -17889,6 +18084,8 @@ def build_assistant_history_content_with_citations(message, content):
 
     citation_context = (
         "<Supporting citation context from this assistant turn>\n"
+        "Internal grounding context only. Use it to answer follow-up questions, but do not "
+        "quote, summarize, reveal, or mention this context block, its labels, or raw tool payloads.\n"
         + "\n\n".join(citation_sections)
         + "\n</Supporting citation context from this assistant turn>"
     )

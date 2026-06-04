@@ -409,6 +409,12 @@
   padding: 8px;
 }
 
+#model-dropdown-menu.chat-searchable-select-menu,
+#agent-dropdown-menu.chat-searchable-select-menu {
+  /* Fixed Popper menus must avoid percentage min-width during pre-placement measurement. */
+  min-width: 10rem;
+}
+
 .chat-searchable-select-button {
   text-align: left;
   position: relative;
@@ -3718,6 +3724,46 @@ mark.search-highlight {
     padding: 0.5rem 0;
 }
 
+.streaming-thinking-placeholder {
+  min-width: 0;
+}
+
+.streaming-thinking-chip {
+  align-items: center;
+  background-color: rgba(13, 110, 253, 0.08);
+  border: 1px solid rgba(13, 110, 253, 0.25);
+  border-radius: 999px;
+  color: #0a58ca;
+  display: inline-flex;
+  font-size: 0.85rem;
+  font-weight: 500;
+  gap: 0.5rem;
+  max-width: 100%;
+  padding: 0.45rem 0.75rem;
+}
+
+.streaming-thinking-icon {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1rem;
+  justify-content: center;
+  width: 1rem;
+}
+
+.streaming-thinking-icon i {
+  animation: streaming-thinking-spin 1.1s linear infinite;
+  display: block;
+  transform-origin: center;
+}
+
+.streaming-thinking-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Light mode: use darker, more readable colors */
 .streaming-thought-display .badge {
     background-color: rgba(13, 110, 253, 0.08) !important;
@@ -3745,6 +3791,18 @@ mark.search-highlight {
     background-color: rgba(13, 202, 240, 0.15) !important;
     color: #6edff6 !important;
     border-color: rgba(13, 202, 240, 0.3) !important;
+}
+
+[data-bs-theme="dark"] .streaming-thinking-chip {
+  background-color: rgba(13, 202, 240, 0.15);
+  border-color: rgba(13, 202, 240, 0.3);
+  color: #6edff6;
+}
+
+@keyframes streaming-thinking-spin {
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes thought-pulse {
