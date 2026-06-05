@@ -606,7 +606,7 @@ function initializeCosmosThroughputStatusView() {
     if (cachedStatus) {
         updateCosmosThroughputStatusPanel(cachedStatus);
         const refreshText = automationEnabled
-            ? 'Background automation refreshes this saved view about every 5 minutes while enabled.'
+            ? 'Background automation refreshes this saved view on the Metrics Window cadence while enabled.'
             : 'Automation is currently disabled; use Refresh to update this saved view.';
         setCosmosThroughputMessage(`Showing last saved Cosmos throughput status. ${refreshText}`, 'info');
         return;

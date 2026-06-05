@@ -23,6 +23,9 @@ COSMOS_THROUGHPUT_AUTOSCALE_MIN_RU = 1000
 COSMOS_THROUGHPUT_MANUAL_MIN_RU = 400
 COSMOS_THROUGHPUT_CONTAINER_METRIC_MAX_RESULTS = 1000
 COSMOS_THROUGHPUT_CONTAINER_THROUGHPUT_WORKERS = 8
+COSMOS_THROUGHPUT_AUTOSCALE_DEFAULT_INTERVAL_SECONDS = 300
+COSMOS_THROUGHPUT_AUTOSCALE_MIN_INTERVAL_SECONDS = 60
+COSMOS_THROUGHPUT_AUTOSCALE_MAX_INTERVAL_SECONDS = 3600
 DEFAULT_COSMOS_DATABASE_NAME = 'SimpleChat'
 
 COSMOS_THROUGHPUT_SETTING_KEYS = (
@@ -246,6 +249,16 @@ def normalize_cosmos_throughput_settings(settings):
     )
 
     return normalized
+
+
+def calculate_cosmos_throughput_autoscale_interval_seconds(settings=None):
+    """Calculate the background autoscale check cadence from the metrics window."""
+    normalized = normalize_cosmos_throughput_settings(settings or {})
+    interval_seconds = normalized['cosmos_throughput_metrics_window_minutes'] * 60
+    return max(
+        COSMOS_THROUGHPUT_AUTOSCALE_MIN_INTERVAL_SECONDS,
+        min(COSMOS_THROUGHPUT_AUTOSCALE_MAX_INTERVAL_SECONDS, interval_seconds),
+    )
 
 
 def normalize_container_policy(container_name, policy=None, settings=None):
@@ -1636,10 +1649,10 @@ def build_runtime_update(status=None, decision=None, scale_result=None, error=''
     return update
 
 
-def evaluate_and_apply_cosmos_throughput_scaling(settings, current_time=None):
+def evaluate_and_apply_cosmos_throughput_scaling(settings, current_time=None, refresh_id=''):
     """Evaluate Cosmos RU usage and apply a scale action when configured thresholds require it."""
     try:
-        status = get_cosmos_throughput_status(settings, include_metrics=True)
+        status = get_cosmos_throughput_status(settings, include_metrics=True, refresh_id=refresh_id)
         decision = calculate_scale_decision(settings, status, current_time=current_time)
         scale_result = None
 

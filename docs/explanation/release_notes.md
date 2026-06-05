@@ -1,8 +1,18 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.156, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.157, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.157)**
+
+#### Bug Fixes
+
+*   **Cosmos Autoscale Background Cadence**
+    *   Updated the Cosmos throughput background scheduler so the check cadence follows the configured Metrics Window instead of a hard-coded five-minute sleep.
+    *   Added background-specific autoscale start, completion, and sleep logs so scheduler runs are distinguishable from manual Admin Settings Refresh requests.
+    *   Clarified Admin Settings copy that background automation refreshes on the Metrics Window cadence while Scale Up/Down intervals remain cooldowns after scaling.
+    *   (Ref: `background_tasks.py`, `functions_cosmos_throughput.py`, Admin Settings Scale tab, `COSMOS_AUTOSCALE_BACKGROUND_CADENCE_FIX.md`)
 
 ### **(v0.241.156)**
 

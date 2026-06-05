@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Cosmos throughput controls.
 
-Version: 0.241.156
+Version: 0.241.157
 Implemented in: 0.241.147
 
 This test ensures the Scale tab exposes Cosmos throughput monitoring and
@@ -11,7 +11,8 @@ It also validates the container-targeted metric clarity, setup guide UI, and
 cached status first render. Container policy enforcement coverage was added in
 version 0.241.153. Aggregate-only metric warning coverage was added in
 version 0.241.154 and clarified in version 0.241.155. Version 0.241.156
-keeps coverage aligned with the REST metadata metrics path.
+keeps coverage aligned with the REST metadata metrics path. Version 0.241.157
+adds Metrics Window cadence copy coverage.
 """
 
 import re
@@ -71,7 +72,7 @@ def test_admin_cosmos_throughput_controls_render_from_template():
     assert '<th scope="col">Database</th>' not in template
     assert 'Total request units consumed during the selected metrics window' in template
     assert 'Highest normalized RU percentage Azure Monitor reported' in template
-    assert 'Automation checks Cosmos throughput about every 5 minutes' in template
+    assert 'Automation checks Cosmos throughput on the Metrics Window cadence' in template
     assert 'window.cosmosThroughputCachedStatus' in template
     assert "admin_settings.js') }}?v={{ config['VERSION'] }}" in template
     assert 'Enforce global policy for all containers' in template
@@ -156,6 +157,7 @@ def test_cached_cosmos_status_renders_before_refresh():
     assert "updateCosmosThroughputStatusPanel(cachedStatus);" in source
     assert "Showing last saved Cosmos throughput status." in source
     assert "No saved Cosmos throughput status is available yet. Loading the first status check now" in source
+    assert "Background automation refreshes this saved view on the Metrics Window cadence" in source
     assert "Azure Monitor returned aggregate RU utilization, but not per-container metric dimensions" in source
     assert "Container autoscale waits for per-container utilization before scaling individual containers" in source
 

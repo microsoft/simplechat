@@ -20,7 +20,11 @@ from functions_control_center import (
     get_control_center_auto_refresh_schedule,
     parse_control_center_auto_refresh_datetime,
 )
-from functions_cosmos_throughput import evaluate_and_apply_cosmos_throughput_scaling
+from functions_cosmos_throughput import (
+    COSMOS_THROUGHPUT_AUTOSCALE_DEFAULT_INTERVAL_SECONDS,
+    calculate_cosmos_throughput_autoscale_interval_seconds,
+    evaluate_and_apply_cosmos_throughput_scaling,
+)
 from functions_debug import debug_print
 from functions_file_sync import check_due_file_sync_sources_once
 from functions_tabular_generated_exports import check_due_tabular_generated_output_runs_once
@@ -400,13 +404,46 @@ def check_cosmos_throughput_autoscale_once():
         if not settings.get('cosmos_throughput_autoscale_enabled', False):
             return None
 
-        result = evaluate_and_apply_cosmos_throughput_scaling(settings)
+        refresh_id = f"background-{uuid.uuid4()}"
+        log_event(
+            '[CosmosThroughput] Background autoscale check starting.',
+            extra={'refresh_id': refresh_id},
+        )
+        result = evaluate_and_apply_cosmos_throughput_scaling(settings, refresh_id=refresh_id)
         settings_update = result.get('settings_update') or {}
         if settings_update:
             update_settings(settings_update)
+        decision = result.get('decision') or {}
+        scale_result = result.get('scale_result') or {}
+        log_event(
+            '[CosmosThroughput] Background autoscale check completed.',
+            extra={
+                'refresh_id': refresh_id,
+                'decision_reason': decision.get('reason'),
+                'should_scale': decision.get('should_scale', False),
+                'scale_scope': scale_result.get('scope', ''),
+                'container_name': scale_result.get('container_name', ''),
+            },
+        )
         return result
     finally:
         release_distributed_task_lock(lock_document)
+
+
+def get_cosmos_throughput_autoscale_sleep_seconds():
+    """Return the next Cosmos throughput autoscale sleep interval."""
+    try:
+        return calculate_cosmos_throughput_autoscale_interval_seconds(get_settings())
+    except Exception as exc:
+        log_event(
+            '[CosmosThroughput] Failed to calculate autoscale check interval; using default.',
+            extra={
+                'error': str(exc),
+                'sleep_seconds': COSMOS_THROUGHPUT_AUTOSCALE_DEFAULT_INTERVAL_SECONDS,
+            },
+            level=logging.WARNING,
+        )
+        return COSMOS_THROUGHPUT_AUTOSCALE_DEFAULT_INTERVAL_SECONDS
 
 
 def run_cosmos_throughput_autoscale_loop():
@@ -418,7 +455,15 @@ def run_cosmos_throughput_autoscale_loop():
             print(f"Error in Cosmos throughput autoscale check: {exc}")
             log_event(f"[CosmosThroughput] Error in autoscale check: {exc}", level=logging.ERROR)
 
-        time.sleep(300)
+        sleep_seconds = get_cosmos_throughput_autoscale_sleep_seconds()
+        log_event(
+            '[CosmosThroughput] Background autoscale check sleeping.',
+            extra={
+                'sleep_seconds': sleep_seconds,
+                'metrics_window_minutes': int(sleep_seconds / 60),
+            },
+        )
+        time.sleep(sleep_seconds)
 
 
 def check_due_workflows_once():
