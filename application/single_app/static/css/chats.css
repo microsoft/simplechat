@@ -2733,6 +2733,109 @@ ol {
   overflow: hidden;
 }
 
+.sc-inline-chart-header {
+  min-width: 0;
+}
+
+.sc-inline-chart-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sc-inline-chart-title,
+.sc-inline-chart-subtitle,
+.sc-inline-chart-color-label {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sc-inline-chart-actions {
+  flex: 0 0 auto;
+}
+
+.sc-inline-chart-colors-toggle {
+  align-items: center;
+  display: inline-flex;
+  height: 2rem;
+  justify-content: center;
+  padding: 0;
+  width: 2rem;
+}
+
+.sc-inline-chart-color-panel {
+  background: rgba(var(--bs-secondary-bg-rgb), 0.5);
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.sc-inline-chart-palette-group,
+.sc-inline-chart-color-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sc-inline-chart-palette-group {
+  margin-bottom: 0.75rem;
+}
+
+.sc-inline-chart-palette-btn {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.15rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.45rem;
+}
+
+.sc-inline-chart-palette-swatch {
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.75rem;
+  width: 0.75rem;
+}
+
+.sc-inline-chart-color-row {
+  align-items: center;
+  background: var(--bs-body-bg);
+  border: 1px solid rgba(100, 116, 139, 0.16);
+  border-radius: 0.45rem;
+  display: inline-flex;
+  gap: 0.45rem;
+  max-width: 100%;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.sc-inline-chart-color-input {
+  flex: 0 0 auto;
+  height: 1.5rem;
+  padding: 0.125rem;
+  width: 2rem;
+}
+
+.sc-inline-chart-color-label {
+  color: var(--bs-body-color);
+  font-size: 0.82rem;
+  line-height: 1.25;
+  max-width: min(14rem, 58vw);
+}
+
+[data-bs-theme="dark"] .sc-inline-chart-color-panel {
+  background: rgba(17, 24, 39, 0.72);
+  border-color: rgba(148, 163, 184, 0.26);
+}
+
+[data-bs-theme="dark"] .sc-inline-chart-color-row {
+  background: #111827;
+  border-color: rgba(148, 163, 184, 0.24);
+}
+
+[data-bs-theme="dark"] .sc-inline-chart-palette-swatch {
+  border-color: rgba(248, 250, 252, 0.24);
+}
+
 .sc-inline-image-proposal-title {
   line-height: 1.25;
   overflow-wrap: anywhere;

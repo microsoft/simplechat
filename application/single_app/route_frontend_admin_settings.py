@@ -11,6 +11,12 @@ from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
 )
+from functions_cosmos_throughput import (
+    get_cached_cosmos_throughput_status,
+    get_cosmos_resource_config,
+    get_cosmos_throughput_setting_keys,
+    normalize_cosmos_throughput_settings,
+)
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
@@ -135,6 +141,13 @@ def register_route_frontend_admin_settings(app):
         settings['control_center_auto_refresh_time'] = control_center_auto_refresh_schedule['time']
         settings['control_center_auto_refresh_hour'] = control_center_auto_refresh_schedule['hour']
         settings['control_center_auto_refresh_minute'] = control_center_auto_refresh_schedule['minute']
+        settings.update(normalize_cosmos_throughput_settings(settings))
+        cosmos_resource_config = get_cosmos_resource_config(settings)
+        settings['cosmos_throughput_resolved_subscription_id'] = cosmos_resource_config.get('subscription_id', '')
+        settings['cosmos_throughput_resolved_resource_group'] = cosmos_resource_config.get('resource_group', '')
+        settings['cosmos_throughput_resolved_account_name'] = cosmos_resource_config.get('account_name', '')
+        settings['cosmos_throughput_resolved_database_name'] = cosmos_resource_config.get('database_name', '')
+        settings['cosmos_throughput_cached_status'] = get_cached_cosmos_throughput_status(settings)
         # --- End NEW Default Checks ---
 
         # Ensure classification fields exist with defaults if missing in DB
@@ -1351,6 +1364,40 @@ def register_route_frontend_admin_settings(app):
                 flash('Invalid Front Door URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
                 front_door_url = ''
 
+            try:
+                cosmos_throughput_container_policies = json.loads(
+                    form_data.get('cosmos_throughput_container_policies_json') or '{}'
+                )
+                if not isinstance(cosmos_throughput_container_policies, dict):
+                    cosmos_throughput_container_policies = {}
+            except Exception:
+                flash('Container throughput policies could not be parsed and were not updated.', 'warning')
+                cosmos_throughput_container_policies = settings.get('cosmos_throughput_container_policies', {})
+
+            cosmos_throughput_settings = normalize_cosmos_throughput_settings({
+                **settings,
+                'cosmos_throughput_autoscale_enabled': form_data.get('cosmos_throughput_autoscale_enabled') == 'on',
+                'cosmos_throughput_auto_scale_up_enabled': form_data.get('cosmos_throughput_auto_scale_up_enabled') == 'on',
+                'cosmos_throughput_auto_scale_down_enabled': form_data.get('cosmos_throughput_auto_scale_down_enabled') == 'on',
+                'cosmos_throughput_subscription_id': form_data.get('cosmos_throughput_subscription_id', '').strip(),
+                'cosmos_throughput_resource_group': form_data.get('cosmos_throughput_resource_group', '').strip(),
+                'cosmos_throughput_account_name': form_data.get('cosmos_throughput_account_name', '').strip(),
+                'cosmos_throughput_database_name': form_data.get('cosmos_throughput_database_name', '').strip(),
+                'cosmos_throughput_metrics_window_minutes': form_data.get('cosmos_throughput_metrics_window_minutes'),
+                'cosmos_throughput_scale_up_threshold_percent': form_data.get('cosmos_throughput_scale_up_threshold_percent'),
+                'cosmos_throughput_scale_down_threshold_percent': form_data.get('cosmos_throughput_scale_down_threshold_percent'),
+                'cosmos_throughput_scale_up_step_ru': form_data.get('cosmos_throughput_scale_up_step_ru'),
+                'cosmos_throughput_scale_down_step_ru': form_data.get('cosmos_throughput_scale_down_step_ru'),
+                'cosmos_throughput_scale_up_cooldown_minutes': form_data.get('cosmos_throughput_scale_up_cooldown_minutes'),
+                'cosmos_throughput_scale_down_cooldown_minutes': form_data.get('cosmos_throughput_scale_down_cooldown_minutes'),
+                'cosmos_throughput_min_ru': form_data.get('cosmos_throughput_min_ru'),
+                'cosmos_throughput_max_ru': form_data.get('cosmos_throughput_max_ru'),
+                'cosmos_throughput_ignore_min_limit': form_data.get('cosmos_throughput_ignore_min_limit') == 'on',
+                'cosmos_throughput_ignore_max_limit': form_data.get('cosmos_throughput_ignore_max_limit') == 'on',
+                'cosmos_throughput_enforce_container_defaults': form_data.get('cosmos_throughput_enforce_container_defaults') == 'on',
+                'cosmos_throughput_container_policies': cosmos_throughput_container_policies,
+            })
+
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
             existing_chunk_sizes = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
@@ -1751,6 +1798,11 @@ def register_route_frontend_admin_settings(app):
                 del new_settings['semantic_kernel_agents']
             if 'semantic_kernel_plugins' in new_settings:
                 del new_settings['semantic_kernel_plugins']
+
+            new_settings.update({
+                key: cosmos_throughput_settings[key]
+                for key in get_cosmos_throughput_setting_keys()
+            })
 
             # Remove legacy web search keys if present
             for legacy_key in [

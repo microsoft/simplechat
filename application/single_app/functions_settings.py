@@ -6,6 +6,7 @@ from flask import has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
+from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_service_health import get_default_service_health
 import app_settings_cache
@@ -278,6 +279,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'redis_url': '',
         'redis_key': '',
         'redis_auth_type': '',
+
+        # Cosmos DB Throughput Scale Settings
+        **get_default_cosmos_throughput_settings(),
 
 
         # Workspaces

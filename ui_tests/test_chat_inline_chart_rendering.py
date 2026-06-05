@@ -1,13 +1,15 @@
 # test_chat_inline_chart_rendering.py
 """
 UI test for inline chart rendering in chat.
-Version: 0.241.141
-Implemented in: 0.241.047; YAML and pending-source rendering fixed in 0.241.126; final metadata rendering fixed in 0.241.134; streaming chart stability fixed in 0.241.141
+Version: 0.241.146
+Implemented in: 0.241.047; YAML and pending-source rendering fixed in 0.241.126; final metadata rendering fixed in 0.241.134; streaming chart stability fixed in 0.241.141; chart color editor added in 0.241.145; edited chart export override added in 0.241.146
 
 This test ensures that assistant messages can render inline Chart.js visualizations
 in the chat page, that the optional data table is accessible in desktop and mobile layouts,
 that YAML-style chart blocks do not leak raw chart source while streaming, and that
-final assistant metadata rendering does not blank hydrated chart canvases.
+final assistant metadata rendering does not blank hydrated chart canvases. It also
+validates the chart-level color editor updates rendered charts without creating a new message
+and that exports send the edited chart markdown to the backend.
 """
 
 import os
@@ -185,6 +187,72 @@ def test_chat_inline_chart_rendering_desktop():
         expect(table_toggle).to_be_visible()
         table_toggle.click()
         expect(page.locator(f'[data-message-id="{message_id}"] table')).to_be_visible()
+
+        message_count_before = page.locator('[data-message-id]').count()
+        color_toggle = page.locator(f'[data-message-id="{message_id}"] .sc-inline-chart-colors-toggle')
+        expect(color_toggle).to_be_visible()
+        color_toggle.click()
+        color_panel = page.locator(f'[data-message-id="{message_id}"] .sc-inline-chart-color-panel')
+        expect(color_panel).to_be_visible()
+        expect(color_panel.locator('.sc-inline-chart-palette-btn')).to_have_count(5)
+        first_color_input = color_panel.locator('.sc-inline-chart-color-input').first
+        first_color_input.fill('#9333ea')
+        color_state = page.evaluate(
+            """
+            (messageId) => {
+                const message = document.querySelector(`[data-message-id="${messageId}"]`);
+                const chart = message?.querySelector('.sc-inline-chart');
+                const canvas = chart?.querySelector('canvas');
+                const chartInstance = canvas && window.Chart ? window.Chart.getChart(canvas) : null;
+                const hiddenMarkdown = message?.querySelector('textarea[id^="copy-md-"]')?.value || '';
+                const storedSpec = JSON.parse(decodeURIComponent(chart?.getAttribute('data-chart-spec') || ''));
+                return {
+                    chartColor: chartInstance?.data?.datasets?.[0]?.borderColor || '',
+                    storedColor: storedSpec?.data?.datasets?.[0]?.borderColor || '',
+                    markdownHasColor: hiddenMarkdown.includes('#9333ea'),
+                };
+            }
+            """,
+            message_id,
+        )
+        assert color_state['chartColor'] == '#9333ea', color_state
+        assert color_state['storedColor'] == '#9333ea', color_state
+        assert color_state['markdownHasColor'] is True, color_state
+        assert page.locator('[data-message-id]').count() == message_count_before
+
+        export_payload = page.evaluate(
+            """
+            async (messageId) => {
+                const message = document.querySelector(`[data-message-id="${messageId}"]`);
+                const exportModule = await import('/static/js/chat/chat-message-export.js');
+                const originalFetch = window.fetch;
+                const payloads = [];
+                window.currentConversationId = 'ui-chart-export-conversation';
+                window.fetch = async (url, options = {}) => {
+                    if (String(url).includes('/api/message/export-powerpoint')) {
+                        payloads.push(JSON.parse(options.body || '{}'));
+                        return new Response(new Blob(['pptx'], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }), {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }
+                        });
+                    }
+                    return originalFetch(url, options);
+                };
+
+                try {
+                    await exportModule.exportMessageAsPowerPoint(message, messageId, 'assistant');
+                } finally {
+                    window.fetch = originalFetch;
+                }
+                return payloads[0] || null;
+            }
+            """,
+            message_id,
+        )
+        assert export_payload is not None
+        assert export_payload['message_id'] == message_id
+        assert export_payload['conversation_id'] == 'ui-chart-export-conversation'
+        assert '#9333ea' in export_payload['message_content_override']
 
         context.close()
         browser.close()

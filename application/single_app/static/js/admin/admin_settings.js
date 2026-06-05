@@ -29,6 +29,9 @@ let releaseNotificationsRegistration = window.releaseNotificationsRegistration |
 
 // Track whether form has been modified since last save
 let formModified = false;
+let currentCosmosContainers = [];
+let currentCosmosMetricsWindowMinutes = 0;
+let currentCosmosStatusLoaded = false;
 
 const enableClassificationToggle = document.getElementById('enable_document_classification');
 const classificationSettingsDiv = document.getElementById('document_classification_settings');
@@ -143,9 +146,582 @@ function setButtonBusy(button, isBusy, busyText) {
     if (!button.dataset.originalText) {
         button.dataset.originalText = button.textContent.trim();
     }
+    if (!button.dataset.originalHtml) {
+        button.dataset.originalHtml = button.innerHTML;
+    }
 
     button.disabled = isBusy;
-    button.textContent = isBusy ? busyText : button.dataset.originalText;
+    if (isBusy) {
+        button.textContent = busyText;
+    } else {
+        button.innerHTML = button.dataset.originalHtml;
+    }
+}
+
+function setElementText(elementId, value) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.textContent = value || 'Not loaded';
+    }
+}
+
+function formatNumber(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return numericValue.toLocaleString();
+}
+
+function formatRu(value) {
+    const formattedValue = formatNumber(value);
+    return formattedValue === 'Not available' ? formattedValue : `${formattedValue} RU/s`;
+}
+
+function formatRequestUnits(value) {
+    return formatNumber(value);
+}
+
+function getNumericFieldValue(fieldId, fallbackValue) {
+    const numericValue = Number(getFieldValue(fieldId));
+    return Number.isNaN(numericValue) ? fallbackValue : numericValue;
+}
+
+function formatPercent(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toFixed(1)}%`;
+}
+
+function setCosmosThroughputMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('cosmos-throughput-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} mt-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function readCosmosContainerPolicies() {
+    const policyField = document.getElementById('cosmos_throughput_container_policies_json');
+    if (!policyField) {
+        return {};
+    }
+
+    try {
+        const parsedPolicies = JSON.parse(policyField.value || '{}');
+        return parsedPolicies && typeof parsedPolicies === 'object' && !Array.isArray(parsedPolicies)
+            ? parsedPolicies
+            : {};
+    } catch (error) {
+        return {};
+    }
+}
+
+function writeCosmosContainerPolicies(policies) {
+    const policyField = document.getElementById('cosmos_throughput_container_policies_json');
+    if (!policyField) {
+        return;
+    }
+
+    policyField.value = JSON.stringify(policies || {});
+    markFormAsModified();
+}
+
+function isCosmosContainerPolicyEnforced() {
+    return isFieldChecked('cosmos_throughput_enforce_container_defaults');
+}
+
+function buildGlobalCosmosContainerPolicy(containerName = '') {
+    return {
+        container_name: containerName,
+        enabled: true,
+        auto_scale_up_enabled: isFieldChecked('cosmos_throughput_auto_scale_up_enabled'),
+        auto_scale_down_enabled: isFieldChecked('cosmos_throughput_auto_scale_down_enabled'),
+        scale_up_threshold_percent: getNumericFieldValue('cosmos_throughput_scale_up_threshold_percent', 90),
+        scale_down_threshold_percent: getNumericFieldValue('cosmos_throughput_scale_down_threshold_percent', 70),
+        scale_up_step_ru: getNumericFieldValue('cosmos_throughput_scale_up_step_ru', 1000),
+        scale_down_step_ru: getNumericFieldValue('cosmos_throughput_scale_down_step_ru', 1000),
+        scale_up_cooldown_minutes: getNumericFieldValue('cosmos_throughput_scale_up_cooldown_minutes', 5),
+        scale_down_cooldown_minutes: getNumericFieldValue('cosmos_throughput_scale_down_cooldown_minutes', 20),
+        min_ru: getNumericFieldValue('cosmos_throughput_min_ru', 1000),
+        max_ru: getNumericFieldValue('cosmos_throughput_max_ru', 20000),
+        ignore_min_limit: isFieldChecked('cosmos_throughput_ignore_min_limit'),
+        ignore_max_limit: isFieldChecked('cosmos_throughput_ignore_max_limit')
+    };
+}
+
+function mergeRuntimePolicyFields(policy, existingPolicy) {
+    const mergedPolicy = { ...policy };
+    if (existingPolicy?.last_scale_up_at) {
+        mergedPolicy.last_scale_up_at = existingPolicy.last_scale_up_at;
+    }
+    if (existingPolicy?.last_scale_down_at) {
+        mergedPolicy.last_scale_down_at = existingPolicy.last_scale_down_at;
+    }
+    return mergedPolicy;
+}
+
+function getCosmosContainerPolicy(container) {
+    const savedPolicies = readCosmosContainerPolicies();
+    const containerName = container?.container_name || '';
+    if (isCosmosContainerPolicyEnforced()) {
+        const existingPolicy = savedPolicies[containerName] || container?.policy || {};
+        return mergeRuntimePolicyFields(buildGlobalCosmosContainerPolicy(containerName), existingPolicy);
+    }
+
+    return {
+        ...(container?.policy || {}),
+        ...(savedPolicies[containerName] || {}),
+        container_name: containerName
+    };
+}
+
+function createPolicyCheckbox(containerName, fieldName, checked, label) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'form-check form-switch mb-1';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'form-check-input cosmos-container-policy-input';
+    checkbox.checked = Boolean(checked);
+    checkbox.dataset.containerName = containerName;
+    checkbox.dataset.policyField = fieldName;
+
+    const checkboxLabel = document.createElement('label');
+    checkboxLabel.className = 'form-check-label small';
+    checkboxLabel.textContent = label;
+
+    wrapper.appendChild(checkbox);
+    wrapper.appendChild(checkboxLabel);
+    return wrapper;
+}
+
+function createPolicyNumberInput(containerName, fieldName, value, min, max, step, label) {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'form-label small d-block mb-1';
+    wrapper.textContent = label;
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'form-control form-control-sm cosmos-container-policy-input mt-1';
+    input.value = value ?? '';
+    input.min = String(min);
+    if (max !== null && max !== undefined) {
+        input.max = String(max);
+    }
+    input.step = String(step);
+    input.dataset.containerName = containerName;
+    input.dataset.policyField = fieldName;
+    input.dataset.policyType = 'number';
+
+    wrapper.appendChild(input);
+    return wrapper;
+}
+
+function createManualContainerScaleButton(containerName, direction, disabled) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = direction === 'up' ? 'btn btn-outline-primary btn-sm' : 'btn btn-outline-secondary btn-sm';
+    button.disabled = disabled;
+    button.textContent = direction === 'up' ? 'Up' : 'Down';
+    button.title = direction === 'up' ? 'Scale this container up' : 'Scale this container down';
+    button.setAttribute('aria-label', direction === 'up' ? 'Scale this container up' : 'Scale this container down');
+    button.addEventListener('click', () => manuallyScaleCosmosThroughput(direction, containerName, button));
+    return button;
+}
+
+function collectCosmosContainerPolicies() {
+    const policies = readCosmosContainerPolicies();
+    const inputs = document.querySelectorAll('.cosmos-container-policy-input[data-container-name][data-policy-field]');
+    inputs.forEach(input => {
+        const containerName = input.dataset.containerName;
+        const policyField = input.dataset.policyField;
+        if (!containerName || !policyField) {
+            return;
+        }
+
+        policies[containerName] = policies[containerName] || { container_name: containerName };
+        if (input.type === 'checkbox') {
+            policies[containerName][policyField] = input.checked;
+        } else if (input.dataset.policyType === 'number') {
+            policies[containerName][policyField] = Number(input.value || 0);
+        } else {
+            policies[containerName][policyField] = input.value;
+        }
+    });
+
+    return policies;
+}
+
+function getContainerRuUtilization(container) {
+    const normalizedValue = container?.normalized_ru_percent;
+    if (normalizedValue !== null && normalizedValue !== undefined && normalizedValue !== '') {
+        return formatPercent(normalizedValue);
+    }
+
+    const requestUnitsValue = container?.request_units;
+    const currentRuValue = container?.current_ru;
+    const windowMinutes = Number(currentCosmosMetricsWindowMinutes);
+    if (
+        requestUnitsValue !== null
+        && requestUnitsValue !== undefined
+        && currentRuValue !== null
+        && currentRuValue !== undefined
+        && windowMinutes > 0
+    ) {
+        const requestUnits = Number(requestUnitsValue);
+        const currentRu = Number(currentRuValue);
+        if (!Number.isNaN(requestUnits) && !Number.isNaN(currentRu) && currentRu > 0) {
+            const averageRuPerSecond = requestUnits / (windowMinutes * 60);
+            return `${((averageRuPerSecond / currentRu) * 100).toFixed(1)}% est.`;
+        }
+    }
+
+    return 'Not available';
+}
+
+function renderCosmosContainerMetrics(containers) {
+    const tableBody = document.getElementById('cosmos-throughput-containers-body');
+    if (!tableBody) {
+        return;
+    }
+
+    tableBody.replaceChildren();
+    if (!Array.isArray(containers) || containers.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 7;
+        cell.className = 'text-muted';
+        cell.textContent = 'No containers were returned for the configured Cosmos database.';
+        row.appendChild(cell);
+        tableBody.appendChild(row);
+        return;
+    }
+
+    containers.forEach(container => {
+        const row = document.createElement('tr');
+        const policy = getCosmosContainerPolicy(container);
+        const policyLabel = isCosmosContainerPolicyEnforced()
+            ? 'Global policy'
+            : policy.enabled === false ? 'Disabled' : `${policy.min_ru || 'min'}-${policy.max_ru || 'max'} RU/s`;
+        const values = [
+            container.container_name || 'database',
+            container.mode || 'unknown',
+            formatRu(container.current_ru),
+            getContainerRuUtilization(container),
+            formatRequestUnits(container.request_units),
+            policyLabel
+        ];
+
+        values.forEach(value => {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            row.appendChild(cell);
+        });
+
+        const actionCell = document.createElement('td');
+        actionCell.className = 'text-nowrap';
+        const actionGroup = document.createElement('div');
+        actionGroup.className = 'btn-group btn-group-sm';
+        actionGroup.setAttribute('role', 'group');
+        actionGroup.setAttribute('aria-label', `Actions for ${container.container_name || 'container'}`);
+        const configureButton = createIconButton('bi bi-gear', `Configure ${container.container_name || 'container'} throughput policy`);
+        configureButton.setAttribute('data-bs-toggle', 'modal');
+        configureButton.setAttribute('data-bs-target', '#cosmosThroughputContainerModal');
+        actionGroup.appendChild(configureButton);
+        actionGroup.appendChild(createManualContainerScaleButton(container.container_name || '', 'up', !container.is_scalable));
+        actionGroup.appendChild(createManualContainerScaleButton(container.container_name || '', 'down', !container.is_scalable));
+        actionCell.appendChild(actionGroup);
+        row.appendChild(actionCell);
+
+        tableBody.appendChild(row);
+    });
+}
+
+function renderCosmosContainerPolicyModal(containers) {
+    const tableBody = document.getElementById('cosmos-throughput-container-policies-body');
+    if (!tableBody) {
+        return;
+    }
+
+    const globalPolicyEnforced = isCosmosContainerPolicyEnforced();
+    tableBody.replaceChildren();
+    if (!Array.isArray(containers) || containers.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 7;
+        cell.className = 'text-muted';
+        cell.textContent = 'Refresh Cosmos throughput status to load containers.';
+        row.appendChild(cell);
+        tableBody.appendChild(row);
+        return;
+    }
+
+    containers.forEach(container => {
+        const containerName = container.container_name || '';
+        const policy = getCosmosContainerPolicy(container);
+        const row = document.createElement('tr');
+
+        const nameCell = document.createElement('td');
+        const nameText = document.createElement('div');
+        nameText.className = 'fw-semibold';
+        nameText.textContent = containerName;
+        const metaText = document.createElement('div');
+        metaText.className = 'small text-muted';
+        metaText.textContent = globalPolicyEnforced
+            ? `${container.mode || 'unknown'} | ${formatRu(container.current_ru)} | global policy enforced`
+            : `${container.mode || 'unknown'} | ${formatRu(container.current_ru)}`;
+        nameCell.appendChild(nameText);
+        nameCell.appendChild(metaText);
+        row.appendChild(nameCell);
+
+        const enabledCell = document.createElement('td');
+        enabledCell.appendChild(createPolicyCheckbox(containerName, 'enabled', policy.enabled !== false, 'Enabled'));
+        row.appendChild(enabledCell);
+
+        const upCell = document.createElement('td');
+        upCell.appendChild(createPolicyCheckbox(containerName, 'auto_scale_up_enabled', policy.auto_scale_up_enabled !== false, 'Auto'));
+        upCell.appendChild(createPolicyNumberInput(containerName, 'scale_up_threshold_percent', policy.scale_up_threshold_percent || 90, 1, 100, 1, 'At %'));
+        upCell.appendChild(createPolicyNumberInput(containerName, 'scale_up_step_ru', policy.scale_up_step_ru || 1000, 100, null, 100, 'Step RU/s'));
+        upCell.appendChild(createPolicyNumberInput(containerName, 'scale_up_cooldown_minutes', policy.scale_up_cooldown_minutes || 5, 1, 1440, 1, 'Interval min'));
+        row.appendChild(upCell);
+
+        const downCell = document.createElement('td');
+        downCell.appendChild(createPolicyCheckbox(containerName, 'auto_scale_down_enabled', policy.auto_scale_down_enabled !== false, 'Auto'));
+        downCell.appendChild(createPolicyNumberInput(containerName, 'scale_down_threshold_percent', policy.scale_down_threshold_percent || 70, 0, 99, 1, 'At %'));
+        downCell.appendChild(createPolicyNumberInput(containerName, 'scale_down_step_ru', policy.scale_down_step_ru || 1000, 100, null, 100, 'Step RU/s'));
+        downCell.appendChild(createPolicyNumberInput(containerName, 'scale_down_cooldown_minutes', policy.scale_down_cooldown_minutes || 20, 1, 1440, 1, 'Interval min'));
+        row.appendChild(downCell);
+
+        const minCell = document.createElement('td');
+        minCell.appendChild(createPolicyNumberInput(containerName, 'min_ru', policy.min_ru || 1000, 100, null, 100, 'Min'));
+        minCell.appendChild(createPolicyCheckbox(containerName, 'ignore_min_limit', policy.ignore_min_limit, 'Ignore'));
+        row.appendChild(minCell);
+
+        const maxCell = document.createElement('td');
+        maxCell.appendChild(createPolicyNumberInput(containerName, 'max_ru', policy.max_ru || 20000, 100, null, 100, 'Max'));
+        maxCell.appendChild(createPolicyCheckbox(containerName, 'ignore_max_limit', policy.ignore_max_limit, 'Ignore'));
+        row.appendChild(maxCell);
+
+        const manualCell = document.createElement('td');
+        manualCell.appendChild(createManualContainerScaleButton(containerName, 'up', !container.is_scalable));
+        manualCell.appendChild(createManualContainerScaleButton(containerName, 'down', !container.is_scalable));
+        if (!container.is_scalable) {
+            const helper = document.createElement('div');
+            helper.className = 'small text-muted mt-1';
+            helper.textContent = 'Shared throughput';
+            manualCell.appendChild(helper);
+        }
+        row.appendChild(manualCell);
+
+        if (globalPolicyEnforced) {
+            row.querySelectorAll('.cosmos-container-policy-input').forEach(input => {
+                input.disabled = true;
+            });
+        }
+
+        tableBody.appendChild(row);
+    });
+}
+
+function applyGlobalCosmosContainerPolicyToCurrentContainers() {
+    if (!Array.isArray(currentCosmosContainers) || currentCosmosContainers.length === 0) {
+        setCosmosThroughputMessage('Refresh Cosmos throughput status before applying the global policy to containers.', 'warning');
+        return;
+    }
+
+    const policies = readCosmosContainerPolicies();
+    currentCosmosContainers.forEach(container => {
+        const containerName = container?.container_name || '';
+        if (!containerName) {
+            return;
+        }
+        const existingPolicy = policies[containerName] || container?.policy || {};
+        policies[containerName] = mergeRuntimePolicyFields(buildGlobalCosmosContainerPolicy(containerName), existingPolicy);
+    });
+
+    writeCosmosContainerPolicies(policies);
+    renderCosmosContainerMetrics(currentCosmosContainers);
+    renderCosmosContainerPolicyModal(currentCosmosContainers);
+    setCosmosThroughputMessage('Global container policy is staged for the currently discovered containers. Save Admin Settings to persist it.', 'info');
+}
+
+function updateCosmosThroughputStatusPanel(status) {
+    const throughput = status?.throughput || {};
+    const metrics = status?.metrics || {};
+    currentCosmosContainers = status?.containers || [];
+    currentCosmosStatusLoaded = true;
+    currentCosmosMetricsWindowMinutes = metrics?.window_minutes || Number(document.getElementById('cosmos_throughput_metrics_window_minutes')?.value || 0);
+    setElementText('cosmos-throughput-mode', status?.capacity_scope === 'container' ? 'container targeted' : throughput.mode || 'Unknown');
+    setElementText('cosmos-throughput-current-ru', formatRu(throughput.current_ru));
+    setElementText('cosmos-throughput-utilization', formatPercent(metrics.normalized_ru_percent));
+    setElementText('cosmos-throughput-last-checked', status?.last_checked_at || 'Not loaded');
+    renderCosmosContainerMetrics(currentCosmosContainers);
+    renderCosmosContainerPolicyModal(currentCosmosContainers);
+
+    const globalScaleButtonsDisabled = status?.capacity_scope === 'container' || !throughput.is_scalable;
+    document.getElementById('cosmos-throughput-scale-up-btn')?.toggleAttribute('disabled', globalScaleButtonsDisabled);
+    document.getElementById('cosmos-throughput-scale-down-btn')?.toggleAttribute('disabled', globalScaleButtonsDisabled);
+}
+
+function hasContainerLevelCosmosMetrics(status) {
+    return (status?.containers || []).some(container => (
+        container?.normalized_ru_percent !== null
+        && container?.normalized_ru_percent !== undefined
+    ) || (
+        container?.request_units !== null
+        && container?.request_units !== undefined
+    ));
+}
+
+function getCachedCosmosThroughputStatus() {
+    const cachedStatus = window.cosmosThroughputCachedStatus;
+    if (!cachedStatus || typeof cachedStatus !== 'object' || Array.isArray(cachedStatus)) {
+        return null;
+    }
+
+    const hasStatusData = Boolean(
+        cachedStatus.last_checked_at
+        || cachedStatus.capacity_scope
+        || (Array.isArray(cachedStatus.containers) && cachedStatus.containers.length > 0)
+    );
+    return hasStatusData ? cachedStatus : null;
+}
+
+function initializeCosmosThroughputStatusView() {
+    const cachedStatus = getCachedCosmosThroughputStatus();
+    const automationEnabled = isFieldChecked('cosmos_throughput_autoscale_enabled');
+
+    if (cachedStatus) {
+        updateCosmosThroughputStatusPanel(cachedStatus);
+        const refreshText = automationEnabled
+            ? 'Background automation refreshes this saved view about every 5 minutes while enabled.'
+            : 'Automation is currently disabled; use Refresh to update this saved view.';
+        setCosmosThroughputMessage(`Showing last saved Cosmos throughput status. ${refreshText}`, 'info');
+        return;
+    }
+
+    if (automationEnabled) {
+        setCosmosThroughputMessage('No saved Cosmos throughput status is available yet. Loading the first status check now...', 'info');
+        loadCosmosThroughputStatus();
+    }
+}
+
+async function loadCosmosThroughputStatus(event = null) {
+    const triggerButton = event?.currentTarget || document.getElementById('cosmos-throughput-refresh-btn');
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    setCosmosThroughputMessage('Loading Cosmos throughput status...', 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/cosmos-throughput/status', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to load Cosmos throughput status.');
+        }
+
+        updateCosmosThroughputStatusPanel(data);
+        if (!data.configured) {
+            setCosmosThroughputMessage(data.error || 'Cosmos throughput management needs subscription, resource group, account, and database settings.', 'warning');
+        } else if (data.capacity_scope === 'container' && data.metrics?.normalized_ru_percent !== null && data.metrics?.normalized_ru_percent !== undefined && !hasContainerLevelCosmosMetrics(data)) {
+            setCosmosThroughputMessage('Azure Monitor returned aggregate RU utilization, but not per-container metric dimensions for this window. Container autoscale waits for per-container utilization before scaling individual containers; Refresh again after a few minutes.', 'warning');
+        } else if (data.capacity_scope === 'container') {
+            setCosmosThroughputMessage('Database-level throughput was not found. Container-targeted throughput controls are available for containers with dedicated throughput.', 'warning');
+        } else if (data.metric_error) {
+            setCosmosThroughputMessage('Throughput loaded, but Azure Monitor metrics are unavailable. Check the app identity permissions and Cosmos metrics availability.', 'warning');
+        } else {
+            setCosmosThroughputMessage('Cosmos throughput status loaded.', 'success');
+        }
+    } catch (error) {
+        setCosmosThroughputMessage(error.message || 'Failed to load Cosmos throughput status.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function manuallyScaleCosmosThroughput(direction, containerName = '', triggerButton = null) {
+    const button = triggerButton || document.getElementById(`cosmos-throughput-scale-${direction}-btn`);
+    if (button) {
+        setButtonBusy(button, true, direction === 'up' ? 'Scaling up...' : 'Scaling down...');
+    }
+    const targetText = containerName ? ` for ${containerName}` : '';
+    setCosmosThroughputMessage(direction === 'up' ? `Submitting scale-up request${targetText}...` : `Submitting scale-down request${targetText}...`, 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/cosmos-throughput/scale', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ direction, container_name: containerName })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Cosmos throughput scale request failed.');
+        }
+
+        const scaledTarget = data.container_name ? ` for ${data.container_name}` : '';
+        setCosmosThroughputMessage(`Cosmos throughput${scaledTarget} changed from ${formatRu(data.from_ru)} to ${formatRu(data.to_ru)}.`, 'success');
+        await loadCosmosThroughputStatus();
+    } catch (error) {
+        setCosmosThroughputMessage(error.message || 'Cosmos throughput scale request failed.', 'danger');
+    } finally {
+        if (button) {
+            setButtonBusy(button, false, direction === 'up' ? 'Scale Up' : 'Scale Down');
+        }
+    }
+}
+
+function setupCosmosThroughputControls() {
+    const section = document.getElementById('cosmos-throughput-section');
+    if (!section) {
+        return;
+    }
+
+    const automationToggle = document.getElementById('cosmos_throughput_autoscale_enabled');
+    const automationSettings = document.getElementById('cosmos-throughput-automation-settings');
+    if (automationToggle && automationSettings) {
+        automationToggle.addEventListener('change', () => {
+            automationSettings.classList.toggle('d-none', !automationToggle.checked);
+        });
+        automationSettings.classList.toggle('d-none', !automationToggle.checked);
+    }
+
+    document.getElementById('cosmos-throughput-refresh-btn')?.addEventListener('click', loadCosmosThroughputStatus);
+    document.getElementById('cosmos-throughput-run-setup-test-btn')?.addEventListener('click', loadCosmosThroughputStatus);
+    document.getElementById('cosmos-throughput-scale-up-btn')?.addEventListener('click', () => manuallyScaleCosmosThroughput('up'));
+    document.getElementById('cosmos-throughput-scale-down-btn')?.addEventListener('click', () => manuallyScaleCosmosThroughput('down'));
+    document.getElementById('cosmos_throughput_enforce_container_defaults')?.addEventListener('change', () => {
+        renderCosmosContainerMetrics(currentCosmosContainers);
+        renderCosmosContainerPolicyModal(currentCosmosContainers);
+        markFormAsModified();
+    });
+    document.getElementById('cosmos-throughput-apply-global-policy-btn')?.addEventListener('click', applyGlobalCosmosContainerPolicyToCurrentContainers);
+    document.getElementById('cosmos-throughput-save-container-policies-btn')?.addEventListener('click', () => {
+        writeCosmosContainerPolicies(collectCosmosContainerPolicies());
+        renderCosmosContainerMetrics(currentCosmosContainers);
+        setCosmosThroughputMessage('Container throughput policies are staged. Save Admin Settings to persist them.', 'info');
+    });
+    if (!currentCosmosStatusLoaded) {
+        initializeCosmosThroughputStatusView();
+    }
 }
 
 function createTextElement(tagName, className, text) {
@@ -954,6 +1530,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- NEW: Chunk size controls ---
     setupChunkSizeControls();
+
+    setupCosmosThroughputControls();
     
     // --- Setup form change tracking ---
     setupFormChangeTracking();

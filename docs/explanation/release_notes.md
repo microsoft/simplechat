@@ -1,8 +1,104 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.154, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.156, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.156)**
+
+#### Bug Fixes
+
+*   **Cosmos Container Metrics REST Metadata Parsing**
+    *   Switched Cosmos throughput metric collection from the Azure Monitor Query SDK response model to the raw Azure Monitor Metrics REST response for this feature, because the SDK returned container-split time series without usable metadata names or values.
+    *   Restored per-container RU utilization and request-unit rows by parsing REST `collectionname` and `databasename` metadata from the same metric dimensions shown in Azure Metrics Explorer.
+    *   (Ref: `functions_cosmos_throughput.py`, Azure Monitor Metrics REST, Cosmos `CollectionName` dimensions, `COSMOS_CONTAINER_METRICS_REST_METADATA_FIX.md`)
+
+### **(v0.241.155)**
+
+#### Bug Fixes
+
+*   **Cosmos Container Autoscale Metric Accuracy and Refresh Performance**
+    *   Tightened the Azure Monitor query so container-targeted scaling requests `NormalizedRUConsumption` split by the configured database and `CollectionName`, matching the per-container view available in the Azure portal.
+    *   Container autoscale now explicitly waits for per-container utilization rows instead of treating aggregate account-level utilization as eligible input for individual container scaling.
+    *   Reduced Admin Settings refresh latency by reusing one ARM token and reading per-container throughput settings in a bounded parallel scan instead of serial per-container reads.
+    *   (Ref: `functions_cosmos_throughput.py`, Cosmos throughput Azure Monitor dimensions, ARM container throughput reads, `COSMOS_CONTAINER_THROUGHPUT_REFRESH_PERFORMANCE_FIX.md`)
+
+### **(v0.241.154)**
+
+#### Bug Fixes
+
+*   **Cosmos Container Metric Dimensions**
+    *   Fixed Cosmos throughput status refreshes so Azure Monitor is asked for per-container metric dimensions instead of only aggregate account-level RU metrics.
+    *   Preserved the aggregate RU utilization card through a fallback query when container-dimensional metrics are delayed or unavailable, and added clearer Admin Settings messaging for that aggregate-only state.
+    *   (Ref: `functions_cosmos_throughput.py`, `admin_settings.js`, Cosmos throughput Azure Monitor metrics, `COSMOS_CONTAINER_METRICS_DIMENSION_FIX.md`)
+
+### **(v0.241.153)**
+
+#### New Features
+
+*   **Cosmos Container Policy Enforcement**
+    *   Added an Admin Settings option to enforce the global Cosmos throughput automation policy across every dedicated-throughput container.
+    *   New containers discovered by Refresh or the background autoscale loop inherit the same global thresholds, intervals, RU step sizes, and guardrails automatically.
+    *   Added an Apply Global Policy action in the Containers modal to stage the current global policy onto all currently discovered containers while preserving per-container cooldown timestamps.
+    *   (Ref: `functions_cosmos_throughput.py`, `admin_settings.html`, `admin_settings.js`, `COSMOS_CONTAINER_POLICY_ENFORCEMENT.md`)
+
+### **(v0.241.152)**
+
+#### Bug Fixes
+
+*   **Cosmos Throughput Cached Status**
+    *   Fixed the Admin Settings Cosmos throughput card so it renders the last saved database or container-targeted view immediately after server restart instead of requiring a manual Refresh to rediscover containers.
+    *   Manual Refresh and background autoscale checks now persist a compact cached status with capacity scope, throughput summary, metrics, container rows, and timestamps.
+    *   Added copy clarifying that background automation checks throughput about every 5 minutes while enabled, and versioned the Admin Settings JavaScript asset to avoid stale browser-side Cosmos UI logic.
+    *   (Ref: `functions_cosmos_throughput.py`, `admin_settings.html`, `admin_settings.js`, `COSMOS_THROUGHPUT_CACHED_STATUS_FIX.md`)
+
+### **(v0.241.151)**
+
+#### User Interface Enhancements
+
+*   **Cosmos Throughput Table Clarity**
+    *   Simplified the Admin Settings Cosmos throughput container table by removing the redundant Database column and replacing the Configure text action with a compact gear button.
+    *   Added tooltips that distinguish RU Utilization from Request Units, plus a Setup Guide modal with a Run Test action that uses the same status checks as Refresh.
+    *   Preserved unavailable container request-unit metrics as unavailable instead of rendering a misleading zero when Azure Monitor does not return a container metric row.
+    *   (Ref: `admin_settings.html`, `admin_settings.js`, Cosmos throughput container metrics, `COSMOS_THROUGHPUT_TABLE_CLARITY_FIX.md`)
+
+### **(v0.241.150)**
+
+#### Bug Fixes
+
+*   **Container Policy Save Button Activation**
+    *   Fixed the Cosmos throughput container policy modal so saving staged container policies enables the main Admin Settings Save button immediately.
+    *   The modal now uses the standard admin form dirty-state handler instead of setting only the internal modified flag.
+    *   (Ref: `admin_settings.js`, Admin Settings Scale tab, `COSMOS_CONTAINER_POLICY_SAVE_BUTTON_FIX.md`)
+
+### **(v0.241.149)**
+
+#### Bug Fixes
+
+*   **Cosmos Throughput Refresh Logging**
+    *   Added backend start, completion, failure, and phase timing logs for Admin Settings Cosmos throughput refreshes so admins can see whether the request is waiting on token acquisition, ARM throughput reads, container scans, or Azure Monitor metrics.
+    *   Added a refresh correlation ID across route, ARM, container, and metrics logs to make a single Refresh click traceable in console logs and Application Insights.
+    *   (Ref: `functions_cosmos_throughput.py`, `route_backend_settings.py`, Cosmos throughput refresh diagnostics)
+
+### **(v0.241.148)**
+
+#### User Interface Enhancements
+
+*   **Container-Targeted Cosmos Throughput Policies**
+    *   Added a Containers modal to the Admin Settings Scale tab so admins can review every Cosmos container and configure per-container automation settings.
+    *   Each dedicated-throughput container can now have independent min/max RU guardrails, scale-up/down thresholds, RU step sizes, cooldown intervals, and manual scale actions.
+    *   The Cosmos throughput status endpoint now falls back to container-targeted management when database-level throughput settings are absent instead of failing the card with a 404.
+    *   (Ref: `functions_cosmos_throughput.py`, Admin Settings Scale tab, `COSMOS_CONTAINER_THROUGHPUT_FALLBACK_FIX.md`)
+
+### **(v0.241.147)**
+
+#### New Features
+
+*   **Cosmos DB Throughput Autoscale Controls**
+    *   Added Cosmos DB RU monitoring to the Admin Settings Scale tab, including database throughput status, recent normalized RU utilization, and per-container request-unit visibility.
+    *   Added guarded manual Scale Up and Scale Down actions plus optional background automation with separate up/down thresholds, intervals, RU step sizes, and minimum/maximum guardrails.
+    *   Added deployment metadata app settings and a custom Cosmos throughput operator role so the app identity can adjust throughput and read metrics without exposing Cosmos data-plane access to agents or user actions.
+    *   (Ref: `functions_cosmos_throughput.py`, Admin Settings Scale tab, Cosmos throughput autoscale, `COSMOS_THROUGHPUT_AUTOSCALE.md`)
 
 ### **(v0.241.133)**
 

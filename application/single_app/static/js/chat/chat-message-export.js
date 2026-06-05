@@ -40,6 +40,27 @@ function getMessageMeta(messageDiv, role) {
     return { sender };
 }
 
+function getMessageContentOverride(messageDiv, role) {
+    if (role !== 'assistant') {
+        return '';
+    }
+
+    return String(getMessageMarkdown(messageDiv, role) || '');
+}
+
+function buildMessageExportRequestBody(messageDiv, messageId, conversationId, role, extraFields = {}) {
+    const requestBody = {
+        message_id: messageId,
+        conversation_id: conversationId,
+        ...extraFields,
+    };
+    const messageContentOverride = getMessageContentOverride(messageDiv, role);
+    if (messageContentOverride) {
+        requestBody.message_content_override = messageContentOverride;
+    }
+    return requestBody;
+}
+
 /**
  * Trigger a browser file download from a Blob.
  */
@@ -181,10 +202,7 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
         const response = await fetch('/api/message/export-word', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message_id: messageId,
-                conversation_id: conversationId
-            })
+            body: JSON.stringify(buildMessageExportRequestBody(messageDiv, messageId, conversationId, role))
         });
 
         if (!response.ok) {
@@ -222,12 +240,10 @@ export async function exportMessageAsPowerPoint(messageDiv, messageId, role, opt
     }
 
     try {
-        const requestBody = {
-            message_id: messageId,
-            conversation_id: conversationId
-        };
+        const requestBody = buildMessageExportRequestBody(messageDiv, messageId, conversationId, role);
         if (preferredArtifactSource?.artifactMessageId) {
             requestBody.artifact_message_id = preferredArtifactSource.artifactMessageId;
+            delete requestBody.message_content_override;
         }
 
         const response = await fetch('/api/message/export-powerpoint', {
@@ -304,10 +320,7 @@ export async function openInEmail(messageDiv, messageId, role) {
         const response = await fetch('/api/message/export-email-draft', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message_id: messageId,
-                conversation_id: conversationId
-            })
+            body: JSON.stringify(buildMessageExportRequestBody(messageDiv, messageId, conversationId, role))
         });
 
         const data = await response.json().catch(() => null);

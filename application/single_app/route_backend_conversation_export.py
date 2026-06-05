@@ -78,6 +78,7 @@ POWERPOINT_MAX_APPENDIX_TABLES = 3
 POWERPOINT_MAX_APPENDIX_CODE_BLOCKS = 2
 POWERPOINT_MAX_INLINE_IMAGES_PER_SLIDE = 2
 POWERPOINT_MAX_TABLE_ROWS = 8
+MESSAGE_EXPORT_CONTENT_OVERRIDE_MAX_LENGTH = 1000000
 POWERPOINT_MAX_TABLE_COLS = 5
 
 POWERPOINT_TITLE_BG = RGBColor(22, 37, 66)
@@ -240,6 +241,8 @@ def register_route_backend_conversation_export(app):
                 conversation_id=conversation_id,
                 message_id=message_id
             )
+            message_content_override = _get_message_export_content_override(data)
+            message = _apply_message_export_content_override(message, message_content_override)
 
             document_bytes = _message_to_docx_bytes(message)
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
@@ -256,6 +259,8 @@ def register_route_backend_conversation_export(app):
             return jsonify({'error': str(exc)}), 404
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
 
         except Exception as exc:
             debug_print(f"Message export error: {str(exc)}")
@@ -305,6 +310,9 @@ def register_route_backend_conversation_export(app):
                 message_id=message_id,
                 artifact_message_id=artifact_message_id,
             )
+            if not artifact_message_id:
+                message_content_override = _get_message_export_content_override(data)
+                message = _apply_message_export_content_override(message, message_content_override)
 
             presentation_bytes = _message_to_pptx_bytes(
                 message,
@@ -325,6 +333,8 @@ def register_route_backend_conversation_export(app):
             return jsonify({'error': str(exc)}), 404
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             debug_print(f"Message PowerPoint export error: {str(exc)}")
             log_event(f"Message PowerPoint export failed: {exc}", level="WARNING")
@@ -365,6 +375,8 @@ def register_route_backend_conversation_export(app):
                 conversation_id=conversation_id,
                 message_id=message_id
             )
+            message_content_override = _get_message_export_content_override(data)
+            message = _apply_message_export_content_override(message, message_content_override)
             draft_payload = _message_to_email_draft_payload(
                 message=message,
                 settings=settings,
@@ -376,6 +388,8 @@ def register_route_backend_conversation_export(app):
             return jsonify({'error': str(exc)}), 404
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
 
         except Exception as exc:
             debug_print(f"Message email draft export error: {str(exc)}")
@@ -1444,6 +1458,45 @@ def _safe_filename(title: str) -> str:
     if len(safe) > 50:
         safe = safe[:50]
     return safe or 'Untitled'
+
+
+def _get_message_export_content_override(data: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(data, dict):
+        return None
+
+    if 'message_content_override' in data:
+        raw_override = data.get('message_content_override')
+    elif 'content_override' in data:
+        raw_override = data.get('content_override')
+    else:
+        return None
+
+    if raw_override in (None, ''):
+        return None
+    if not isinstance(raw_override, str):
+        raise ValueError('message_content_override must be a string')
+
+    normalized_override = raw_override.replace('\r\n', '\n').replace('\r', '\n')
+    if not normalized_override.strip():
+        return None
+    if len(normalized_override) > MESSAGE_EXPORT_CONTENT_OVERRIDE_MAX_LENGTH:
+        raise ValueError('message_content_override is too large')
+    return normalized_override
+
+
+def _apply_message_export_content_override(
+    message: Dict[str, Any],
+    message_content_override: Optional[str],
+) -> Dict[str, Any]:
+    if message_content_override is None:
+        return message
+
+    export_message = dict(message)
+    export_message['content'] = message_content_override
+    metadata = dict(export_message.get('metadata') or {})
+    metadata['export_content_override_applied'] = True
+    export_message['metadata'] = metadata
+    return export_message
 
 
 def _load_export_message_for_user(user_id: str, conversation_id: str, message_id: str) -> Dict[str, Any]:

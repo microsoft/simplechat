@@ -1,0 +1,130 @@
+# Cosmos Throughput Autoscale
+
+Overview
+
+Implemented in version: **0.241.147**
+
+This feature adds Cosmos DB RU monitoring and guarded throughput automation to the Admin Settings Scale tab. It helps administrators monitor Cosmos DB RU pressure and automatically adjust the shared SimpleChat database throughput, or dedicated container throughput, when utilization crosses configured thresholds.
+
+Fixed/Implemented in version: **0.241.147**
+
+Enhanced in version: **0.241.148** with container-targeted throughput fallback and per-container policy controls.
+
+Dependencies
+
+- Admin Settings Scale tab in `application/single_app/templates/admin_settings.html`
+- Admin settings JavaScript in `application/single_app/static/js/admin/admin_settings.js`
+- Cosmos throughput helper in `application/single_app/functions_cosmos_throughput.py`
+- Background scheduler in `application/single_app/background_tasks.py`
+- Azure Monitor metrics through `azure-monitor-query`
+- Azure Resource Manager access through `DefaultAzureCredential`
+- Deployer app settings and RBAC in `deployers/bicep/modules/appService.bicep` and `deployers/bicep/modules/setPermissions.bicep`
+
+Technical Specifications
+
+Architecture overview
+
+- The Scale tab now includes a Cosmos DB Throughput card for database identity, automation settings, live status, manual scale controls, per-container RU visibility, and a container policy modal.
+- Current SimpleChat Bicep deployments use database-level autoscale throughput on the `SimpleChat` database, so the preferred path scales the database autoscale max RU/s.
+- Environments without database-level throughput fall back to container-targeted management for containers with dedicated throughput.
+- Azure Monitor metrics provide recent normalized RU utilization and per-container request-unit visibility.
+- Manual Scale Up and Scale Down buttons call admin-only backend APIs.
+- Automatic scaling runs in the existing background task framework every five minutes.
+- A Cosmos-backed distributed lock prevents multiple app instances from scaling at the same time.
+
+Automation behavior
+
+- Scale up defaults to 1000 RU/s every 5 minutes when utilization reaches 90% or higher.
+- Scale down defaults to 1000 RU/s every 20 minutes when utilization is 70% or lower.
+- Scale up and scale down can be enabled or disabled independently.
+- Minimum and maximum RU/s guardrails are available.
+- Admins can explicitly ignore the minimum or maximum guardrail when needed.
+- Runtime state is saved back into app settings for last check, last observed utilization, last scale action, and last error.
+- Container-targeted runtime state stores last scale-up/down timestamps per container so cooldowns are enforced independently.
+
+Container policy controls
+
+- The Containers button opens a modal with all discovered containers.
+- Each container can be enabled or disabled for automation.
+- Each container has independent scale-up and scale-down thresholds, step sizes, cooldown intervals, minimum RU/s, maximum RU/s, and min/max ignore flags.
+- Containers using shared database throughput are shown for visibility but cannot be scaled individually until they have dedicated throughput.
+
+Security model
+
+- No Cosmos DB connection string, query surface, or management client is exposed to agents or user-defined actions.
+- Throughput operations are available only through admin-only Flask routes and the internal background scheduler.
+- The deployer adds resource metadata app settings so the backend can target the deployed Cosmos account without user-supplied resource IDs.
+- The deployer adds a custom `SimpleChat Cosmos Throughput Operator` role for the web app identity. This role allows throughput-setting reads/writes and metric reads without adding Cosmos data-plane permissions.
+- Managed identity deployments still retain the existing Cosmos Contributor role because other deployment/runtime flows depend on it.
+- Key-auth deployments can still use the system-assigned web app identity for management-plane throughput changes.
+
+API endpoints
+
+- `GET /api/admin/settings/cosmos-throughput/status`
+  - Returns configured resource metadata, database throughput mode/current RU, recent metrics, and per-container metric rows.
+- `POST /api/admin/settings/cosmos-throughput/scale`
+  - Accepts `{ "direction": "up" }` or `{ "direction": "down" }` and applies the configured step and guardrails.
+  - Accepts an optional `container_name` value for dedicated container throughput scaling.
+
+Configuration options
+
+- `cosmos_throughput_autoscale_enabled`
+- `cosmos_throughput_auto_scale_up_enabled`
+- `cosmos_throughput_auto_scale_down_enabled`
+- `cosmos_throughput_subscription_id`
+- `cosmos_throughput_resource_group`
+- `cosmos_throughput_account_name`
+- `cosmos_throughput_database_name`
+- `cosmos_throughput_metrics_window_minutes`
+- `cosmos_throughput_scale_up_threshold_percent`
+- `cosmos_throughput_scale_down_threshold_percent`
+- `cosmos_throughput_scale_up_step_ru`
+- `cosmos_throughput_scale_down_step_ru`
+- `cosmos_throughput_scale_up_cooldown_minutes`
+- `cosmos_throughput_scale_down_cooldown_minutes`
+- `cosmos_throughput_min_ru`
+- `cosmos_throughput_max_ru`
+- `cosmos_throughput_ignore_min_limit`
+- `cosmos_throughput_ignore_max_limit`
+- `cosmos_throughput_container_policies`
+
+Usage Instructions
+
+Admin workflow
+
+- Open Admin Settings.
+- Select the Scale tab.
+- Review the Cosmos DB Throughput card.
+- Save resource metadata if the deployed app settings do not auto-populate it.
+- Enable Cosmos throughput automation.
+- Adjust scale-up and scale-down thresholds, step sizes, cooldown intervals, and min/max guardrails.
+- Use Containers to configure per-container policies when the environment uses dedicated container throughput.
+- Save Admin Settings.
+- Use Refresh to view current throughput and metrics.
+- Use Scale Up or Scale Down for guarded manual changes.
+
+Testing and Validation
+
+Functional coverage
+
+- `functional_tests/test_cosmos_throughput_autoscale_logic.py`
+- `ui_tests/test_admin_cosmos_throughput_settings_ui.py`
+
+Validation performed
+
+- `python -m py_compile application/single_app/functions_cosmos_throughput.py application/single_app/route_backend_settings.py application/single_app/route_frontend_admin_settings.py application/single_app/background_tasks.py application/single_app/functions_settings.py`
+- `node --check application/single_app/static/js/admin/admin_settings.js`
+- `python functional_tests/test_cosmos_throughput_autoscale_logic.py`
+- Focused Playwright UI test for the new Scale-tab controls
+
+Known limitations
+
+- The preferred path scales the shared `SimpleChat` database throughput because that is how the current deployer provisions Cosmos DB capacity.
+- Per-container scaling applies only to containers with dedicated throughput. Containers sharing database throughput remain visibility-only.
+- Azure Monitor metrics can lag by a few minutes, so decisions use recent observed utilization rather than instantaneous request pressure.
+- Serverless Cosmos accounts cannot be scaled by this feature.
+
+Related config.py version update
+
+- Application version updated to `0.241.148` in `application/single_app/config.py` for container-targeted fallback controls.
+- Deployer version updated to `1.0.12` in `deployers/version.txt` for Bicep app-setting and RBAC changes.

@@ -8,14 +8,25 @@ from functions_web_search_test import run_web_search_connection_test
 from functions_url_access_policy_test import run_url_access_policy_test
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
+    log_general_admin_action,
     log_admin_release_notifications_registration,
     log_user_support_feedback_email_submission,
 )
 from functions_appinsights import log_event
+from functions_cosmos_throughput import (
+    calculate_manual_scale_target,
+    build_runtime_update,
+    CosmosThroughputError,
+    get_cosmos_throughput_status,
+    set_database_throughput,
+)
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
+import logging
 import redis 
+import time
+import uuid
 
 
 def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: str = None) -> dict:
@@ -442,6 +453,116 @@ def register_route_backend_settings(app):
 
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/settings/cosmos-throughput/status', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_cosmos_throughput_admin_status():
+        """Return Cosmos DB throughput and RU usage status for the admin Scale tab."""
+        refresh_id = str(uuid.uuid4())
+        refresh_start = time.perf_counter()
+        try:
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+            log_event(
+                '[CosmosThroughput] Admin status refresh requested.',
+                extra={'refresh_id': refresh_id, 'admin_email': admin_email},
+                level=logging.INFO,
+            )
+            status = get_cosmos_throughput_status(get_settings(), include_metrics=True, refresh_id=refresh_id)
+            update_settings(build_runtime_update(status=status))
+            log_event(
+                '[CosmosThroughput] Admin status refresh completed.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'capacity_scope': status.get('capacity_scope'),
+                    'configured': status.get('configured'),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.INFO,
+            )
+            return jsonify(status), 200
+        except Exception as e:
+            log_event(
+                '[CosmosThroughput] Failed to load admin status.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'error': str(e),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load Cosmos throughput status.'}), 500
+
+    @app.route('/api/admin/settings/cosmos-throughput/scale', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def scale_cosmos_throughput_admin():
+        """Manually scale Cosmos DB database throughput from the admin Scale tab."""
+        user = session.get('user', {})
+        admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+        admin_user_id = get_current_user_id() or 'unknown'
+
+        try:
+            data = request.get_json(force=True) or {}
+            direction = str(data.get('direction') or '').strip().lower()
+            container_name = str(data.get('container_name') or '').strip()
+            settings = get_settings()
+            status = get_cosmos_throughput_status(settings, include_metrics=True)
+            target_ru = calculate_manual_scale_target(settings, status, direction, container_name=container_name)
+            scale_result = set_database_throughput(
+                settings,
+                target_ru,
+                initiated_by=admin_email,
+                reason=f'manual_{direction}',
+                decision={'scope': 'container', 'container_name': container_name} if container_name else {'scope': 'database'},
+            )
+            scale_result['direction'] = direction
+            scale_result['reason'] = f'manual_{direction}'
+
+            update_settings(build_runtime_update(
+                status=status,
+                decision={'direction': direction, 'reason': f'manual_{direction}'},
+                scale_result=scale_result,
+                settings=settings,
+            ))
+            log_general_admin_action(
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+                action='cosmos_throughput_manual_scale',
+                description=f'Manually scaled Cosmos DB throughput {direction}.',
+                additional_context={
+                    'direction': direction,
+                    'scope': scale_result.get('scope'),
+                    'container_name': scale_result.get('container_name'),
+                    'from_ru': scale_result.get('from_ru'),
+                    'to_ru': scale_result.get('to_ru'),
+                    'mode': scale_result.get('mode'),
+                },
+            )
+
+            return jsonify({
+                'success': True,
+                'direction': direction,
+                'scope': scale_result.get('scope'),
+                'container_name': scale_result.get('container_name'),
+                'from_ru': scale_result.get('from_ru'),
+                'to_ru': scale_result.get('to_ru'),
+                'mode': scale_result.get('mode'),
+            }), 200
+        except CosmosThroughputError as e:
+            return jsonify({'error': str(e)}), 400
+        except Exception as e:
+            log_event(
+                '[CosmosThroughput] Manual admin scale failed.',
+                extra={'error': str(e), 'admin_email': admin_email},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to scale Cosmos throughput.'}), 500
 
     @app.route('/api/admin/settings/send_feedback_email', methods=['POST'])
     @swagger_route(security=get_auth_security())

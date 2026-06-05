@@ -97,6 +97,47 @@ resource cosmosContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
+resource cosmosThroughputOperatorRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(resourceGroup().id, 'simplechat-cosmos-throughput-operator')
+  properties: {
+    roleName: 'SimpleChat Cosmos Throughput Operator'
+    description: 'Allows SimpleChat to read metrics and adjust Cosmos DB SQL database/container throughput settings without granting data-plane access.'
+    type: 'CustomRole'
+    permissions: [
+      {
+        actions: [
+          'Microsoft.DocumentDB/databaseAccounts/read'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/read'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/read'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/read'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/write'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/operationResults/read'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/read'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/write'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/operationResults/read'
+          'Microsoft.Insights/metrics/read'
+        ]
+        notActions: []
+        dataActions: []
+        notDataActions: []
+      }
+    ]
+    assignableScopes: [
+      resourceGroup().id
+    ]
+  }
+}
+
+resource cosmosThroughputOperatorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(cosmosDb.id, webApp.id, 'cosmos-throughput-operator')
+  scope: cosmosDb
+  properties: {
+    roleDefinitionId: cosmosThroughputOperatorRoleDefinition.id
+    principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Grant the managed identity Cosmos DB Built-in Data Contributor role
 resource cosmosDataContributorRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = if (authenticationType == 'managed_identity') {
   name: guid(cosmosDb.id, webApp.id, 'cosmos-data-contributor')

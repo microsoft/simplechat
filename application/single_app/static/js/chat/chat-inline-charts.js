@@ -14,6 +14,15 @@ const DEFAULT_PALETTE = [
     { background: 'rgba(58, 141, 121, 0.18)', border: '#3a8d79' },
     { background: 'rgba(101, 120, 48, 0.18)', border: '#657830' }
 ];
+const CHART_COLOR_PRESETS = Object.freeze([
+    { name: 'Default', colors: ['#1c6ea4', '#d75b35', '#277b54', '#995c20', '#7e4d8c', '#bf4270', '#3a8d79', '#657830'] },
+    { name: 'Calm', colors: ['#2563eb', '#0f766e', '#65a30d', '#0891b2', '#7c3aed', '#4b5563', '#ca8a04', '#be123c'] },
+    { name: 'Vivid', colors: ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#9333ea', '#db2777'] },
+    { name: 'Warm', colors: ['#b91c1c', '#c2410c', '#ca8a04', '#a16207', '#92400e', '#be123c', '#9f1239', '#7f1d1d'] },
+    { name: 'Contrast', colors: ['#111827', '#2563eb', '#dc2626', '#16a34a', '#ca8a04', '#7c3aed', '#0891b2', '#db2777'] }
+]);
+const CHART_COLOR_BACKGROUND_ALPHA = 0.18;
+const CHART_COLOR_MAX_EDIT_TARGETS = 12;
 const NAMED_CHART_COLORS = Object.freeze({
     apple: '#c2410c',
     apples: '#c2410c',
@@ -42,6 +51,57 @@ function escapeHtml(value) {
 
 function getPalette(index) {
     return DEFAULT_PALETTE[index % DEFAULT_PALETTE.length];
+}
+
+function expandShortHexColor(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!/^#[0-9a-f]{3}$/.test(normalized)) {
+        return normalized;
+    }
+
+    return `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}`;
+}
+
+function rgbStringToHex(value) {
+    const match = String(value || '').trim().match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
+    if (!match) {
+        return '';
+    }
+
+    const channels = match.slice(1, 4).map(channel => Math.max(0, Math.min(255, Number(channel) || 0)));
+    return `#${channels.map(channel => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function normalizeHexColor(value, fallback = '#1c6ea4') {
+    const namedColor = typeof value === 'string' ? NAMED_CHART_COLORS[value.trim().toLowerCase()] : '';
+    const candidate = expandShortHexColor(namedColor || value || fallback);
+    if (/^#[0-9a-f]{6}$/i.test(candidate)) {
+        return candidate.toLowerCase();
+    }
+
+    const rgbHex = rgbStringToHex(candidate);
+    if (rgbHex) {
+        return rgbHex.toLowerCase();
+    }
+
+    const normalizedFallback = expandShortHexColor(fallback);
+    return /^#[0-9a-f]{6}$/i.test(normalizedFallback) ? normalizedFallback.toLowerCase() : '#1c6ea4';
+}
+
+function hexToRgba(hexColor, alpha = CHART_COLOR_BACKGROUND_ALPHA) {
+    const normalized = normalizeHexColor(hexColor);
+    const red = parseInt(normalized.slice(1, 3), 16);
+    const green = parseInt(normalized.slice(3, 5), 16);
+    const blue = parseInt(normalized.slice(5, 7), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function resolveColorValue(value, fallbackHex) {
+    if (Array.isArray(value)) {
+        return normalizeHexColor(value[0], fallbackHex);
+    }
+
+    return normalizeHexColor(value, fallbackHex);
 }
 
 function sanitizeText(value, maxLength = 240) {
@@ -490,23 +550,44 @@ function buildTableHtml(spec) {
     `;
 }
 
+function buildColorEditorButtonHtml(panelId) {
+    return `
+        <button type="button" class="btn btn-sm btn-outline-secondary sc-inline-chart-colors-toggle" aria-expanded="false" aria-controls="${escapeHtml(panelId)}" aria-label="Edit chart colors" title="Edit chart colors">
+            <i class="bi bi-palette" aria-hidden="true"></i>
+        </button>
+    `;
+}
+
+function buildSafeChartDomId(prefix, source, fallback) {
+    const normalizedSource = sanitizeText(source, 64).replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '');
+    return `${prefix}-${normalizedSource || fallback}`;
+}
+
 function buildPlaceholderHtml(block, index) {
     const encodedSpec = encodeURIComponent(JSON.stringify(block.spec));
     const captionParts = [block.spec.description, block.spec.summary].filter(Boolean);
     const captionHtml = captionParts.length
         ? `<div class="small text-muted mt-2">${escapeHtml(captionParts.join(' '))}</div>`
         : '';
+    const fallbackIdSource = `${index}-${Math.random().toString(36).slice(2, 10)}`;
+    const colorPanelId = buildSafeChartDomId('chart-color-panel', block.spec.chartId, fallbackIdSource);
 
     return `
         <section class="sc-inline-chart card border-0 shadow-sm my-3" data-chart-hydrated="false" data-chart-spec="${encodedSpec}" aria-label="Inline chart ${index + 1}">
             <div class="card-body p-3">
-                <div class="d-flex flex-column gap-1 mb-2">
-                    ${block.spec.title ? `<div class="fw-semibold">${escapeHtml(block.spec.title)}</div>` : ''}
-                    ${block.spec.subtitle ? `<div class="small text-muted">${escapeHtml(block.spec.subtitle)}</div>` : ''}
+                <div class="sc-inline-chart-header d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="sc-inline-chart-heading min-w-0 d-flex flex-column gap-1">
+                        ${block.spec.title ? `<div class="fw-semibold sc-inline-chart-title">${escapeHtml(block.spec.title)}</div>` : ''}
+                        ${block.spec.subtitle ? `<div class="small text-muted sc-inline-chart-subtitle">${escapeHtml(block.spec.subtitle)}</div>` : ''}
+                    </div>
+                    <div class="sc-inline-chart-actions d-flex align-items-center gap-1">
+                        ${buildColorEditorButtonHtml(colorPanelId)}
+                    </div>
                 </div>
                 <div class="sc-inline-chart-stage position-relative">
                     <canvas role="img" aria-label="${escapeHtml(block.spec.title || block.spec.kind)}"></canvas>
                 </div>
+                <div class="sc-inline-chart-color-panel d-none mt-3" id="${escapeHtml(colorPanelId)}"></div>
                 ${captionHtml}
                 ${buildTableHtml(block.spec)}
             </div>
@@ -614,6 +695,239 @@ function buildChartJsConfig(spec) {
     return config;
 }
 
+function isSegmentColorChart(spec) {
+    return ['pie', 'doughnut', 'polar_area'].includes(spec?.kind);
+}
+
+function getEditableColorTargets(spec) {
+    if (!spec?.data?.datasets?.length) {
+        return [];
+    }
+
+    if (isSegmentColorChart(spec) && Array.isArray(spec.data.labels) && spec.data.labels.length) {
+        return spec.data.labels.slice(0, CHART_COLOR_MAX_EDIT_TARGETS).map((label, dataIndex) => ({
+            datasetIndex: 0,
+            dataIndex,
+            label: label || `Slice ${dataIndex + 1}`,
+        }));
+    }
+
+    return spec.data.datasets.slice(0, CHART_COLOR_MAX_EDIT_TARGETS).map((dataset, datasetIndex) => ({
+        datasetIndex,
+        dataIndex: null,
+        label: dataset.label || `Series ${datasetIndex + 1}`,
+    }));
+}
+
+function getTargetColor(spec, target) {
+    const dataset = spec?.data?.datasets?.[target.datasetIndex];
+    const palette = getPalette(target.dataIndex ?? target.datasetIndex);
+    if (!dataset) {
+        return normalizeHexColor(palette.border);
+    }
+
+    if (target.dataIndex !== null && target.dataIndex !== undefined) {
+        const borderColor = Array.isArray(dataset.borderColor) ? dataset.borderColor[target.dataIndex] : dataset.borderColor;
+        const backgroundColor = Array.isArray(dataset.backgroundColor) ? dataset.backgroundColor[target.dataIndex] : dataset.backgroundColor;
+        return resolveColorValue(borderColor || backgroundColor, palette.border);
+    }
+
+    return resolveColorValue(dataset.borderColor || dataset.backgroundColor, palette.border);
+}
+
+function buildColorArray(existingValue, targetLength, fallbackResolver) {
+    const values = Array.isArray(existingValue)
+        ? existingValue.slice(0, targetLength)
+        : [];
+    while (values.length < targetLength) {
+        values.push(fallbackResolver(values.length));
+    }
+    return values;
+}
+
+function setTargetColor(spec, target, colorHex) {
+    const dataset = spec?.data?.datasets?.[target.datasetIndex];
+    if (!dataset) {
+        return;
+    }
+
+    const normalizedHex = normalizeHexColor(colorHex, getPalette(target.datasetIndex).border);
+    if (target.dataIndex !== null && target.dataIndex !== undefined) {
+        const targetLength = Array.isArray(spec.data.labels) && spec.data.labels.length
+            ? spec.data.labels.length
+            : dataset.data.length;
+        const backgroundColors = buildColorArray(
+            dataset.backgroundColor,
+            targetLength,
+            colorIndex => getPalette(colorIndex).background
+        );
+        const borderColors = buildColorArray(
+            dataset.borderColor,
+            targetLength,
+            colorIndex => getPalette(colorIndex).border
+        );
+        backgroundColors[target.dataIndex] = normalizedHex;
+        borderColors[target.dataIndex] = normalizedHex;
+        dataset.backgroundColor = backgroundColors;
+        dataset.borderColor = borderColors;
+        return;
+    }
+
+    dataset.borderColor = normalizedHex;
+    dataset.backgroundColor = hexToRgba(normalizedHex);
+}
+
+function applyColorPreset(spec, preset) {
+    const targets = getEditableColorTargets(spec);
+    targets.forEach((target, targetIndex) => {
+        setTargetColor(spec, target, preset.colors[targetIndex % preset.colors.length]);
+    });
+}
+
+function getChartIndexWithinMessage(container) {
+    const messageElement = container.closest('.message');
+    if (!messageElement) {
+        return -1;
+    }
+
+    return Array.from(messageElement.querySelectorAll('.sc-inline-chart[data-chart-spec]')).indexOf(container);
+}
+
+function updateHiddenChartMarkdown(container, spec) {
+    const messageElement = container.closest('.message');
+    const hiddenTextarea = messageElement?.querySelector('textarea[id^="copy-md-"]');
+    const chartIndex = getChartIndexWithinMessage(container);
+    if (!hiddenTextarea || chartIndex < 0) {
+        return;
+    }
+
+    let currentIndex = -1;
+    INLINE_CHART_REGEX.lastIndex = 0;
+    hiddenTextarea.value = hiddenTextarea.value.replace(INLINE_CHART_REGEX, match => {
+        currentIndex += 1;
+        if (currentIndex !== chartIndex) {
+            return match;
+        }
+
+        return `\`\`\`${INLINE_CHART_LANGUAGE}\n${JSON.stringify(spec)}\n\`\`\``;
+    });
+}
+
+function updateStoredChartSpec(container, spec) {
+    container._chartSpec = spec;
+    container.setAttribute('data-chart-spec', encodeURIComponent(JSON.stringify(spec)));
+    updateHiddenChartMarkdown(container, spec);
+}
+
+function applyChartSpecToInstance(container, spec) {
+    const chartInstance = container._chartInstance;
+    if (!chartInstance) {
+        return;
+    }
+
+    const chartConfig = buildChartJsConfig(spec);
+    chartInstance.data.labels = chartConfig.data.labels || [];
+    chartInstance.data.datasets = chartConfig.data.datasets;
+    chartInstance.options = chartConfig.options;
+    chartInstance.update();
+}
+
+function createPaletteSwatch(colorHex) {
+    const swatch = document.createElement('span');
+    swatch.className = 'sc-inline-chart-palette-swatch';
+    swatch.style.backgroundColor = normalizeHexColor(colorHex);
+    swatch.setAttribute('aria-hidden', 'true');
+    return swatch;
+}
+
+function renderColorPanel(container, spec) {
+    const panel = container.querySelector('.sc-inline-chart-color-panel');
+    if (!panel) {
+        return;
+    }
+
+    panel.replaceChildren();
+    const targets = getEditableColorTargets(spec);
+    if (!targets.length) {
+        return;
+    }
+
+    const paletteGroup = document.createElement('div');
+    paletteGroup.className = 'sc-inline-chart-palette-group';
+    CHART_COLOR_PRESETS.forEach(preset => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-outline-secondary sc-inline-chart-palette-btn';
+        button.title = `${preset.name} palette`;
+        button.setAttribute('aria-label', `Apply ${preset.name} palette`);
+        preset.colors.slice(0, 5).forEach(colorHex => {
+            button.appendChild(createPaletteSwatch(colorHex));
+        });
+        button.addEventListener('click', () => {
+            applyColorPreset(spec, preset);
+            updateStoredChartSpec(container, spec);
+            applyChartSpecToInstance(container, spec);
+            renderColorPanel(container, spec);
+        });
+        paletteGroup.appendChild(button);
+    });
+
+    const swatchGrid = document.createElement('div');
+    swatchGrid.className = 'sc-inline-chart-color-grid';
+    targets.forEach(target => {
+        const colorRow = document.createElement('label');
+        colorRow.className = 'sc-inline-chart-color-row';
+
+        const input = document.createElement('input');
+        input.type = 'color';
+        input.className = 'form-control form-control-color sc-inline-chart-color-input';
+        input.value = getTargetColor(spec, target);
+        input.setAttribute('aria-label', `Color for ${target.label}`);
+        input.addEventListener('input', () => {
+            setTargetColor(spec, target, input.value);
+            updateStoredChartSpec(container, spec);
+            applyChartSpecToInstance(container, spec);
+        });
+
+        const labelText = document.createElement('span');
+        labelText.className = 'sc-inline-chart-color-label';
+        labelText.textContent = target.label;
+
+        colorRow.appendChild(input);
+        colorRow.appendChild(labelText);
+        swatchGrid.appendChild(colorRow);
+    });
+
+    panel.appendChild(paletteGroup);
+    panel.appendChild(swatchGrid);
+
+    const totalTargetCount = isSegmentColorChart(spec)
+        ? spec.data.labels.length
+        : spec.data.datasets.length;
+    if (totalTargetCount > targets.length) {
+        const clippedNote = document.createElement('div');
+        clippedNote.className = 'small text-muted mt-2';
+        clippedNote.textContent = `Showing first ${targets.length} colors.`;
+        panel.appendChild(clippedNote);
+    }
+}
+
+function bindChartColorControls(container, spec) {
+    const toggleButton = container.querySelector('.sc-inline-chart-colors-toggle');
+    const panel = container.querySelector('.sc-inline-chart-color-panel');
+    if (!toggleButton || !panel || toggleButton.dataset.bound) {
+        return;
+    }
+
+    toggleButton.dataset.bound = 'true';
+    renderColorPanel(container, spec);
+    toggleButton.addEventListener('click', () => {
+        const isHidden = panel.classList.contains('d-none');
+        panel.classList.toggle('d-none', !isHidden);
+        toggleButton.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+    });
+}
+
 export function extractInlineChartBlocks(markdownText = '') {
     const blocks = [];
     let markdown = String(markdownText ?? '').replace(INLINE_CHART_REGEX, (match, payload) => {
@@ -714,7 +1028,9 @@ export function hydrateInlineCharts(root = document) {
                 existingChart.destroy();
             }
             container._chartInstance = new window.Chart(canvas.getContext('2d'), chartConfig);
+            container._chartSpec = spec;
             container.setAttribute('data-chart-hydrated', 'true');
+            bindChartColorControls(container, spec);
 
             const toggleButton = container.querySelector('.sc-inline-chart-table-toggle');
             if (toggleButton && !toggleButton.dataset.bound) {

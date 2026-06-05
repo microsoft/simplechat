@@ -20,6 +20,7 @@ from functions_control_center import (
     get_control_center_auto_refresh_schedule,
     parse_control_center_auto_refresh_datetime,
 )
+from functions_cosmos_throughput import evaluate_and_apply_cosmos_throughput_scaling
 from functions_debug import debug_print
 from functions_file_sync import check_due_file_sync_sources_once
 from functions_tabular_generated_exports import check_due_tabular_generated_output_runs_once
@@ -383,6 +384,43 @@ def run_control_center_auto_refresh_loop():
         time.sleep(300)
 
 
+def check_cosmos_throughput_autoscale_once():
+    """Run the Cosmos DB throughput autoscale check when enabled."""
+    settings = get_settings()
+    if not settings.get('cosmos_throughput_autoscale_enabled', False):
+        return None
+
+    lock_document = acquire_distributed_task_lock('cosmos_throughput_autoscale', lease_seconds=240)
+    if not lock_document:
+        debug_print('Skipping Cosmos throughput autoscale because another worker holds the lease.')
+        return None
+
+    try:
+        settings = get_settings()
+        if not settings.get('cosmos_throughput_autoscale_enabled', False):
+            return None
+
+        result = evaluate_and_apply_cosmos_throughput_scaling(settings)
+        settings_update = result.get('settings_update') or {}
+        if settings_update:
+            update_settings(settings_update)
+        return result
+    finally:
+        release_distributed_task_lock(lock_document)
+
+
+def run_cosmos_throughput_autoscale_loop():
+    """Run Cosmos DB throughput autoscale checks forever."""
+    while True:
+        try:
+            check_cosmos_throughput_autoscale_once()
+        except Exception as exc:
+            print(f"Error in Cosmos throughput autoscale check: {exc}")
+            log_event(f"[CosmosThroughput] Error in autoscale check: {exc}", level=logging.ERROR)
+
+        time.sleep(300)
+
+
 def check_due_workflows_once():
     """Execute scheduled personal workflows that are due."""
     settings = get_settings()
@@ -524,6 +562,7 @@ def start_background_task_threads():
         ('Approval expiration background task started.', run_approval_expiration_loop),
         ('Retention policy background task started.', run_retention_policy_loop),
         ('Control Center auto-refresh background task started.', run_control_center_auto_refresh_loop),
+        ('Cosmos throughput autoscale background task started.', run_cosmos_throughput_autoscale_loop),
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),

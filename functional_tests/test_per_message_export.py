@@ -2,7 +2,7 @@
 # test_per_message_export.py
 """
 Functional tests for the per-message export feature and export route regressions.
-Version: 0.241.143
+Version: 0.241.146
 Implemented in: 0.241.019
 
 Covers:
@@ -10,6 +10,7 @@ Covers:
  - Word-native formatting: markdown content is converted into DOCX headings, lists, tables, and styled runs.
  - Email export: mailto drafts use word-style plain text and smarter subject selection.
  - Email chart export: inline charts are converted to PNG download payloads for mail drafts.
+ - Edited chart export: frontend chart color edits are sent to backend export routes.
  - Markdown export logic: correct header, timestamp and content rendered.
  - Route regression: backend source defines POST /api/message/export-word.
  - Auth failure: unauthenticated caller receives 401.
@@ -832,11 +833,54 @@ def test_email_export_frontend_uses_mailto_draft_endpoint():
         source = handle.read()
 
     assert "fetch('/api/message/export-email-draft'" in source, 'Expected frontend to fetch the backend email draft endpoint'
+    assert 'buildMessageExportRequestBody(messageDiv, messageId, conversationId, role)' in source, 'Expected frontend email draft requests to include edited assistant markdown overrides'
     assert 'downloadEmailDraftAttachments(data?.attachments)' in source, 'Expected frontend to download chart PNG attachments from the draft payload'
     assert 'mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}' in source, 'Expected frontend to build a mailto URL from the draft payload'
     assert 'window.location.href = mailtoUrl;' in source, 'Expected frontend to continue using a mailto navigation'
 
     print("✅ test_email_export_frontend_uses_mailto_draft_endpoint passed!")
+    return True
+
+
+def test_per_message_export_uses_content_override_contract():
+    """Edited assistant markdown must flow from the frontend into backend export routes."""
+    print("🔍 Testing per-message export content override contract...")
+
+    route_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..',
+        'application',
+        'single_app',
+        'route_backend_conversation_export.py'
+    )
+    frontend_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..',
+        'application',
+        'single_app',
+        'static',
+        'js',
+        'chat',
+        'chat-message-export.js'
+    )
+
+    with open(route_file, 'r', encoding='utf-8') as handle:
+        route_source = handle.read()
+    with open(frontend_file, 'r', encoding='utf-8') as handle:
+        frontend_source = handle.read()
+
+    assert 'MESSAGE_EXPORT_CONTENT_OVERRIDE_MAX_LENGTH' in route_source
+    assert 'def _get_message_export_content_override(data: Dict[str, Any]) -> Optional[str]:' in route_source
+    assert 'def _apply_message_export_content_override(' in route_source
+    assert route_source.count('message_content_override = _get_message_export_content_override(data)') >= 3
+    assert route_source.count('_apply_message_export_content_override(message, message_content_override)') >= 3
+
+    assert 'function buildMessageExportRequestBody(messageDiv, messageId, conversationId, role, extraFields = {})' in frontend_source
+    assert 'requestBody.message_content_override = messageContentOverride;' in frontend_source
+    assert "body: JSON.stringify(buildMessageExportRequestBody(messageDiv, messageId, conversationId, role))" in frontend_source
+    assert 'delete requestBody.message_content_override;' in frontend_source
+
+    print("✅ test_per_message_export_uses_content_override_contract passed!")
     return True
 
 
@@ -950,6 +994,7 @@ if __name__ == "__main__":
         test_export_word_route_definition_present,
         test_export_email_route_definition_present,
         test_email_export_frontend_uses_mailto_draft_endpoint,
+        test_per_message_export_uses_content_override_contract,
         test_auth_failure_unauthenticated,
         test_ownership_failure_wrong_user,
         test_ownership_failure_missing_conversation,

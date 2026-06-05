@@ -2,7 +2,7 @@
 # test_per_message_powerpoint_export.py
 """
 Functional test for per-message PowerPoint export.
-Version: 0.241.143
+Version: 0.241.146
 Implemented in: 0.241.033
 
 This test ensures the message export flow exposes a PowerPoint route,
@@ -13,6 +13,7 @@ ensures already structured markdown slide decks are exported without
 AI summarization or slide-count compression. It also ensures generated
 Markdown artifacts can be used as the PowerPoint export source and that
 slide-local charts/images render as PNGs without leaking authoring labels.
+It also verifies edited assistant markdown can be sent with direct message exports.
 """
 
 import ast
@@ -31,11 +32,21 @@ from typing import Any, Dict, List, Optional, Tuple
 import markdown2
 from bs4 import BeautifulSoup, NavigableString, Tag
 from PIL import Image
-from pptx import Presentation
-from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches as PptxInches, Pt as PptxPt
+try:
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches as PptxInches, Pt as PptxPt
+    PPTX_IMPORT_ERROR = None
+except ModuleNotFoundError as exc:
+    Presentation = None
+    RGBColor = None
+    MSO_AUTO_SHAPE_TYPE = None
+    PP_ALIGN = None
+    PptxInches = None
+    PptxPt = None
+    PPTX_IMPORT_ERROR = exc
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -111,7 +122,18 @@ def _collect_slide_text(presentation: Presentation) -> str:
     return '\n'.join(text_parts)
 
 
+def _powerpoint_dependencies_available(test_name: str) -> bool:
+    if PPTX_IMPORT_ERROR is None:
+        return True
+
+    print(f"SKIP: {test_name} requires python-pptx: {PPTX_IMPORT_ERROR}")
+    return False
+
+
 def _load_powerpoint_helpers():
+    if PPTX_IMPORT_ERROR is not None:
+        raise RuntimeError(f'python-pptx is required for PowerPoint helper tests: {PPTX_IMPORT_ERROR}')
+
     helper_names = {
         '_message_to_pptx_bytes',
         '_attach_generated_image_proposal_assets',
@@ -404,6 +426,8 @@ def test_powerpoint_frontend_hooks_present() -> bool:
 
     assert "fetch('/api/message/export-powerpoint'" in frontend_source, 'Expected frontend fetch for the PowerPoint export endpoint'
     assert 'exportMessageAsPowerPoint' in frontend_source, 'Expected frontend PowerPoint export helper'
+    assert 'message_content_override' in frontend_source, 'Expected PowerPoint export requests to support edited assistant markdown overrides'
+    assert 'delete requestBody.message_content_override;' in frontend_source, 'Expected artifact PowerPoint export to ignore visible-message overrides'
     assert 'dropdown-export-ppt-btn' in menu_source, 'Expected chat message menu PowerPoint action'
     assert 'artifact_message_id' in frontend_source, 'Expected PowerPoint export request to support artifact_message_id'
     assert 'generated-artifact-export-ppt-btn' in menu_source, 'Expected generated Markdown artifact PowerPoint action'
@@ -415,6 +439,9 @@ def test_powerpoint_frontend_hooks_present() -> bool:
 def test_powerpoint_export_can_use_generated_markdown_artifact_source() -> bool:
     """Generated Markdown artifact exports should load artifact blob content."""
     print("Testing generated Markdown artifact PowerPoint source loading...")
+
+    if not _powerpoint_dependencies_available('generated Markdown artifact PowerPoint source loading'):
+        return True
 
     helpers, _ = _load_powerpoint_helpers()
     lookup_messages = helpers['_artifact_lookup_messages']
@@ -465,6 +492,9 @@ def test_powerpoint_export_can_use_generated_markdown_artifact_source() -> bool:
 def test_powerpoint_export_prefers_message_model_and_renders_appendix() -> bool:
     """PowerPoint export should use the message model hint and render appendix slides."""
     print("Testing PowerPoint slide generation...")
+
+    if not _powerpoint_dependencies_available('PowerPoint slide generation'):
+        return True
 
     helpers, requested_models = _load_powerpoint_helpers()
     image_data_uri = _build_test_image_data_uri()
@@ -519,6 +549,9 @@ def test_powerpoint_export_prefers_message_model_and_renders_appendix() -> bool:
 def test_structured_markdown_powerpoint_export_preserves_slide_count() -> bool:
     """Structured markdown decks should bypass AI planning and preserve slide count."""
     print("Testing structured markdown PowerPoint export preservation...")
+
+    if not _powerpoint_dependencies_available('structured markdown PowerPoint export preservation'):
+        return True
 
     helpers, requested_models = _load_powerpoint_helpers()
     content_lines = [
@@ -623,6 +656,9 @@ def test_structured_powerpoint_export_embeds_slide_visuals_and_strips_labels() -
     """Structured slide exports should place PNG visuals on their source slides."""
     print("Testing structured PowerPoint visual placement and label cleanup...")
 
+    if not _powerpoint_dependencies_available('structured PowerPoint visual placement and label cleanup'):
+        return True
+
     helpers, requested_models = _load_powerpoint_helpers()
     generated_image_data_uri = _build_test_image_data_uri((37, 99, 235))
     chart_data_uri = _build_test_image_data_uri((215, 91, 53))
@@ -708,6 +744,9 @@ def test_structured_powerpoint_export_embeds_slide_visuals_and_strips_labels() -
 def test_powerpoint_slide_count_request_validation() -> bool:
     """Optional slide_count should accept bounded integers and reject invalid values."""
     print("Testing PowerPoint slide count request validation...")
+
+    if not _powerpoint_dependencies_available('PowerPoint slide count request validation'):
+        return True
 
     helpers, _ = _load_powerpoint_helpers()
     parse_slide_count = helpers['_parse_powerpoint_requested_slide_count']
