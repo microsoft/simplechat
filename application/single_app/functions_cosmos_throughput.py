@@ -145,7 +145,7 @@ def normalize_ru(value, mode='autoscale', direction='up'):
     return max(service_minimum, adjusted_value)
 
 
-def normalize_cosmos_throughput_settings(settings):
+def normalize_cosmos_throughput_settings(settings, repair_policy_relationships=True):
     """Return validated Cosmos throughput settings merged with defaults."""
     source_settings = settings or {}
     normalized = get_default_cosmos_throughput_settings()
@@ -207,7 +207,10 @@ def normalize_cosmos_throughput_settings(settings):
         maximum=99,
     )
 
-    if normalized['cosmos_throughput_scale_down_threshold_percent'] >= normalized['cosmos_throughput_scale_up_threshold_percent']:
+    if (
+        repair_policy_relationships
+        and normalized['cosmos_throughput_scale_down_threshold_percent'] >= normalized['cosmos_throughput_scale_up_threshold_percent']
+    ):
         normalized['cosmos_throughput_scale_down_threshold_percent'] = max(
             0,
             normalized['cosmos_throughput_scale_up_threshold_percent'] - 1,
@@ -246,15 +249,144 @@ def normalize_cosmos_throughput_settings(settings):
         direction='up',
     )
 
-    if normalized['cosmos_throughput_max_ru'] < normalized['cosmos_throughput_min_ru']:
+    if repair_policy_relationships and normalized['cosmos_throughput_max_ru'] < normalized['cosmos_throughput_min_ru']:
         normalized['cosmos_throughput_max_ru'] = normalized['cosmos_throughput_min_ru']
 
     normalized['cosmos_throughput_container_policies'] = normalize_container_policies(
         normalized.get('cosmos_throughput_container_policies'),
         normalized,
+        repair_policy_relationships=repair_policy_relationships,
     )
 
     return normalized
+
+
+def _append_policy_validation_errors(errors, policy_label, policy, metrics_window_minutes):
+    scale_up_threshold = policy.get('scale_up_threshold_percent')
+    scale_down_threshold = policy.get('scale_down_threshold_percent')
+    scale_up_interval = policy.get('scale_up_cooldown_minutes')
+    scale_down_interval = policy.get('scale_down_cooldown_minutes')
+
+    if scale_up_threshold <= scale_down_threshold:
+        errors.append(f'{policy_label}: Scale Up At must be higher than Scale Down At.')
+    if scale_up_interval < metrics_window_minutes:
+        errors.append(
+            f'{policy_label}: Scale Up Interval must be greater than or equal to the Metrics Window '
+            f'({metrics_window_minutes} minutes).'
+        )
+    if scale_down_interval < metrics_window_minutes:
+        errors.append(
+            f'{policy_label}: Scale Down Interval must be greater than or equal to the Metrics Window '
+            f'({metrics_window_minutes} minutes).'
+        )
+
+
+def validate_cosmos_throughput_policy_settings(settings, include_container_policies=True):
+    """Return save-blocking validation errors for Cosmos throughput policy settings."""
+    normalized = normalize_cosmos_throughput_settings(
+        settings,
+        repair_policy_relationships=False,
+    )
+
+    if not normalized.get('cosmos_throughput_autoscale_enabled'):
+        return []
+
+    errors = []
+    metrics_window_minutes = normalized['cosmos_throughput_metrics_window_minutes']
+    _append_policy_validation_errors(
+        errors,
+        'Cosmos throughput policy',
+        {
+            'scale_up_threshold_percent': normalized['cosmos_throughput_scale_up_threshold_percent'],
+            'scale_down_threshold_percent': normalized['cosmos_throughput_scale_down_threshold_percent'],
+            'scale_up_cooldown_minutes': normalized['cosmos_throughput_scale_up_cooldown_minutes'],
+            'scale_down_cooldown_minutes': normalized['cosmos_throughput_scale_down_cooldown_minutes'],
+        },
+        metrics_window_minutes,
+    )
+
+    if include_container_policies and not normalized.get('cosmos_throughput_enforce_container_defaults'):
+        for container_name, policy in normalized.get('cosmos_throughput_container_policies', {}).items():
+            if policy.get('enabled') is False:
+                continue
+            _append_policy_validation_errors(
+                errors,
+                f"Container '{container_name}' policy",
+                policy,
+                metrics_window_minutes,
+            )
+
+    return errors
+
+
+def build_cosmos_throughput_access_validation(status):
+    """Return admin-facing validation checks for Cosmos throughput access."""
+    status = status or {}
+    checks = []
+
+    def add_check(name, label, passed, message):
+        checks.append({
+            'name': name,
+            'label': label,
+            'passed': bool(passed),
+            'message': message,
+        })
+
+    configured = bool(status.get('configured'))
+    add_check(
+        'configuration',
+        'Resource configuration',
+        configured,
+        'Cosmos subscription, resource group, account, and database are configured.'
+        if configured else status.get('error') or 'Cosmos resource settings are incomplete.',
+    )
+    if not configured:
+        return {
+            'success': False,
+            'variant': 'danger',
+            'message': 'Cosmos throughput access validation could not run because resource settings are incomplete.',
+            'checks': checks,
+        }
+
+    throughput = status.get('throughput') or {}
+    containers = status.get('containers') or []
+    has_database_throughput = bool(throughput.get('is_scalable'))
+    scalable_container_count = sum(1 for container in containers if container.get('is_scalable'))
+    has_scalable_target = has_database_throughput or scalable_container_count > 0
+    container_error = status.get('container_error') or ''
+    metric_error = status.get('metric_error') or ''
+
+    add_check(
+        'throughput_read',
+        'Throughput read access',
+        has_scalable_target,
+        'Database throughput is readable and manageable.'
+        if has_database_throughput else (
+            f'{scalable_container_count} dedicated container throughput target(s) are readable and manageable.'
+            if scalable_container_count else 'No scalable database or dedicated container throughput target was found.'
+        ),
+    )
+    add_check(
+        'container_discovery',
+        'Container discovery access',
+        not bool(container_error),
+        'Container discovery completed.' if not container_error else container_error,
+    )
+    add_check(
+        'metrics_read',
+        'Azure Monitor metrics access',
+        not bool(metric_error),
+        'Azure Monitor metrics query completed.' if not metric_error else metric_error,
+    )
+
+    success = all(check['passed'] for check in checks)
+    return {
+        'success': success,
+        'variant': 'success' if success else 'danger',
+        'message': 'Cosmos throughput configuration and access validated successfully.'
+        if success else 'Cosmos throughput access validation found issues. Review the failed checks before enabling automation.',
+        'checks': checks,
+    }
 
 
 def calculate_cosmos_throughput_autoscale_interval_seconds(settings=None):
@@ -267,7 +399,7 @@ def calculate_cosmos_throughput_autoscale_interval_seconds(settings=None):
     )
 
 
-def normalize_container_policy(container_name, policy=None, settings=None):
+def normalize_container_policy(container_name, policy=None, settings=None, repair_policy_relationships=True):
     """Return a validated throughput policy for one Cosmos container."""
     settings = settings or get_default_cosmos_throughput_settings()
     source_policy = policy or {}
@@ -343,15 +475,15 @@ def normalize_container_policy(container_name, policy=None, settings=None):
         'last_mode_conversion_at': source_policy.get('last_mode_conversion_at'),
     }
 
-    if normalized['scale_down_threshold_percent'] >= normalized['scale_up_threshold_percent']:
+    if repair_policy_relationships and normalized['scale_down_threshold_percent'] >= normalized['scale_up_threshold_percent']:
         normalized['scale_down_threshold_percent'] = max(0, normalized['scale_up_threshold_percent'] - 1)
-    if normalized['max_ru'] < normalized['min_ru']:
+    if repair_policy_relationships and normalized['max_ru'] < normalized['min_ru']:
         normalized['max_ru'] = normalized['min_ru']
 
     return normalized
 
 
-def normalize_container_policies(policies=None, settings=None):
+def normalize_container_policies(policies=None, settings=None, repair_policy_relationships=True):
     """Return a normalized mapping of container name to throughput policy."""
     normalized_policies = {}
     for container_name, policy in _coerce_dict(policies).items():
@@ -362,6 +494,7 @@ def normalize_container_policies(policies=None, settings=None):
             normalized_name,
             policy,
             settings,
+            repair_policy_relationships=repair_policy_relationships,
         )
 
     return normalized_policies

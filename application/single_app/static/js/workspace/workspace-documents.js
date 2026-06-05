@@ -339,6 +339,48 @@ function getDocumentClassificationBadge(doc) {
     return '<span class="badge bg-secondary">None</span>';
 }
 
+function isPdfDocument(doc) {
+    return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
+}
+
+function getDocumentExtractionModeLabel(doc) {
+    const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+    return mode === 'layout' ? 'Layout' : 'Read';
+}
+
+function getDocumentExtractionModeBadge(doc) {
+    if (!isPdfDocument(doc)) {
+        return '';
+    }
+
+    const label = getDocumentExtractionModeLabel(doc);
+    const badgeClass = label === 'Layout' ? 'bg-primary' : 'bg-secondary';
+    return `<span class="badge ${badgeClass}"><i class="bi bi-file-earmark-text me-1"></i>${label}</span>`;
+}
+
+function getDocumentReprocessDropdownItems(doc) {
+    if (!isPdfDocument(doc)) {
+        return '';
+    }
+
+    const docId = escapeHtml(String(doc.id || ''));
+
+    return `
+        <li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header">Reprocess PDF</h6></li>
+        <li><a class="dropdown-item" href="#" onclick="window.reprocessDocumentExtraction('${docId}', 'read', event); return false;">
+            <i class="bi bi-file-earmark-text me-2"></i>Read
+        </a></li>
+        <li><a class="dropdown-item" href="#" onclick="window.reprocessDocumentExtraction('${docId}', 'layout', event); return false;">
+            <i class="bi bi-layout-text-window-reverse me-2"></i>Layout
+        </a></li>`;
+}
+
+    window.isWorkspacePdfDocument = isPdfDocument;
+    window.getWorkspaceDocumentExtractionModeLabel = getDocumentExtractionModeLabel;
+    window.getWorkspaceDocumentExtractionModeBadge = getDocumentExtractionModeBadge;
+    window.getWorkspaceDocumentReprocessDropdownItems = getDocumentReprocessDropdownItems;
+
 function getDocumentMetaPills(doc) {
     const pills = [];
     const authors = Array.isArray(doc.authors)
@@ -350,6 +392,9 @@ function getDocumentMetaPills(doc) {
     }
     if (doc.number_of_pages) {
         pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeHtml(String(doc.number_of_pages))} pages</span>`);
+    }
+    if (isPdfDocument(doc)) {
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-richtext"></i>${getDocumentExtractionModeLabel(doc)}</span>`);
     }
     if (authors.length) {
         const authorLabel = authors.length > 2
@@ -485,6 +530,10 @@ function createDocumentCard(doc) {
                 </a></li>`;
         }
 
+        if (access.isOwner) {
+            dropdownItems += getDocumentReprocessDropdownItems(doc);
+        }
+
         if (access.isOwner && (window.enable_file_sharing === true || window.enable_file_sharing === "true")) {
             const shareCount = Array.isArray(doc.shared_user_ids) ? doc.shared_user_ids.length : 0;
             dropdownItems += `
@@ -552,6 +601,7 @@ function createDocumentCard(doc) {
                 <div class="document-item-card__badges">
                     ${getDocumentClassificationBadge(doc)}
                     <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
+                    ${getDocumentExtractionModeBadge(doc)}
                     ${getDocumentSyncBadgeHtml(doc)}
                 </div>
                 <div class="document-item-card__tags">${renderTagBadges(doc.tags || [], 4)}</div>
@@ -1462,6 +1512,10 @@ function renderDocumentRow(doc) {
                 </a></li>
             `;
         }
+
+        if (isOwner) {
+            actionsDropdown += getDocumentReprocessDropdownItems(doc);
+        }
         
         // Add Chat option
         actionsDropdown += `
@@ -1550,7 +1604,7 @@ function renderDocumentRow(doc) {
     // Complete row HTML
     docRow.innerHTML = `
         ${firstColumnHtml}
-        <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")}</td>
+        <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")} <span class="ms-1">${getDocumentExtractionModeBadge(doc)}</span></td>
         <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
         <td class="align-middle document-actions-cell">
             ${approvalButton}
@@ -1597,6 +1651,7 @@ function renderDocumentRow(doc) {
                     <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || "N/A")}</p>
                     <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(Array.isArray(doc.authors) ? doc.authors.join(", ") : doc.authors || "N/A")}</p>
                     <p class="mb-1"><strong>Pages:</strong> ${escapeHtml(doc.number_of_pages || "N/A")}</p>
+                    ${isPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getDocumentExtractionModeBadge(doc)}</p>` : ''}
                     <p class="mb-1"><strong>Citations:</strong> ${doc.enhanced_citations ? '<span class="badge bg-success">Enhanced</span>' : '<span class="badge bg-secondary">Standard</span>'}</p>
                     <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || "N/A")}</p>
                     <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(Array.isArray(doc.keywords) ? doc.keywords.join(", ") : doc.keywords || "N/A")}</p>
@@ -1614,6 +1669,18 @@ function renderDocumentRow(doc) {
             detailsHtml += `
                 <button class="btn btn-sm btn-warning" onclick="window.onExtractMetadata('${docId}', event)" title="Re-run Metadata Extraction">
                     <i class="bi bi-magic"></i> Extract Metadata
+                </button>
+            `;
+        }
+
+        if (isOwner && isPdfDocument(doc)) {
+            const reprocessDocId = escapeHtml(String(docId || ''));
+            detailsHtml += `
+                <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessDocumentExtraction('${reprocessDocId}', 'read', event)" title="Reprocess PDF with Read">
+                    <i class="bi bi-file-earmark-text"></i> Read
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessDocumentExtraction('${reprocessDocId}', 'layout', event)" title="Reprocess PDF with Layout">
+                    <i class="bi bi-layout-text-window-reverse"></i> Layout
                 </button>
             `;
         }
@@ -2140,6 +2207,84 @@ window.chatWithSelected = function() {
     const idsParam = encodeURIComponent(docIds.join(','));
     window.location.href = `/chats?search_documents=true&doc_scope=personal&document_ids=${idsParam}`;
 }
+
+async function requestDocumentExtractionReprocess(documentIds, extractionMode) {
+    const response = await fetch('/api/documents/reprocess_extraction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            document_ids: documentIds,
+            extraction_mode: extractionMode,
+        }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+        throw new Error(data.error || data.message || 'Unable to queue PDF reprocessing.');
+    }
+    return data;
+}
+
+function showDocumentReprocessResult(data, extractionMode) {
+    const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+    const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+    const message = errorCount > 0
+        ? `Queued ${queuedCount} PDF(s) for ${modeLabel}; ${errorCount} item(s) were skipped.`
+        : (data.message || `Queued ${queuedCount} PDF(s) for ${modeLabel}.`);
+
+    if (window.showToast) {
+        window.showToast(message, errorCount > 0 ? 'warning' : 'success');
+    } else {
+        alert(message);
+    }
+}
+
+window.reprocessDocumentExtraction = async function(documentId, extractionMode, event) {
+    if (event) {
+        event.preventDefault();
+    }
+    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+    if (!confirm(`Queue this PDF for ${modeLabel} reprocessing?`)) {
+        return;
+    }
+
+    try {
+        const data = await requestDocumentExtractionReprocess([documentId], extractionMode);
+        showDocumentReprocessResult(data, extractionMode);
+        fetchUserDocuments();
+    } catch (error) {
+        if (window.showToast) {
+            window.showToast(error.message, 'danger');
+        } else {
+            alert(error.message);
+        }
+    }
+};
+
+window.reprocessSelectedDocumentExtraction = async function(extractionMode) {
+    const documentIds = Array.from(selectedDocuments);
+    if (documentIds.length === 0) {
+        return;
+    }
+    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+    if (!confirm(`Queue ${documentIds.length} selected document(s) for ${modeLabel} PDF reprocessing?`)) {
+        return;
+    }
+
+    try {
+        const data = await requestDocumentExtractionReprocess(documentIds, extractionMode);
+        showDocumentReprocessResult(data, extractionMode);
+        selectedDocuments.clear();
+        syncDocumentSelectionModeUI();
+        fetchUserDocuments();
+    } catch (error) {
+        if (window.showToast) {
+            window.showToast(error.message, 'danger');
+        } else {
+            alert(error.message);
+        }
+    }
+};
 
 // Make fetchUserDocuments globally available for workspace-init.js
 window.fetchUserDocuments = fetchUserDocuments;

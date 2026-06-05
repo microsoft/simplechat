@@ -16,6 +16,7 @@ from functions_cosmos_throughput import (
     get_cosmos_resource_config,
     get_cosmos_throughput_setting_keys,
     normalize_cosmos_throughput_settings,
+    validate_cosmos_throughput_policy_settings,
 )
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
 from functions_notifications import broadcast_system_notification
@@ -1374,7 +1375,7 @@ def register_route_frontend_admin_settings(app):
                 flash('Container throughput policies could not be parsed and were not updated.', 'warning')
                 cosmos_throughput_container_policies = settings.get('cosmos_throughput_container_policies', {})
 
-            cosmos_throughput_settings = normalize_cosmos_throughput_settings({
+            cosmos_throughput_candidate_settings = {
                 **settings,
                 'cosmos_throughput_autoscale_enabled': form_data.get('cosmos_throughput_autoscale_enabled') == 'on',
                 'cosmos_throughput_auto_scale_up_enabled': form_data.get('cosmos_throughput_auto_scale_up_enabled') == 'on',
@@ -1397,7 +1398,16 @@ def register_route_frontend_admin_settings(app):
                 'cosmos_throughput_convert_manual_to_autoscale_enabled': form_data.get('cosmos_throughput_convert_manual_to_autoscale_enabled') == 'on',
                 'cosmos_throughput_enforce_container_defaults': form_data.get('cosmos_throughput_enforce_container_defaults') == 'on',
                 'cosmos_throughput_container_policies': cosmos_throughput_container_policies,
-            })
+            }
+            cosmos_throughput_validation_errors = validate_cosmos_throughput_policy_settings(
+                cosmos_throughput_candidate_settings,
+            )
+            if cosmos_throughput_validation_errors:
+                for validation_error in cosmos_throughput_validation_errors:
+                    flash(validation_error, 'danger')
+                return redirect(url_for('admin_settings'))
+
+            cosmos_throughput_settings = normalize_cosmos_throughput_settings(cosmos_throughput_candidate_settings)
 
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
@@ -1440,6 +1450,9 @@ def register_route_frontend_admin_settings(app):
 
             document_intelligence_pdf_image_extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode(
                 form_data.get('document_intelligence_pdf_image_extraction_mode')
+            )
+            document_intelligence_auto_sample_pages = normalize_document_intelligence_auto_sample_pages(
+                form_data.get('document_intelligence_auto_sample_pages')
             )
 
             # --- Construct new_settings Dictionary ---
@@ -1728,6 +1741,7 @@ def register_route_frontend_admin_settings(app):
                 'azure_document_intelligence_key': form_data.get('azure_document_intelligence_key', '').strip(),
                 'azure_document_intelligence_authentication_type': form_data.get('azure_document_intelligence_authentication_type', 'key'),
                 'document_intelligence_pdf_image_extraction_mode': document_intelligence_pdf_image_extraction_mode,
+                'document_intelligence_auto_sample_pages': document_intelligence_auto_sample_pages,
                 'enable_document_intelligence_apim': form_data.get('enable_document_intelligence_apim') == 'on',
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),

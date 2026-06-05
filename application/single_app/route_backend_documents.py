@@ -1080,6 +1080,68 @@ def register_route_backend_documents(app):
             'document_id': document_id
         }), 200
 
+    @app.route('/api/documents/reprocess_extraction', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_reprocess_document_extraction():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        payload = request.get_json(silent=True) or {}
+        raw_mode = str(payload.get('extraction_mode') or payload.get('target_extraction_mode') or '').strip().lower()
+        if raw_mode not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
+            return jsonify({'error': 'Extraction mode must be Read or Layout.'}), 400
+        target_mode = normalize_document_intelligence_manual_extraction_mode(raw_mode)
+
+        document_ids = payload.get('document_ids')
+        if not isinstance(document_ids, list):
+            document_id = payload.get('document_id')
+            document_ids = [document_id] if document_id else []
+        document_ids = [str(document_id).strip() for document_id in document_ids if str(document_id or '').strip()]
+        if not document_ids:
+            return jsonify({'error': 'At least one document ID is required.'}), 400
+
+        queued = []
+        errors = []
+        for document_id in document_ids:
+            try:
+                document_item = get_document_metadata(document_id=document_id, user_id=user_id)
+                if not document_item:
+                    errors.append({'document_id': document_id, 'error': 'Document not found.'})
+                    continue
+                if document_item.get('user_id') != user_id:
+                    errors.append({'document_id': document_id, 'error': 'Only the document owner can reprocess this PDF.'})
+                    continue
+
+                is_valid, validation_message = validate_document_reprocess_source(document_item, user_id=user_id)
+                if not is_valid:
+                    errors.append({'document_id': document_id, 'error': validation_message})
+                    continue
+
+                current_app.extensions['executor'].submit_stored(
+                    f"{document_id}_di_reprocess_{target_mode}",
+                    process_document_reprocess_extraction_background,
+                    document_id=document_id,
+                    user_id=user_id,
+                    target_extraction_mode=target_mode,
+                )
+                queued.append({'document_id': document_id, 'extraction_mode': target_mode})
+            except Exception as e:
+                errors.append({'document_id': document_id, 'error': str(e)})
+
+        if queued:
+            invalidate_personal_search_cache(user_id)
+
+        status_code = 202 if queued and not errors else (207 if queued else 400)
+        return jsonify({
+            'message': f'Queued {len(queued)} document(s) for {target_mode.title()} reprocessing.',
+            'queued': queued,
+            'errors': errors,
+        }), status_code
+
     @app.route("/api/get_citation", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required

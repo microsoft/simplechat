@@ -24,6 +24,81 @@ ARCHIVED_SCOPE_PREFIX = "__archived__::"
 CURRENT_ALIAS_BLOB_PATH_MODE = "current_alias"
 ARCHIVED_REVISION_BLOB_PATH_MODE = "archived_revision"
 TAG_COLOR_PATTERN = re.compile(r'^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
+DI_SELECTION_MARK_PATTERNS = (
+    "Selection marks detected:",
+    "\u2612",
+    "\u2610",
+    ":selected:",
+    ":unselected:",
+    "selected selection mark",
+    "unselected selection mark",
+)
+DI_MARKDOWN_TABLE_SEPARATOR_PATTERN = re.compile(r'(?m)^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
+DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
+
+
+def is_pdf_file_name(file_name):
+    """Return True when the file name points to a PDF document."""
+    return str(file_name or '').lower().endswith('.pdf')
+
+
+def is_pdf_or_image_file_name(file_name):
+    """Return True when the file name points to a PDF or configured image type."""
+    normalized_file_name = str(file_name or '').lower()
+    if normalized_file_name.endswith('.pdf'):
+        return True
+    return any(normalized_file_name.endswith(f'.{ext}') for ext in IMAGE_EXTENSIONS)
+
+
+def _build_document_intelligence_page_range(sample_pages, total_pages=0):
+    sample_count = normalize_document_intelligence_auto_sample_pages(sample_pages)
+    if total_pages and total_pages > 0:
+        sample_count = min(sample_count, total_pages)
+    return "1" if sample_count == 1 else f"1-{sample_count}"
+
+
+def _get_document_intelligence_auto_layout_reason(sampled_pages):
+    sampled_text = "\n\n".join(
+        str(page.get('content', '') or '')
+        for page in sampled_pages or []
+        if isinstance(page, dict)
+    )
+    if not sampled_text.strip():
+        return ''
+
+    sampled_text_lower = sampled_text.lower()
+    if any(marker.lower() in sampled_text_lower for marker in DI_SELECTION_MARK_PATTERNS):
+        return 'selection marks or checkbox states detected in the sampled pages'
+    if DI_MARKDOWN_TABLE_ROW_PATTERN.search(sampled_text) and DI_MARKDOWN_TABLE_SEPARATOR_PATTERN.search(sampled_text):
+        return 'table structure detected in the sampled pages'
+    return ''
+
+
+def _resolve_document_intelligence_auto_mode(temp_file_path, is_pdf, is_image, page_count, sample_pages, update_callback):
+    if is_image:
+        return 'layout', 'image input benefits from Layout for spatial structure and selection marks'
+
+    if not is_pdf:
+        return 'read', 'Auto mode is only evaluated for PDFs and images'
+
+    page_range = _build_document_intelligence_page_range(sample_pages, page_count)
+    update_callback(status=f"Auto mode sampling PDF pages {page_range} with Layout...")
+
+    try:
+        sampled_pages = extract_content_with_azure_di(
+            temp_file_path,
+            extraction_mode='layout',
+            pages=page_range
+        )
+    except Exception as e:
+        log_event(f"[document_intelligence_auto] Layout sampling failed; falling back to Read: {e}", level=logging.WARNING)
+        return 'read', 'Layout sampling failed, so Auto fell back to Read'
+
+    layout_reason = _get_document_intelligence_auto_layout_reason(sampled_pages)
+    if layout_reason:
+        return 'layout', layout_reason
+
+    return 'read', 'no tables or selection marks detected in the sampled pages'
 
 
 def _get_blob_container_name(group_id=None, public_workspace_id=None):
@@ -4215,7 +4290,7 @@ Format your response as JSON with these keys:
         traceback.print_exc()
         return None
 
-def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None):
+def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None, mark_enhanced_citations=True):
     """Uploads the file to Azure Blob Storage."""
 
     try:
@@ -4277,7 +4352,8 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         current_document["blob_container"] = storage_account_container_name
         current_document["blob_path"] = blob_path
         current_document["blob_path_mode"] = CURRENT_ALIAS_BLOB_PATH_MODE
-        current_document["enhanced_citations"] = True
+        current_document["source_file_available"] = True
+        current_document["enhanced_citations"] = bool(mark_enhanced_citations)
         if current_document.get("archived_blob_path") is None:
             current_document["archived_blob_path"] = None
         cosmos_container.upsert_item(current_document)
@@ -6048,7 +6124,7 @@ def process_visio(document_id, user_id, temp_file_path, original_filename, enabl
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
+def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True, extraction_mode_override=None):
     """Processes documents supported by Azure Document Intelligence (PDF, Word, PPT, Image)."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -6097,9 +6173,34 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     settings = get_settings() # Assuming get_settings is accessible
     chunk_config = get_chunk_size_config(settings)
     document_intelligence_extraction_mode = 'read'
+    document_intelligence_requested_mode = 'read'
+    document_intelligence_auto_sample_pages = get_document_intelligence_auto_sample_pages(settings)
+    document_intelligence_auto_reason = ''
     if is_pdf or is_image:
-        document_intelligence_extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
-        update_callback(document_intelligence_extraction_mode=document_intelligence_extraction_mode)
+        if extraction_mode_override:
+            document_intelligence_requested_mode = normalize_document_intelligence_manual_extraction_mode(extraction_mode_override)
+        else:
+            document_intelligence_requested_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+
+        if document_intelligence_requested_mode == 'auto':
+            document_intelligence_extraction_mode, document_intelligence_auto_reason = _resolve_document_intelligence_auto_mode(
+                temp_file_path=temp_file_path,
+                is_pdf=is_pdf,
+                is_image=is_image,
+                page_count=page_count,
+                sample_pages=document_intelligence_auto_sample_pages,
+                update_callback=update_callback,
+            )
+        else:
+            document_intelligence_extraction_mode = document_intelligence_requested_mode
+            document_intelligence_auto_reason = ''
+
+        update_callback(
+            document_intelligence_extraction_mode=document_intelligence_extraction_mode,
+            document_intelligence_extraction_mode_requested=document_intelligence_requested_mode,
+            document_intelligence_auto_sample_pages=document_intelligence_auto_sample_pages,
+            document_intelligence_auto_reason=document_intelligence_auto_reason,
+        )
 
     di_limit_bytes = 500 * 1024 * 1024
     di_page_limit = 2000
@@ -6118,6 +6219,23 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             needs_pdf_file_chunking = True
     else:
         update_callback(enhanced_citations=False, status="Enhanced citations disabled")
+
+        if is_pdf or is_image:
+            args = {
+                "temp_file_path": temp_file_path,
+                "user_id": user_id,
+                "document_id": document_id,
+                "blob_filename": original_filename,
+                "update_callback": update_callback,
+                "mark_enhanced_citations": False,
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            upload_to_blob(**args)
 
     if needs_pdf_file_chunking:
         try:
@@ -6399,6 +6517,168 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     # This ensures vision_analysis is available in metadata when chunks are being saved
 
     return total_final_chunks_processed, total_embedding_tokens, embedding_model_name
+
+
+def validate_document_reprocess_source(document_item, user_id=None, group_id=None, public_workspace_id=None):
+    """Validate that a PDF has a stored source blob available for DI reprocessing."""
+    if not document_item:
+        return False, "Document not found."
+
+    if not is_pdf_file_name(document_item.get('file_name')):
+        return False, "Only PDF documents can be reprocessed between Read and Layout."
+
+    container_name, blob_path = get_document_blob_storage_info(
+        document_item,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not container_name or not blob_path:
+        return False, "Source PDF is unavailable. Re-upload this PDF before reprocessing."
+
+    try:
+        if not _blob_exists(container_name, blob_path):
+            return False, "Stored source PDF was not found in Blob Storage. Re-upload this PDF before reprocessing."
+    except Exception as e:
+        return False, f"Unable to validate stored source PDF: {str(e)}"
+
+    return True, ""
+
+
+def _download_document_source_to_temp_file(document_item, user_id=None, group_id=None, public_workspace_id=None):
+    container_name, blob_path = get_document_blob_storage_info(
+        document_item,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not container_name or not blob_path:
+        raise FileNotFoundError("Source PDF is unavailable.")
+
+    blob_service_client = _get_blob_service_client()
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+    temp_file_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            temp_file_path = temp_file.name
+            download_stream = blob_client.download_blob()
+            for chunk in download_stream.chunks():
+                temp_file.write(chunk)
+        return temp_file_path
+    except Exception:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise
+
+
+def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
+    """Reprocess a stored PDF with an explicit Document Intelligence Read/Layout mode."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+    target_mode = normalize_document_intelligence_manual_extraction_mode(target_extraction_mode)
+    temp_file_path = None
+
+    def update_doc_callback(**kwargs):
+        args = {
+            "document_id": document_id,
+            "user_id": user_id,
+            **kwargs,
+        }
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+        update_document(**args)
+
+    try:
+        document_item = get_document_metadata(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        is_valid, validation_message = validate_document_reprocess_source(
+            document_item,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        if not is_valid:
+            raise ValueError(validation_message)
+
+        original_filename = document_item.get('file_name') or f'{document_id}.pdf'
+        update_doc_callback(
+            status=f"Queued for {target_mode.title()} reprocessing",
+            percentage_complete=0,
+            current_file_chunk=0,
+            num_chunks=0,
+            number_of_pages=0,
+            document_intelligence_extraction_mode=target_mode,
+            document_intelligence_extraction_mode_requested=target_mode,
+            document_intelligence_auto_sample_pages=get_document_intelligence_auto_sample_pages(get_settings()),
+            document_intelligence_auto_reason='Manual reprocess requested',
+        )
+
+        temp_file_path = _download_document_source_to_temp_file(
+            document_item,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+
+        update_doc_callback(status=f"Deleting existing chunks before {target_mode.title()} reprocessing...")
+        delete_document_chunks(document_id, group_id=group_id, public_workspace_id=public_workspace_id)
+
+        update_doc_callback(status=f"Reprocessing PDF with Document Intelligence {target_mode.title()}...")
+        result = process_di_document(
+            document_id=document_id,
+            user_id=user_id,
+            temp_file_path=temp_file_path,
+            original_filename=original_filename,
+            file_ext='.pdf',
+            enable_enhanced_citations=bool(document_item.get('enhanced_citations')),
+            update_callback=update_doc_callback,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            auto_extract_metadata=False,
+            extraction_mode_override=target_mode,
+        )
+        if isinstance(result, tuple) and len(result) == 3:
+            total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+        else:
+            total_chunks_saved = result
+            total_embedding_tokens = 0
+            embedding_model_name = None
+
+        final_update_args = {
+            "number_of_pages": total_chunks_saved,
+            "status": _resolve_processing_complete_status(total_chunks_saved, '.pdf', tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
+            "percentage_complete": 100,
+            "current_file_chunk": None,
+        }
+        if total_embedding_tokens > 0:
+            final_update_args["embedding_tokens"] = total_embedding_tokens
+        if embedding_model_name:
+            final_update_args["embedding_model_deployment_name"] = embedding_model_name
+        update_doc_callback(**final_update_args)
+
+        print(f"Document {document_id} reprocessed successfully with Document Intelligence {target_mode}.")
+    except Exception as e:
+        print(f"Error reprocessing document {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
+        try:
+            update_doc_callback(
+                status=f"Error reprocessing document: {str(e)}",
+                percentage_complete=0,
+            )
+        except Exception as update_error:
+            print(f"Failed to update reprocess error status for {document_id}: {update_error}")
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except Exception as cleanup_error:
+                print(f"Warning: Failed to clean up reprocess temp file {temp_file_path}: {cleanup_error}")
 
 def _get_content_type(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
@@ -6852,7 +7132,7 @@ def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_exte
 
     return "Processing complete"
 
-def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None):
+def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
     """
     Main background task dispatcher for document processing.
     Handles various file types with specific chunking and processing logic.
@@ -7022,7 +7302,10 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 auto_extract_metadata=False
             )
         elif file_ext in di_supported_extensions or file_ext == '.doc':
-            result = process_di_document(**processor_args_without_auto_metadata)
+            result = process_di_document(
+                **processor_args_without_auto_metadata,
+                extraction_mode_override=extraction_mode_override
+            )
             # Handle tuple return (chunks, tokens, model_name)
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result

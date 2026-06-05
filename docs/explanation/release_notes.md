@@ -1,8 +1,18 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.160, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.163, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.163)**
+
+#### New Features
+
+*   **Document Intelligence Auto Mode and PDF Reprocessing**
+    *   Added **Auto** extraction for PDFs and images so admins can sample the first PDF pages with Layout and let SimpleChat finish with Read or Layout based on detected tables or selection marks.
+    *   Expanded Search & Extract guidance with a Read/Layout/Auto help modal, Auto sample-page control, and clearer Layout benefit/cost copy including the 6X increase for every 1000 pages.
+    *   Added Read/Layout extraction badges plus single-document and bulk PDF reprocess actions in personal, group, and public workspaces. New PDF/image uploads preserve their source blob so PDFs can be reprocessed later when available.
+    *   (Ref: `DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODE.md`, `functions_documents.py`, Admin Settings Search & Extract, workspace document actions)
 
 ### **(v0.241.160)**
 

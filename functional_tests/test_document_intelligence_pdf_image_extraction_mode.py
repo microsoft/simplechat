@@ -1,12 +1,13 @@
 # test_document_intelligence_pdf_image_extraction_mode.py
 """
 Functional test for Document Intelligence PDF/image extraction mode.
-Version: 0.241.158
+Version: 0.241.163
 Implemented in: 0.241.158
+Enhanced in: 0.241.163
 
-This test ensures admins can select Read or Layout extraction for PDFs/images,
-the setting is saved and tested, and ingestion records the selected mode as
-document metadata.
+This test ensures admins can select Read, Layout, or Auto extraction for
+PDFs/images, the setting is saved and tested, and ingestion records the
+resolved mode as document metadata.
 """
 
 import sys
@@ -44,37 +45,54 @@ def test_document_intelligence_pdf_image_extraction_mode_contract():
 
     assert_contains(config, 'VERSION = "', "application version declaration")
 
-    assert_contains(settings, 'DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout"}', "allowed extraction modes")
+    assert_contains(settings, 'DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout", "auto"}', "allowed extraction modes")
+    assert_contains(settings, "DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT = 3", "Auto sample page default")
     assert_contains(settings, "'document_intelligence_pdf_image_extraction_mode': 'read'", "default extraction mode")
+    assert_contains(settings, "'document_intelligence_auto_sample_pages': DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT", "default Auto sample pages")
     assert_contains(settings, "def normalize_document_intelligence_pdf_image_extraction_mode", "mode normalizer")
+    assert_contains(settings, "def normalize_document_intelligence_auto_sample_pages", "Auto sample normalizer")
 
     assert_contains(admin_html, 'id="document_intelligence_pdf_image_extraction_mode"', "admin extraction mode selector")
     assert_contains(admin_html, 'name="document_intelligence_pdf_image_extraction_mode"', "admin extraction mode form field")
     assert_contains(admin_html, '<option value="read"', "Read option")
     assert_contains(admin_html, '<option value="layout"', "Layout option")
-    assert_contains(admin_html, "It can take longer to parse than Read", "Layout latency explanation")
+    assert_contains(admin_html, '<option value="auto"', "Auto option")
+    assert_contains(admin_html, 'id="document_intelligence_auto_sample_pages"', "Auto sample pages input")
+    assert_contains(admin_html, "6X increase for every 1000 pages", "Layout cost explanation")
+    assert_contains(admin_html, "documentIntelligenceExtractionHelpModal", "extraction guidance modal")
 
     assert_contains(admin_route, "document_intelligence_pdf_image_extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode", "admin save normalizer")
+    assert_contains(admin_route, "document_intelligence_auto_sample_pages = normalize_document_intelligence_auto_sample_pages", "admin save Auto sample normalizer")
     assert_contains(admin_route, "'document_intelligence_pdf_image_extraction_mode': document_intelligence_pdf_image_extraction_mode", "admin save setting")
+    assert_contains(admin_route, "'document_intelligence_auto_sample_pages': document_intelligence_auto_sample_pages", "admin save Auto sample setting")
 
     assert_contains(admin_js, "document_intelligence_pdf_image_extraction_mode: extractionMode", "admin JS test payload")
+    assert_contains(admin_js, "document_intelligence_auto_sample_pages: autoSamplePages", "admin JS Auto sample test payload")
+    assert_contains(admin_js, "updateDocumentIntelligenceAutoControls", "admin JS Auto visibility toggle")
     assert_contains(admin_js, "resultDiv.textContent = data.message", "safe success rendering")
     assert_contains(admin_js, "#document_intelligence_pdf_image_extraction_mode", "walkthrough change hook")
+    assert_contains(admin_js, "#document_intelligence_auto_sample_pages", "walkthrough Auto sample change hook")
 
-    assert_contains(backend_route, 'model_id = "prebuilt-layout" if extraction_mode == "layout" else "prebuilt-read"', "backend test model selection")
+    assert_contains(backend_route, 'test_extraction_mode = "layout" if extraction_mode in ("layout", "auto") else "read"', "backend Auto test mode selection")
+    assert_contains(backend_route, 'model_id = "prebuilt-layout" if test_extraction_mode == "layout" else "prebuilt-read"', "backend test model selection")
     assert_contains(backend_route, 'analyze_options["output_content_format"] = "markdown"', "backend layout markdown option")
 
-    assert_contains(extractor, "def extract_content_with_azure_di(file_path, extraction_mode='read')", "extractor mode parameter")
+    assert_contains(extractor, "def extract_content_with_azure_di(file_path, extraction_mode='read', pages=None)", "extractor mode and pages parameter")
     assert_contains(extractor, 'model_id = "prebuilt-layout" if normalized_extraction_mode == "layout" else "prebuilt-read"', "extractor model selection")
     assert_contains(extractor, 'analyze_options["output_content_format"] = "markdown"', "extractor layout markdown option")
+    assert_contains(extractor, 'analyze_options["pages"] = str(pages)', "extractor page sampling option")
     assert_contains(extractor, "Selection marks detected", "selection mark summary")
 
-    assert_contains(documents, "document_intelligence_extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)", "document mode lookup")
-    assert_contains(documents, "update_callback(document_intelligence_extraction_mode=document_intelligence_extraction_mode)", "document metadata update")
+    assert_contains(documents, "def _resolve_document_intelligence_auto_mode", "document Auto resolver")
+    assert_contains(documents, "document_intelligence_extraction_mode_requested=document_intelligence_requested_mode", "document requested mode metadata update")
+    assert_contains(documents, "document_intelligence_auto_reason=document_intelligence_auto_reason", "document Auto reason metadata update")
     assert_contains(documents, "extraction_mode=document_intelligence_extraction_mode", "document extractor call")
+    assert_contains(documents, '"mark_enhanced_citations": False', "source-only PDF/image blob persistence")
 
     assert_contains(chat_route, "get_document_intelligence_pdf_image_extraction_mode(settings)", "chat upload mode lookup")
+    assert_contains(chat_route, "extraction_mode = 'layout' if is_image_file else 'read'", "chat upload Auto fallback")
     assert_contains(smart_http_plugin, "get_document_intelligence_pdf_image_extraction_mode(settings)", "Smart HTTP PDF mode lookup")
+    assert_contains(smart_http_plugin, "if extraction_mode == 'auto':", "Smart HTTP Auto fallback guard")
 
     print("Document Intelligence PDF/image extraction mode contract passed.")
     return True

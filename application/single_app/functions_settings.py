@@ -26,7 +26,10 @@ def is_tabular_processing_enabled(settings):
 
 CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
 WORKFLOW_USER_APP_ROLE = "WorkflowUser"
-DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout"}
+DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout", "auto"}
+DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES = {"read", "layout"}
+DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT = 3
+DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_MAX = 20
 
 
 def normalize_document_intelligence_pdf_image_extraction_mode(value):
@@ -42,6 +45,31 @@ def get_document_intelligence_pdf_image_extraction_mode(settings):
     return normalize_document_intelligence_pdf_image_extraction_mode(
         (settings or {}).get('document_intelligence_pdf_image_extraction_mode')
     )
+
+
+def normalize_document_intelligence_auto_sample_pages(value):
+    """Normalize how many first pages Auto mode samples before choosing a mode."""
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError):
+        normalized_value = DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT
+
+    return max(1, min(normalized_value, DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_MAX))
+
+
+def get_document_intelligence_auto_sample_pages(settings):
+    """Return the configured Auto-mode sample page count."""
+    return normalize_document_intelligence_auto_sample_pages(
+        (settings or {}).get('document_intelligence_auto_sample_pages')
+    )
+
+
+def normalize_document_intelligence_manual_extraction_mode(value):
+    """Normalize an explicit reprocess target mode, limited to Read or Layout."""
+    normalized_value = str(value or "read").strip().lower()
+    if normalized_value not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
+        return "read"
+    return normalized_value
 
 
 def normalize_app_role_claims(user_roles):
@@ -457,6 +485,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'azure_document_intelligence_key': '',
         'azure_document_intelligence_authentication_type': 'key',
         'document_intelligence_pdf_image_extraction_mode': 'read',
+        'document_intelligence_auto_sample_pages': DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT,
         'enable_document_intelligence_apim': False,
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',

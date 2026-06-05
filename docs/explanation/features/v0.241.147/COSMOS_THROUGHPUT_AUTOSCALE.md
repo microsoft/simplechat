@@ -10,6 +10,10 @@ Fixed/Implemented in version: **0.241.147**
 
 Enhanced in version: **0.241.148** with container-targeted throughput fallback and per-container policy controls.
 
+Enhanced in version: **0.241.161** with grouped scale-up and scale-down policy controls plus save-blocking validation for policy threshold and interval relationships.
+
+Enhanced in version: **0.241.162** with a dedicated Validate Access action that tests the current form values before admins save or enable throughput automation.
+
 Dependencies
 
 - Admin Settings Scale tab in `application/single_app/templates/admin_settings.html`
@@ -25,6 +29,7 @@ Technical Specifications
 Architecture overview
 
 - The Scale tab now includes a Cosmos DB Throughput card for database identity, automation settings, live status, manual scale controls, per-container RU visibility, and a container policy modal.
+- The card header includes a Setup Guide button, while operational actions such as Refresh and Validate Access are grouped separately in the card body.
 - Current SimpleChat Bicep deployments use database-level autoscale throughput on the `SimpleChat` database, so the preferred path scales the database autoscale max RU/s.
 - Environments without database-level throughput fall back to container-targeted management for containers with dedicated throughput.
 - Azure Monitor metrics provide recent normalized RU utilization and per-container request-unit visibility.
@@ -37,9 +42,12 @@ Automation behavior
 - Scale up defaults to 1000 RU/s every 5 minutes when utilization reaches 90% or higher.
 - Scale down defaults to 1000 RU/s every 20 minutes when utilization is 70% or lower.
 - Scale up and scale down can be enabled or disabled independently.
+- Scale Up At must be higher than Scale Down At when automation is enabled.
+- Scale Up Interval and Scale Down Interval must be greater than or equal to the Metrics Window.
 - Minimum and maximum RU/s guardrails are available.
 - Admins can explicitly ignore the minimum or maximum guardrail when needed.
 - Runtime state is saved back into app settings for last check, last observed utilization, last scale action, and last error.
+- Validate Access runs a non-mutating setup check with the current form values and does not update the saved runtime status cache.
 - Container-targeted runtime state stores last scale-up/down timestamps per container so cooldowns are enforced independently.
 
 Container policy controls
@@ -62,6 +70,8 @@ API endpoints
 
 - `GET /api/admin/settings/cosmos-throughput/status`
   - Returns configured resource metadata, database throughput mode/current RU, recent metrics, and per-container metric rows.
+- `POST /api/admin/settings/cosmos-throughput/validate-access`
+  - Accepts the current Cosmos throughput form values and validates resource configuration, throughput read access, container discovery, and Azure Monitor metrics without saving settings or changing RU/s.
 - `POST /api/admin/settings/cosmos-throughput/scale`
   - Accepts `{ "direction": "up" }` or `{ "direction": "down" }` and applies the configured step and guardrails.
   - Accepts an optional `container_name` value for dedicated container throughput scaling.
@@ -98,8 +108,10 @@ Admin workflow
 - Save resource metadata if the deployed app settings do not auto-populate it.
 - Enable Cosmos throughput automation.
 - Adjust scale-up and scale-down thresholds, step sizes, cooldown intervals, and min/max guardrails.
+- Keep the Metrics Window less than or equal to both scale intervals and keep Scale Up At higher than Scale Down At.
 - Use Containers to configure per-container policies when the environment uses dedicated container throughput.
 - Save Admin Settings.
+- Use Validate Access after changing resource identity or permissions to confirm the current form values work before enabling automation.
 - Use Refresh to view current throughput and metrics.
 - Use Scale Up or Scale Down for guarded manual changes.
 
@@ -115,6 +127,7 @@ Validation performed
 - `python -m py_compile application/single_app/functions_cosmos_throughput.py application/single_app/route_backend_settings.py application/single_app/route_frontend_admin_settings.py application/single_app/background_tasks.py application/single_app/functions_settings.py`
 - `node --check application/single_app/static/js/admin/admin_settings.js`
 - `python functional_tests/test_cosmos_throughput_autoscale_logic.py`
+- `python -m pytest functional_tests/test_cosmos_throughput_autoscale_logic.py ui_tests/test_admin_cosmos_throughput_settings_ui.py`
 - Focused Playwright UI test for the new Scale-tab controls
 
 Known limitations
@@ -127,4 +140,6 @@ Known limitations
 Related config.py version update
 
 - Application version updated to `0.241.148` in `application/single_app/config.py` for container-targeted fallback controls.
+- Application version updated to `0.241.161` in `application/single_app/config.py` for grouped policy controls and save-blocking validation.
+- Application version updated to `0.241.162` in `application/single_app/config.py` for the Validate Access setup test action.
 - Deployer version updated to `1.0.12` in `deployers/version.txt` for Bicep app-setting and RBAC changes.

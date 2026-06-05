@@ -1156,6 +1156,7 @@ function appendPublicDocumentMetaPills(container, doc) {
     doc.version ? `v${doc.version}` : null,
     doc.authors ? `By ${doc.authors}` : null,
     doc.number_of_pages ? `${doc.number_of_pages} pages` : null,
+    isPublicPdfDocument(doc) ? getPublicDocumentExtractionModeLabel(doc) : null,
     doc.publication_date ? doc.publication_date : null,
   ].filter(Boolean);
 
@@ -1167,6 +1168,49 @@ function appendPublicDocumentMetaPills(container, doc) {
   metaItems.slice(0, 4).forEach((item) => {
     appendPublicTextElement(container, 'span', 'badge bg-light text-dark border', item);
   });
+}
+
+function isPublicPdfDocument(doc) {
+  return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
+}
+
+function getPublicDocumentExtractionModeLabel(doc) {
+  const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+  return mode === 'layout' ? 'Layout' : 'Read';
+}
+
+function createPublicDocumentExtractionModeBadge(doc) {
+  if (!isPublicPdfDocument(doc)) {
+    return null;
+  }
+
+  const label = getPublicDocumentExtractionModeLabel(doc);
+  const badge = document.createElement('span');
+  badge.className = `badge ${label === 'Layout' ? 'bg-primary' : 'bg-secondary'}`;
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-file-earmark-text me-1';
+  badge.appendChild(icon);
+  badge.appendChild(document.createTextNode(label));
+  return badge;
+}
+
+function getPublicDocumentExtractionModeBadgeHtml(doc) {
+  if (!isPublicPdfDocument(doc)) {
+    return '';
+  }
+
+  const label = getPublicDocumentExtractionModeLabel(doc);
+  const badgeClass = label === 'Layout' ? 'bg-primary' : 'bg-secondary';
+  return `<span class="badge ${badgeClass}"><i class="bi bi-file-earmark-text me-1"></i>${escapeHtml(label)}</span>`;
+}
+
+function createPublicDropdownHeader(label) {
+  const listItem = document.createElement('li');
+  const header = document.createElement('h6');
+  header.className = 'dropdown-header';
+  header.textContent = label;
+  listItem.appendChild(header);
+  return listItem;
 }
 
 function createPublicDocumentCard(doc) {
@@ -1251,6 +1295,8 @@ function createPublicDocumentCard(doc) {
   citationBadge.className = `badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}`;
   citationBadge.textContent = doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations';
   badges.appendChild(citationBadge);
+  const extractionBadge = createPublicDocumentExtractionModeBadge(doc);
+  if (extractionBadge) badges.appendChild(extractionBadge);
   appendPublicDocumentSyncBadge(badges, doc);
 
   const tags = document.createElement('div');
@@ -1295,6 +1341,12 @@ function createPublicDocumentCard(doc) {
     if (canManage) {
       dropdownItems.push(createPublicDropdownItem('bi-pencil-fill', 'Edit Metadata', () => window.onEditPublicDocument(docId)));
       dropdownItems.push(createPublicDropdownItem('bi-magic', 'Extract Metadata', () => window.onExtractPublicMetadata(docId, null)));
+      if (isPublicPdfDocument(doc)) {
+        dropdownItems.push(createPublicDropdownDivider());
+        dropdownItems.push(createPublicDropdownHeader('Reprocess PDF'));
+        dropdownItems.push(createPublicDropdownItem('bi-file-earmark-text', 'Read', () => window.reprocessPublicDocumentExtraction(docId, 'read', null)));
+        dropdownItems.push(createPublicDropdownItem('bi-layout-text-window-reverse', 'Layout', () => window.reprocessPublicDocumentExtraction(docId, 'layout', null)));
+      }
       dropdownItems.push(createPublicDropdownDivider());
       dropdownItems.push(createPublicDropdownItem('bi-trash-fill', 'Delete', () => window.deletePublicDocument(docId, null), true));
     }
@@ -1445,6 +1497,7 @@ function renderPublicDocumentRow(doc) {
           </a></li>`;
 
     if (canManage) {
+      const reprocessDocId = escapeHtml(String(doc.id || ''));
       actionsDropdown += `
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;">
@@ -1453,6 +1506,15 @@ function renderPublicDocumentRow(doc) {
           <li><a class="dropdown-item" href="#" onclick="window.onExtractPublicMetadata('${doc.id}', event); return false;">
             <i class="bi bi-magic me-2"></i>Extract Metadata
           </a></li>
+          ${isPublicPdfDocument(doc) ? `
+          <li><hr class="dropdown-divider"></li>
+          <li><h6 class="dropdown-header">Reprocess PDF</h6></li>
+          <li><a class="dropdown-item" href="#" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'read', event); return false;">
+            <i class="bi bi-file-earmark-text me-2"></i>Read
+          </a></li>
+          <li><a class="dropdown-item" href="#" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'layout', event); return false;">
+            <i class="bi bi-layout-text-window-reverse me-2"></i>Layout
+          </a></li>` : ''}
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item text-danger" href="#" onclick="deletePublicDocument('${doc.id}', event); return false;">
             <i class="bi bi-trash-fill me-2"></i>Delete
@@ -1479,7 +1541,7 @@ function renderPublicDocumentRow(doc) {
   tr.classList.add('document-row');
   tr.innerHTML = `
     <td class="align-middle">${firstTdHtml}</td>
-    <td class="align-middle" title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)}</td>
+    <td class="align-middle" title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)} <span class="ms-1">${getPublicDocumentExtractionModeBadgeHtml(doc)}</span></td>
     <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
     <td class="align-middle">${chatButton}${actionsDropdown}</td>`;
 
@@ -1511,6 +1573,8 @@ function renderPublicDocumentRow(doc) {
       '<span class="badge bg-secondary">Standard</span>';
   }
 
+  const reprocessDocId = escapeHtml(String(doc.id || ''));
+
   detailsRow.innerHTML = `
     <td colspan="4">
       <div class="bg-light p-3 border rounded small">
@@ -1519,6 +1583,7 @@ function renderPublicDocumentRow(doc) {
         <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || '1')}</p>
         <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(doc.authors || 'N/A')}</p>
         <p class="mb-1"><strong>Pages/Chunks:</strong> ${escapeHtml(doc.number_of_pages || 'N/A')}</p>
+        ${isPublicPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getPublicDocumentExtractionModeBadgeHtml(doc)}</p>` : ''}
         <p class="mb-1"><strong>Citations:</strong> ${getCitationBadge(doc.enhanced_citations)}</p>
         <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || 'N/A')}</p>
         <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(doc.keywords || 'N/A')}</p>
@@ -1533,6 +1598,13 @@ function renderPublicDocumentRow(doc) {
             <button class="btn btn-sm btn-warning" onclick="window.onExtractPublicMetadata('${doc.id}', event)" title="Re-run Metadata Extraction">
               <i class="bi bi-magic"></i> Extract Metadata
             </button>
+            ${isPublicPdfDocument(doc) ? `
+            <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'read', event)" title="Reprocess PDF with Read">
+              <i class="bi bi-file-earmark-text"></i> Read
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'layout', event)" title="Reprocess PDF with Layout">
+              <i class="bi bi-layout-text-window-reverse"></i> Layout
+            </button>` : ''}
           ` : ''}
         </div>
       </div>
@@ -2038,12 +2110,14 @@ function updatePublicBulkActionButtons() {
   const bulkActionsBar = document.getElementById('publicBulkActionsBar');
   const selectedCountSpan = document.getElementById('publicSelectedCount');
   const deleteBtn = document.getElementById('public-delete-selected-btn');
+  const reprocessDropdown = document.getElementById('public-reprocess-selected-dropdown');
 
   if (publicSelectedDocuments.size > 0) {
     if (bulkActionsBar) bulkActionsBar.style.display = 'block';
     if (selectedCountSpan) selectedCountSpan.textContent = publicSelectedDocuments.size;
     const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
     if (deleteBtn) deleteBtn.style.display = canManage ? 'inline-block' : 'none';
+    if (reprocessDropdown) reprocessDropdown.classList.toggle('d-none', !canManage);
   } else {
     if (bulkActionsBar) bulkActionsBar.style.display = 'none';
   }
@@ -2209,12 +2283,79 @@ function chatWithPublicSelected() {
   window.location.href = `/chats?search_documents=true&doc_scope=public&document_ids=${idsParam}&workspace_id=${activePublicId}`;
 }
 
+async function requestPublicDocumentExtractionReprocess(documentIds, extractionMode) {
+  const response = await fetch('/api/public_documents/reprocess_extraction', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      document_ids: documentIds,
+      extraction_mode: extractionMode,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+    throw new Error(data.error || data.message || 'Unable to queue PDF reprocessing.');
+  }
+  return data;
+}
+
+function showPublicDocumentReprocessResult(data, extractionMode) {
+  const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+  const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+  const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+  const message = errorCount > 0
+    ? `Queued ${queuedCount} PDF(s) for ${modeLabel}; ${errorCount} item(s) were skipped.`
+    : (data.message || `Queued ${queuedCount} PDF(s) for ${modeLabel}.`);
+  showPublicWorkspaceToast(message, errorCount > 0 ? 'warning' : 'success');
+}
+
+async function reprocessPublicDocumentExtraction(documentId, extractionMode, event) {
+  if (event) {
+    event.preventDefault();
+  }
+  const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+  if (!confirm(`Queue this PDF for ${modeLabel} reprocessing?`)) {
+    return;
+  }
+
+  try {
+    const data = await requestPublicDocumentExtractionReprocess([documentId], extractionMode);
+    showPublicDocumentReprocessResult(data, extractionMode);
+    fetchPublicDocs();
+  } catch (error) {
+    showPublicWorkspaceToast(error.message, 'danger');
+  }
+}
+
+async function reprocessPublicSelectedDocumentExtraction(extractionMode) {
+  const documentIds = Array.from(publicSelectedDocuments);
+  if (documentIds.length === 0) {
+    return;
+  }
+  const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+  if (!confirm(`Queue ${documentIds.length} selected document(s) for ${modeLabel} PDF reprocessing?`)) {
+    return;
+  }
+
+  try {
+    const data = await requestPublicDocumentExtractionReprocess(documentIds, extractionMode);
+    showPublicDocumentReprocessResult(data, extractionMode);
+    publicSelectedDocuments.clear();
+    syncPublicSelectionModeUI();
+    fetchPublicDocs();
+  } catch (error) {
+    showPublicWorkspaceToast(error.message, 'danger');
+  }
+}
+
 // Expose selection functions globally
 window.updatePublicSelectedDocuments = updatePublicSelectedDocuments;
 window.togglePublicSelectionMode = togglePublicSelectionMode;
 window.deletePublicSelectedDocuments = deletePublicSelectedDocuments;
 window.clearPublicSelection = clearPublicSelection;
 window.chatWithPublicSelected = chatWithPublicSelected;
+window.reprocessPublicDocumentExtraction = reprocessPublicDocumentExtraction;
+window.reprocessPublicSelectedDocumentExtraction = reprocessPublicSelectedDocumentExtraction;
 
 // Prompts
 function canManagePublicPrompts() {
@@ -2977,8 +3118,13 @@ function buildPublicFolderDocumentsTable(docs) {
             <li><a class="dropdown-item" href="#" onclick="togglePublicSelectionMode(); return false;"><i class="bi bi-check-square me-2"></i>Select</a></li>
             <li><a class="dropdown-item" href="#" onclick="searchPublicDocumentInChat('${doc.id}'); return false;"><i class="bi bi-chat-dots-fill me-2"></i>Chat</a></li>`;
       if (canManage) {
+        const reprocessDocId = escapeHtml(String(doc.id || ''));
         actionsHtml += `<li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;"><i class="bi bi-pencil-fill me-2"></i>Edit Metadata</a></li>
             <li><a class="dropdown-item" href="#" onclick="window.onExtractPublicMetadata('${doc.id}', event); return false;"><i class="bi bi-magic me-2"></i>Extract Metadata</a></li>
+        ${isPublicPdfDocument(doc) ? `<li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header">Reprocess PDF</h6></li>
+        <li><a class="dropdown-item" href="#" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'read', event); return false;"><i class="bi bi-file-earmark-text me-2"></i>Read</a></li>
+        <li><a class="dropdown-item" href="#" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'layout', event); return false;"><i class="bi bi-layout-text-window-reverse me-2"></i>Layout</a></li>` : ''}
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item text-danger" href="#" onclick="deletePublicDocument('${doc.id}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>`;
       }
@@ -2991,7 +3137,7 @@ function buildPublicFolderDocumentsTable(docs) {
 
     html += `<tr>
       <td>${firstColHtml}</td>
-      <td title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)}</td>
+      <td title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)} <span class="ms-1">${getPublicDocumentExtractionModeBadgeHtml(doc)}</span></td>
       <td title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
       <td>${actionsHtml}</td>
     </tr>`;

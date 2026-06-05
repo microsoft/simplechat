@@ -715,6 +715,15 @@ app_settings.app_title }} {% endblock %} {% block head %}
                       onclick="chatWithGroupSelected()">
                 <i class="bi bi-chat-dots-fill me-1"></i>Chat with Selected
               </button>
+              <div class="btn-group me-2" id="group-reprocess-selected-dropdown">
+                <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                  <i class="bi bi-arrow-repeat me-1"></i>Reprocess
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li><button type="button" class="dropdown-item" onclick="reprocessGroupSelectedDocumentExtraction('read')">Read</button></li>
+                  <li><button type="button" class="dropdown-item" onclick="reprocessGroupSelectedDocumentExtraction('layout')">Layout</button></li>
+                </ul>
+              </div>
               <button type="button" class="btn btn-sm btn-info me-2" id="group-bulk-tag-btn"
                       data-bs-toggle="modal" data-bs-target="#groupBulkTagModal">
                 <i class="bi bi-tags me-1"></i>Tag Selected
@@ -2752,6 +2761,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (doc.number_of_pages) {
       pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeGroupHtml(String(doc.number_of_pages))} pages</span>`);
     }
+    if (isGroupPdfDocument(doc)) {
+      pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-richtext"></i>${escapeGroupHtml(getGroupDocumentExtractionModeLabel(doc))}</span>`);
+    }
     if (authors.length) {
       const authorLabel = authors.length > 2
         ? `${authors.slice(0, 2).join(', ')} +${authors.length - 2}`
@@ -2763,6 +2775,43 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
 
     return pills.join('');
+  }
+
+  function isGroupPdfDocument(doc) {
+    return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
+  }
+
+  function getGroupDocumentExtractionModeLabel(doc) {
+    const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+    return mode === 'layout' ? 'Layout' : 'Read';
+  }
+
+  function getGroupDocumentExtractionModeBadge(doc) {
+    if (!isGroupPdfDocument(doc)) {
+      return '';
+    }
+
+    const label = getGroupDocumentExtractionModeLabel(doc);
+    const badgeClass = label === 'Layout' ? 'bg-primary' : 'bg-secondary';
+    return `<span class="badge ${badgeClass}"><i class="bi bi-file-earmark-text me-1"></i>${escapeGroupHtml(label)}</span>`;
+  }
+
+  function getGroupDocumentReprocessDropdownItems(doc) {
+    if (!isGroupPdfDocument(doc)) {
+      return '';
+    }
+
+    const docId = escapeGroupHtml(String(doc.id || ''));
+
+    return `
+      <li><hr class="dropdown-divider"></li>
+      <li><h6 class="dropdown-header">Reprocess PDF</h6></li>
+      <li><a class="dropdown-item" href="#" onclick="reprocessGroupDocumentExtraction('${docId}', 'read', event); return false;">
+        <i class="bi bi-file-earmark-text me-2"></i>Read
+      </a></li>
+      <li><a class="dropdown-item" href="#" onclick="reprocessGroupDocumentExtraction('${docId}', 'layout', event); return false;">
+        <i class="bi bi-layout-text-window-reverse me-2"></i>Layout
+      </a></li>`;
   }
 
   function isGroupSyncedDocument(doc) {
@@ -3053,6 +3102,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </a></li>`;
       }
 
+      if (canManage && canModify) {
+        dropdownItems += getGroupDocumentReprocessDropdownItems(doc);
+      }
+
       if (canShare) {
         const shareCount = Array.isArray(doc.shared_group_ids) ? doc.shared_group_ids.length : 0;
         dropdownItems += `
@@ -3125,6 +3178,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="document-item-card__badges">
             ${getGroupClassificationBadge(doc)}
             <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
+            ${getGroupDocumentExtractionModeBadge(doc)}
             ${getGroupDocumentSyncBadgeHtml(doc)}
           </div>
           <div class="document-item-card__tags">${renderGroupTagBadges(doc.tags || [], 4)}</div>
@@ -3378,6 +3432,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const selectedCountSpan = document.getElementById("groupSelectedCount");
     const deleteBtn = document.getElementById("group-delete-selected-btn");
     const removeBtn = document.getElementById("group-remove-selected-btn");
+    const reprocessDropdown = document.getElementById("group-reprocess-selected-dropdown");
     
     if (groupSelectedDocuments.size > 0) {
       // Show bulk actions bar with count
@@ -3394,6 +3449,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
       // Show/hide delete and remove buttons based on permissions
       if (deleteBtn) {
         deleteBtn.style.display = canManage ? "inline-block" : "none";
+      }
+
+      if (reprocessDropdown) {
+        reprocessDropdown.classList.toggle("d-none", !canManage);
       }
       
       // Remove button is available for group documents
@@ -4991,6 +5050,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     </a></li>
                 `;
             }
+
+            actionsDropdown += getGroupDocumentReprocessDropdownItems(doc);
         }
         
         // Chat - only if chat is allowed (not inactive)
@@ -5079,7 +5140,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Complete row HTML
     docRow.innerHTML = `
         ${firstColumnHtml}
-      <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")}</td>
+      <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")} <span class="ms-1">${getGroupDocumentExtractionModeBadge(doc)}</span></td>
       <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
       <td class="align-middle document-actions-cell">
         ${approvalButton}
@@ -5143,6 +5204,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 <p class="mb-1"><strong>Pages/Chunks:</strong> ${escapeHtml(
                   doc.number_of_pages || "N/A"
                 )}</p> <!-- Assuming number_of_pages stores chunk count -->
+                ${isGroupPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getGroupDocumentExtractionModeBadge(doc)}</p>` : ''}
                 <p class="mb-1"><strong>Citations:</strong> ${
                   doc.enhanced_citations
                     ? '<span class="badge bg-success">Enhanced</span>'
@@ -5176,6 +5238,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
         ) {
           detailsHtml += `
                       <button class="btn btn-sm btn-warning" onclick="onExtractGroupMetadata('${docId}', event)" title="Re-run Metadata Extraction"> <i class="bi bi-magic"></i> Extract Metadata </button>`;
+        }
+        if (isGroupPdfDocument(doc)) {
+          const reprocessDocId = escapeHtml(String(docId || ''));
+          detailsHtml += `
+                      <button class="btn btn-sm btn-outline-secondary" onclick="reprocessGroupDocumentExtraction('${reprocessDocId}', 'read', event)" title="Reprocess PDF with Read"> <i class="bi bi-file-earmark-text"></i> Read </button>
+                      <button class="btn btn-sm btn-outline-secondary" onclick="reprocessGroupDocumentExtraction('${reprocessDocId}', 'layout', event)" title="Reprocess PDF with Layout"> <i class="bi bi-layout-text-window-reverse"></i> Layout </button>`;
         }
       }
       detailsHtml += `</div></div></td>`; // Close buttons div, details div, td
@@ -5841,6 +5909,86 @@ app_settings.app_title }} {% endblock %} {% block head %}
     window.location.href = `/chats?search_documents=true&doc_scope=group&document_ids=${idsParam}&group_id=${activeGroupId}`;
   }
   window.chatWithGroupSelected = chatWithGroupSelected;
+
+  async function requestGroupDocumentExtractionReprocess(documentIds, extractionMode) {
+    const response = await fetch('/api/group_documents/reprocess_extraction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        document_ids: documentIds,
+        extraction_mode: extractionMode,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+      throw new Error(data.error || data.message || 'Unable to queue PDF reprocessing.');
+    }
+    return data;
+  }
+
+  function showGroupDocumentReprocessResult(data, extractionMode) {
+    const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+    const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+    const message = errorCount > 0
+      ? `Queued ${queuedCount} PDF(s) for ${modeLabel}; ${errorCount} item(s) were skipped.`
+      : (data.message || `Queued ${queuedCount} PDF(s) for ${modeLabel}.`);
+
+    if (window.showToast) {
+      window.showToast(message, errorCount > 0 ? 'warning' : 'success');
+    } else {
+      alert(message);
+    }
+  }
+
+  async function reprocessGroupDocumentExtraction(documentId, extractionMode, event) {
+    if (event) {
+      event.preventDefault();
+    }
+    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+    if (!confirm(`Queue this PDF for ${modeLabel} reprocessing?`)) {
+      return;
+    }
+
+    try {
+      const data = await requestGroupDocumentExtractionReprocess([documentId], extractionMode);
+      showGroupDocumentReprocessResult(data, extractionMode);
+      fetchGroupDocuments();
+    } catch (error) {
+      if (window.showToast) {
+        window.showToast(error.message, 'danger');
+      } else {
+        alert(error.message);
+      }
+    }
+  }
+  window.reprocessGroupDocumentExtraction = reprocessGroupDocumentExtraction;
+
+  async function reprocessGroupSelectedDocumentExtraction(extractionMode) {
+    const documentIds = Array.from(groupSelectedDocuments);
+    if (documentIds.length === 0) {
+      return;
+    }
+    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+    if (!confirm(`Queue ${documentIds.length} selected document(s) for ${modeLabel} PDF reprocessing?`)) {
+      return;
+    }
+
+    try {
+      const data = await requestGroupDocumentExtractionReprocess(documentIds, extractionMode);
+      showGroupDocumentReprocessResult(data, extractionMode);
+      groupSelectedDocuments.clear();
+      refreshGroupSelectionState();
+      fetchGroupDocuments();
+    } catch (error) {
+      if (window.showToast) {
+        window.showToast(error.message, 'danger');
+      } else {
+        alert(error.message);
+      }
+    }
+  }
+  window.reprocessGroupSelectedDocumentExtraction = reprocessGroupSelectedDocumentExtraction;
 
   /* ===================== GROUP PROMPTS ===================== */
   // — State —
@@ -6864,6 +7012,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
             actionsDropdown += `<li><a class="dropdown-item" href="#" onclick="onExtractGroupMetadata('${docId}', event); return false;"><i class="bi bi-magic me-2"></i>Extract Metadata</a></li>`;
           }
+          actionsDropdown += getGroupDocumentReprocessDropdownItems(doc);
         }
 
         if (canChat) {
@@ -6893,7 +7042,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       html += `<tr>
         <td class="align-middle">${firstColHtml}</td>
-        <td class="align-middle" title="${escapeHtml(doc.file_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || '')}</td>
+        <td class="align-middle" title="${escapeHtml(doc.file_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || '')} <span class="ms-1">${getGroupDocumentExtractionModeBadge(doc)}</span></td>
         <td class="align-middle" title="${escapeHtml(doc.title || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.title || 'N/A')}</td>
         <td class="align-middle">${approvalButton}${chatButton}${actionsDropdown}</td>
       </tr>`;

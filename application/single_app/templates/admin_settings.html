@@ -4086,7 +4086,7 @@
                 </div>
 
                 <div class="card p-3 mb-3" id="cosmos-throughput-section" data-testid="cosmos-throughput-section">
-                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
                         <div>
                             <h5 class="mb-1">
                                 <i class="bi bi-speedometer2 me-2"></i>Cosmos DB Throughput
@@ -4095,26 +4095,30 @@
                                 Monitor RU utilization and automatically adjust shared database or dedicated container throughput.
                             </p>
                         </div>
-                        <div class="btn-group" role="group" aria-label="Cosmos throughput actions">
-                            <button type="button" class="btn btn-outline-info btn-sm" id="cosmos-throughput-setup-guide-btn" data-bs-toggle="modal" data-bs-target="#cosmosThroughputSetupModal">
-                                <i class="bi bi-journal-text me-1"></i>Setup Guide
-                            </button>
-                            <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-refresh-btn">
-                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                            </button>
-                            <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-container-policies-btn" data-bs-toggle="modal" data-bs-target="#cosmosThroughputContainerModal">
-                                <i class="bi bi-sliders me-1"></i>Containers
-                            </button>
-                            <button type="button" class="btn btn-outline-primary btn-sm" id="cosmos-throughput-convert-autoscale-btn" title="Convert database manual throughput to Cosmos autoscale">
-                                <i class="bi bi-lightning-charge me-1"></i>Convert
-                            </button>
-                            <button type="button" class="btn btn-outline-primary btn-sm" id="cosmos-throughput-scale-up-btn">
-                                <i class="bi bi-arrow-up-circle me-1"></i>Scale Up
-                            </button>
-                            <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-scale-down-btn">
-                                <i class="bi bi-arrow-down-circle me-1"></i>Scale Down
-                            </button>
-                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" id="cosmos-throughput-setup-guide-btn" data-bs-toggle="modal" data-bs-target="#cosmosThroughputSetupModal">
+                            <i class="bi bi-journal-text me-1"></i>Setup Guide
+                        </button>
+                    </div>
+
+                    <div class="d-flex flex-wrap gap-2 mb-3" role="group" aria-label="Cosmos throughput actions">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-refresh-btn">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                        <button type="button" class="btn btn-outline-success btn-sm" id="cosmos-throughput-validate-access-btn">
+                            <i class="bi bi-shield-check me-1"></i>Validate Access
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-container-policies-btn" data-bs-toggle="modal" data-bs-target="#cosmosThroughputContainerModal">
+                            <i class="bi bi-sliders me-1"></i>Containers
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="cosmos-throughput-convert-autoscale-btn" title="Convert database manual throughput to Cosmos autoscale">
+                            <i class="bi bi-lightning-charge me-1"></i>Convert
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="cosmos-throughput-scale-up-btn">
+                            <i class="bi bi-arrow-up-circle me-1"></i>Scale Up
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-scale-down-btn">
+                            <i class="bi bi-arrow-down-circle me-1"></i>Scale Down
+                        </button>
                     </div>
 
                     <div class="alert alert-info small mb-3">
@@ -4186,93 +4190,106 @@
                             </div>
                         </div>
 
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_metrics_window_minutes" class="form-label">Metrics Window</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="cosmos_throughput_metrics_window_minutes" name="cosmos_throughput_metrics_window_minutes" min="1" max="60" value="{{ settings.cosmos_throughput_metrics_window_minutes }}">
-                                    <span class="input-group-text">min</span>
+                        <div class="border rounded p-3 mb-3">
+                            <h6 class="mb-3">Metrics Window</h6>
+                            <div class="row g-3">
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_metrics_window_minutes" class="form-label">Metrics Window</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_metrics_window_minutes" name="cosmos_throughput_metrics_window_minutes" min="1" max="60" value="{{ settings.cosmos_throughput_metrics_window_minutes }}">
+                                        <span class="input-group-text">min</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_scale_up_threshold_percent" class="form-label">Scale Up At</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="cosmos_throughput_scale_up_threshold_percent" name="cosmos_throughput_scale_up_threshold_percent" min="1" max="100" value="{{ settings.cosmos_throughput_scale_up_threshold_percent }}">
-                                    <span class="input-group-text">%</span>
-                                </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_scale_down_threshold_percent" class="form-label">Scale Down At</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="cosmos_throughput_scale_down_threshold_percent" name="cosmos_throughput_scale_down_threshold_percent" min="0" max="99" value="{{ settings.cosmos_throughput_scale_down_threshold_percent }}">
-                                    <span class="input-group-text">%</span>
-                                </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_min_ru" class="form-label">Minimum RU/s</label>
-                                <input type="number" class="form-control" id="cosmos_throughput_min_ru" name="cosmos_throughput_min_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_min_ru }}">
                             </div>
                         </div>
 
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6 col-xl-3">
-                                <div class="form-check form-switch mt-4 pt-2">
-                                    <input class="form-check-input" type="checkbox" id="cosmos_throughput_auto_scale_up_enabled" name="cosmos_throughput_auto_scale_up_enabled" {% if settings.cosmos_throughput_auto_scale_up_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="cosmos_throughput_auto_scale_up_enabled">Auto scale up</label>
+                        <div class="border rounded p-3 mb-3" id="cosmos-throughput-scale-up-policy">
+                            <h6 class="mb-3">Scale Up Policy</h6>
+                            <div class="row g-3 align-items-start">
+                                <div class="col-md-6 col-xl-3">
+                                    <div class="form-check form-switch mt-4 pt-2">
+                                        <input class="form-check-input" type="checkbox" id="cosmos_throughput_auto_scale_up_enabled" name="cosmos_throughput_auto_scale_up_enabled" {% if settings.cosmos_throughput_auto_scale_up_enabled %}checked{% endif %}>
+                                        <label class="form-check-label" for="cosmos_throughput_auto_scale_up_enabled">Auto scale up</label>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_scale_up_step_ru" class="form-label">Scale Up Step</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="cosmos_throughput_scale_up_step_ru" name="cosmos_throughput_scale_up_step_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_scale_up_step_ru }}">
-                                    <span class="input-group-text">RU/s</span>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_up_threshold_percent" class="form-label">Scale Up At</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_up_threshold_percent" name="cosmos_throughput_scale_up_threshold_percent" min="1" max="100" value="{{ settings.cosmos_throughput_scale_up_threshold_percent }}">
+                                        <span class="input-group-text">%</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_scale_up_cooldown_minutes" class="form-label">Scale Up Interval</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="cosmos_throughput_scale_up_cooldown_minutes" name="cosmos_throughput_scale_up_cooldown_minutes" min="1" max="1440" value="{{ settings.cosmos_throughput_scale_up_cooldown_minutes }}">
-                                    <span class="input-group-text">min</span>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_up_step_ru" class="form-label">Scale Up Step</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_up_step_ru" name="cosmos_throughput_scale_up_step_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_scale_up_step_ru }}">
+                                        <span class="input-group-text">RU/s</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_max_ru" class="form-label">Maximum RU/s</label>
-                                <input type="number" class="form-control" id="cosmos_throughput_max_ru" name="cosmos_throughput_max_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_max_ru }}">
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_up_cooldown_minutes" class="form-label">Scale Up Interval</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_up_cooldown_minutes" name="cosmos_throughput_scale_up_cooldown_minutes" min="1" max="1440" value="{{ settings.cosmos_throughput_scale_up_cooldown_minutes }}">
+                                        <span class="input-group-text">min</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_max_ru" class="form-label">Maximum RU/s</label>
+                                    <input type="number" class="form-control" id="cosmos_throughput_max_ru" name="cosmos_throughput_max_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_max_ru }}">
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <div class="form-check mt-4 pt-2">
+                                        <input class="form-check-input" type="checkbox" id="cosmos_throughput_ignore_max_limit" name="cosmos_throughput_ignore_max_limit" {% if settings.cosmos_throughput_ignore_max_limit %}checked{% endif %}>
+                                        <label class="form-check-label" for="cosmos_throughput_ignore_max_limit">Ignore maximum guardrail</label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6 col-xl-3">
-                                <div class="form-check form-switch mt-4 pt-2">
-                                    <input class="form-check-input" type="checkbox" id="cosmos_throughput_auto_scale_down_enabled" name="cosmos_throughput_auto_scale_down_enabled" {% if settings.cosmos_throughput_auto_scale_down_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="cosmos_throughput_auto_scale_down_enabled">Auto scale down</label>
+                        <div class="border rounded p-3 mb-3" id="cosmos-throughput-scale-down-policy">
+                            <h6 class="mb-3">Scale Down Policy</h6>
+                            <div class="row g-3 align-items-start">
+                                <div class="col-md-6 col-xl-3">
+                                    <div class="form-check form-switch mt-4 pt-2">
+                                        <input class="form-check-input" type="checkbox" id="cosmos_throughput_auto_scale_down_enabled" name="cosmos_throughput_auto_scale_down_enabled" {% if settings.cosmos_throughput_auto_scale_down_enabled %}checked{% endif %}>
+                                        <label class="form-check-label" for="cosmos_throughput_auto_scale_down_enabled">Auto scale down</label>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_scale_down_step_ru" class="form-label">Scale Down Step</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="cosmos_throughput_scale_down_step_ru" name="cosmos_throughput_scale_down_step_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_scale_down_step_ru }}">
-                                    <span class="input-group-text">RU/s</span>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_down_threshold_percent" class="form-label">Scale Down At</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_down_threshold_percent" name="cosmos_throughput_scale_down_threshold_percent" min="0" max="99" value="{{ settings.cosmos_throughput_scale_down_threshold_percent }}">
+                                        <span class="input-group-text">%</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <label for="cosmos_throughput_scale_down_cooldown_minutes" class="form-label">Scale Down Interval</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="cosmos_throughput_scale_down_cooldown_minutes" name="cosmos_throughput_scale_down_cooldown_minutes" min="1" max="1440" value="{{ settings.cosmos_throughput_scale_down_cooldown_minutes }}">
-                                    <span class="input-group-text">min</span>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_down_step_ru" class="form-label">Scale Down Step</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_down_step_ru" name="cosmos_throughput_scale_down_step_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_scale_down_step_ru }}">
+                                        <span class="input-group-text">RU/s</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-md-6 col-xl-3">
-                                <div class="form-check mt-2">
-                                    <input class="form-check-input" type="checkbox" id="cosmos_throughput_ignore_min_limit" name="cosmos_throughput_ignore_min_limit" {% if settings.cosmos_throughput_ignore_min_limit %}checked{% endif %}>
-                                    <label class="form-check-label" for="cosmos_throughput_ignore_min_limit">Ignore minimum guardrail</label>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_down_cooldown_minutes" class="form-label">Scale Down Interval</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_down_cooldown_minutes" name="cosmos_throughput_scale_down_cooldown_minutes" min="1" max="1440" value="{{ settings.cosmos_throughput_scale_down_cooldown_minutes }}">
+                                        <span class="input-group-text">min</span>
+                                    </div>
                                 </div>
-                                <div class="form-check mt-2">
-                                    <input class="form-check-input" type="checkbox" id="cosmos_throughput_ignore_max_limit" name="cosmos_throughput_ignore_max_limit" {% if settings.cosmos_throughput_ignore_max_limit %}checked{% endif %}>
-                                    <label class="form-check-label" for="cosmos_throughput_ignore_max_limit">Ignore maximum guardrail</label>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_min_ru" class="form-label">Minimum RU/s</label>
+                                    <input type="number" class="form-control" id="cosmos_throughput_min_ru" name="cosmos_throughput_min_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_min_ru }}">
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <div class="form-check mt-4 pt-2">
+                                        <input class="form-check-input" type="checkbox" id="cosmos_throughput_ignore_min_limit" name="cosmos_throughput_ignore_min_limit" {% if settings.cosmos_throughput_ignore_min_limit %}checked{% endif %}>
+                                        <label class="form-check-label" for="cosmos_throughput_ignore_min_limit">Ignore minimum guardrail</label>
+                                    </div>
                                 </div>
                             </div>
                         </div>
+
+                        <div id="cosmos-throughput-validation-message" class="alert alert-danger d-none" role="alert" aria-live="polite"></div>
 
                         <div class="border rounded p-3 mb-3">
                             <div class="form-check form-switch mb-3">
@@ -4375,7 +4392,7 @@
                             </div>
                             <div class="modal-body">
                                 <div class="alert alert-info small mb-3">
-                                    Refresh runs the same checks automation depends on: resource identity, Azure Resource Manager throughput reads, container discovery, and Azure Monitor metrics.
+                                    Validate Access runs the same read checks automation depends on using the current form values: resource identity, Azure Resource Manager throughput reads, container discovery, and Azure Monitor metrics.
                                 </div>
                                 <div class="mb-3">
                                     <h6>Required Azure Access</h6>
@@ -4406,7 +4423,7 @@
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
                                 <button type="button" class="btn btn-primary" id="cosmos-throughput-run-setup-test-btn" data-bs-dismiss="modal">
-                                    <i class="bi bi-play-circle me-1"></i>Run Test
+                                    <i class="bi bi-shield-check me-1"></i>Validate Access
                                 </button>
                             </div>
                         </div>
@@ -6679,9 +6696,21 @@
                         Configure Azure Document Intelligence settings.
                     </p>
                     <div class="mb-3">
-                        <label for="document_intelligence_pdf_image_extraction_mode" class="form-label">
-                            PDF and Image Extraction Mode
-                        </label>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <label for="document_intelligence_pdf_image_extraction_mode" class="form-label mb-0">
+                                PDF and Image Extraction Mode
+                            </label>
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-secondary rounded-circle"
+                                data-bs-toggle="modal"
+                                data-bs-target="#documentIntelligenceExtractionHelpModal"
+                                aria-label="Document Intelligence extraction guidance"
+                                title="Document Intelligence extraction guidance"
+                            >
+                                <i class="bi bi-question-lg" aria-hidden="true"></i>
+                            </button>
+                        </div>
                         <select
                             class="form-select"
                             id="document_intelligence_pdf_image_extraction_mode"
@@ -6693,9 +6722,55 @@
                             <option value="layout" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'layout' %}selected{% endif %}>
                                 Layout - richer structure, tables, and checkbox states
                             </option>
+                            <option value="auto" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'auto' %}selected{% endif %}>
+                                Auto - sample first pages, then choose Read or Layout
+                            </option>
                         </select>
                         <div class="form-text">
-                            Layout captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It can take longer to parse than Read.
+                            Layout captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected.
+                        </div>
+                        <div
+                            class="mt-3 {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') != 'auto' %}d-none{% endif %}"
+                            id="document_intelligence_auto_sample_pages_group"
+                        >
+                            <label for="document_intelligence_auto_sample_pages" class="form-label">
+                                Auto Sample Pages
+                            </label>
+                            <input
+                                type="number"
+                                class="form-control"
+                                id="document_intelligence_auto_sample_pages"
+                                name="document_intelligence_auto_sample_pages"
+                                min="1"
+                                max="20"
+                                value="{{ settings.document_intelligence_auto_sample_pages|default(3) }}"
+                            >
+                            <div class="form-text">
+                                Auto samples this many first PDF pages with Layout. If it detects tables or selection marks, the full PDF uses Layout; otherwise it finishes with Read. Images use Layout in Auto mode.
+                            </div>
+                        </div>
+                        <div class="alert alert-light border mt-3 mb-0 small" role="note">
+                            <div><strong>Read:</strong> fastest and lowest-cost path for plain text PDFs and images.</div>
+                            <div><strong>Layout:</strong> best for tables, section structure, page layout, forms, and checkbox states. Expect more latency and a 6X increase for every 1000 pages.</div>
+                            <div><strong>Auto:</strong> samples the first pages, then uses Layout only when the sample shows tables or selection marks.</div>
+                        </div>
+                    </div>
+                    <div class="modal fade" id="documentIntelligenceExtractionHelpModal" tabindex="-1" aria-labelledby="documentIntelligenceExtractionHelpModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="documentIntelligenceExtractionHelpModalLabel">Read, Layout, and Auto</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p><strong>Choose Read</strong> for mostly text-based PDFs and images when speed and cost matter most.</p>
+                                    <p><strong>Choose Layout</strong> when document structure matters: tables, page layout, headings, forms, checked or unchecked boxes, and selection marks. Layout is the better extraction path for those documents, but it adds latency and has a 6X increase for every 1000 pages.</p>
+                                    <p><strong>Choose Auto</strong> when admins want the platform to decide. Auto samples the configured number of first PDF pages with Layout. If those pages contain tables or selection marks, the full PDF is extracted with Layout; otherwise it is extracted with Read. Images are extracted with Layout in Auto mode because they are single-page inputs and benefit from spatial structure detection.</p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="form-group form-check form-switch mb-3 d-flex align-items-center">

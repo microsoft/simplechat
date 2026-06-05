@@ -2,8 +2,8 @@
 # test_cosmos_throughput_autoscale_logic.py
 """
 Functional test for Cosmos throughput autoscale decision logic.
-Version: 0.241.160
-Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159; migrateToAutoscale ARM action fix added in 0.241.160
+Version: 0.241.162
+Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159; migrateToAutoscale ARM action fix added in 0.241.160; save validation added in 0.241.161; access validation added in 0.241.162
 
 This test ensures that Cosmos DB throughput automation scales the shared
 SimpleChat database up and down using separate thresholds, cooldowns, and
@@ -26,10 +26,12 @@ import functions_cosmos_throughput as cosmos_throughput
 
 from functions_cosmos_throughput import (
     _build_throughput_payload,
+    build_cosmos_throughput_access_validation,
     calculate_manual_scale_target,
     calculate_scale_decision,
     get_container_policy,
     normalize_cosmos_throughput_settings,
+    validate_cosmos_throughput_policy_settings,
 )
 
 
@@ -422,6 +424,113 @@ def test_manual_to_autoscale_update_uses_migration_action():
     assert result['to_ru'] == 5000
 
 
+def test_policy_validation_rejects_invalid_global_thresholds_and_intervals():
+    """Invalid global throughput policy values should block Admin Settings saves."""
+    errors = validate_cosmos_throughput_policy_settings({
+        **_base_settings(),
+        'cosmos_throughput_metrics_window_minutes': 10,
+        'cosmos_throughput_scale_up_threshold_percent': 60,
+        'cosmos_throughput_scale_down_threshold_percent': 70,
+        'cosmos_throughput_scale_up_cooldown_minutes': 5,
+        'cosmos_throughput_scale_down_cooldown_minutes': 9,
+    })
+
+    assert any('Scale Up At must be higher than Scale Down At' in error for error in errors)
+    assert any('Scale Up Interval must be greater than or equal to the Metrics Window' in error for error in errors)
+    assert any('Scale Down Interval must be greater than or equal to the Metrics Window' in error for error in errors)
+
+
+def test_policy_validation_rejects_invalid_container_policy_values():
+    """Invalid enabled container policies should block Admin Settings saves."""
+    errors = validate_cosmos_throughput_policy_settings({
+        **_base_settings(),
+        'cosmos_throughput_metrics_window_minutes': 10,
+        'cosmos_throughput_enforce_container_defaults': False,
+        'cosmos_throughput_container_policies': {
+            'messages': {
+                'container_name': 'messages',
+                'enabled': True,
+                'scale_up_threshold_percent': 50,
+                'scale_down_threshold_percent': 70,
+                'scale_up_cooldown_minutes': 5,
+                'scale_down_cooldown_minutes': 8,
+            },
+        },
+    })
+
+    assert any("Container 'messages' policy" in error for error in errors)
+    assert any('Scale Up At must be higher than Scale Down At' in error for error in errors)
+    assert any('Scale Up Interval must be greater than or equal to the Metrics Window' in error for error in errors)
+    assert any('Scale Down Interval must be greater than or equal to the Metrics Window' in error for error in errors)
+
+
+def test_access_validation_reports_successful_cosmos_checks():
+    """Access validation should pass when configuration, throughput, containers, and metrics are available."""
+    validation = build_cosmos_throughput_access_validation({
+        'configured': True,
+        'throughput': {
+            'is_scalable': True,
+            'mode': 'autoscale',
+            'current_ru': 5000,
+        },
+        'containers': [
+            {
+                'container_name': 'messages',
+                'is_scalable': False,
+            },
+        ],
+        'metrics': {
+            'normalized_ru_percent': 42,
+        },
+        'metric_error': '',
+        'container_error': '',
+    })
+
+    assert validation['success'] is True
+    assert validation['variant'] == 'success'
+    assert all(check['passed'] for check in validation['checks'])
+
+
+def test_access_validation_reports_configuration_and_permission_failures():
+    """Access validation should explain missing config, throughput targets, and metrics failures."""
+    missing_config_validation = build_cosmos_throughput_access_validation({
+        'configured': False,
+        'error': 'Missing Cosmos resource settings: subscription_id',
+    })
+
+    assert missing_config_validation['success'] is False
+    assert any(
+        check['name'] == 'configuration' and not check['passed']
+        for check in missing_config_validation['checks']
+    )
+
+    access_validation = build_cosmos_throughput_access_validation({
+        'configured': True,
+        'throughput': {
+            'is_scalable': False,
+            'mode': 'container_or_serverless',
+        },
+        'containers': [],
+        'metric_error': 'metrics read forbidden',
+        'container_error': 'containers read forbidden',
+    })
+
+    assert access_validation['success'] is False
+    assert access_validation['variant'] == 'danger'
+    assert any(
+        check['name'] == 'throughput_read' and not check['passed']
+        for check in access_validation['checks']
+    )
+    assert any(
+        check['name'] == 'container_discovery' and check['message'] == 'containers read forbidden'
+        for check in access_validation['checks']
+    )
+    assert any(
+        check['name'] == 'metrics_read' and check['message'] == 'metrics read forbidden'
+        for check in access_validation['checks']
+    )
+
+
 if __name__ == "__main__":
     tests = [
         test_scales_up_when_utilization_is_high,
@@ -437,6 +546,10 @@ if __name__ == "__main__":
         test_global_container_policy_converts_manual_containers_before_scaling,
         test_manual_to_autoscale_payload_uses_autoscale_settings,
         test_manual_to_autoscale_update_uses_migration_action,
+        test_policy_validation_rejects_invalid_global_thresholds_and_intervals,
+        test_policy_validation_rejects_invalid_container_policy_values,
+        test_access_validation_reports_successful_cosmos_checks,
+        test_access_validation_reports_configuration_and_permission_failures,
     ]
     results = []
     for test in tests:

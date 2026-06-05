@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Cosmos throughput controls.
 
-Version: 0.241.159
+Version: 0.241.162
 Implemented in: 0.241.147
 
 This test ensures the Scale tab exposes Cosmos throughput monitoring and
@@ -13,7 +13,9 @@ version 0.241.153. Aggregate-only metric warning coverage was added in
 version 0.241.154 and clarified in version 0.241.155. Version 0.241.156
 keeps coverage aligned with the REST metadata metrics path. Version 0.241.157
 adds Metrics Window cadence copy coverage. Version 0.241.159 adds native
-Cosmos manual-to-autoscale conversion coverage.
+Cosmos manual-to-autoscale conversion coverage. Version 0.241.161 adds
+grouped scale-up/scale-down policy UI and save-blocking validation coverage.
+Version 0.241.162 adds Validate Access setup testing coverage.
 """
 
 import re
@@ -53,12 +55,16 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         "cosmos_throughput_max_ru",
         "cosmos_throughput_ignore_min_limit",
         "cosmos_throughput_ignore_max_limit",
+        "cosmos-throughput-scale-up-policy",
+        "cosmos-throughput-scale-down-policy",
+        "cosmos-throughput-validation-message",
         "cosmos_throughput_convert_manual_to_autoscale_enabled",
         "cosmos_throughput_enforce_container_defaults",
         "cosmos-throughput-setup-guide-btn",
         "cosmosThroughputSetupModal",
         "cosmos-throughput-run-setup-test-btn",
         "cosmos-throughput-refresh-btn",
+        "cosmos-throughput-validate-access-btn",
         "cosmos-throughput-container-policies-btn",
         "cosmos-throughput-convert-autoscale-btn",
         "cosmos-throughput-scale-up-btn",
@@ -81,6 +87,9 @@ def test_admin_cosmos_throughput_controls_render_from_template():
     assert "admin_settings.js') }}?v={{ config['VERSION'] }}" in template
     assert 'Enforce global policy for all containers' in template
     assert 'Convert manual throughput to Cosmos autoscale' in template
+    assert 'Scale Up Policy' in template
+    assert 'Scale Down Policy' in template
+    assert 'Validate Access runs the same read checks automation depends on using the current form values' in template
     assert 'Apply Global Policy' in template
 
     card_match = re.search(
@@ -89,6 +98,7 @@ def test_admin_cosmos_throughput_controls_render_from_template():
     )
     assert card_match, "Expected to find the Cosmos throughput settings card."
     card_html = card_match.group(0)
+    assert card_html.index('id="cosmos-throughput-setup-guide-btn"') < card_html.index('id="cosmos-throughput-refresh-btn"')
     card_html = re.sub(r"\{\%[^%]*\%\}", "", card_html)
     card_html = re.sub(r"\{\{[^}]*\}\}", "", card_html)
     modal_match = re.search(
@@ -120,6 +130,8 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         expect(page.get_by_label("Enable Cosmos throughput automation")).to_be_visible()
         expect(page.get_by_label("Auto scale up")).to_be_visible()
         expect(page.get_by_label("Auto scale down")).to_be_visible()
+        expect(page.get_by_text("Scale Up Policy")).to_be_visible()
+        expect(page.get_by_text("Scale Down Policy")).to_be_visible()
         expect(page.get_by_label("Scale Up At")).to_be_visible()
         expect(page.get_by_label("Scale Down At")).to_be_visible()
         expect(page.get_by_label("Minimum RU/s")).to_be_visible()
@@ -130,6 +142,7 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         expect(page.get_by_label("Enforce global policy for all containers")).to_be_visible()
         expect(page.get_by_role("button", name="Setup Guide")).to_be_visible()
         expect(page.get_by_role("button", name="Refresh")).to_be_visible()
+        expect(page.get_by_role("button", name="Validate Access")).to_be_visible()
         expect(page.get_by_role("button", name="Containers")).to_be_visible()
         expect(page.get_by_role("button", name="Convert")).to_be_visible()
         expect(page.get_by_role("button", name="Scale Up")).to_be_visible()
@@ -197,3 +210,32 @@ def test_global_container_policy_enforcement_ui_logic():
     assert "cosmos_throughput_enforce_container_defaults" in source
     assert "convert_manual_to_autoscale_enabled" in source
     assert "cosmos_throughput_convert_manual_to_autoscale_enabled" in source
+
+
+def test_cosmos_throughput_policy_validation_blocks_invalid_saves():
+    """The frontend should block invalid Cosmos throughput policy saves."""
+    source = ADMIN_JS.read_text(encoding="utf-8")
+
+    assert "function validateCosmosThroughputSettings" in source
+    assert "cosmos-throughput-validation-message" in source
+    assert "Scale Up At must be higher than Scale Down At" in source
+    assert "Scale Up Interval must be greater than or equal to the Metrics Window" in source
+    assert "Scale Down Interval must be greater than or equal to the Metrics Window" in source
+    assert "e.preventDefault();" in source
+    assert "e.stopImmediatePropagation();" in source
+    assert "if (event.defaultPrevented)" in source
+
+
+def test_cosmos_throughput_validate_access_uses_current_form_values():
+    """Validate Access should test unsaved Cosmos throughput form values separately from Refresh."""
+    source = ADMIN_JS.read_text(encoding="utf-8")
+
+    assert "function buildCosmosThroughputAccessPayload" in source
+    assert "function validateCosmosThroughputAccess" in source
+    assert "/api/admin/settings/cosmos-throughput/validate-access" in source
+    assert "cosmos_throughput_subscription_id: getFieldValue('cosmos_throughput_subscription_id')" in source
+    assert "cosmos_throughput_resource_group: getFieldValue('cosmos_throughput_resource_group')" in source
+    assert "cosmos_throughput_account_name: getFieldValue('cosmos_throughput_account_name')" in source
+    assert "cosmos_throughput_database_name: getFieldValue('cosmos_throughput_database_name')" in source
+    assert "document.getElementById('cosmos-throughput-validate-access-btn')" in source
+    assert "document.getElementById('cosmos-throughput-run-setup-test-btn')" in source

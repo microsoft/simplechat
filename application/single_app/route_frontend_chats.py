@@ -562,6 +562,8 @@ def register_route_frontend_chats(app):
                 extraction_mode = 'read'
                 if file_ext == '.pdf' or is_image_file:
                     extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+                    if extraction_mode == 'auto':
+                        extraction_mode = 'layout' if is_image_file else 'read'
                 extracted_content_raw  = extract_content_with_azure_di(
                     temp_file_path,
                     extraction_mode=extraction_mode

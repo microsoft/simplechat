@@ -16,9 +16,12 @@ from functions_appinsights import log_event
 from functions_cosmos_throughput import (
     calculate_manual_to_autoscale_target,
     calculate_manual_scale_target,
+    build_cosmos_throughput_access_validation,
     build_runtime_update,
     CosmosThroughputError,
+    get_cosmos_throughput_setting_keys,
     get_cosmos_throughput_status,
+    normalize_cosmos_throughput_settings,
     set_database_throughput,
 )
 from azure.identity import DefaultAzureCredential
@@ -496,6 +499,63 @@ def register_route_backend_settings(app):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to load Cosmos throughput status.'}), 500
+
+    @app.route('/api/admin/settings/cosmos-throughput/validate-access', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def validate_cosmos_throughput_admin_access():
+        """Validate Cosmos throughput resource configuration and access without saving settings."""
+        validation_id = str(uuid.uuid4())
+        validation_start = time.perf_counter()
+        try:
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+            payload = request.get_json(silent=True) or {}
+            base_settings = get_settings()
+            candidate_settings = dict(base_settings or {})
+            for key in get_cosmos_throughput_setting_keys():
+                if key in payload:
+                    candidate_settings[key] = payload.get(key)
+            candidate_settings = normalize_cosmos_throughput_settings(candidate_settings)
+
+            log_event(
+                '[CosmosThroughput] Admin access validation requested.',
+                extra={'validation_id': validation_id, 'admin_email': admin_email},
+                level=logging.INFO,
+            )
+            status = get_cosmos_throughput_status(
+                candidate_settings,
+                include_metrics=True,
+                refresh_id=validation_id,
+            )
+            validation = build_cosmos_throughput_access_validation(status)
+            log_event(
+                '[CosmosThroughput] Admin access validation completed.',
+                extra={
+                    'validation_id': validation_id,
+                    'success': validation.get('success'),
+                    'capacity_scope': status.get('capacity_scope'),
+                    'elapsed_ms': int((time.perf_counter() - validation_start) * 1000),
+                },
+                level=logging.INFO if validation.get('success') else logging.WARNING,
+            )
+            return jsonify({
+                **validation,
+                'status': status,
+            }), 200
+        except Exception as exc:
+            log_event(
+                '[CosmosThroughput] Admin access validation failed.',
+                extra={
+                    'validation_id': validation_id,
+                    'error': str(exc),
+                    'elapsed_ms': int((time.perf_counter() - validation_start) * 1000),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to validate Cosmos throughput access.'}), 500
 
     @app.route('/api/admin/settings/cosmos-throughput/scale', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -1397,9 +1457,10 @@ def _test_azure_doc_intelligence_connection(payload):
     extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode(
         payload.get('document_intelligence_pdf_image_extraction_mode')
     )
-    model_id = "prebuilt-layout" if extraction_mode == "layout" else "prebuilt-read"
+    test_extraction_mode = "layout" if extraction_mode in ("layout", "auto") else "read"
+    model_id = "prebuilt-layout" if test_extraction_mode == "layout" else "prebuilt-read"
     analyze_options = {}
-    if extraction_mode == "layout":
+    if test_extraction_mode == "layout":
         analyze_options["output_content_format"] = "markdown"
 
     if enable_apim:
@@ -1472,6 +1533,8 @@ def _test_azure_doc_intelligence_connection(payload):
         time.sleep(10)
 
     if status == "succeeded":
+        if extraction_mode == "auto":
+            return jsonify({'message': 'Azure document intelligence Auto connection successful. Auto samples PDFs with Layout during ingestion, then finishes with Read or Layout.'}), 200
         return jsonify({'message': f'Azure document intelligence {extraction_mode} connection successful'}), 200
     else:
         return jsonify({'error': f"Document Intelligence error: {status}"}), 500

@@ -426,6 +426,8 @@ class SmartHttpPlugin:
                     return f"📄 **PDF TOO LARGE FOR PROCESSING**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes (exceeds {max_di_size:,} byte limit for Document Intelligence)\n\n⚠️  This PDF is too large for automated text extraction. Please try:\n• A smaller PDF document\n• Specific sections of the document\n• Contact the document provider for a text version"
                 
                 extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+                if extraction_mode == 'auto':
+                    extraction_mode = 'read'
                 pages_data = extract_content_with_azure_di(
                     temp_file_path,
                     extraction_mode=extraction_mode

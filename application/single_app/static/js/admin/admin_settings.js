@@ -212,6 +212,163 @@ function setCosmosThroughputMessage(message, variant = 'info') {
     messageElement.classList.toggle('d-none', !message);
 }
 
+function setCosmosThroughputValidationMessage(errors) {
+    const messageElement = document.getElementById('cosmos-throughput-validation-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = Array.isArray(errors) && errors.length > 0 ? errors.join(' ') : '';
+    messageElement.className = 'alert alert-danger';
+    messageElement.classList.toggle('d-none', !errors || errors.length === 0);
+}
+
+const COSMOS_THROUGHPUT_VALIDATION_FIELD_IDS = [
+    'cosmos_throughput_metrics_window_minutes',
+    'cosmos_throughput_scale_up_threshold_percent',
+    'cosmos_throughput_scale_down_threshold_percent',
+    'cosmos_throughput_scale_up_cooldown_minutes',
+    'cosmos_throughput_scale_down_cooldown_minutes'
+];
+
+function clearCosmosThroughputValidationState() {
+    COSMOS_THROUGHPUT_VALIDATION_FIELD_IDS.forEach(fieldId => {
+        const field = document.getElementById(fieldId);
+        if (!field) {
+            return;
+        }
+        field.classList.remove('is-invalid');
+        field.setCustomValidity('');
+    });
+
+    document.querySelectorAll('.cosmos-container-policy-input.is-invalid').forEach(input => {
+        input.classList.remove('is-invalid');
+        input.setCustomValidity('');
+    });
+    setCosmosThroughputValidationMessage([]);
+}
+
+function getPolicyNumericValue(policy, fieldName, fallbackValue) {
+    const numericValue = Number(policy?.[fieldName]);
+    return Number.isNaN(numericValue) ? fallbackValue : numericValue;
+}
+
+function markCosmosFieldInvalid(fieldId, message) {
+    const field = document.getElementById(fieldId);
+    if (!field) {
+        return null;
+    }
+    field.classList.add('is-invalid');
+    field.setCustomValidity(message);
+    return field;
+}
+
+function markCosmosContainerPolicyFieldsInvalid(containerName, fieldNames, message) {
+    const markedInputs = [];
+    const inputs = document.querySelectorAll('.cosmos-container-policy-input[data-container-name][data-policy-field]');
+    inputs.forEach(input => {
+        if (input.dataset.containerName !== containerName || !fieldNames.includes(input.dataset.policyField)) {
+            return;
+        }
+        input.classList.add('is-invalid');
+        input.setCustomValidity(message);
+        markedInputs.push(input);
+    });
+    return markedInputs;
+}
+
+function validateCosmosThroughputSettings(options = {}) {
+    clearCosmosThroughputValidationState();
+    if (!isFieldChecked('cosmos_throughput_autoscale_enabled')) {
+        return { isValid: true, errors: [] };
+    }
+
+    const errors = [];
+    const invalidFields = [];
+    const metricsWindow = getNumericFieldValue('cosmos_throughput_metrics_window_minutes', 5);
+    const scaleUpThreshold = getNumericFieldValue('cosmos_throughput_scale_up_threshold_percent', 90);
+    const scaleDownThreshold = getNumericFieldValue('cosmos_throughput_scale_down_threshold_percent', 70);
+    const scaleUpInterval = getNumericFieldValue('cosmos_throughput_scale_up_cooldown_minutes', 5);
+    const scaleDownInterval = getNumericFieldValue('cosmos_throughput_scale_down_cooldown_minutes', 20);
+
+    function addGlobalError(message, fieldIds) {
+        errors.push(`Cosmos throughput policy: ${message}`);
+        fieldIds.forEach(fieldId => {
+            const field = markCosmosFieldInvalid(fieldId, message);
+            if (field) {
+                invalidFields.push(field);
+            }
+        });
+    }
+
+    if (scaleUpThreshold <= scaleDownThreshold) {
+        addGlobalError('Scale Up At must be higher than Scale Down At.', [
+            'cosmos_throughput_scale_up_threshold_percent',
+            'cosmos_throughput_scale_down_threshold_percent'
+        ]);
+    }
+    if (scaleUpInterval < metricsWindow) {
+        addGlobalError('Scale Up Interval must be greater than or equal to the Metrics Window.', [
+            'cosmos_throughput_metrics_window_minutes',
+            'cosmos_throughput_scale_up_cooldown_minutes'
+        ]);
+    }
+    if (scaleDownInterval < metricsWindow) {
+        addGlobalError('Scale Down Interval must be greater than or equal to the Metrics Window.', [
+            'cosmos_throughput_metrics_window_minutes',
+            'cosmos_throughput_scale_down_cooldown_minutes'
+        ]);
+    }
+
+    if (!isCosmosContainerPolicyEnforced()) {
+        const policies = collectCosmosContainerPolicies();
+        Object.entries(policies).forEach(([containerName, policy]) => {
+            if (policy?.enabled === false) {
+                return;
+            }
+
+            const policyScaleUpThreshold = getPolicyNumericValue(policy, 'scale_up_threshold_percent', scaleUpThreshold);
+            const policyScaleDownThreshold = getPolicyNumericValue(policy, 'scale_down_threshold_percent', scaleDownThreshold);
+            const policyScaleUpInterval = getPolicyNumericValue(policy, 'scale_up_cooldown_minutes', scaleUpInterval);
+            const policyScaleDownInterval = getPolicyNumericValue(policy, 'scale_down_cooldown_minutes', scaleDownInterval);
+
+            function addContainerError(message, fieldNames) {
+                errors.push(`Container '${containerName}' policy: ${message}`);
+                invalidFields.push(...markCosmosContainerPolicyFieldsInvalid(containerName, fieldNames, message));
+            }
+
+            if (policyScaleUpThreshold <= policyScaleDownThreshold) {
+                addContainerError('Scale Up At must be higher than Scale Down At.', [
+                    'scale_up_threshold_percent',
+                    'scale_down_threshold_percent'
+                ]);
+            }
+            if (policyScaleUpInterval < metricsWindow) {
+                addContainerError('Scale Up Interval must be greater than or equal to the Metrics Window.', [
+                    'scale_up_cooldown_minutes'
+                ]);
+            }
+            if (policyScaleDownInterval < metricsWindow) {
+                addContainerError('Scale Down Interval must be greater than or equal to the Metrics Window.', [
+                    'scale_down_cooldown_minutes'
+                ]);
+            }
+        });
+    }
+
+    if (errors.length === 0) {
+        return { isValid: true, errors: [] };
+    }
+
+    setCosmosThroughputValidationMessage(errors);
+    if (options.report && invalidFields.length > 0) {
+        document.getElementById('scale-tab')?.click();
+        invalidFields[0].focus({ preventScroll: false });
+        invalidFields[0].reportValidity();
+    }
+    return { isValid: false, errors };
+}
+
 function readCosmosContainerPolicies() {
     const policyField = document.getElementById('cosmos_throughput_container_policies_json');
     if (!policyField) {
@@ -328,6 +485,10 @@ function createPolicyNumberInput(containerName, fieldName, value, min, max, step
     input.dataset.containerName = containerName;
     input.dataset.policyField = fieldName;
     input.dataset.policyType = 'number';
+    input.addEventListener('input', () => {
+        input.classList.remove('is-invalid');
+        input.setCustomValidity('');
+    });
 
     wrapper.appendChild(input);
     return wrapper;
@@ -683,6 +844,85 @@ async function loadCosmosThroughputStatus(event = null) {
     }
 }
 
+function buildCosmosThroughputAccessPayload() {
+    return {
+        cosmos_throughput_autoscale_enabled: isFieldChecked('cosmos_throughput_autoscale_enabled'),
+        cosmos_throughput_auto_scale_up_enabled: isFieldChecked('cosmos_throughput_auto_scale_up_enabled'),
+        cosmos_throughput_auto_scale_down_enabled: isFieldChecked('cosmos_throughput_auto_scale_down_enabled'),
+        cosmos_throughput_subscription_id: getFieldValue('cosmos_throughput_subscription_id'),
+        cosmos_throughput_resource_group: getFieldValue('cosmos_throughput_resource_group'),
+        cosmos_throughput_account_name: getFieldValue('cosmos_throughput_account_name'),
+        cosmos_throughput_database_name: getFieldValue('cosmos_throughput_database_name'),
+        cosmos_throughput_metrics_window_minutes: getNumericFieldValue('cosmos_throughput_metrics_window_minutes', 5),
+        cosmos_throughput_scale_up_threshold_percent: getNumericFieldValue('cosmos_throughput_scale_up_threshold_percent', 90),
+        cosmos_throughput_scale_down_threshold_percent: getNumericFieldValue('cosmos_throughput_scale_down_threshold_percent', 70),
+        cosmos_throughput_scale_up_step_ru: getNumericFieldValue('cosmos_throughput_scale_up_step_ru', 1000),
+        cosmos_throughput_scale_down_step_ru: getNumericFieldValue('cosmos_throughput_scale_down_step_ru', 1000),
+        cosmos_throughput_scale_up_cooldown_minutes: getNumericFieldValue('cosmos_throughput_scale_up_cooldown_minutes', 5),
+        cosmos_throughput_scale_down_cooldown_minutes: getNumericFieldValue('cosmos_throughput_scale_down_cooldown_minutes', 20),
+        cosmos_throughput_min_ru: getNumericFieldValue('cosmos_throughput_min_ru', 1000),
+        cosmos_throughput_max_ru: getNumericFieldValue('cosmos_throughput_max_ru', 20000),
+        cosmos_throughput_ignore_min_limit: isFieldChecked('cosmos_throughput_ignore_min_limit'),
+        cosmos_throughput_ignore_max_limit: isFieldChecked('cosmos_throughput_ignore_max_limit'),
+        cosmos_throughput_convert_manual_to_autoscale_enabled: isFieldChecked('cosmos_throughput_convert_manual_to_autoscale_enabled'),
+        cosmos_throughput_enforce_container_defaults: isFieldChecked('cosmos_throughput_enforce_container_defaults'),
+        cosmos_throughput_container_policies: collectCosmosContainerPolicies()
+    };
+}
+
+function formatCosmosThroughputAccessValidationMessage(data) {
+    const baseMessage = data?.message || 'Cosmos throughput access validation completed.';
+    const failedChecks = Array.isArray(data?.checks)
+        ? data.checks.filter(check => !check?.passed)
+        : [];
+    if (failedChecks.length === 0) {
+        return baseMessage;
+    }
+
+    const details = failedChecks
+        .map(check => `${check.label || 'Check'}: ${check.message || 'Failed.'}`)
+        .join(' ');
+    return `${baseMessage} ${details}`;
+}
+
+async function validateCosmosThroughputAccess(triggerButton = null) {
+    const button = triggerButton || document.getElementById('cosmos-throughput-validate-access-btn');
+    if (button) {
+        setButtonBusy(button, true, 'Validating...');
+    }
+    setCosmosThroughputMessage('Validating Cosmos throughput configuration and access...', 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/cosmos-throughput/validate-access', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(buildCosmosThroughputAccessPayload())
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to validate Cosmos throughput access.');
+        }
+
+        if (data.status?.configured) {
+            updateCosmosThroughputStatusPanel(data.status);
+        }
+        setCosmosThroughputMessage(
+            formatCosmosThroughputAccessValidationMessage(data),
+            data.variant || (data.success ? 'success' : 'danger')
+        );
+    } catch (error) {
+        setCosmosThroughputMessage(error.message || 'Failed to validate Cosmos throughput access.', 'danger');
+    } finally {
+        if (button) {
+            setButtonBusy(button, false);
+        }
+    }
+}
+
 async function manuallyScaleCosmosThroughput(direction, containerName = '', triggerButton = null) {
     const button = triggerButton || document.getElementById(`cosmos-throughput-scale-${direction}-btn`);
     if (button) {
@@ -757,12 +997,23 @@ function setupCosmosThroughputControls() {
     if (automationToggle && automationSettings) {
         automationToggle.addEventListener('change', () => {
             automationSettings.classList.toggle('d-none', !automationToggle.checked);
+            validateCosmosThroughputSettings();
         });
         automationSettings.classList.toggle('d-none', !automationToggle.checked);
     }
 
+    COSMOS_THROUGHPUT_VALIDATION_FIELD_IDS.forEach(fieldId => {
+        const field = document.getElementById(fieldId);
+        if (!field) {
+            return;
+        }
+        field.addEventListener('input', () => validateCosmosThroughputSettings());
+        field.addEventListener('change', () => validateCosmosThroughputSettings());
+    });
+
     document.getElementById('cosmos-throughput-refresh-btn')?.addEventListener('click', loadCosmosThroughputStatus);
-    document.getElementById('cosmos-throughput-run-setup-test-btn')?.addEventListener('click', loadCosmosThroughputStatus);
+    document.getElementById('cosmos-throughput-validate-access-btn')?.addEventListener('click', event => validateCosmosThroughputAccess(event.currentTarget));
+    document.getElementById('cosmos-throughput-run-setup-test-btn')?.addEventListener('click', event => validateCosmosThroughputAccess(event.currentTarget));
     document.getElementById('cosmos-throughput-convert-autoscale-btn')?.addEventListener('click', event => convertCosmosThroughputToAutoscale('', event.currentTarget));
     document.getElementById('cosmos-throughput-scale-up-btn')?.addEventListener('click', () => manuallyScaleCosmosThroughput('up'));
     document.getElementById('cosmos-throughput-scale-down-btn')?.addEventListener('click', () => manuallyScaleCosmosThroughput('down'));
@@ -778,6 +1029,10 @@ function setupCosmosThroughputControls() {
     });
     document.getElementById('cosmos-throughput-apply-global-policy-btn')?.addEventListener('click', applyGlobalCosmosContainerPolicyToCurrentContainers);
     document.getElementById('cosmos-throughput-save-container-policies-btn')?.addEventListener('click', () => {
+        const validationResult = validateCosmosThroughputSettings({ report: true });
+        if (!validationResult.isValid) {
+            return;
+        }
         writeCosmosContainerPolicies(collectCosmosContainerPolicies());
         renderCosmosContainerMetrics(currentCosmosContainers);
         setCosmosThroughputMessage('Container throughput policies are staged. Save Admin Settings to persist them.', 'info');
@@ -1609,6 +1864,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (adminForm) {
         adminForm.addEventListener('submit', function(e) {
             try {
+                const cosmosValidationResult = validateCosmosThroughputSettings({ report: true });
+                if (!cosmosValidationResult.isValid) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    return;
+                }
+
                 console.log('🚀 Form submission started - gathering tab information...');
                 
                 // Capture the current active tab before form submission
@@ -3198,6 +3460,26 @@ function setupToggles() {
         });
     }
 
+    const documentIntelligenceExtractionMode = document.getElementById('document_intelligence_pdf_image_extraction_mode');
+    const documentIntelligenceAutoSamplePagesGroup = document.getElementById('document_intelligence_auto_sample_pages_group');
+    const documentIntelligenceAutoSamplePages = document.getElementById('document_intelligence_auto_sample_pages');
+    const updateDocumentIntelligenceAutoControls = () => {
+        if (!documentIntelligenceExtractionMode || !documentIntelligenceAutoSamplePagesGroup) {
+            return;
+        }
+        documentIntelligenceAutoSamplePagesGroup.classList.toggle('d-none', documentIntelligenceExtractionMode.value !== 'auto');
+    };
+    if (documentIntelligenceExtractionMode) {
+        updateDocumentIntelligenceAutoControls();
+        documentIntelligenceExtractionMode.addEventListener('change', function () {
+            updateDocumentIntelligenceAutoControls();
+            markFormAsModified();
+        });
+    }
+    if (documentIntelligenceAutoSamplePages) {
+        documentIntelligenceAutoSamplePages.addEventListener('input', markFormAsModified);
+    }
+
     const enableContentSafetyCheckbox = document.getElementById('enable_content_safety');
     if (enableContentSafetyCheckbox) {
         enableContentSafetyCheckbox.addEventListener('change', function() {
@@ -4611,11 +4893,13 @@ function setupTestButtons() {
 
             const enableApim = document.getElementById('enable_document_intelligence_apim').checked;
             const extractionMode = document.getElementById('document_intelligence_pdf_image_extraction_mode')?.value || 'read';
+            const autoSamplePages = document.getElementById('document_intelligence_auto_sample_pages')?.value || '3';
 
             const payload = {
                 test_type: 'azure_doc_intelligence',
                 enable_apim: enableApim,
-                document_intelligence_pdf_image_extraction_mode: extractionMode
+                document_intelligence_pdf_image_extraction_mode: extractionMode,
+                document_intelligence_auto_sample_pages: autoSamplePages
             };
 
             if (enableApim) {
@@ -6726,6 +7010,7 @@ function setupWalkthroughFieldListeners() {
             {selector: '#azure_document_intelligence_key', event: 'input'},
             {selector: '#azure_document_intelligence_authentication_type', event: 'change'},
             {selector: '#document_intelligence_pdf_image_extraction_mode', event: 'change'},
+            {selector: '#document_intelligence_auto_sample_pages', event: 'input'},
             {selector: '#azure_apim_document_intelligence_endpoint', event: 'input'},
             {selector: '#azure_apim_document_intelligence_subscription_key', event: 'input'},
             {selector: '#enable_document_intelligence_apim', event: 'change'}
@@ -7033,7 +7318,10 @@ function setupFormChangeTracking() {
     });
     
     // Reset form state when form is submitted
-    adminForm.addEventListener('submit', () => {
+    adminForm.addEventListener('submit', event => {
+        if (event.defaultPrevented) {
+            return;
+        }
         formModified = false;
         updateSaveButtonState();
     });

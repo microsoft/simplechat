@@ -266,7 +266,7 @@ def _append_selection_mark_summary(page_text):
     return f"{str(page_text or '').rstrip()}\n\n{summary}"
 
 
-def extract_content_with_azure_di(file_path, extraction_mode='read'):
+def extract_content_with_azure_di(file_path, extraction_mode='read', pages=None):
     """
     Extracts text page-by-page using Azure Document Intelligence.
     and returns a list of dicts, each containing page_number and content.
@@ -278,11 +278,15 @@ def extract_content_with_azure_di(file_path, extraction_mode='read'):
         analyze_options = {}
         if normalized_extraction_mode == "layout":
             analyze_options["output_content_format"] = "markdown"
+        if pages:
+            analyze_options["pages"] = str(pages)
         
         # Debug logging for troubleshooting
         debug_print(f"Starting Azure DI extraction for: {os.path.basename(file_path)}")
         debug_print(f"AZURE_ENVIRONMENT: {AZURE_ENVIRONMENT}")
         debug_print(f"Azure DI extraction mode: {normalized_extraction_mode}")
+        if pages:
+            debug_print(f"Azure DI page selection: {pages}")
 
         if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
             # Required format for Document Intelligence API version 2024-11-30
