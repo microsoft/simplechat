@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Cosmos throughput controls.
 
-Version: 0.241.157
+Version: 0.241.159
 Implemented in: 0.241.147
 
 This test ensures the Scale tab exposes Cosmos throughput monitoring and
@@ -12,7 +12,8 @@ cached status first render. Container policy enforcement coverage was added in
 version 0.241.153. Aggregate-only metric warning coverage was added in
 version 0.241.154 and clarified in version 0.241.155. Version 0.241.156
 keeps coverage aligned with the REST metadata metrics path. Version 0.241.157
-adds Metrics Window cadence copy coverage.
+adds Metrics Window cadence copy coverage. Version 0.241.159 adds native
+Cosmos manual-to-autoscale conversion coverage.
 """
 
 import re
@@ -52,12 +53,14 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         "cosmos_throughput_max_ru",
         "cosmos_throughput_ignore_min_limit",
         "cosmos_throughput_ignore_max_limit",
+        "cosmos_throughput_convert_manual_to_autoscale_enabled",
         "cosmos_throughput_enforce_container_defaults",
         "cosmos-throughput-setup-guide-btn",
         "cosmosThroughputSetupModal",
         "cosmos-throughput-run-setup-test-btn",
         "cosmos-throughput-refresh-btn",
         "cosmos-throughput-container-policies-btn",
+        "cosmos-throughput-convert-autoscale-btn",
         "cosmos-throughput-scale-up-btn",
         "cosmos-throughput-scale-down-btn",
         "cosmos_throughput_container_policies_json",
@@ -73,9 +76,11 @@ def test_admin_cosmos_throughput_controls_render_from_template():
     assert 'Total request units consumed during the selected metrics window' in template
     assert 'Highest normalized RU percentage Azure Monitor reported' in template
     assert 'Automation checks Cosmos throughput on the Metrics Window cadence' in template
+    assert 'Native Cosmos autoscale conversion is separate from SimpleChat scale-up and scale-down automation' in template
     assert 'window.cosmosThroughputCachedStatus' in template
     assert "admin_settings.js') }}?v={{ config['VERSION'] }}" in template
     assert 'Enforce global policy for all containers' in template
+    assert 'Convert manual throughput to Cosmos autoscale' in template
     assert 'Apply Global Policy' in template
 
     card_match = re.search(
@@ -121,10 +126,12 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         expect(page.get_by_label("Maximum RU/s")).to_be_visible()
         expect(page.get_by_label("Ignore minimum guardrail")).to_be_visible()
         expect(page.get_by_label("Ignore maximum guardrail")).to_be_visible()
+        expect(page.get_by_label("Convert manual throughput to Cosmos autoscale")).to_be_visible()
         expect(page.get_by_label("Enforce global policy for all containers")).to_be_visible()
         expect(page.get_by_role("button", name="Setup Guide")).to_be_visible()
         expect(page.get_by_role("button", name="Refresh")).to_be_visible()
         expect(page.get_by_role("button", name="Containers")).to_be_visible()
+        expect(page.get_by_role("button", name="Convert")).to_be_visible()
         expect(page.get_by_role("button", name="Scale Up")).to_be_visible()
         expect(page.get_by_role("button", name="Scale Down")).to_be_visible()
         expect(page.locator("#cosmos-throughput-run-setup-test-btn")).to_be_attached()
@@ -144,8 +151,11 @@ def test_container_metrics_table_uses_clarity_renderer():
     assert "configureButton.textContent = 'Configure'" not in source
     assert "container.database_name || ''" not in source
     assert "cell.colSpan = 7;" in source
+    assert "cell.colSpan = 8;" in source
     assert "getContainerRuUtilization(container)" in source
     assert "formatRequestUnits(container.request_units)" in source
+    assert "createCosmosAutoscaleConversionButton" in source
+    assert "/api/admin/settings/cosmos-throughput/convert-autoscale" in source
 
 
 def test_cached_cosmos_status_renders_before_refresh():
@@ -185,3 +195,5 @@ def test_global_container_policy_enforcement_ui_logic():
     assert "Apply Global Policy" not in source
     assert "applyGlobalCosmosContainerPolicyToCurrentContainers" in source
     assert "cosmos_throughput_enforce_container_defaults" in source
+    assert "convert_manual_to_autoscale_enabled" in source
+    assert "cosmos_throughput_convert_manual_to_autoscale_enabled" in source

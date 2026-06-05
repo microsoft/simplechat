@@ -257,7 +257,8 @@ function buildGlobalCosmosContainerPolicy(containerName = '') {
         min_ru: getNumericFieldValue('cosmos_throughput_min_ru', 1000),
         max_ru: getNumericFieldValue('cosmos_throughput_max_ru', 20000),
         ignore_min_limit: isFieldChecked('cosmos_throughput_ignore_min_limit'),
-        ignore_max_limit: isFieldChecked('cosmos_throughput_ignore_max_limit')
+        ignore_max_limit: isFieldChecked('cosmos_throughput_ignore_max_limit'),
+        convert_manual_to_autoscale_enabled: isFieldChecked('cosmos_throughput_convert_manual_to_autoscale_enabled')
     };
 }
 
@@ -268,6 +269,9 @@ function mergeRuntimePolicyFields(policy, existingPolicy) {
     }
     if (existingPolicy?.last_scale_down_at) {
         mergedPolicy.last_scale_down_at = existingPolicy.last_scale_down_at;
+    }
+    if (existingPolicy?.last_mode_conversion_at) {
+        mergedPolicy.last_mode_conversion_at = existingPolicy.last_mode_conversion_at;
     }
     return mergedPolicy;
 }
@@ -338,6 +342,14 @@ function createManualContainerScaleButton(containerName, direction, disabled) {
     button.title = direction === 'up' ? 'Scale this container up' : 'Scale this container down';
     button.setAttribute('aria-label', direction === 'up' ? 'Scale this container up' : 'Scale this container down');
     button.addEventListener('click', () => manuallyScaleCosmosThroughput(direction, containerName, button));
+    return button;
+}
+
+function createCosmosAutoscaleConversionButton(containerName, mode, isScalable, buttonClass = 'btn-outline-secondary') {
+    const disabled = mode !== 'manual' || !isScalable;
+    const button = createIconButton('bi bi-lightning-charge', `Convert ${containerName || 'database'} manual throughput to Cosmos autoscale`, buttonClass);
+    button.disabled = disabled;
+    button.addEventListener('click', () => convertCosmosThroughputToAutoscale(containerName, button));
     return button;
 }
 
@@ -440,6 +452,7 @@ function renderCosmosContainerMetrics(containers) {
         configureButton.setAttribute('data-bs-toggle', 'modal');
         configureButton.setAttribute('data-bs-target', '#cosmosThroughputContainerModal');
         actionGroup.appendChild(configureButton);
+        actionGroup.appendChild(createCosmosAutoscaleConversionButton(container.container_name || '', container.mode, container.is_scalable));
         actionGroup.appendChild(createManualContainerScaleButton(container.container_name || '', 'up', !container.is_scalable));
         actionGroup.appendChild(createManualContainerScaleButton(container.container_name || '', 'down', !container.is_scalable));
         actionCell.appendChild(actionGroup);
@@ -460,7 +473,7 @@ function renderCosmosContainerPolicyModal(containers) {
     if (!Array.isArray(containers) || containers.length === 0) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
-        cell.colSpan = 7;
+        cell.colSpan = 8;
         cell.className = 'text-muted';
         cell.textContent = 'Refresh Cosmos throughput status to load containers.';
         row.appendChild(cell);
@@ -504,6 +517,16 @@ function renderCosmosContainerPolicyModal(containers) {
         downCell.appendChild(createPolicyNumberInput(containerName, 'scale_down_cooldown_minutes', policy.scale_down_cooldown_minutes || 20, 1, 1440, 1, 'Interval min'));
         row.appendChild(downCell);
 
+        const autoscaleCell = document.createElement('td');
+        autoscaleCell.appendChild(createPolicyCheckbox(containerName, 'convert_manual_to_autoscale_enabled', policy.convert_manual_to_autoscale_enabled, 'Convert manual'));
+        if (policy.last_mode_conversion_at) {
+            const helper = document.createElement('div');
+            helper.className = 'small text-muted mt-1';
+            helper.textContent = `Last converted ${policy.last_mode_conversion_at}`;
+            autoscaleCell.appendChild(helper);
+        }
+        row.appendChild(autoscaleCell);
+
         const minCell = document.createElement('td');
         minCell.appendChild(createPolicyNumberInput(containerName, 'min_ru', policy.min_ru || 1000, 100, null, 100, 'Min'));
         minCell.appendChild(createPolicyCheckbox(containerName, 'ignore_min_limit', policy.ignore_min_limit, 'Ignore'));
@@ -515,6 +538,7 @@ function renderCosmosContainerPolicyModal(containers) {
         row.appendChild(maxCell);
 
         const manualCell = document.createElement('td');
+        manualCell.appendChild(createCosmosAutoscaleConversionButton(containerName, container.mode, container.is_scalable, 'btn-outline-primary'));
         manualCell.appendChild(createManualContainerScaleButton(containerName, 'up', !container.is_scalable));
         manualCell.appendChild(createManualContainerScaleButton(containerName, 'down', !container.is_scalable));
         if (!container.is_scalable) {
@@ -571,6 +595,8 @@ function updateCosmosThroughputStatusPanel(status) {
     renderCosmosContainerPolicyModal(currentCosmosContainers);
 
     const globalScaleButtonsDisabled = status?.capacity_scope === 'container' || !throughput.is_scalable;
+    const globalConvertButtonDisabled = status?.capacity_scope === 'container' || throughput.mode !== 'manual' || !throughput.is_scalable;
+    document.getElementById('cosmos-throughput-convert-autoscale-btn')?.toggleAttribute('disabled', globalConvertButtonDisabled);
     document.getElementById('cosmos-throughput-scale-up-btn')?.toggleAttribute('disabled', globalScaleButtonsDisabled);
     document.getElementById('cosmos-throughput-scale-down-btn')?.toggleAttribute('disabled', globalScaleButtonsDisabled);
 }
@@ -689,6 +715,37 @@ async function manuallyScaleCosmosThroughput(direction, containerName = '', trig
     }
 }
 
+async function convertCosmosThroughputToAutoscale(containerName = '', triggerButton = null) {
+    const targetText = containerName ? ` for ${containerName}` : '';
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Converting...');
+    }
+    setCosmosThroughputMessage(`Converting manual Cosmos throughput${targetText} to native autoscale...`, 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/cosmos-throughput/convert-autoscale', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ container_name: containerName })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Cosmos throughput mode conversion failed.');
+        }
+
+        const convertedTarget = data.container_name ? ` for ${data.container_name}` : '';
+        setCosmosThroughputMessage(`Cosmos throughput${convertedTarget} converted from manual ${formatRu(data.from_ru)} to autoscale max ${formatRu(data.to_ru)}.`, 'success');
+        await loadCosmosThroughputStatus();
+    } catch (error) {
+        setCosmosThroughputMessage(error.message || 'Cosmos throughput mode conversion failed.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
 function setupCosmosThroughputControls() {
     const section = document.getElementById('cosmos-throughput-section');
     if (!section) {
@@ -706,9 +763,15 @@ function setupCosmosThroughputControls() {
 
     document.getElementById('cosmos-throughput-refresh-btn')?.addEventListener('click', loadCosmosThroughputStatus);
     document.getElementById('cosmos-throughput-run-setup-test-btn')?.addEventListener('click', loadCosmosThroughputStatus);
+    document.getElementById('cosmos-throughput-convert-autoscale-btn')?.addEventListener('click', event => convertCosmosThroughputToAutoscale('', event.currentTarget));
     document.getElementById('cosmos-throughput-scale-up-btn')?.addEventListener('click', () => manuallyScaleCosmosThroughput('up'));
     document.getElementById('cosmos-throughput-scale-down-btn')?.addEventListener('click', () => manuallyScaleCosmosThroughput('down'));
     document.getElementById('cosmos_throughput_enforce_container_defaults')?.addEventListener('change', () => {
+        renderCosmosContainerMetrics(currentCosmosContainers);
+        renderCosmosContainerPolicyModal(currentCosmosContainers);
+        markFormAsModified();
+    });
+    document.getElementById('cosmos_throughput_convert_manual_to_autoscale_enabled')?.addEventListener('change', () => {
         renderCosmosContainerMetrics(currentCosmosContainers);
         renderCosmosContainerPolicyModal(currentCosmosContainers);
         markFormAsModified();
@@ -4543,27 +4606,28 @@ function setupTestButtons() {
     if (testDocIntelBtn) {
         testDocIntelBtn.addEventListener('click', async () => {
             const resultDiv = document.getElementById('test_azure_doc_intelligence_result');
-            resultDiv.innerHTML = 'Testing Document Intelligence...';
+            resultDiv.className = 'mt-2';
+            resultDiv.textContent = 'Testing Document Intelligence...';
 
             const enableApim = document.getElementById('enable_document_intelligence_apim').checked;
+            const extractionMode = document.getElementById('document_intelligence_pdf_image_extraction_mode')?.value || 'read';
 
             const payload = {
                 test_type: 'azure_doc_intelligence',
-                enable_apim: enableApim
+                enable_apim: enableApim,
+                document_intelligence_pdf_image_extraction_mode: extractionMode
             };
 
             if (enableApim) {
                 payload.apim = {
-                    endpoint: document.getElementById('azure_apim_document_intelligence_endpoint').value,
-                    subscription_key: document.getElementById('azure_apim_document_intelligence_subscription_key').value,
-                    deployment: document.getElementById('azure_apim_document_intelligence_deployment').value,
-                    api_version: document.getElementById('azure_apim_document_intelligence_api_version').value
+                    endpoint: document.getElementById('azure_apim_document_intelligence_endpoint')?.value || '',
+                    subscription_key: document.getElementById('azure_apim_document_intelligence_subscription_key')?.value || ''
                 };
             } else {
                 payload.direct = {
-                    endpoint: document.getElementById('azure_document_intelligence_endpoint').value,
-                    auth_type: document.getElementById('azure_document_intelligence_authentication_type').value,
-                    key: document.getElementById('azure_document_intelligence_key').value
+                    endpoint: document.getElementById('azure_document_intelligence_endpoint')?.value || '',
+                    auth_type: document.getElementById('azure_document_intelligence_authentication_type')?.value || 'key',
+                    key: document.getElementById('azure_document_intelligence_key')?.value || ''
                 };
             }
 
@@ -4575,12 +4639,15 @@ function setupTestButtons() {
                 });
                 const data = await resp.json();
                 if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                    resultDiv.className = 'mt-2 text-success';
+                    resultDiv.textContent = data.message;
                 } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Doc Intelligence'}</span>`;
+                    resultDiv.className = 'mt-2 text-danger';
+                    resultDiv.textContent = data.error || 'Error testing Doc Intelligence';
                 }
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                resultDiv.className = 'mt-2 text-danger';
+                resultDiv.textContent = `Error: ${err.message}`;
             }
         });
     }
@@ -6658,6 +6725,7 @@ function setupWalkthroughFieldListeners() {
             {selector: '#azure_document_intelligence_endpoint', event: 'input'},
             {selector: '#azure_document_intelligence_key', event: 'input'},
             {selector: '#azure_document_intelligence_authentication_type', event: 'change'},
+            {selector: '#document_intelligence_pdf_image_extraction_mode', event: 'change'},
             {selector: '#azure_apim_document_intelligence_endpoint', event: 'input'},
             {selector: '#azure_apim_document_intelligence_subscription_key', event: 'input'},
             {selector: '#enable_document_intelligence_apim', event: 'change'}

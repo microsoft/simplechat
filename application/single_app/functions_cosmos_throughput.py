@@ -47,6 +47,7 @@ COSMOS_THROUGHPUT_SETTING_KEYS = (
     'cosmos_throughput_max_ru',
     'cosmos_throughput_ignore_min_limit',
     'cosmos_throughput_ignore_max_limit',
+    'cosmos_throughput_convert_manual_to_autoscale_enabled',
     'cosmos_throughput_enforce_container_defaults',
     'cosmos_throughput_container_policies',
 )
@@ -81,6 +82,7 @@ def get_default_cosmos_throughput_settings():
         'cosmos_throughput_max_ru': COSMOS_THROUGHPUT_DEFAULT_MAX_RU,
         'cosmos_throughput_ignore_min_limit': False,
         'cosmos_throughput_ignore_max_limit': False,
+        'cosmos_throughput_convert_manual_to_autoscale_enabled': False,
         'cosmos_throughput_enforce_container_defaults': False,
         'cosmos_throughput_container_policies': {},
         'cosmos_throughput_last_checked_at': None,
@@ -167,6 +169,10 @@ def normalize_cosmos_throughput_settings(settings):
     )
     normalized['cosmos_throughput_ignore_max_limit'] = _coerce_bool(
         normalized.get('cosmos_throughput_ignore_max_limit'),
+        False,
+    )
+    normalized['cosmos_throughput_convert_manual_to_autoscale_enabled'] = _coerce_bool(
+        normalized.get('cosmos_throughput_convert_manual_to_autoscale_enabled'),
         False,
     )
     normalized['cosmos_throughput_enforce_container_defaults'] = _coerce_bool(
@@ -328,8 +334,13 @@ def normalize_container_policy(container_name, policy=None, settings=None):
             source_policy.get('ignore_max_limit'),
             settings.get('cosmos_throughput_ignore_max_limit', False),
         ),
+        'convert_manual_to_autoscale_enabled': _coerce_bool(
+            source_policy.get('convert_manual_to_autoscale_enabled'),
+            settings.get('cosmos_throughput_convert_manual_to_autoscale_enabled', False),
+        ),
         'last_scale_up_at': source_policy.get('last_scale_up_at'),
         'last_scale_down_at': source_policy.get('last_scale_down_at'),
+        'last_mode_conversion_at': source_policy.get('last_mode_conversion_at'),
     }
 
     if normalized['scale_down_threshold_percent'] >= normalized['scale_up_threshold_percent']:
@@ -366,6 +377,7 @@ def get_container_policy(settings, container_name):
             'container_name': container_name,
             'last_scale_up_at': saved_policy.get('last_scale_up_at'),
             'last_scale_down_at': saved_policy.get('last_scale_down_at'),
+            'last_mode_conversion_at': saved_policy.get('last_mode_conversion_at'),
         }
     return normalize_container_policy(container_name, saved_policy, normalized)
 
@@ -391,6 +403,8 @@ def build_cached_cosmos_throughput_status(status=None, scale_result=None):
     )
     if scale_result and scale_result.get('scope') != 'container' and scale_result.get('to_ru') is not None:
         throughput['current_ru'] = scale_result.get('to_ru')
+        if scale_result.get('to_mode'):
+            throughput['mode'] = scale_result.get('to_mode')
 
     containers = []
     for container in status.get('containers') or []:
@@ -418,6 +432,8 @@ def build_cached_cosmos_throughput_status(status=None, scale_result=None):
             and scale_result.get('to_ru') is not None
         ):
             cached_container['current_ru'] = scale_result.get('to_ru')
+            if scale_result.get('to_mode'):
+                cached_container['mode'] = scale_result.get('to_mode')
         containers.append(cached_container)
 
     cached_status = {
@@ -874,7 +890,15 @@ def get_container_throughputs(settings=None, resource_ids=None, refresh_id=''):
     return container_throughputs
 
 
+def _normalize_throughput_mode(mode, default_mode='manual'):
+    normalized_mode = str(mode or default_mode or '').strip().lower()
+    if normalized_mode not in {'manual', 'autoscale'}:
+        raise CosmosThroughputError('Cosmos throughput target mode must be manual or autoscale.')
+    return normalized_mode
+
+
 def _build_throughput_payload(mode, target_ru):
+    mode = _normalize_throughput_mode(mode)
     if mode == 'autoscale':
         return {
             'properties': {
@@ -895,17 +919,18 @@ def _build_throughput_payload(mode, target_ru):
     }
 
 
-def _apply_throughput_update(current, target_ru, initiated_by, reason):
+def _apply_throughput_update(current, target_ru, initiated_by, reason, target_mode=None):
     if not current.get('is_scalable'):
         raise CosmosThroughputError('Cosmos throughput is not scalable for this capacity mode.')
 
     mode = current.get('mode')
-    normalized_target = normalize_ru(target_ru, mode=mode, direction='up')
+    update_mode = _normalize_throughput_mode(target_mode or mode, default_mode=mode)
+    normalized_target = normalize_ru(target_ru, mode=update_mode, direction='up')
     resource_ids = current['resource_ids']
     _arm_request(
         'PUT',
         resource_ids['throughput_id'],
-        payload=_build_throughput_payload(mode, normalized_target),
+        payload=_build_throughput_payload(update_mode, normalized_target),
     )
 
     log_event(
@@ -913,7 +938,8 @@ def _apply_throughput_update(current, target_ru, initiated_by, reason):
         extra={
             'scope': current.get('scope'),
             'container_name': current.get('container_name', ''),
-            'mode': mode,
+            'from_mode': mode,
+            'to_mode': update_mode,
             'from_ru': current.get('current_ru'),
             'to_ru': normalized_target,
             'initiated_by': initiated_by,
@@ -925,7 +951,9 @@ def _apply_throughput_update(current, target_ru, initiated_by, reason):
     return {
         'scope': current.get('scope'),
         'container_name': current.get('container_name', ''),
-        'mode': mode,
+        'mode': update_mode,
+        'from_mode': mode,
+        'to_mode': update_mode,
         'from_ru': current.get('current_ru'),
         'to_ru': normalized_target,
         'resource_ids': resource_ids,
@@ -943,7 +971,13 @@ def set_database_throughput(settings, target_ru, initiated_by='system', reason='
     else:
         current = get_database_throughput(settings)
 
-    return _apply_throughput_update(current, target_ru, initiated_by, reason)
+    return _apply_throughput_update(
+        current,
+        target_ru,
+        initiated_by,
+        reason,
+        target_mode=decision.get('target_mode'),
+    )
 
 
 def _metadata_to_dict(metadata_values):
@@ -1415,6 +1449,8 @@ def calculate_container_scale_decision(settings, status, current_time=None):
     now = current_time or datetime.now(timezone.utc)
     up_candidates = []
     down_candidates = []
+    conversion_candidates = []
+    conversion_blocked_count = 0
     scalable_container_count = 0
     metric_container_count = 0
 
@@ -1433,6 +1469,21 @@ def calculate_container_scale_decision(settings, status, current_time=None):
             normalized,
         )
         if not policy.get('enabled'):
+            continue
+
+        if policy.get('convert_manual_to_autoscale_enabled') and container.get('mode') == 'manual':
+            try:
+                conversion_candidates.append(_build_autoscale_conversion_decision(
+                    container,
+                    policy['min_ru'],
+                    policy['max_ru'],
+                    ignore_min_limit=policy['ignore_min_limit'],
+                    ignore_max_limit=policy['ignore_max_limit'],
+                    scope='container',
+                    container_name=container_name,
+                ))
+            except CosmosThroughputError:
+                conversion_blocked_count += 1
             continue
 
         observed_percent = container.get('normalized_ru_percent')
@@ -1481,10 +1532,22 @@ def calculate_container_scale_decision(settings, status, current_time=None):
                     'reason': 'container_utilization_below_threshold',
                 })
 
+    if conversion_candidates:
+        return sorted(
+            [candidate for candidate in conversion_candidates if candidate],
+            key=lambda item: (item['from_ru'], item.get('container_name') or ''),
+            reverse=True,
+        )[0]
     if up_candidates:
         return sorted(up_candidates, key=lambda item: item['observed_percent'], reverse=True)[0]
     if down_candidates:
         return sorted(down_candidates, key=lambda item: (item['observed_percent'], -item['from_ru']))[0]
+    if conversion_blocked_count:
+        return {
+            'should_scale': False,
+            'reason': 'manual_to_autoscale_guardrail_blocked',
+            'blocked_container_count': conversion_blocked_count,
+        }
     if scalable_container_count and not metric_container_count:
         return {
             'should_scale': False,
@@ -1519,6 +1582,85 @@ def _cooldown_elapsed(last_action_at, cooldown_minutes, current_time):
     return current_time - last_action_time >= timedelta(minutes=cooldown_minutes)
 
 
+def _calculate_autoscale_conversion_target(throughput, min_ru, max_ru, ignore_min_limit=False, ignore_max_limit=False):
+    current_ru = throughput.get('current_ru')
+    if not current_ru:
+        raise CosmosThroughputError('Current Cosmos throughput could not be determined.')
+    if throughput.get('mode') != 'manual':
+        raise CosmosThroughputError('Cosmos throughput is not in manual mode.')
+
+    target_ru = normalize_ru(int(current_ru), mode='autoscale', direction='up')
+    if not ignore_min_limit:
+        target_ru = max(target_ru, normalize_ru(min_ru, mode='autoscale', direction='up'))
+    if not ignore_max_limit:
+        max_ru = normalize_ru(max_ru, mode='autoscale', direction='up')
+        if target_ru > max_ru:
+            raise CosmosThroughputError('Current manual RU/s exceeds the maximum autoscale guardrail.')
+
+    return target_ru
+
+
+def _build_autoscale_conversion_decision(throughput, min_ru, max_ru, ignore_min_limit=False, ignore_max_limit=False, scope='database', container_name='', observed_percent=None):
+    if throughput.get('mode') != 'manual' or not throughput.get('current_ru'):
+        return None
+
+    target_ru = _calculate_autoscale_conversion_target(
+        throughput,
+        min_ru,
+        max_ru,
+        ignore_min_limit=ignore_min_limit,
+        ignore_max_limit=ignore_max_limit,
+    )
+    decision = {
+        'should_scale': True,
+        'scope': scope,
+        'direction': 'convert_to_autoscale',
+        'target_mode': 'autoscale',
+        'from_mode': 'manual',
+        'to_mode': 'autoscale',
+        'from_ru': int(throughput.get('current_ru')),
+        'to_ru': target_ru,
+        'reason': 'manual_throughput_conversion_requested',
+    }
+    if container_name:
+        decision['container_name'] = container_name
+    if observed_percent is not None:
+        decision['observed_percent'] = observed_percent
+    return decision
+
+
+def calculate_manual_to_autoscale_target(settings, status, container_name=''):
+    """Calculate the native Cosmos autoscale max RU/s for a manual throughput conversion."""
+    normalized = normalize_cosmos_throughput_settings(settings)
+    if container_name:
+        matching_container = next(
+            (
+                container
+                for container in status.get('containers') or []
+                if container.get('container_name') == container_name
+            ),
+            None,
+        )
+        if not matching_container:
+            raise CosmosThroughputError('Container throughput target was not found.')
+        policy = normalize_container_policy(container_name, matching_container.get('policy'), normalized)
+        return _calculate_autoscale_conversion_target(
+            matching_container,
+            policy['min_ru'],
+            policy['max_ru'],
+            ignore_min_limit=policy['ignore_min_limit'],
+            ignore_max_limit=policy['ignore_max_limit'],
+        )
+
+    return _calculate_autoscale_conversion_target(
+        status.get('throughput') or {},
+        normalized['cosmos_throughput_min_ru'],
+        normalized['cosmos_throughput_max_ru'],
+        ignore_min_limit=normalized.get('cosmos_throughput_ignore_min_limit'),
+        ignore_max_limit=normalized.get('cosmos_throughput_ignore_max_limit'),
+    )
+
+
 def calculate_scale_decision(settings, status, current_time=None):
     """Decide whether Cosmos throughput should scale based on status and settings."""
     normalized = normalize_cosmos_throughput_settings(settings)
@@ -1533,6 +1675,19 @@ def calculate_scale_decision(settings, status, current_time=None):
         return {'should_scale': False, 'reason': 'disabled'}
     if not throughput.get('is_scalable') or not current_ru:
         return calculate_container_scale_decision(settings, status, current_time=current_time)
+    if mode == 'manual' and normalized.get('cosmos_throughput_convert_manual_to_autoscale_enabled'):
+        try:
+            return _build_autoscale_conversion_decision(
+                throughput,
+                normalized['cosmos_throughput_min_ru'],
+                normalized['cosmos_throughput_max_ru'],
+                ignore_min_limit=normalized.get('cosmos_throughput_ignore_min_limit'),
+                ignore_max_limit=normalized.get('cosmos_throughput_ignore_max_limit'),
+                scope='database',
+                observed_percent=observed_percent,
+            )
+        except CosmosThroughputError as exc:
+            return {'should_scale': False, 'reason': 'manual_to_autoscale_guardrail_blocked', 'error': str(exc)}
     if observed_percent is None:
         return {'should_scale': False, 'reason': 'missing_utilization_metric'}
 
@@ -1643,6 +1798,8 @@ def build_runtime_update(status=None, decision=None, scale_result=None, error=''
                 policy['last_scale_up_at'] = current_time
             elif direction == 'down':
                 policy['last_scale_down_at'] = current_time
+            elif direction == 'convert_to_autoscale':
+                policy['last_mode_conversion_at'] = current_time
             policies[container_name] = policy
             update['cosmos_throughput_container_policies'] = policies
 

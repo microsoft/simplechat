@@ -4105,6 +4105,9 @@
                             <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-container-policies-btn" data-bs-toggle="modal" data-bs-target="#cosmosThroughputContainerModal">
                                 <i class="bi bi-sliders me-1"></i>Containers
                             </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="cosmos-throughput-convert-autoscale-btn" title="Convert database manual throughput to Cosmos autoscale">
+                                <i class="bi bi-lightning-charge me-1"></i>Convert
+                            </button>
                             <button type="button" class="btn btn-outline-primary btn-sm" id="cosmos-throughput-scale-up-btn">
                                 <i class="bi bi-arrow-up-circle me-1"></i>Scale Up
                             </button>
@@ -4116,7 +4119,7 @@
 
                     <div class="alert alert-info small mb-3">
                         <i class="bi bi-info-circle me-2"></i>
-                        Automation checks Cosmos throughput on the Metrics Window cadence while enabled and saves the last observed database or container view. Refresh runs the same check immediately.
+                        Automation checks Cosmos throughput on the Metrics Window cadence while enabled and saves the last observed database or container view. Native Cosmos autoscale conversion is separate from SimpleChat scale-up and scale-down automation.
                     </div>
 
                     <textarea class="d-none" id="cosmos_throughput_container_policies_json" name="cosmos_throughput_container_policies_json">{{ settings.cosmos_throughput_container_policies | tojson }}</textarea>
@@ -4272,6 +4275,19 @@
                         </div>
 
                         <div class="border rounded p-3 mb-3">
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    id="cosmos_throughput_convert_manual_to_autoscale_enabled"
+                                    name="cosmos_throughput_convert_manual_to_autoscale_enabled"
+                                    {% if settings.cosmos_throughput_convert_manual_to_autoscale_enabled %}checked{% endif %}
+                                >
+                                <label class="form-check-label fw-semibold" for="cosmos_throughput_convert_manual_to_autoscale_enabled">
+                                    Convert manual throughput to Cosmos autoscale
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, background automation converts manual database or dedicated container throughput to native Cosmos autoscale before applying RU guardrails. The autoscale max preserves the current manual RU/s rounded up to Cosmos autoscale increments."></i>
+                            </div>
                             <div class="form-check form-switch">
                                 <input
                                     class="form-check-input"
@@ -4286,7 +4302,7 @@
                                 <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, every dedicated-throughput container uses the global thresholds, intervals, step sizes, and guardrails above. New containers discovered later inherit the same policy automatically."></i>
                             </div>
                             <div class="small text-muted mt-1">
-                                Use this when container throughput should follow one standard automation policy instead of per-container overrides. This does not convert Cosmos manual throughput to Cosmos autoscale; it applies SimpleChat's background scaling policy consistently.
+                                Use this when container throughput should follow one standard automation policy instead of per-container overrides. Global policy also applies the Cosmos autoscale conversion setting above to current and future dedicated-throughput containers.
                             </div>
                         </div>
                     </div>
@@ -4375,6 +4391,7 @@
                                         <li>Database mode scales the shared <code>SimpleChat</code> database throughput.</li>
                                         <li>Container-targeted mode scales only containers with dedicated throughput.</li>
                                         <li>Containers that inherit shared database throughput are visible but not individually scalable.</li>
+                                        <li>Manual throughput can be converted to native Cosmos autoscale only when the admin enables conversion globally or for the container policy.</li>
                                     </ul>
                                 </div>
                                 <div>
@@ -4407,7 +4424,7 @@
                             </div>
                             <div class="modal-body">
                                 <div class="alert alert-info small mb-3">
-                                    Dedicated container throughput is controlled per row unless global policy enforcement is enabled. Containers using shared database throughput are shown for visibility, but cannot be scaled individually until they have dedicated throughput.
+                                    Dedicated container throughput is controlled per row unless global policy enforcement is enabled. Containers using shared database throughput are shown for visibility, but cannot be scaled or converted individually until they have dedicated throughput.
                                 </div>
                                 <div class="table-responsive">
                                     <table class="table table-sm align-middle">
@@ -4417,6 +4434,7 @@
                                                 <th scope="col">Enabled</th>
                                                 <th scope="col">Scale Up</th>
                                                 <th scope="col">Scale Down</th>
+                                                <th scope="col">Cosmos Autoscale</th>
                                                 <th scope="col">Min RU/s</th>
                                                 <th scope="col">Max RU/s</th>
                                                 <th scope="col">Manual</th>
@@ -4424,7 +4442,7 @@
                                         </thead>
                                         <tbody id="cosmos-throughput-container-policies-body">
                                             <tr>
-                                                <td colspan="7" class="text-muted">Refresh Cosmos throughput status to load containers.</td>
+                                                <td colspan="8" class="text-muted">Refresh Cosmos throughput status to load containers.</td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -6660,6 +6678,26 @@
                     <p class="text-muted">
                         Configure Azure Document Intelligence settings.
                     </p>
+                    <div class="mb-3">
+                        <label for="document_intelligence_pdf_image_extraction_mode" class="form-label">
+                            PDF and Image Extraction Mode
+                        </label>
+                        <select
+                            class="form-select"
+                            id="document_intelligence_pdf_image_extraction_mode"
+                            name="document_intelligence_pdf_image_extraction_mode"
+                        >
+                            <option value="read" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'read' %}selected{% endif %}>
+                                Read - faster text extraction
+                            </option>
+                            <option value="layout" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'layout' %}selected{% endif %}>
+                                Layout - richer structure, tables, and checkbox states
+                            </option>
+                        </select>
+                        <div class="form-text">
+                            Layout captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It can take longer to parse than Read.
+                        </div>
+                    </div>
                     <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                         <input
                             type="checkbox"

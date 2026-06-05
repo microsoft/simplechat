@@ -386,7 +386,7 @@ class SmartHttpPlugin:
         try:
             # Import here to avoid circular imports
             from functions_content import extract_content_with_azure_di
-            from functions_settings import get_settings
+            from functions_settings import get_document_intelligence_pdf_image_extraction_mode, get_settings
             from config import initialize_clients, CLIENTS
             
             # Check if pdf_bytes is actually string content (error case)
@@ -402,9 +402,9 @@ class SmartHttpPlugin:
             self.logger.debug(f"PDF validation for {uri}: Header: {pdf_bytes[:10]}, Size: {len(pdf_bytes)} bytes")
             
             # Ensure Document Intelligence client is initialized
+            settings = get_settings()
             if 'document_intelligence_client' not in CLIENTS or CLIENTS['document_intelligence_client'] is None:
                 self.logger.info("Initializing Document Intelligence client for PDF processing")
-                settings = get_settings()
                 initialize_clients(settings)
             
             # Create temporary file for PDF processing with better handling
@@ -425,7 +425,11 @@ class SmartHttpPlugin:
                 if pdf_size > max_di_size:
                     return f"📄 **PDF TOO LARGE FOR PROCESSING**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes (exceeds {max_di_size:,} byte limit for Document Intelligence)\n\n⚠️  This PDF is too large for automated text extraction. Please try:\n• A smaller PDF document\n• Specific sections of the document\n• Contact the document provider for a text version"
                 
-                pages_data = extract_content_with_azure_di(temp_file_path)
+                extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+                pages_data = extract_content_with_azure_di(
+                    temp_file_path,
+                    extraction_mode=extraction_mode
+                )
                 
                 if not pages_data:
                     return f"📄 **PDF PROCESSING COMPLETED BUT NO TEXT FOUND**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes\n🔄 Processing: Document Intelligence completed successfully\n\n⚠️  The PDF was processed but contained no extractable text. This could be due to:\n• Image-only PDF (scanned document)\n• Encrypted or secured PDF\n• Unsupported PDF format\n• Empty or corrupted file"

@@ -6096,6 +6096,11 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     # --- DI Processing Logic ---
     settings = get_settings() # Assuming get_settings is accessible
     chunk_config = get_chunk_size_config(settings)
+    document_intelligence_extraction_mode = 'read'
+    if is_pdf or is_image:
+        document_intelligence_extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+        update_callback(document_intelligence_extraction_mode=document_intelligence_extraction_mode)
+
     di_limit_bytes = 500 * 1024 * 1024
     di_page_limit = 2000
     file_size = os.path.getsize(temp_file_path)
@@ -6184,7 +6189,10 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             # Send chunk to Azure DI
             update_callback(status=f"Sending {chunk_effective_filename} to Azure Document Intelligence...")
             try:
-                di_extracted_pages = extract_content_with_azure_di(chunk_path)
+                di_extracted_pages = extract_content_with_azure_di(
+                    chunk_path,
+                    extraction_mode=document_intelligence_extraction_mode
+                )
                 num_di_pages = len(di_extracted_pages)
                 conceptual_pages = num_di_pages if not is_image else 1 # Image is one conceptual item
 

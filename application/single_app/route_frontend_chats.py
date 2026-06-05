@@ -559,7 +559,13 @@ def register_route_frontend_chats(app):
             is_image_file = file_ext_nodot in IMAGE_EXTENSIONS
             
             if file_ext_nodot in (DOCUMENT_EXTENSIONS | {'html'}) or is_image_file:
-                extracted_content_raw  = extract_content_with_azure_di(temp_file_path)
+                extraction_mode = 'read'
+                if file_ext == '.pdf' or is_image_file:
+                    extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+                extracted_content_raw  = extract_content_with_azure_di(
+                    temp_file_path,
+                    extraction_mode=extraction_mode
+                )
                 
                 # Convert pages_data list to string
                 if isinstance(extracted_content_raw, list):

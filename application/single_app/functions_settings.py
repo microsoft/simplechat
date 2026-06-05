@@ -26,6 +26,22 @@ def is_tabular_processing_enabled(settings):
 
 CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
 WORKFLOW_USER_APP_ROLE = "WorkflowUser"
+DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout"}
+
+
+def normalize_document_intelligence_pdf_image_extraction_mode(value):
+    """Normalize the PDF/image Document Intelligence extraction mode."""
+    normalized_value = str(value or "read").strip().lower()
+    if normalized_value not in DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES:
+        return "read"
+    return normalized_value
+
+
+def get_document_intelligence_pdf_image_extraction_mode(settings):
+    """Return the configured PDF/image Document Intelligence extraction mode."""
+    return normalize_document_intelligence_pdf_image_extraction_mode(
+        (settings or {}).get('document_intelligence_pdf_image_extraction_mode')
+    )
 
 
 def normalize_app_role_claims(user_roles):
@@ -440,6 +456,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'azure_document_intelligence_endpoint': '',
         'azure_document_intelligence_key': '',
         'azure_document_intelligence_authentication_type': 'key',
+        'document_intelligence_pdf_image_extraction_mode': 'read',
         'enable_document_intelligence_apim': False,
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',

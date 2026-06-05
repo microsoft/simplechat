@@ -14,6 +14,7 @@ from functions_activity_logging import (
 )
 from functions_appinsights import log_event
 from functions_cosmos_throughput import (
+    calculate_manual_to_autoscale_target,
     calculate_manual_scale_target,
     build_runtime_update,
     CosmosThroughputError,
@@ -563,6 +564,86 @@ def register_route_backend_settings(app):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to scale Cosmos throughput.'}), 500
+
+    @app.route('/api/admin/settings/cosmos-throughput/convert-autoscale', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def convert_cosmos_throughput_to_autoscale_admin():
+        """Convert manual Cosmos DB throughput to native Cosmos autoscale throughput."""
+        user = session.get('user', {})
+        admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+        admin_user_id = get_current_user_id() or 'unknown'
+
+        try:
+            data = request.get_json(force=True) or {}
+            container_name = str(data.get('container_name') or '').strip()
+            settings = get_settings()
+            status = get_cosmos_throughput_status(settings, include_metrics=False)
+            target_ru = calculate_manual_to_autoscale_target(settings, status, container_name=container_name)
+            decision = {
+                'scope': 'container',
+                'container_name': container_name,
+                'direction': 'convert_to_autoscale',
+                'target_mode': 'autoscale',
+                'reason': 'manual_throughput_conversion_requested',
+            } if container_name else {
+                'scope': 'database',
+                'direction': 'convert_to_autoscale',
+                'target_mode': 'autoscale',
+                'reason': 'manual_throughput_conversion_requested',
+            }
+            scale_result = set_database_throughput(
+                settings,
+                target_ru,
+                initiated_by=admin_email,
+                reason='manual_to_autoscale_conversion',
+                decision=decision,
+            )
+            scale_result['direction'] = 'convert_to_autoscale'
+            scale_result['reason'] = 'manual_to_autoscale_conversion'
+
+            update_settings(build_runtime_update(
+                status=status,
+                decision=decision,
+                scale_result=scale_result,
+                settings=settings,
+            ))
+            log_general_admin_action(
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+                action='cosmos_throughput_manual_to_autoscale_conversion',
+                description='Converted Cosmos DB manual throughput to native autoscale throughput.',
+                additional_context={
+                    'scope': scale_result.get('scope'),
+                    'container_name': scale_result.get('container_name'),
+                    'from_ru': scale_result.get('from_ru'),
+                    'to_ru': scale_result.get('to_ru'),
+                    'from_mode': scale_result.get('from_mode'),
+                    'to_mode': scale_result.get('to_mode'),
+                },
+            )
+
+            return jsonify({
+                'success': True,
+                'scope': scale_result.get('scope'),
+                'container_name': scale_result.get('container_name'),
+                'from_ru': scale_result.get('from_ru'),
+                'to_ru': scale_result.get('to_ru'),
+                'from_mode': scale_result.get('from_mode'),
+                'to_mode': scale_result.get('to_mode'),
+                'reason': scale_result.get('reason'),
+            }), 200
+        except CosmosThroughputError as exc:
+            return jsonify({'error': str(exc)}), exc.status_code or 400
+        except Exception as exc:
+            log_event(
+                '[CosmosThroughput] Manual-to-autoscale conversion failed.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Cosmos throughput mode conversion failed.'}), 500
 
     @app.route('/api/admin/settings/send_feedback_email', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -1313,6 +1394,13 @@ def _test_azure_ai_search_connection(payload):
 def _test_azure_doc_intelligence_connection(payload):
     """Attempt to connect to Azure Form Recognizer / Document Intelligence."""
     enable_apim = payload.get('enable_apim', False)
+    extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode(
+        payload.get('document_intelligence_pdf_image_extraction_mode')
+    )
+    model_id = "prebuilt-layout" if extraction_mode == "layout" else "prebuilt-read"
+    analyze_options = {}
+    if extraction_mode == "layout":
+        analyze_options["output_content_format"] = "markdown"
 
     if enable_apim:
         apim_data = payload.get('apim', {})
@@ -1356,8 +1444,9 @@ def _test_azure_doc_intelligence_connection(payload):
             base64_source = base64.b64encode(file_bytes).decode('utf-8')
 
         poller = document_intelligence_client.begin_analyze_document(
-            "prebuilt-read",
-            {"base64Source": base64_source}
+            model_id,
+            {"base64Source": base64_source},
+            **analyze_options
         )
     else:
         with open(test_file_path, 'rb') as f:
@@ -1366,8 +1455,9 @@ def _test_azure_doc_intelligence_connection(payload):
             base64_source = base64.b64encode(file_content).decode('utf-8')
             analyze_request = {"base64Source": base64_source}
             poller = document_intelligence_client.begin_analyze_document(
-                model_id="prebuilt-read",
-                body=analyze_request
+                model_id=model_id,
+                body=analyze_request,
+                **analyze_options
             )
 
     max_wait_time = 600
@@ -1382,7 +1472,7 @@ def _test_azure_doc_intelligence_connection(payload):
         time.sleep(10)
 
     if status == "succeeded":
-        return jsonify({'message': 'Azure document intelligence connection successful'}), 200
+        return jsonify({'message': f'Azure document intelligence {extraction_mode} connection successful'}), 200
     else:
         return jsonify({'error': f"Document Intelligence error: {status}"}), 500
 

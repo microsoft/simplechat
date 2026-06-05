@@ -2,14 +2,15 @@
 # test_cosmos_throughput_autoscale_logic.py
 """
 Functional test for Cosmos throughput autoscale decision logic.
-Version: 0.241.155
-Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155
+Version: 0.241.159
+Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159
 
 This test ensures that Cosmos DB throughput automation scales the shared
 SimpleChat database up and down using separate thresholds, cooldowns, and
 minimum/maximum RU guardrails without requiring live Azure resources. It also
 validates enforced global container policy behavior for current and future
-containers.
+containers, including optional conversion from manual throughput to native
+Cosmos autoscale throughput.
 """
 
 import os
@@ -22,6 +23,7 @@ if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 
 from functions_cosmos_throughput import (
+    _build_throughput_payload,
     calculate_manual_scale_target,
     calculate_scale_decision,
     get_container_policy,
@@ -286,6 +288,86 @@ def test_enforced_global_container_policy_overrides_saved_container_policy():
     assert future_policy['container_name'] == 'new_container'
 
 
+def test_manual_database_conversion_requires_explicit_policy():
+    """Manual database throughput should only convert when the admin opts in."""
+    disabled_decision = calculate_scale_decision(
+        _base_settings(cosmos_throughput_convert_manual_to_autoscale_enabled=False),
+        {
+            'throughput': {
+                'mode': 'manual',
+                'current_ru': 1400,
+                'is_scalable': True,
+            },
+            'metrics': {
+                'normalized_ru_percent': None,
+            },
+        },
+        current_time=datetime(2026, 6, 6, tzinfo=timezone.utc),
+    )
+    enabled_decision = calculate_scale_decision(
+        _base_settings(cosmos_throughput_convert_manual_to_autoscale_enabled=True),
+        {
+            'throughput': {
+                'mode': 'manual',
+                'current_ru': 1400,
+                'is_scalable': True,
+            },
+            'metrics': {
+                'normalized_ru_percent': None,
+            },
+        },
+        current_time=datetime(2026, 6, 6, tzinfo=timezone.utc),
+    )
+
+    assert disabled_decision['should_scale'] is False
+    assert disabled_decision['reason'] == 'missing_utilization_metric'
+    assert enabled_decision['should_scale'] is True
+    assert enabled_decision['direction'] == 'convert_to_autoscale'
+    assert enabled_decision['target_mode'] == 'autoscale'
+    assert enabled_decision['from_ru'] == 1400
+    assert enabled_decision['to_ru'] == 3000
+
+
+def test_global_container_policy_converts_manual_containers_before_scaling():
+    """Global policy enforcement should apply native autoscale conversion to manual containers."""
+    settings = _base_settings(
+        cosmos_throughput_convert_manual_to_autoscale_enabled=True,
+        cosmos_throughput_enforce_container_defaults=True,
+        cosmos_throughput_min_ru=3000,
+        cosmos_throughput_max_ru=12000,
+    )
+    decision = calculate_scale_decision(
+        settings,
+        _container_status([
+            {
+                'container_name': 'messages',
+                'mode': 'manual',
+                'current_ru': 4500,
+                'is_scalable': True,
+                'normalized_ru_percent': None,
+                'policy': {},
+            },
+        ]),
+        current_time=datetime(2026, 6, 6, tzinfo=timezone.utc),
+    )
+
+    assert decision['should_scale'] is True
+    assert decision['scope'] == 'container'
+    assert decision['container_name'] == 'messages'
+    assert decision['direction'] == 'convert_to_autoscale'
+    assert decision['target_mode'] == 'autoscale'
+    assert decision['from_ru'] == 4500
+    assert decision['to_ru'] == 5000
+
+
+def test_manual_to_autoscale_payload_uses_autoscale_settings():
+    """Conversion writes the Cosmos autoscaleSettings payload rather than manual throughput."""
+    payload = _build_throughput_payload('autoscale', 5000)
+
+    assert payload['properties']['resource']['autoscaleSettings']['maxThroughput'] == 5000
+    assert 'throughput' not in payload['properties']['resource']
+
+
 if __name__ == "__main__":
     tests = [
         test_scales_up_when_utilization_is_high,
@@ -297,6 +379,9 @@ if __name__ == "__main__":
         test_container_targeted_scaling_waits_for_per_container_metrics,
         test_container_manual_scale_uses_container_policy,
         test_enforced_global_container_policy_overrides_saved_container_policy,
+        test_manual_database_conversion_requires_explicit_policy,
+        test_global_container_policy_converts_manual_containers_before_scaling,
+        test_manual_to_autoscale_payload_uses_autoscale_settings,
     ]
     results = []
     for test in tests:

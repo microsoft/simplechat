@@ -1394,6 +1394,7 @@ def register_route_frontend_admin_settings(app):
                 'cosmos_throughput_max_ru': form_data.get('cosmos_throughput_max_ru'),
                 'cosmos_throughput_ignore_min_limit': form_data.get('cosmos_throughput_ignore_min_limit') == 'on',
                 'cosmos_throughput_ignore_max_limit': form_data.get('cosmos_throughput_ignore_max_limit') == 'on',
+                'cosmos_throughput_convert_manual_to_autoscale_enabled': form_data.get('cosmos_throughput_convert_manual_to_autoscale_enabled') == 'on',
                 'cosmos_throughput_enforce_container_defaults': form_data.get('cosmos_throughput_enforce_container_defaults') == 'on',
                 'cosmos_throughput_container_policies': cosmos_throughput_container_policies,
             })
@@ -1436,6 +1437,10 @@ def register_route_frontend_admin_settings(app):
                     f"Chunk sizes capped at {chunk_size_cap} for: {', '.join(chunk_size_warning_keys)}.",
                     'warning'
                 )
+
+            document_intelligence_pdf_image_extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode(
+                form_data.get('document_intelligence_pdf_image_extraction_mode')
+            )
 
             # --- Construct new_settings Dictionary ---
             new_settings = {
@@ -1722,6 +1727,7 @@ def register_route_frontend_admin_settings(app):
                 'azure_document_intelligence_endpoint': form_data.get('azure_document_intelligence_endpoint', '').strip(),
                 'azure_document_intelligence_key': form_data.get('azure_document_intelligence_key', '').strip(),
                 'azure_document_intelligence_authentication_type': form_data.get('azure_document_intelligence_authentication_type', 'key'),
+                'document_intelligence_pdf_image_extraction_mode': document_intelligence_pdf_image_extraction_mode,
                 'enable_document_intelligence_apim': form_data.get('enable_document_intelligence_apim') == 'on',
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),

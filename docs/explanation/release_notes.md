@@ -1,8 +1,18 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.157, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.158, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.158)**
+
+#### New Features
+
+*   **Document Intelligence PDF and Image Extraction Mode**
+    *   Added a Search & Extract admin setting that lets administrators choose Read or Layout extraction for PDF and image uploads.
+    *   Read keeps the faster text-extraction path, while Layout captures richer structure such as tables, document layout, and checked or unchecked selection marks with some added parsing latency.
+    *   New PDF and image ingestion records `document_intelligence_extraction_mode` metadata so extracted documents identify whether Read or Layout was used.
+    *   (Ref: `admin_settings.html`, `functions_content.py`, `functions_documents.py`, `DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODE.md`)
 
 ### **(v0.241.157)**
 

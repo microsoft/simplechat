@@ -212,17 +212,77 @@ def extract_legacy_doc_text(file_path):
     finally:
         ole.close()
 
-def extract_content_with_azure_di(file_path):
+_SELECTION_MARK_PATTERN = re.compile(r'(\u2612|\u2610|:selected:|:unselected:)', re.IGNORECASE)
+
+
+def _clean_selection_mark_label(label_text):
+    """Return a compact text label adjacent to a DI selection mark."""
+    clean_label = re.sub(r'<[^>]+>', ' ', str(label_text or ''))
+    clean_label = re.sub(r'\s+', ' ', clean_label).strip(' -:\t')
+    if len(clean_label) > 240:
+        clean_label = clean_label[:240].rstrip()
+    return clean_label
+
+
+def _build_selection_mark_summary(page_text):
+    """Build explicit checked/unchecked text from Layout markdown selection marks."""
+    summaries = []
+    seen = set()
+
+    for raw_line in str(page_text or '').splitlines():
+        if not _SELECTION_MARK_PATTERN.search(raw_line):
+            continue
+
+        parts = _SELECTION_MARK_PATTERN.split(raw_line)
+        for index in range(1, len(parts), 2):
+            marker = parts[index].lower()
+            label = _clean_selection_mark_label(parts[index + 1] if index + 1 < len(parts) else '')
+            if not label and index > 1:
+                label = _clean_selection_mark_label(parts[index - 1])
+            if not label:
+                continue
+
+            state = 'unchecked'
+            if marker in ('\u2612', ':selected:'):
+                state = 'checked'
+
+            summary_key = (label.lower(), state)
+            if summary_key in seen:
+                continue
+            seen.add(summary_key)
+            summaries.append(f"- {label}: {state}")
+
+    if not summaries:
+        return ''
+
+    return "Selection marks detected:\n" + "\n".join(summaries)
+
+
+def _append_selection_mark_summary(page_text):
+    """Append explicit selection-mark language to Layout content when available."""
+    summary = _build_selection_mark_summary(page_text)
+    if not summary:
+        return page_text
+    return f"{str(page_text or '').rstrip()}\n\n{summary}"
+
+
+def extract_content_with_azure_di(file_path, extraction_mode='read'):
     """
-    Extracts text page-by-page using Azure Document Intelligence "prebuilt-read"
+    Extracts text page-by-page using Azure Document Intelligence.
     and returns a list of dicts, each containing page_number and content.
     """
     try:
         document_intelligence_client = CLIENTS['document_intelligence_client'] # Ensure CLIENTS is populated
+        normalized_extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode(extraction_mode)
+        model_id = "prebuilt-layout" if normalized_extraction_mode == "layout" else "prebuilt-read"
+        analyze_options = {}
+        if normalized_extraction_mode == "layout":
+            analyze_options["output_content_format"] = "markdown"
         
         # Debug logging for troubleshooting
         debug_print(f"Starting Azure DI extraction for: {os.path.basename(file_path)}")
         debug_print(f"AZURE_ENVIRONMENT: {AZURE_ENVIRONMENT}")
+        debug_print(f"Azure DI extraction mode: {normalized_extraction_mode}")
 
         if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
             # Required format for Document Intelligence API version 2024-11-30
@@ -234,8 +294,9 @@ def extract_content_with_azure_di(file_path):
             # For stable API 1.0.2, use the correct body parameter structure
             analyze_request = {"base64Source": base64_source}
             poller = document_intelligence_client.begin_analyze_document(
-                model_id="prebuilt-read",
-                body=analyze_request
+                model_id=model_id,
+                body=analyze_request,
+                **analyze_options
             )
             debug_print("Successfully started analysis with base64Source")
         else:
@@ -248,9 +309,10 @@ def extract_content_with_azure_di(file_path):
                 try:
                     # Method 1: Use bytes directly in body
                     poller = document_intelligence_client.begin_analyze_document(
-                        model_id="prebuilt-read",
+                        model_id=model_id,
                         body=file_content,
-                        content_type="application/pdf"
+                        content_type="application/pdf",
+                        **analyze_options
                     )
                     debug_print("Successfully started analysis with body as bytes")
                 except Exception as e1:
@@ -261,8 +323,9 @@ def extract_content_with_azure_di(file_path):
                         base64_source = base64.b64encode(file_content).decode('utf-8')
                         analyze_request = {"base64Source": base64_source}
                         poller = document_intelligence_client.begin_analyze_document(
-                            model_id="prebuilt-read",
-                            body=analyze_request
+                            model_id=model_id,
+                            body=analyze_request,
+                            **analyze_options
                         )
                         debug_print("Successfully started analysis with base64Source in body")
                     except Exception as e2:
@@ -335,13 +398,14 @@ def extract_content_with_azure_di(file_path):
 
                 pages_data.append({
                     "page_number": page_number,
-                    "content": page_text.strip() # Add strip() just in case
+                    "content": _append_selection_mark_summary(page_text.strip()) if normalized_extraction_mode == "layout" else page_text.strip()
                 })
         # --- Fallback if NO pages were found at all, but top-level content exists ---
         elif result.content:
+            fallback_content = result.content.strip()
             pages_data.append({
                 "page_number": 1,
-                "content": result.content.strip()
+                "content": _append_selection_mark_summary(fallback_content) if normalized_extraction_mode == "layout" else fallback_content
             })
         # else: # No pages and no content, pages_data remains empty
 
