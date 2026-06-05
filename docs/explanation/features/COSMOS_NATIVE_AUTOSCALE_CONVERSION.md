@@ -4,7 +4,9 @@
 
 Implemented in version: **0.241.159**
 
-Related config.py version update: `VERSION = "0.241.159"`
+Migration action fixed in version: **0.241.160**
+
+Related config.py version update: `VERSION = "0.241.160"`
 
 ## Overview
 
@@ -13,14 +15,20 @@ SimpleChat admins can convert Cosmos DB manual throughput offers to native Cosmo
 ## Dependencies
 
 - Azure Resource Manager access to the configured Cosmos DB account, database, and throughput settings.
-- The SimpleChat Cosmos Throughput Operator role assigned to the web app identity.
+- The SimpleChat Cosmos Throughput Operator role assigned to the web app identity with throughput read/write, `migrateToAutoscale/action`, and migration operation-result read permissions.
 - Cosmos DB SQL database or container throughput using manual provisioned throughput.
 
 ## Technical Specifications
 
 ### Architecture
 
-Manual-to-autoscale conversion is handled by `functions_cosmos_throughput.py`. When conversion is requested, SimpleChat writes the Cosmos throughput settings ARM resource with:
+Manual-to-autoscale conversion is handled by `functions_cosmos_throughput.py`. When conversion is requested for an existing manual throughput offer, SimpleChat calls the Cosmos throughput migration action:
+
+```text
+POST {throughputSettings/default}/migrateToAutoscale
+```
+
+After an offer is already in native Cosmos autoscale mode, SimpleChat can update the autoscale max throughput with:
 
 ```json
 {

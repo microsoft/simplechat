@@ -919,6 +919,38 @@ def _build_throughput_payload(mode, target_ru):
     }
 
 
+def _migrate_throughput_to_autoscale(current):
+    resource_ids = current['resource_ids']
+    migration_url = f"{resource_ids['throughput_id']}/migrateToAutoscale"
+    _arm_request('POST', migration_url)
+
+    try:
+        migrated_body = _arm_request('GET', resource_ids['throughput_id'])
+        migrated = _parse_throughput_body(
+            migrated_body,
+            resource_ids,
+            scope=current.get('scope', 'database'),
+            container_name=current.get('container_name', ''),
+        )
+        if migrated.get('mode') == 'autoscale' and migrated.get('current_ru'):
+            return migrated
+    except Exception as exc:
+        log_event(
+            '[CosmosThroughput] Autoscale migration submitted but follow-up throughput read failed.',
+            extra={
+                'scope': current.get('scope'),
+                'container_name': current.get('container_name', ''),
+                'error': str(exc),
+            },
+            level=logging.WARNING,
+        )
+
+    migrated = dict(current)
+    migrated['mode'] = 'autoscale'
+    migrated['current_ru'] = normalize_ru(current.get('current_ru'), mode='autoscale', direction='up')
+    return migrated
+
+
 def _apply_throughput_update(current, target_ru, initiated_by, reason, target_mode=None):
     if not current.get('is_scalable'):
         raise CosmosThroughputError('Cosmos throughput is not scalable for this capacity mode.')
@@ -927,11 +959,15 @@ def _apply_throughput_update(current, target_ru, initiated_by, reason, target_mo
     update_mode = _normalize_throughput_mode(target_mode or mode, default_mode=mode)
     normalized_target = normalize_ru(target_ru, mode=update_mode, direction='up')
     resource_ids = current['resource_ids']
-    _arm_request(
-        'PUT',
-        resource_ids['throughput_id'],
-        payload=_build_throughput_payload(update_mode, normalized_target),
-    )
+    if mode == 'manual' and update_mode == 'autoscale':
+        migrated = _migrate_throughput_to_autoscale(current)
+        normalized_target = migrated.get('current_ru') or normalized_target
+    else:
+        _arm_request(
+            'PUT',
+            resource_ids['throughput_id'],
+            payload=_build_throughput_payload(update_mode, normalized_target),
+        )
 
     log_event(
         '[CosmosThroughput] Throughput update submitted.',

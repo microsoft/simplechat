@@ -111,10 +111,14 @@ resource cosmosThroughputOperatorRoleDefinition 'Microsoft.Authorization/roleDef
           'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/read'
           'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/read'
           'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/write'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/migrateToAutoscale/action'
           'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/operationResults/read'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/migrateToAutoscale/operationResults/read'
           'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/read'
           'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/write'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/migrateToAutoscale/action'
           'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/operationResults/read'
+          'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/migrateToAutoscale/operationResults/read'
           'Microsoft.Insights/metrics/read'
         ]
         notActions: []

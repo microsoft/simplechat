@@ -1,8 +1,28 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.158, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.160, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.160)**
+
+#### Bug Fixes
+
+*   **Cosmos Native Autoscale Migration Action**
+    *   Fixed manual-to-autoscale conversions so manual Cosmos throughput offers call the ARM `migrateToAutoscale` action instead of attempting to write `autoscaleSettings.maxThroughput` directly onto a manual offer.
+    *   Preserved the existing `PUT autoscaleSettings.maxThroughput` path for database or container throughput that is already in autoscale mode.
+    *   Expanded the least-privilege Cosmos throughput operator role with the `migrateToAutoscale/action` and operation-result read permissions required for native conversion without Cosmos data-plane access.
+    *   (Ref: `functions_cosmos_throughput.py`, `setPermissions.bicep`, `COSMOS_NATIVE_AUTOSCALE_MIGRATION_ACTION_FIX.md`)
+
+### **(v0.241.159)**
+
+#### New Features
+
+*   **Cosmos Native Autoscale Conversion**
+    *   Added global and per-container policy controls that let admins convert dedicated manual Cosmos throughput to native Cosmos autoscale.
+    *   Added manual Convert actions for database and container throughput so admins can move eligible manual throughput to autoscale from the Admin Settings Scale tab.
+    *   Background throughput automation can now prioritize eligible manual-to-autoscale conversions before utilization-based RU scale decisions, while preserving configured min and max guardrails.
+    *   (Ref: `functions_cosmos_throughput.py`, Admin Settings Scale tab, `COSMOS_NATIVE_AUTOSCALE_CONVERSION.md`)
 
 ### **(v0.241.158)**
 

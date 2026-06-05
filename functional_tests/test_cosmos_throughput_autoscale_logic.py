@@ -2,8 +2,8 @@
 # test_cosmos_throughput_autoscale_logic.py
 """
 Functional test for Cosmos throughput autoscale decision logic.
-Version: 0.241.159
-Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159
+Version: 0.241.160
+Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159; migrateToAutoscale ARM action fix added in 0.241.160
 
 This test ensures that Cosmos DB throughput automation scales the shared
 SimpleChat database up and down using separate thresholds, cooldowns, and
@@ -21,6 +21,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ROOT = os.path.join(REPO_ROOT, "application", "single_app")
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
+
+import functions_cosmos_throughput as cosmos_throughput
 
 from functions_cosmos_throughput import (
     _build_throughput_payload,
@@ -368,6 +370,58 @@ def test_manual_to_autoscale_payload_uses_autoscale_settings():
     assert 'throughput' not in payload['properties']['resource']
 
 
+def test_manual_to_autoscale_update_uses_migration_action():
+    """Manual offers must use Cosmos migrateToAutoscale before autoscale settings can be updated."""
+    original_arm_request = cosmos_throughput._arm_request
+    calls = []
+    throughput_id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DocumentDB/databaseAccounts/acct/sqlDatabases/SimpleChat/containers/messages/throughputSettings/default'
+
+    def fake_arm_request(method, resource_path, payload=None, **kwargs):
+        calls.append({
+            'method': method,
+            'resource_path': resource_path,
+            'payload': payload,
+        })
+        if method == 'GET':
+            return {
+                'properties': {
+                    'resource': {
+                        'autoscaleSettings': {
+                            'maxThroughput': 5000,
+                        },
+                    },
+                },
+            }
+        return {}
+
+    try:
+        cosmos_throughput._arm_request = fake_arm_request
+        result = cosmos_throughput._apply_throughput_update(
+            {
+                'scope': 'container',
+                'container_name': 'messages',
+                'mode': 'manual',
+                'current_ru': 4500,
+                'is_scalable': True,
+                'resource_ids': {'throughput_id': throughput_id},
+            },
+            5000,
+            initiated_by='test',
+            reason='manual_to_autoscale_conversion',
+            target_mode='autoscale',
+        )
+    finally:
+        cosmos_throughput._arm_request = original_arm_request
+
+    assert calls[0]['method'] == 'POST'
+    assert calls[0]['resource_path'] == f'{throughput_id}/migrateToAutoscale'
+    assert calls[0]['payload'] is None
+    assert not any(call['method'] == 'PUT' for call in calls)
+    assert result['from_mode'] == 'manual'
+    assert result['to_mode'] == 'autoscale'
+    assert result['to_ru'] == 5000
+
+
 if __name__ == "__main__":
     tests = [
         test_scales_up_when_utilization_is_high,
@@ -382,6 +436,7 @@ if __name__ == "__main__":
         test_manual_database_conversion_requires_explicit_policy,
         test_global_container_policy_converts_manual_containers_before_scaling,
         test_manual_to_autoscale_payload_uses_autoscale_settings,
+        test_manual_to_autoscale_update_uses_migration_action,
     ]
     results = []
     for test in tests:
