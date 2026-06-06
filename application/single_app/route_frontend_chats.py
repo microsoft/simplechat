@@ -81,7 +81,7 @@ def _filter_chat_model_endpoints_by_governance(user_id, endpoints, feature_key):
                 ensure_governance_access(
                     feature_key,
                     user_id,
-                    item_entity_type='endpoint',
+                    item_entity_type='global_endpoint',
                     item_id=endpoint_id,
                 )
             except PermissionError:

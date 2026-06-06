@@ -1,6 +1,9 @@
 # route_backend_users.py
 
+from urllib.parse import quote
+
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import *
 from functions_group import update_active_group_for_user
 from functions_public_workspaces import update_active_public_workspace_for_user
@@ -10,6 +13,49 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 def _escape_graph_odata_literal(value):
     return str(value or "").replace("'", "''")
+
+
+def _build_user_info_response(user_id, display_name="", email="", user_principal_name=""):
+    resolved_email = email or user_principal_name or ""
+    return {
+        "id": user_id,
+        "user_id": user_id,
+        "displayName": display_name or resolved_email or "",
+        "display_name": display_name or resolved_email or "",
+        "email": resolved_email,
+        "mail": email or "",
+        "userPrincipalName": user_principal_name or resolved_email,
+    }
+
+
+def _get_graph_user_info_by_id(user_id):
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return None
+
+    token = get_valid_access_token()
+    if not token:
+        return None
+
+    user_endpoint = get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    params = {
+        "$select": "id,displayName,mail,userPrincipalName"
+    }
+
+    response = requests.get(user_endpoint, headers=headers, params=params)
+    response.raise_for_status()
+    user = response.json() or {}
+    graph_user_id = user.get("id") or normalized_user_id
+    return _build_user_info_response(
+        graph_user_id,
+        display_name=user.get("displayName", ""),
+        email=user.get("mail", ""),
+        user_principal_name=user.get("userPrincipalName", ""),
+    )
 
 
 def register_route_backend_users(app):
@@ -88,24 +134,41 @@ def register_route_backend_users(app):
         """
         Get user info (email, display_name) by user_id (oid).
         """
-        # Directly query Cosmos for the user document by id (oid)
-        from config import cosmos_user_settings_container
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            return jsonify({"error": "User ID is required"}), 400
+
         try:
             user_doc = cosmos_user_settings_container.read_item(
-                item=user_id,
-                partition_key=user_id
+                item=normalized_user_id,
+                partition_key=normalized_user_id
             )
-            print(f"/api/user/info/{user_id} → doc: {user_doc}", flush=True)
-            return jsonify({
-                "user_id": user_id,
-                "email": user_doc.get("email", ""),
-                "display_name": user_doc.get("display_name", "")
-            }), 200
-        except Exception as e:
-            print(f"[ERROR] /api/user/info/{user_id} failed: {e}", flush=True)
-            return jsonify({
-                "error": f"User not found for oid {user_id}"
-            }), 404
+            return jsonify(_build_user_info_response(
+                normalized_user_id,
+                display_name=user_doc.get("display_name", ""),
+                email=user_doc.get("email", ""),
+            )), 200
+        except Exception:
+            pass
+
+        try:
+            graph_user_info = _get_graph_user_info_by_id(normalized_user_id)
+            if graph_user_info:
+                return jsonify(graph_user_info), 200
+        except requests.exceptions.RequestException as ex:
+            log_event(
+                "[Users] Graph user info lookup failed",
+                level=logging.WARNING,
+                extra={
+                    "target_user_id": normalized_user_id,
+                    "status_code": getattr(ex.response, "status_code", None),
+                },
+                debug_only=True,
+            )
+
+        return jsonify({
+            "error": f"User not found for oid {normalized_user_id}"
+        }), 404
     
     @app.route('/api/user/settings', methods=['GET', 'POST'])
     @swagger_route(security=get_auth_security())

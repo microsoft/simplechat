@@ -5869,7 +5869,7 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                     ensure_governance_access(
                         'governance_global_endpoints',
                         user_id,
-                        item_entity_type='endpoint',
+                        item_entity_type='global_endpoint',
                         item_id=endpoint_id,
                     )
                 except PermissionError:

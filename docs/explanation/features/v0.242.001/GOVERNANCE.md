@@ -1,10 +1,12 @@
 # Governance
 
-Implemented/Updated in version: **0.242.011**
+Implemented/Updated in version: **0.242.022**
 
 ## Overview
 
 Governance provides administrative controls for limiting access to user, group, and global resources across endpoints, agents, and actions. It combines coarse feature-level controls with optional delegated item-level controls so administrators can decide whether a capability is open to all users or restricted to explicit users and groups.
+
+SimpleChat application-level features are governed by identity and app roles. Capabilities and resources configured inside SimpleChat, including agents, actions, endpoints, and delegated items added by admins or users, are governed by in-app governance rules. Use app roles for platform access boundaries, and use in-app governance for resources and capabilities created inside SimpleChat.
 
 The current implementation keeps backend enforcement as the source of truth. Frontend governance UI and Jinja rendering gates improve user experience by hiding disabled workspace modules before their JavaScript loads, but they are not treated as the authorization boundary.
 
@@ -14,7 +16,7 @@ Governance is intended to:
 
 - Restrict access to user endpoints, group endpoints, global endpoints, user agents, group agents, global agent usage, user actions, group actions, and global action usage.
 - Support allow lists containing explicit user IDs and group IDs.
-- Support delegated item policies for specific endpoints, global agents, and global actions.
+- Support one or more delegated item whitelist policies for specific endpoints, global agents, and global actions.
 - Provide admin tooling that scales to large allow lists.
 - Minimize repeated governance reads on hot API paths through request-level memoization and short-lived process caching.
 
@@ -60,7 +62,11 @@ Item policies add a second layer of control for specific delegated resources. Su
 - `global_agent`
 - `global_action`
 
-Item policies use the same `allow_all`, `allowed_users`, and `allowed_groups` structure as feature policies. During enforcement, the user must pass the feature policy first and then the item policy when one is provided.
+Item policies use the same `allow_all`, `allowed_users`, and `allowed_groups` structure as feature policies, and also include a `policy_id`, `policy_name`, and optional `resource_label`. During enforcement, the user must pass the feature policy first and then at least one item policy when policies exist for the selected resource.
+
+Multiple delegated item policies for the same resource are OR combined whitelists. A user is allowed when they are a member of any matching delegated item whitelist for that resource.
+
+Delegated item policies do not override feature-level governance. A user must pass the matching feature policy first. For example, if a user is allowed by an item policy for a specific global agent but does not pass the Global Agent Usage feature policy, the user remains blocked from that global agent.
 
 ## Admin API Endpoints
 
@@ -71,6 +77,7 @@ Governance administration is exposed through these backend routes:
 - `GET /api/admin/governance/item-policies`
 - `GET /api/admin/governance/item-policies/review`
 - `PUT /api/admin/governance/item-policies/<entity_type>/<item_id>`
+- `DELETE /api/admin/governance/item-policies/<entity_type>/<item_id>/<policy_id>`
 
 All governance admin routes are protected with Swagger security, login enforcement, and admin authorization.
 
@@ -85,9 +92,10 @@ The flow is:
 3. Read settings and exit early if the relevant governance setting is disabled.
 4. Resolve the user's governance group IDs from group workspaces and public workspaces.
 5. Read and evaluate the feature policy.
-6. If an item entity type and item ID are provided, read and evaluate the item policy.
-7. Cache successful decisions for the remainder of the request.
-8. Raise `PermissionError` if the feature or item policy blocks access.
+6. If an item entity type and item ID are provided, read all matching item policies and allow access if any item policy passes.
+7. If the feature policy fails, skip item policy evaluation and deny access. Item-level whitelists are additive only after the feature policy passes.
+8. Cache successful decisions for the remainder of the request.
+9. Raise `PermissionError` if the feature or item policy blocks access.
 
 The policy pass rules are:
 
@@ -119,7 +127,7 @@ A process-level cache stores feature policies, item policies, and user governanc
 Process cache keys include the data type and normalized identifiers, for example:
 
 - `("feature_policy", feature_key)`
-- `("item_policy", entity_type, item_id)`
+- `("item_policies", entity_type, item_id)`
 - `("user_governance_group_ids", user_id)`
 
 The cache is guarded by an `RLock`. Each entry is stamped with the current shared governance cache version before it is stored. On read, entries are trusted only when their stamped version matches the current shared governance version and the entry has not expired.
@@ -133,10 +141,11 @@ The governance cache version is exposed through `app_settings_cache.py`:
 
 The backing store is selected automatically by the existing app cache configuration:
 
-- Redis disabled or unavailable: version is stored in local process memory.
 - Redis enabled and app cache configured successfully: version is stored in Redis under `GOVERNANCE_CACHE_VERSION` and bumped with Redis `INCR`.
+- Redis disabled: version is stored in a Cosmos-backed document in the governance policies container when Cosmos is available.
+- Redis and Cosmos versioning unavailable: version falls back to local process memory.
 
-This keeps the governance process cache fast while allowing Redis-enabled deployments to invalidate stale process-cache entries across App Service instances and workers.
+The Cosmos version document ID is `governance_cache_version`, and each worker checks it with a local `15` second version-read TTL. This keeps the governance process cache fast while allowing both Redis-enabled and non-Redis deployments to invalidate stale process-cache entries across App Service workers.
 
 ### Invalidation
 
@@ -146,7 +155,7 @@ This keeps the governance process cache fast while allowing Redis-enabled deploy
 - an item policy is upserted
 - default feature policies are bootstrapped
 
-When Redis is enabled, other processes observe the bumped shared version before trusting their local process-cache entries. Stale entries are dropped lazily on their next read. When Redis is disabled or unavailable, the version is process-local and other processes converge when their short TTL expires.
+When Redis is enabled, other processes observe the bumped Redis version before trusting their local process-cache entries. When Redis is disabled, other workers observe the bumped Cosmos version document after their local version-read TTL expires. Stale entries are dropped lazily on their next read. If both Redis and the Cosmos version read/write fail, the code falls back to process-local versioning and workers converge when their short data-cache TTL expires.
 
 ## Admin UI
 
@@ -156,14 +165,36 @@ Major UI areas include:
 
 - Governance feature toggles grouped by User, Group, and Global scope.
 - Feature policy table for all configured governance feature keys.
-- Delegated item policy form for endpoints, global agents, and global actions.
-- Delegated item review modal with search, entity-type filtering, paging, and page size selection.
+- Delegated item policy card with on-page search, entity-type filtering, paging, and page size selection.
+- Dedicated delegated item edit modal for endpoints, global agents, and global actions.
 - Allow-list editor modal for managing users and groups.
+- Governance Configuration Guide modal explaining feature policies, workspace cohorts, delegated item policies, and evaluation flow.
+- Govern buttons on configured global endpoints, global agents, and global actions that open a prefilled delegated item policy editor.
+- Duplicate buttons for configured endpoints, agents, and actions. Endpoint duplicates start disabled, and key-based endpoint duplicates require the key to be re-entered.
 - Bootstrap toast notifications for governance status messages.
 
 Governance feature toggles also control the visible Feature Policies table. When a governance feature toggle is disabled, its matching policy row is hidden. Re-enabling the toggle immediately shows that policy row again.
 
+## Governance Configuration Guide
+
+The Governance tab includes a Configuration Guide modal. It follows the same explanatory modal pattern used by other Admin Settings areas and gives admins a compact reference for how governance works.
+
+The guide covers:
+
+- the difference between feature policies and delegated item policies;
+- how feature toggles relate to all personal, group, and global feature policy rows;
+- how group workspace membership can be reused as a governance cohort;
+- how delegated item policies narrow access to specific global resources;
+- backend evaluation order and caching behavior;
+- troubleshooting guidance for common access surprises.
+
+The most important concept is workspace cohorts. A group workspace can be used as a reusable group of users in an allow list. For example, admins can create a group workspace named **Personal Agents Pilot Users**, add pilot users to that workspace, then add that workspace ID to the **Personal Agents** feature policy's Allowed Groups list. Members can then use personal agents in their own personal workspaces.
+
+Using a group workspace as a governance cohort does **not** grant access to that workspace's documents, does **not** grant access to group agents or group actions, and does **not** move personal agents into the group workspace. It only reuses membership as an access cohort for the selected governance policy.
+
 ## Delegated Item Lookup
+
+The item policy editor is a dedicated Bootstrap modal opened from the Delegated Item Policies card. The card itself lists configured policies and supports search, entity-type filtering, paging, and page size selection so admins can manage large policy sets without opening a review modal.
 
 The item policy editor uses dropdown lookup data instead of requiring admins to type IDs manually.
 
@@ -173,15 +204,18 @@ Lookup behavior:
 - Global agents are loaded from `/api/admin/agents`.
 - Global actions are loaded from `/api/admin/plugins`.
 - The refresh button reloads lookup values for the selected entity type.
+- The delegated item filter narrows large lookup lists by item name, ID, or subtitle before selection.
 - Empty or failed lookups show status text near the delegated item selector.
 
-Delegated item policies are saved through a dedicated JavaScript handler instead of a nested HTML form, so saving a delegated item rule updates the governance item policy API rather than submitting the full Admin Settings form.
+Delegated item policies are saved through a dedicated JavaScript handler in the edit modal instead of a nested HTML form, so saving a delegated item rule updates the governance item policy API rather than submitting the full Admin Settings form.
 
-Existing delegated item policies can be edited from the configured-list review modal. The modal row action loads the selected policy back into the delegated item editor, including entity type, item ID, allow-all state, and explicit users/groups, then automatically opens the allow-list editor modal.
+Existing delegated item policies can be edited from the on-page configured policy list. The row action opens the dedicated edit modal with the selected policy loaded, including entity type, item ID, allow-all state, and explicit users/groups.
 
-Existing delegated item policies can also be deleted from the review modal. Deletion uses a Bootstrap confirmation modal, calls the delegated item policy DELETE API, clears matching editor state, refreshes the configured policy list, and writes governance audit activity.
+When Allow All is disabled for a delegated item policy, the edit modal shows a direct principal editor. This editor supports user lookup, group lookup, CSV import, independent selected-user and selected-group search, paging, page size options, hydrated display labels, truncated IDs, and copy buttons. This keeps item policy editing usable when a delegated item contains hundreds or thousands of allowed principals.
 
-The configured-list review modal shows hydrated user and group labels above the raw IDs. User entries show the best available display name and UPN/email, while group entries show group names. Raw IDs remain visible below the labels for traceability.
+Existing delegated item policies can also be deleted from the configured policy list. Deletion uses a Bootstrap confirmation modal, calls the delegated item policy DELETE API, clears matching editor state, refreshes the configured policy list, and writes governance audit activity.
+
+The configured policy list shows hydrated user and group labels above the raw IDs. User entries show the best available display name and UPN/email, while group entries show group names. Raw IDs remain visible below the labels for traceability.
 
 ## Workspace Jinja Gating
 
@@ -257,6 +291,7 @@ User hydration:
 
 - First tries `/api/userSearch` with the selected user ID.
 - Falls back to `/api/user/info/<user_id>`.
+- The user info endpoint first checks local user settings, then falls back to Microsoft Graph `/users/<user_id>` so selected users can display name and UPN/email even when an admin has not manually searched for that user during the current browser session.
 - Stores display name and UPN/email in the selected-list display cache.
 
 Group hydration:

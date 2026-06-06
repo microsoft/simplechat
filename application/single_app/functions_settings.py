@@ -66,6 +66,45 @@ def is_tabular_processing_enabled(settings):
     """Tabular processing is available whenever enhanced citations is enabled."""
     return bool((settings or {}).get('enable_enhanced_citations', False))
 
+
+def _refresh_app_settings_cache_after_write(settings_payload, context="app_settings_write"):
+    """Update shared/local settings cache around a version bump."""
+    cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+    version_bumper = getattr(app_settings_cache, "bump_app_settings_cache_version", None)
+
+    def _update_cache(stage):
+        if not callable(cache_updater):
+            return
+        try:
+            cache_updater(copy.deepcopy(settings_payload))
+        except Exception as cache_error:
+            log_event(
+                "App settings cache update failed after settings write.",
+                extra={
+                    "context": context,
+                    "stage": stage,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+    _update_cache("before_version_bump")
+
+    if callable(version_bumper):
+        try:
+            version_bumper()
+        except Exception as version_error:
+            log_event(
+                "App settings cache version bump failed after settings write.",
+                extra={
+                    "context": context,
+                    "error": str(version_error)
+                },
+                level=logging.WARNING
+            )
+
+    _update_cache("after_version_bump")
+
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
     default_settings = {
@@ -107,7 +146,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_group_custom_agent_endpoints': False,
         'governance_user_endpoints': False,
         'governance_group_endpoints': False,
-        'governance_global_endpoints': False,
+        'governance_global_endpoints': True,
         'governance_user_agents': False,
         'governance_group_agents': False,
         'governance_global_agents_usage': False,
@@ -545,19 +584,7 @@ def get_settings(use_cosmos=False, include_source=False):
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
         if merge_changed or migration_updated:
             cosmos_settings_container.upsert_item(merged)
-            cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
-            if callable(cache_updater):
-                try:
-                    cache_updater(copy.deepcopy(merged))
-                except Exception as cache_error:
-                    log_event(
-                        "App settings cache update failed after merge upsert.",
-                        extra={
-                            "settings_source": settings_source,
-                            "error": str(cache_error)
-                        },
-                        level=logging.WARNING
-                    )
+            _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
 
             log_event(
                 "App settings missing keys were merged and persisted to Cosmos DB.",
@@ -573,6 +600,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
     except CosmosResourceNotFoundError:
         cosmos_settings_container.create_item(body=default_settings)
+        _refresh_app_settings_cache_after_write(default_settings, context="default_create")
 
         log_event(
             "App settings document not found. Default settings created in Cosmos DB.",
@@ -607,9 +635,7 @@ def update_settings(new_settings):
         )
         settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
         cosmos_settings_container.upsert_item(settings_item)
-        cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
-        if callable(cache_updater):
-            cache_updater(settings_item)
+        _refresh_app_settings_cache_after_write(settings_item, context="update_settings")
         log_event(
             "App settings updated successfully.",
             level=logging.INFO

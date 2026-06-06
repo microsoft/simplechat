@@ -26,6 +26,8 @@ async function loadPlugins() {
             tbodySelector: '#admin-plugins-table-body',
             onEdit: name => editPlugin(name),
             onDelete: name => deletePlugin(name),
+            onGovern: name => governPlugin(name, plugins),
+            onDuplicate: name => duplicatePlugin(name, plugins),
             ensureTable: false,
             isAdmin: true
         });
@@ -44,6 +46,61 @@ function openPluginModal(plugin = null) {
         setupSaveHandler(plugin, modal);
     } else {
         alert('Action modal not available. Please refresh the page.');
+    }
+}
+
+function makePluginCopyName(name, plugins = []) {
+    const baseName = `${String(name || 'action').trim() || 'action'}_copy`;
+    const existingNames = new Set((plugins || []).map((plugin) => String(plugin.name || '').trim().toLowerCase()));
+    if (!existingNames.has(baseName.toLowerCase())) {
+        return baseName;
+    }
+
+    let suffix = 2;
+    while (existingNames.has(`${baseName}_${suffix}`.toLowerCase())) {
+        suffix += 1;
+    }
+    return `${baseName}_${suffix}`;
+}
+
+function duplicatePlugin(name, plugins = []) {
+    const plugin = (plugins || []).find(p => p.name === name);
+    if (!plugin) {
+        showToast(`Action "${name}" not found`, 'danger');
+        return;
+    }
+
+    const duplicate = JSON.parse(JSON.stringify(plugin));
+    delete duplicate.id;
+    duplicate.name = makePluginCopyName(plugin.name, plugins);
+    duplicate.display_name = `${plugin.display_name || plugin.name || 'Action'} Copy`;
+    const modal = window.pluginModalStepper?.showModal(duplicate);
+    if (window.pluginModalStepper) {
+        window.pluginModalStepper.isEditMode = false;
+        window.pluginModalStepper.originalPlugin = null;
+        const title = document.getElementById('plugin-modal-title');
+        if (title) {
+            title.textContent = 'Add Action';
+        }
+    }
+    setupSaveHandler(null, modal);
+}
+
+function governPlugin(name, plugins = []) {
+    const plugin = (plugins || []).find(p => p.name === name);
+    const pluginId = String(plugin?.id || '').trim();
+    if (!pluginId) {
+        showToast('This action does not have a stable ID for governance.', 'warning');
+        return;
+    }
+    if (typeof window.openGovernanceDelegatedItemEditor === 'function') {
+        window.openGovernanceDelegatedItemEditor({
+            entityType: 'global_action',
+            itemId: pluginId,
+            resourceLabel: plugin.display_name || plugin.name || pluginId,
+        });
+    } else {
+        showToast('Governance editor is still loading. Try again in a moment.', 'warning');
     }
 }
 

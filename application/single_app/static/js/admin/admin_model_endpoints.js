@@ -81,6 +81,8 @@ let modelEndpoints = Array.isArray(window.modelEndpoints) ? [...window.modelEndp
 let modalModels = [];
 let pendingDeleteEndpointId = null;
 let pendingDeleteTimeout = null;
+let pendingEndpointDuplicate = null;
+let endpointDuplicateKeyModal = null;
 let defaultModelSelection = window.defaultModelSelection && typeof window.defaultModelSelection === "object"
     ? { ...window.defaultModelSelection }
     : {};
@@ -293,6 +295,8 @@ function renderEndpoints() {
             <td class="text-end">
                 <div class="btn-group btn-group-sm" role="group">
                     <button type="button" class="btn btn-outline-primary" data-action="edit" data-endpoint-id="${endpoint.id}">Edit</button>
+                    <button type="button" class="btn btn-outline-info" data-action="govern" data-endpoint-id="${endpoint.id}">Govern</button>
+                    <button type="button" class="btn btn-outline-secondary" data-action="duplicate" data-endpoint-id="${endpoint.id}">Duplicate</button>
                     <button type="button" class="btn btn-outline-${endpoint.enabled ? "warning" : "success"}" data-action="toggle" data-endpoint-id="${endpoint.id}">${toggleLabel}</button>
                     <button type="button" class="btn btn-outline-danger" data-action="delete" data-endpoint-id="${endpoint.id}">Delete</button>
                 </div>
@@ -438,6 +442,9 @@ function updateAuthVisibility() {
 }
 
 function resetModal() {
+    if (endpointModalEl) {
+        endpointModalEl.dataset.duplicateDisabledDefault = '';
+    }
     if (endpointIdInput) endpointIdInput.value = "";
     if (endpointNameInput) endpointNameInput.value = "";
     if (endpointProviderSelect) endpointProviderSelect.value = "aoai";
@@ -513,6 +520,105 @@ function openModalForEndpoint(endpoint) {
 
     updateAuthVisibility();
     endpointModal.show();
+}
+
+function makeEndpointCopyName(name) {
+    const baseName = `${String(name || 'Endpoint').trim() || 'Endpoint'} Copy`;
+    const existingNames = new Set((modelEndpoints || []).map((endpoint) => String(endpoint.name || '').trim().toLowerCase()));
+    if (!existingNames.has(baseName.toLowerCase())) {
+        return baseName;
+    }
+
+    let suffix = 2;
+    while (existingNames.has(`${baseName} ${suffix}`.toLowerCase())) {
+        suffix += 1;
+    }
+    return `${baseName} ${suffix}`;
+}
+
+function cloneEndpointForDuplicate(endpoint) {
+    const duplicate = JSON.parse(JSON.stringify(endpoint || {}));
+    duplicate.id = generateId();
+    duplicate.name = makeEndpointCopyName(endpoint?.name || 'Endpoint');
+    duplicate.enabled = false;
+    duplicate.models = Array.isArray(duplicate.models)
+        ? duplicate.models.map((model) => ({ ...model, id: generateId() }))
+        : [];
+
+    if (duplicate.auth?.type === 'api_key') {
+        duplicate.auth.api_key = '';
+        duplicate.has_api_key = false;
+    }
+
+    return duplicate;
+}
+
+function ensureEndpointDuplicateKeyModal() {
+    let modalElement = document.getElementById('endpoint-duplicate-key-confirm-modal');
+    if (!modalElement) {
+        const modalMarkup = `
+            <div class="modal fade" id="endpoint-duplicate-key-confirm-modal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Duplicate Key-Based Endpoint</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="mb-2">This endpoint uses API key authentication.</p>
+                            <div class="alert alert-warning mb-0" role="alert">The duplicated endpoint will be disabled and will not include the API key. Re-enter the API key before enabling it.</div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button" class="btn btn-primary" id="endpoint-duplicate-key-confirm-btn">Continue</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = modalMarkup.trim();
+        modalElement = wrapper.firstElementChild;
+        document.body.appendChild(modalElement);
+    }
+
+    if (!endpointDuplicateKeyModal) {
+        endpointDuplicateKeyModal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    }
+
+    if (!modalElement.dataset.wired) {
+        modalElement.dataset.wired = 'true';
+        modalElement.querySelector('#endpoint-duplicate-key-confirm-btn')?.addEventListener('click', () => {
+            const duplicate = pendingEndpointDuplicate;
+            pendingEndpointDuplicate = null;
+            endpointDuplicateKeyModal?.hide();
+            if (duplicate) {
+                openDuplicateEndpointModal(duplicate);
+            }
+        });
+    }
+
+    return modalElement;
+}
+
+function openDuplicateEndpointModal(duplicateEndpoint) {
+    openModalForEndpoint(duplicateEndpoint);
+    if (endpointModalEl) {
+        endpointModalEl.dataset.duplicateDisabledDefault = 'true';
+    }
+    showToast('Duplicated endpoint starts disabled. Review and save it, then enable intentionally.', 'info');
+}
+
+function duplicateEndpoint(endpoint) {
+    const duplicate = cloneEndpointForDuplicate(endpoint);
+    if (endpoint?.auth?.type === 'api_key' || endpoint?.has_api_key) {
+        pendingEndpointDuplicate = duplicate;
+        ensureEndpointDuplicateKeyModal();
+        endpointDuplicateKeyModal?.show();
+        return;
+    }
+
+    openDuplicateEndpointModal(duplicate);
 }
 
 function renderModalModels(models) {
@@ -792,7 +898,9 @@ function saveEndpoint() {
             id: endpointId,
             name: payload.name,
             provider: payload.provider,
-            enabled: true,
+            enabled: endpointModalEl?.dataset.duplicateDisabledDefault === 'true'
+                ? false
+                : (existingEndpoint ? existingEndpoint.enabled !== false : true),
             auth: payload.auth,
             connection: payload.connection,
             management: payload.management,
@@ -870,6 +978,24 @@ function handleTableClick(event) {
 
     if (action === "edit") {
         openModalForEndpoint(endpoint);
+        return;
+    }
+
+    if (action === "govern") {
+        if (typeof window.openGovernanceDelegatedItemEditor === 'function') {
+            window.openGovernanceDelegatedItemEditor({
+                entityType: 'global_endpoint',
+                itemId: endpoint.id,
+                resourceLabel: endpoint.name || endpoint.id,
+            });
+        } else {
+            showToast('Governance editor is still loading. Try again in a moment.', 'warning');
+        }
+        return;
+    }
+
+    if (action === "duplicate") {
+        duplicateEndpoint(endpoint);
         return;
     }
 

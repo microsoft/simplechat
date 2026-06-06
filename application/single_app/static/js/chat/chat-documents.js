@@ -89,6 +89,9 @@ const tagsSearchController = initializeFilterableDropdownSearch({
 });
 
 const SEARCH_DOCUMENTS_MOBILE_MEDIA_QUERY = '(max-width: 991.98px)';
+const SEARCH_DROPDOWN_VIEWPORT_PADDING = 16;
+const SEARCH_FILTER_DESKTOP_MIN_WIDTH = 320;
+const SEARCH_FILTER_DESKTOP_MAX_WIDTH = 640;
 
 function isSearchDocumentsMobileDrawerViewport() {
   return typeof window !== 'undefined' && window.matchMedia(SEARCH_DOCUMENTS_MOBILE_MEDIA_QUERY).matches;
@@ -194,22 +197,35 @@ function refreshDocumentsAndTags({ source = null, showLoading = true } = {}) {
     });
 }
 
-function getSearchDocumentsDropdownConfig() {
+function getSearchDocumentsDropdownConfig({ openUpOnDesktop = false } = {}) {
   return {
     boundary: 'viewport',
     reference: 'toggle',
     autoClose: 'outside',
-    popperConfig: {
-      strategy: 'fixed',
-      modifiers: [
-        {
-          name: 'preventOverflow',
-          options: {
-            boundary: 'viewport',
-            padding: 10,
+    popperConfig(defaultConfig) {
+      const shouldOpenUp = openUpOnDesktop && !isSearchDocumentsMobileDrawerViewport();
+      const defaultModifiers = Array.isArray(defaultConfig.modifiers) ? defaultConfig.modifiers : [];
+      const modifiers = defaultModifiers.filter(modifier => !['preventOverflow', 'flip'].includes(modifier.name));
+
+      return {
+        ...defaultConfig,
+        placement: shouldOpenUp ? 'top-start' : 'bottom-start',
+        strategy: 'fixed',
+        modifiers: [
+          ...modifiers,
+          {
+            name: 'preventOverflow',
+            options: {
+              boundary: 'viewport',
+              padding: 10,
+            },
           },
-        },
-      ],
+          {
+            name: 'flip',
+            enabled: !shouldOpenUp,
+          },
+        ],
+      };
     },
   };
 }
@@ -220,15 +236,31 @@ function sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl) {
   }
 
   const fieldContainer = buttonEl.closest('.chat-search-panel-field');
-  const containerWidth = fieldContainer ? fieldContainer.offsetWidth : buttonEl.offsetWidth || 280;
+  const containerWidth = fieldContainer ? fieldContainer.offsetWidth : buttonEl.offsetWidth || SEARCH_FILTER_DESKTOP_MIN_WIDTH;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || SEARCH_FILTER_DESKTOP_MAX_WIDTH;
+  const viewportMaxWidth = Math.max(160, viewportWidth - (SEARCH_DROPDOWN_VIEWPORT_PADDING * 2));
+  const isMobileDrawer = isSearchDocumentsMobileDrawerViewport();
+  const minWidth = isMobileDrawer
+    ? Math.min(containerWidth, viewportMaxWidth)
+    : Math.min(Math.max(containerWidth, SEARCH_FILTER_DESKTOP_MIN_WIDTH), viewportMaxWidth);
+  const maxWidth = isMobileDrawer
+    ? minWidth
+    : Math.min(Math.max(containerWidth, SEARCH_FILTER_DESKTOP_MAX_WIDTH), viewportMaxWidth);
 
-  menuEl.style.width = `${containerWidth}px`;
-  menuEl.style.maxWidth = `${containerWidth}px`;
+  menuEl.style.width = isMobileDrawer ? `${Math.round(minWidth)}px` : 'max-content';
+  menuEl.style.minWidth = `${Math.round(minWidth)}px`;
+  menuEl.style.maxWidth = `${Math.round(maxWidth)}px`;
   menuEl.style.zIndex = '1060';
 
   const menuRect = menuEl.getBoundingClientRect();
+  const buttonRect = buttonEl.getBoundingClientRect();
   const viewportHeight = window.innerHeight;
-  const maxPossibleHeight = Math.max(180, viewportHeight - menuRect.top - 10);
+  const popperPlacement = menuEl.getAttribute('data-popper-placement') || '';
+  const opensUp = popperPlacement.startsWith('top') && !isMobileDrawer;
+  const availableHeight = opensUp
+    ? buttonRect.top - SEARCH_DROPDOWN_VIEWPORT_PADDING
+    : viewportHeight - menuRect.top - SEARCH_DROPDOWN_VIEWPORT_PADDING;
+  const maxPossibleHeight = Math.max(opensUp ? 120 : 180, availableHeight);
 
   menuEl.style.maxHeight = `${maxPossibleHeight}px`;
 
@@ -246,6 +278,7 @@ function resetSearchFilterDropdownStyles(menuEl, itemsContainerEl) {
   if (menuEl) {
     menuEl.style.maxHeight = '';
     menuEl.style.maxWidth = '';
+    menuEl.style.minWidth = '';
     menuEl.style.width = '';
     menuEl.style.zIndex = '';
   }
@@ -263,13 +296,14 @@ function initializeSearchFilterDropdown({
   itemsContainerEl,
   searchInputEl,
   searchController,
+  openUpOnDesktop = false,
   onShown,
 }) {
   if (!dropdownEl || !buttonEl || !menuEl) {
     return;
   }
 
-  new bootstrap.Dropdown(buttonEl, getSearchDocumentsDropdownConfig());
+  new bootstrap.Dropdown(buttonEl, getSearchDocumentsDropdownConfig({ openUpOnDesktop }));
 
   dropdownEl.addEventListener('show.bs.dropdown', function() {
     if (searchInputEl) {
@@ -282,6 +316,12 @@ function initializeSearchFilterDropdown({
   dropdownEl.addEventListener('shown.bs.dropdown', function() {
     sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl);
     onShown?.();
+
+    try {
+      bootstrap.Dropdown.getInstance(buttonEl)?.update();
+    } catch (error) {
+      console.error('Error updating search filter dropdown placement:', error);
+    }
 
     if (searchInputEl) {
       setTimeout(() => searchInputEl.focus(), 50);
@@ -1309,27 +1349,7 @@ function initializeDocumentDropdown() {
   filterDocumentsBySelectedTags();
   documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');
 
-  // Size the dropdown to fill its parent container
-  const parentContainer = docDropdownButton.closest('.flex-grow-1');
-  const maxWidth = parentContainer ? parentContainer.offsetWidth : 400;
-
-  docDropdownMenu.style.maxWidth = `${maxWidth}px`;
-  docDropdownMenu.style.width = `${maxWidth}px`;
-
-  // Ensure dropdown stays within viewport bounds
-  const menuRect = docDropdownMenu.getBoundingClientRect();
-  const viewportHeight = window.innerHeight;
-
-  if (menuRect.bottom > viewportHeight) {
-    const maxPossibleHeight = viewportHeight - menuRect.top - 10;
-    docDropdownMenu.style.maxHeight = `${maxPossibleHeight}px`;
-
-    if (docDropdownItems) {
-      const searchContainer = docDropdownMenu.querySelector('.document-search-container');
-      const searchHeight = searchContainer ? searchContainer.offsetHeight : 40;
-      docDropdownItems.style.maxHeight = `${maxPossibleHeight - searchHeight}px`;
-    }
-  }
+  sizeSearchFilterDropdown(docDropdownButton, docDropdownMenu, docDropdownItems);
 }
 /* ---------------------------------------------------------------------------
    Load Tags for Selected Scope
@@ -2014,6 +2034,7 @@ document.addEventListener('DOMContentLoaded', function() {
           itemsContainerEl: docDropdownItems,
           searchInputEl: docSearchInput,
           searchController: documentSearchController,
+          openUpOnDesktop: true,
           onShown: initializeDocumentDropdown,
         });
       }

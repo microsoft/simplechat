@@ -87,23 +87,21 @@ body.sidebar-collapsed #chat-sidebar-inline-toggle {
   z-index: 1060 !important;
 }
 
-/* Handle dropdown positioning at the edge of viewport */
-#document-dropdown.dropup .dropdown-menu {
-  bottom: 100% !important;
-  top: auto !important;
-  margin-bottom: 0.125rem;
-}
-
 #document-dropdown .dropdown-menu {
-  width: auto;
-  min-width: 400px; /* Increased width as requested */
-  max-width: 400px; /* Increased width as requested */
-  max-height: 60vh; /* Use viewport height for better adaptation */
+  width: max-content;
+  min-width: min(20rem, calc(100vw - 2rem));
+  max-width: min(40rem, calc(100vw - 2rem));
+  max-height: 60vh;
   overflow: hidden;
   padding: 8px;
-  position: absolute;
-  left: 0 !important; /* Keep it aligned to the left of its container */
-  right: auto !important; /* Prevent right positioning */
+}
+
+.chat-search-filter-menu {
+  width: max-content;
+  min-width: min(20rem, calc(100vw - 2rem));
+  max-width: min(40rem, calc(100vw - 2rem));
+  max-height: 60vh;
+  overflow: hidden;
 }
 
 .chat-search-panel {
@@ -593,8 +591,18 @@ body.sidebar-collapsed #chat-sidebar-inline-toggle {
 
 #scope-dropdown-items .dropdown-item,
 #tags-dropdown-items .dropdown-item {
+  min-width: 0;
   width: 100%;
   text-align: left;
+}
+
+#scope-dropdown-items .dropdown-item span,
+#tags-dropdown-items .dropdown-item span,
+#document-dropdown-items .dropdown-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Document dropdown items must be explicitly displayed */
@@ -608,6 +616,7 @@ body.sidebar-collapsed #chat-sidebar-inline-toggle {
   width: 100%; /* Ensure items take full width of their container */
   text-align: left;
   max-width: 100%; /* Ensure items don't exceed container width */
+  min-width: 0;
 }
 
 /* Only hide when explicitly told to */

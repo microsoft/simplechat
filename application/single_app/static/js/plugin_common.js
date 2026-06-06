@@ -64,7 +64,7 @@ export function escapeHtml(str) {
 }
 
 // Render plugins table (parameterized for tbody selector and button handlers)
-export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, onView, ensureTable = true, isAdmin = false}) {
+export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, onView, onGovern, onDuplicate, ensureTable = true, isAdmin = false}) {
   // Optionally ensure the table is present before rendering
   if (ensureTable) {
     ensurePluginsTableInRoot();
@@ -97,6 +97,12 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
           <button type="button" class="btn btn-sm btn-outline-secondary edit-plugin-btn" data-plugin-name="${safeName}" title="Edit action">
             <i class="bi bi-pencil"></i>
           </button>
+          ${isAdmin ? `<button type="button" class="btn btn-sm btn-outline-info govern-plugin-btn" data-plugin-name="${safeName}" title="Govern action">
+            <i class="bi bi-shield-check"></i>
+          </button>` : ''}
+          ${isAdmin ? `<button type="button" class="btn btn-sm btn-outline-secondary duplicate-plugin-btn" data-plugin-name="${safeName}" title="Duplicate action">
+            <i class="bi bi-files"></i>
+          </button>` : ''}
           <button type="button" class="btn btn-sm btn-outline-danger delete-plugin-btn" data-plugin-name="${safeName}" title="Delete action">
             <i class="bi bi-trash"></i>
           </button>`;
@@ -115,6 +121,20 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
   });
   tbody.querySelectorAll('.delete-plugin-btn').forEach(btn => {
     btn.onclick = () => onDelete(btn.getAttribute('data-plugin-name'));
+  });
+  tbody.querySelectorAll('.govern-plugin-btn').forEach(btn => {
+    btn.onclick = () => {
+      if (onGovern) {
+        onGovern(btn.getAttribute('data-plugin-name'));
+      }
+    };
+  });
+  tbody.querySelectorAll('.duplicate-plugin-btn').forEach(btn => {
+    btn.onclick = () => {
+      if (onDuplicate) {
+        onDuplicate(btn.getAttribute('data-plugin-name'));
+      }
+    };
   });
   tbody.querySelectorAll('.view-plugin-btn').forEach(btn => {
     btn.onclick = () => {

@@ -1065,6 +1065,8 @@
                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="toggle-enable-agents-agents">Enable Agents</label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the agents system powered by Semantic Kernel for AI-driven task automation and orchestration."></i>
+                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_agents_usage">Govern Global Agents</button>
+                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_actions_usage">Govern Global Actions</button>
                     </div>
                     <div id="per-user-sk-restart-msg" class="text-muted small mb-2" style="display:none;">Requires a restart to take effect.</div>
                 </div>
@@ -1087,21 +1089,25 @@
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-agents" name="allow_user_agents" {% if settings.allow_user_agents %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-user-agents">Allow User Agents</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level agents for personal use and customization."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_agents">Govern</button>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-agents" name="allow_group_agents" {% if settings.allow_group_agents %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-group-agents">Allow Group Agents</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level agents that can be shared within workgroups and teams."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_agents">Govern</button>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-endpoints" name="allow_user_custom_endpoints" {% if settings.allow_user_custom_endpoints %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-user-custom-endpoints">Allow User Custom Endpoints</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for their personal workspace agents and model endpoints."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_endpoints">Govern</button>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-endpoints" name="allow_group_custom_endpoints" {% if settings.allow_group_custom_endpoints %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-group-custom-endpoints">Allow Group Custom Endpoints</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for group workspace agents and model endpoints."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_endpoints">Govern</button>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
@@ -1207,7 +1213,7 @@
                 <!-- Actions Configuration Section -->
                 <div class="card p-3 mb-4" id="actions-configuration">
                     <h5 class="card-title">
-                        <i class="bi bi-plugin me-2"></i>Actions Configuration
+                        <i class="bi bi-plugin me-2"></i>Global Actions Configuration
                     </h5>
                     <p class="text-muted small">
                         Configure custom actions and tools to extend functionality with integrations and specialized capabilities.
@@ -1229,13 +1235,15 @@
                                     <h6 class="mb-2">Workspace Action Feature Toggles</h6>
                                     <div class="form-check form-switch mb-2">
                                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
-                                        <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow User Actions</label>
+                                        <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow Personal Actions</label>
                                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level actions/plugins for personal use."></i>
+                                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_actions">Govern</button>
                                     </div>
                                     <div class="form-check form-switch mb-2">
                                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
                                         <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Actions</label>
                                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level actions/plugins that can be shared within workgroups."></i>
+                                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_actions">Govern</button>
                                     </div>
                                 </div>
                             {% endif %}
@@ -1304,30 +1312,35 @@
 
             <!-- Governance Tab Content -->
             <div class="tab-pane fade" id="governance" role="tabpanel" aria-labelledby="governance-tab">
-                <p class="text-muted">
-                    Configure governance enforcement for endpoint, agent, and action creation or usage. Governance is disabled by default and only enforced when toggled on.
-                </p>
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-2 mb-3">
+                    <p class="text-muted mb-0">
+                        Configure governance enforcement for endpoint, agent, and action creation or usage. Governance is disabled by default and only enforced when toggled on.
+                    </p>
+                    <button type="button" class="btn btn-outline-info btn-sm flex-shrink-0" id="governance-info-guide-btn" data-bs-toggle="modal" data-bs-target="#governanceInfoModal">
+                        <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                    </button>
+                </div>
 
                 <div class="card p-3 mb-3" id="governance-feature-toggles-section">
                     <h5>
-                        <i class="bi bi-shield-lock me-2"></i>Governance Feature Toggles
+                        <i class="bi bi-braces-asterisk me-2"></i>Governance Feature Toggles
                     </h5>
                     <p class="text-muted">Turn on governance checks for each feature area. Save with the main Settings button to persist these toggles.</p>
 
                     <div class="row">
                         <div class="col-md-4">
-                            <div class="fw-semibold mb-2">User Scope</div>
+                            <div class="fw-semibold mb-2">Personal Scope</div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="governance_user_endpoints" name="governance_user_endpoints" {% if settings.governance_user_endpoints %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="governance_user_endpoints">Govern User Endpoints</label>
+                                <label class="form-check-label ms-2" for="governance_user_endpoints">Govern Personal Endpoints</label>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="governance_user_agents" name="governance_user_agents" {% if settings.governance_user_agents %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="governance_user_agents">Govern User Agents</label>
+                                <label class="form-check-label ms-2" for="governance_user_agents">Govern Personal Agents</label>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="governance_user_actions" name="governance_user_actions" {% if settings.governance_user_actions %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="governance_user_actions">Govern User Actions</label>
+                                <label class="form-check-label ms-2" for="governance_user_actions">Govern Personal Actions</label>
                             </div>
                         </div>
                         <div class="col-md-4">
@@ -1348,8 +1361,9 @@
                         <div class="col-md-4">
                             <div class="fw-semibold mb-2">Global Scope</div>
                             <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_endpoints" name="governance_global_endpoints" {% if settings.governance_global_endpoints %}checked{% endif %}>
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_endpoints" name="governance_global_endpoints" checked disabled data-governance-locked="true">
                                 <label class="form-check-label ms-2" for="governance_global_endpoints">Govern Global Endpoints</label>
+                                <span class="badge bg-info text-dark ms-2">Always On</span>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="governance_global_agents_usage" name="governance_global_agents_usage" {% if settings.governance_global_agents_usage %}checked{% endif %}>
@@ -1388,81 +1402,66 @@
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Delegated Item Policies</h5>
                         <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-outline-primary btn-sm" id="governance-review-item-policies-btn">Review Configured List</button>
+                            <button type="button" class="btn btn-primary btn-sm" id="governance-new-item-policy-btn">New Policy</button>
                             <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-refresh-item-policies-btn">Refresh</button>
                         </div>
                     </div>
-                    <p class="text-muted">Manage per-item governance for global endpoints, agents, and actions that admins delegate to specific users or groups.</p>
+                    <p class="text-muted mb-1">Manage per-item governance for global endpoints, agents, and actions that admins delegate to specific users or groups.</p>
+                    <div class="alert alert-info py-2 small" role="alert">
+                        Delegated item policies are OR combined whitelists. A user can access a delegated item when they are allowed by any policy for that item.
+                    </div>
 
-                    <div id="governance-item-policy-form" class="border rounded p-3 bg-body-tertiary mb-3">
-                        <div class="row g-3 align-items-start">
-                            <div class="col-lg-3 col-md-4">
-                                <label class="form-label" for="governance-item-entity-type">Entity Type</label>
-                                <select class="form-select" id="governance-item-entity-type">
-                                    <option value="global_agent" selected>Global Agent</option>
-                                    <option value="global_action">Global Action</option>
-                                    <option value="endpoint">Endpoint</option>
-                                </select>
-                            </div>
-                            <div class="col-lg-5 col-md-8">
-                                <label class="form-label" for="governance-item-id">Delegated Item</label>
-                                <div class="input-group">
-                                    <select class="form-select" id="governance-item-id">
-                                        <option value="">Loading items...</option>
-                                    </select>
-                                    <button type="button" class="btn btn-outline-secondary" id="governance-item-id-refresh-btn" title="Refresh lookup" aria-label="Refresh delegated item lookup">
-                                        <i class="bi bi-arrow-clockwise"></i>
-                                    </button>
-                                </div>
-                                <div class="form-text" id="governance-item-id-status">Choose an entity type to load available delegated items.</div>
-                            </div>
-                            <div class="col-lg-2 col-md-4">
-                                <label class="form-label" for="governance-item-allow-all">Access</label>
-                                <div class="border rounded px-3 py-2 bg-body h-100 d-flex align-items-center">
-                                    <div class="form-check form-switch mb-0">
-                                        <input class="form-check-input" type="checkbox" role="switch" id="governance-item-allow-all" checked>
-                                        <label class="form-check-label ms-2" for="governance-item-allow-all">Allow All</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-lg-2 col-md-4 d-grid">
-                                <label class="form-label invisible" aria-hidden="true">Save</label>
-                                <button type="button" class="btn btn-primary" id="governance-save-item-policy-btn">Save Item Policy</button>
-                            </div>
+                    <div class="row g-2 align-items-end mb-3" id="governance-item-policy-card-controls">
+                        <div class="col-lg-5 col-md-6">
+                            <label class="form-label" for="governance-item-review-search">Search</label>
+                            <input type="search" class="form-control" id="governance-item-review-search" placeholder="Search users, groups, endpoint IDs, or item IDs">
                         </div>
-
-                        <div class="row g-3 mt-2 pt-3 border-top d-none" id="governance-item-allowed-principals-controls">
-                            <div class="col-lg-9">
-                                <label class="form-label" for="governance-item-allowlist-summary">Allowed Principals</label>
-                                <input type="text" class="form-control" id="governance-item-allowlist-summary" placeholder="No explicit users or groups configured" readonly>
-                            </div>
-                            <div class="col-lg-3 d-grid align-items-end">
-                                <button type="button" class="btn btn-outline-primary" id="governance-edit-item-allowlist-btn">Edit List</button>
-                            </div>
+                        <div class="col-lg-3 col-md-6">
+                            <label class="form-label" for="governance-item-review-entity-type">Entity Type</label>
+                            <select class="form-select" id="governance-item-review-entity-type">
+                                <option value="">All</option>
+                                <option value="global_endpoint">Global Endpoint</option>
+                                <option value="global_agent">Global Agent</option>
+                                <option value="global_action">Global Action</option>
+                            </select>
                         </div>
-
-                        <div class="d-none" aria-hidden="true">
-                            <input type="text" class="form-control" id="governance-item-users" placeholder="user-id-1,user-id-2">
-                            <input type="text" class="form-control" id="governance-item-groups" placeholder="group-id-1,group-id-2">
+                        <div class="col-lg-2 col-md-4">
+                            <label class="form-label" for="governance-item-review-page-size">Page Size</label>
+                            <select class="form-select" id="governance-item-review-page-size">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-8 d-flex gap-2">
+                            <button type="button" class="btn btn-primary flex-fill" id="governance-item-review-search-btn">Search</button>
+                            <button type="button" class="btn btn-outline-secondary flex-fill" id="governance-item-review-reset-btn">Reset</button>
                         </div>
                     </div>
 
-                    
-
-                    <div class="table-responsive d-none">
-                        <table class="table table-sm table-striped" id="governance-item-policies-table">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped align-middle" id="governance-item-policies-table">
                             <thead>
                                 <tr>
+                                    <th>Policy</th>
                                     <th>Entity Type</th>
-                                    <th>Item ID</th>
+                                    <th>Item</th>
                                     <th>Allow All</th>
                                     <th>Allowed Users</th>
                                     <th>Allowed Groups</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
-                            <tbody id="governance-item-policies-body"></tbody>
+                            <tbody id="governance-item-policies-review-body"></tbody>
                         </table>
+                    </div>
+
+                    <div class="d-flex align-items-center justify-content-between gap-2 mt-3">
+                        <div class="text-muted small" id="governance-item-review-summary"></div>
+                        <div class="btn-group" role="group" aria-label="Delegated item policy pagination">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-item-review-prev-btn">Previous</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-item-review-next-btn">Next</button>
+                        </div>
                     </div>
                 </div>
 
@@ -3365,7 +3364,7 @@
 
                     <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
                         <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h6 class="mb-0">Configured Endpoints</h6>
+                            <h6 class="mb-0">Global Endpoints</h6>
                             <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
                                 <i class="bi bi-plus-circle me-1"></i>Add Endpoint
                             </button>
@@ -6271,6 +6270,9 @@
         
         <!-- Control Center Roles Info Modal -->
         {% include '_control_center_roles_info.html' %}
+
+        <!-- Governance Info Modal -->
+        {% include '_governance_info.html' %}
 
         <!-- Swagger Info Modal -->
         <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">

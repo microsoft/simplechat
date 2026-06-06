@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.242.022)**
+
+#### New Features
+
+*   **Pull Request Preparation Prompt**
+    *   Added a reusable Copilot prompt for preparing SimpleChat branches for pull requests into `Development`.
+    *   The workflow verifies branch freshness against `Development`, runs repo-aligned validation checks, updates release notes when needed, and gates push or PR creation behind explicit user confirmation.
+    *   Optional merge or rebase from `Development` is supported only when requested, with conflicts resolved interactively by the agent after explaining each side of the conflict.
+    *   (Ref: `.github/prompts/prepare-for-pull-request.prompt.md`, PR readiness workflow, Development branch validation)
+
 ### **(v0.241.007)**
 
 ## New Feature

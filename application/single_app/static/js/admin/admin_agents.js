@@ -201,6 +201,55 @@ async function openAgentModal(agent = null) {
     modal.show();
 }
 
+function makeAgentCopyName(name) {
+    const baseName = `${String(name || 'agent').trim() || 'agent'}_copy`;
+    const existingNames = new Set((agents || []).map((agent) => String(agent.name || '').trim().toLowerCase()));
+    if (!existingNames.has(baseName.toLowerCase())) {
+        return baseName;
+    }
+
+    let suffix = 2;
+    while (existingNames.has(`${baseName}_${suffix}`.toLowerCase())) {
+        suffix += 1;
+    }
+    return `${baseName}_${suffix}`;
+}
+
+function duplicateAgent(agent) {
+    const duplicate = JSON.parse(JSON.stringify(agent || {}));
+    delete duplicate.id;
+    duplicate.name = makeAgentCopyName(agent?.name || 'agent');
+    duplicate.display_name = `${agent?.display_name || agent?.name || 'Agent'} Copy`;
+    openAgentModal(duplicate);
+    if (window.agentModalStepper) {
+        window.agentModalStepper.isEditMode = false;
+        window.agentModalStepper.originalAgent = null;
+        const title = document.getElementById('agentModalLabel');
+        if (title) {
+            title.textContent = 'Add Agent';
+        }
+    }
+    window.editingAgentIndex = null;
+    window.editingAgentName = null;
+}
+
+function governAgent(agent) {
+    const agentId = String(agent?.id || '').trim();
+    if (!agentId) {
+        showToast('This agent does not have a stable ID for governance.', 'warning');
+        return;
+    }
+    if (typeof window.openGovernanceDelegatedItemEditor === 'function') {
+        window.openGovernanceDelegatedItemEditor({
+            entityType: 'global_agent',
+            itemId: agentId,
+            resourceLabel: agent.display_name || agent.name || agentId,
+        });
+    } else {
+        showToast('Governance editor is still loading. Try again in a moment.', 'warning');
+    }
+}
+
 // Utility: Show agent modal error
 function showAgentModalError(msg) {
     const errDiv = document.getElementById('agent-modal-error');
@@ -290,6 +339,8 @@ function renderAgentsTable() {
             <td>${selectedBadge}</td>
             <td>
                 <button type="button" class="btn btn-sm btn-secondary edit-agent-btn" data-index="${idx}">Edit</button>
+                <button type="button" class="btn btn-sm btn-outline-info govern-agent-btn" data-index="${idx}">Govern</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary duplicate-agent-btn" data-index="${idx}">Duplicate</button>
                 <button type="button" class="btn btn-sm btn-danger delete-agent-btn" data-index="${idx}" ${isSelected ? 'disabled' : ''}>Delete</button>
             </td>
         `;
@@ -315,6 +366,16 @@ function handleAgentTableClick(e) {
             if (confirm(`Are you sure you want to delete agent '${agents[idx].name}'?`)) {
                 deleteAgent(idx);
             }
+        }
+    } else if (e.target.classList.contains('govern-agent-btn')) {
+        const idx = parseInt(e.target.getAttribute('data-index'), 10);
+        if (!isNaN(idx) && Array.isArray(agents)) {
+            governAgent(agents[idx]);
+        }
+    } else if (e.target.classList.contains('duplicate-agent-btn')) {
+        const idx = parseInt(e.target.getAttribute('data-index'), 10);
+        if (!isNaN(idx) && Array.isArray(agents)) {
+            duplicateAgent(agents[idx]);
         }
     }
 }

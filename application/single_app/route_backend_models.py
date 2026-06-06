@@ -99,7 +99,7 @@ def register_route_backend_models(app):
                         ensure_governance_access(
                             feature_key,
                             user_id,
-                            item_entity_type="endpoint",
+                            item_entity_type="global_endpoint",
                             item_id=endpoint_id,
                         )
                     except PermissionError:
@@ -132,7 +132,7 @@ def register_route_backend_models(app):
             ensure_governance_access(
                 feature_key,
                 user_id,
-                item_entity_type="endpoint",
+                item_entity_type="global_endpoint",
                 item_id=endpoint_id,
             )
         return endpoint

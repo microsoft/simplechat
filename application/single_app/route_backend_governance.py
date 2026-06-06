@@ -32,6 +32,9 @@ def _sanitize_policy_payload(payload):
             "allow_all": True,
             "allowed_users": [],
             "allowed_groups": [],
+            "policy_id": "",
+            "policy_name": "",
+            "resource_label": "",
         }
 
     allowed_users = payload.get("allowed_users", [])
@@ -46,6 +49,9 @@ def _sanitize_policy_payload(payload):
         "allow_all": bool(payload.get("allow_all", True)),
         "allowed_users": allowed_users,
         "allowed_groups": allowed_groups,
+        "policy_id": str(payload.get("policy_id") or "").strip(),
+        "policy_name": str(payload.get("policy_name") or "").strip(),
+        "resource_label": str(payload.get("resource_label") or "").strip(),
     }
 
 
@@ -67,6 +73,9 @@ def _normalize_review_pagination(args):
 
 def _build_item_policy_search_haystack(policy):
     return " ".join([
+        str(policy.get("policy_id") or ""),
+        str(policy.get("policy_name") or ""),
+        str(policy.get("resource_label") or ""),
         str(policy.get("entity_type") or ""),
         str(policy.get("item_id") or ""),
         str(policy.get("allow_all") or ""),
@@ -107,13 +116,10 @@ def register_route_backend_governance(app):
         )
         return jsonify({'policy': updated}), 200
 
-    @app.route('/api/admin/governance/item-policies/<entity_type>/<item_id>', methods=['DELETE'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @admin_required
-    def delete_governance_item_policy_route(entity_type, item_id):
+    def _delete_governance_item_policy(entity_type, item_id, policy_id=None):
         normalized_entity_type = str(entity_type or '').strip().lower()
         normalized_item_id = str(item_id or '').strip()
+        normalized_policy_id = str(policy_id or '').strip() or None
         if not normalized_entity_type or not normalized_item_id:
             return jsonify({'error': 'entity_type and item_id are required.'}), 400
 
@@ -124,6 +130,7 @@ def register_route_backend_governance(app):
             deleted = delete_item_policy(
                 entity_type=normalized_entity_type,
                 item_id=normalized_item_id,
+                policy_id=normalized_policy_id,
                 actor_user_id=actor_user_id,
                 actor_email=actor_email,
             )
@@ -131,6 +138,20 @@ def register_route_backend_governance(app):
             return jsonify({'error': 'Item governance policy not found.'}), 404
 
         return jsonify({'deleted': deleted}), 200
+
+    @app.route('/api/admin/governance/item-policies/<entity_type>/<item_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def delete_governance_item_policy_route(entity_type, item_id):
+        return _delete_governance_item_policy(entity_type, item_id)
+
+    @app.route('/api/admin/governance/item-policies/<entity_type>/<item_id>/<policy_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def delete_governance_named_item_policy_route(entity_type, item_id, policy_id):
+        return _delete_governance_item_policy(entity_type, item_id, policy_id)
 
     @app.route('/api/admin/governance/item-policies', methods=['GET'])
     @swagger_route(security=get_auth_security())
