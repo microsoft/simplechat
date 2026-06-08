@@ -105,6 +105,13 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function setBootstrapIcon(element, iconClass) {
+    element.replaceChildren();
+    const icon = document.createElement('i');
+    icon.className = iconClass;
+    element.appendChild(icon);
+}
+
 function splitPrincipalList(value) {
     if (!value) {
         return [];
@@ -1056,21 +1063,20 @@ function renderGovernanceItemEditorSelectedList(options) {
             const copyButton = document.createElement('button');
             copyButton.type = 'button';
             copyButton.className = 'btn btn-sm btn-link p-0';
-            copyButton.innerHTML = '<i class="bi bi-clipboard"></i>';
+            setBootstrapIcon(copyButton, 'bi bi-clipboard');
             copyButton.title = 'Copy ID';
             copyButton.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                const originalHtml = copyButton.innerHTML;
                 navigator.clipboard.writeText(idValue).then(() => {
-                    copyButton.innerHTML = '<i class="bi bi-check"></i>';
+                    setBootstrapIcon(copyButton, 'bi bi-check');
                     setTimeout(() => {
-                        copyButton.innerHTML = originalHtml;
+                        setBootstrapIcon(copyButton, 'bi bi-clipboard');
                     }, 1500);
                 }).catch(() => {
-                    copyButton.innerHTML = '<i class="bi bi-x"></i>';
+                    setBootstrapIcon(copyButton, 'bi bi-x');
                     setTimeout(() => {
-                        copyButton.innerHTML = originalHtml;
+                        setBootstrapIcon(copyButton, 'bi bi-clipboard');
                     }, 1500);
                 });
             });
@@ -1462,6 +1468,7 @@ function ensureGovernanceItemPolicyEditorModal() {
         `;
 
         const wrapper = document.createElement('div');
+    // xss-check: ignore - modalMarkup is a static Bootstrap shell; untrusted values are populated with DOM APIs.
         wrapper.innerHTML = modalMarkup.trim();
         modalElement = wrapper.firstElementChild;
         document.body.appendChild(modalElement);
@@ -1877,6 +1884,7 @@ function ensureGovernanceItemPolicyDeleteModal() {
         `;
 
         const wrapper = document.createElement('div');
+    // xss-check: ignore - modalMarkup is a static Bootstrap shell; untrusted values are populated with DOM APIs.
         wrapper.innerHTML = modalMarkup.trim();
         modalElement = wrapper.firstElementChild;
         document.body.appendChild(modalElement);
@@ -2351,6 +2359,7 @@ function ensureGovernanceAllowListEditorModal() {
         `;
 
         const wrapper = document.createElement('div');
+    // xss-check: ignore - modalMarkup is a static Bootstrap shell; untrusted values are populated with DOM APIs.
         wrapper.innerHTML = modalMarkup.trim();
         modalElement = wrapper.firstElementChild;
         document.body.appendChild(modalElement);
@@ -2621,21 +2630,20 @@ function renderGovernanceSelectedList(options) {
             const copyButton = document.createElement('button');
             copyButton.type = 'button';
             copyButton.className = 'btn btn-sm btn-link p-0';
-            copyButton.innerHTML = '<i class="bi bi-clipboard"></i>';
+            setBootstrapIcon(copyButton, 'bi bi-clipboard');
             copyButton.title = 'Copy ID';
             copyButton.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const originalHtml = copyButton.innerHTML;
                 navigator.clipboard.writeText(idValue).then(() => {
-                    copyButton.innerHTML = '<i class="bi bi-check"></i>';
+                    setBootstrapIcon(copyButton, 'bi bi-check');
                     setTimeout(() => {
-                        copyButton.innerHTML = originalHtml;
+                        setBootstrapIcon(copyButton, 'bi bi-clipboard');
                     }, 1500);
                 }).catch(() => {
-                    copyButton.innerHTML = '<i class="bi bi-x"></i>';
+                    setBootstrapIcon(copyButton, 'bi bi-x');
                     setTimeout(() => {
-                        copyButton.innerHTML = originalHtml;
+                        setBootstrapIcon(copyButton, 'bi bi-clipboard');
                     }, 1500);
                 });
             });

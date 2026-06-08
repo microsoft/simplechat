@@ -8,11 +8,28 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Governance Controls for Endpoints, Agents, and Actions**
+    *   Added in-app governance policies that let administrators control access to personal, group, and global endpoints, agents, and actions.
+    *   Added feature-level policies, delegated item policies, review workflows, backend enforcement, and Admin Settings UI for managing governance allowlists.
+    *   (Ref: governance policies, delegated item policies, Admin Settings Governance tab)
+
+*   **Governance and App Settings Cache Versioning**
+    *   Added cache-version coordination so settings and governance policy changes can invalidate stale worker process caches across Redis-enabled and non-Redis deployments.
+    *   Keeps hot-path settings and governance checks fast while reducing stale reads after admin changes.
+    *   (Ref: app settings cache, governance cache versioning)
+
 *   **Pull Request Preparation Prompt**
     *   Added a reusable Copilot prompt for preparing SimpleChat branches for pull requests into `Development`.
     *   The workflow verifies branch freshness against `Development`, runs repo-aligned validation checks, updates release notes when needed, and gates push or PR creation behind explicit user confirmation.
     *   Optional merge or rebase from `Development` is supported only when requested, with conflicts resolved interactively by the agent after explaining each side of the conflict.
     *   (Ref: `.github/prompts/prepare-for-pull-request.prompt.md`, PR readiness workflow, Development branch validation)
+
+#### Bug Fixes
+
+*   **Governance Admin Rendering XSS Hardening**
+    *   Reworked changed admin governance, model endpoint, agent, and plugin table rendering paths so untrusted names, descriptions, IDs, and labels are populated with DOM APIs and `textContent` instead of interpolated HTML attributes.
+    *   Added narrow reviewed XSS guardrail suppressions only for static Bootstrap modal shells that do not interpolate untrusted values.
+    *   (Ref: governance admin UI, model endpoint table, plugin table rendering, XSS sink validation)
 
 ### **(v0.241.007)**
 

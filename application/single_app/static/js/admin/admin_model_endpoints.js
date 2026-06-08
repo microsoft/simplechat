@@ -282,26 +282,59 @@ function renderEndpoints() {
         const statusClass = endpoint.enabled ? "success" : "secondary";
         const toggleLabel = endpoint.enabled ? "Disable" : "Enable";
 
-        row.innerHTML = `
-            <td>
-                <div class="fw-semibold">${escapeHtml(endpoint.name || "Unnamed Endpoint")}</div>
-                <div class="text-muted small">${escapeHtml(endpoint.connection?.endpoint || "")}</div>
-            </td>
-            <td>${escapeHtml(formatProviderLabel(endpoint.provider))}</td>
-            <td>
-                <span title="${escapeHtml(selectedModels)}">${escapeHtml(selectedModels)}</span>
-            </td>
-            <td><span class="badge bg-${statusClass}">${statusLabel}</span></td>
-            <td class="text-end">
-                <div class="btn-group btn-group-sm" role="group">
-                    <button type="button" class="btn btn-outline-primary" data-action="edit" data-endpoint-id="${endpoint.id}">Edit</button>
-                    <button type="button" class="btn btn-outline-info" data-action="govern" data-endpoint-id="${endpoint.id}">Govern</button>
-                    <button type="button" class="btn btn-outline-secondary" data-action="duplicate" data-endpoint-id="${endpoint.id}">Duplicate</button>
-                    <button type="button" class="btn btn-outline-${endpoint.enabled ? "warning" : "success"}" data-action="toggle" data-endpoint-id="${endpoint.id}">${toggleLabel}</button>
-                    <button type="button" class="btn btn-outline-danger" data-action="delete" data-endpoint-id="${endpoint.id}">Delete</button>
-                </div>
-            </td>
-        `;
+        const endpointCell = document.createElement("td");
+        const endpointName = document.createElement("div");
+        endpointName.className = "fw-semibold";
+        endpointName.textContent = endpoint.name || "Unnamed Endpoint";
+        const endpointUrl = document.createElement("div");
+        endpointUrl.className = "text-muted small";
+        endpointUrl.textContent = endpoint.connection?.endpoint || "";
+        endpointCell.appendChild(endpointName);
+        endpointCell.appendChild(endpointUrl);
+
+        const providerCell = document.createElement("td");
+        providerCell.textContent = formatProviderLabel(endpoint.provider);
+
+        const modelsCell = document.createElement("td");
+        const modelsSpan = document.createElement("span");
+        modelsSpan.title = selectedModels;
+        modelsSpan.textContent = selectedModels;
+        modelsCell.appendChild(modelsSpan);
+
+        const statusCell = document.createElement("td");
+        const statusBadge = document.createElement("span");
+        statusBadge.className = `badge bg-${statusClass}`;
+        statusBadge.textContent = statusLabel;
+        statusCell.appendChild(statusBadge);
+
+        const actionsCell = document.createElement("td");
+        actionsCell.className = "text-end";
+        const actionsGroup = document.createElement("div");
+        actionsGroup.className = "btn-group btn-group-sm";
+        actionsGroup.setAttribute("role", "group");
+
+        const createEndpointButton = (action, label, className) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = className;
+            button.dataset.action = action;
+            button.dataset.endpointId = endpoint.id || "";
+            button.textContent = label;
+            return button;
+        };
+
+        actionsGroup.appendChild(createEndpointButton("edit", "Edit", "btn btn-outline-primary"));
+        actionsGroup.appendChild(createEndpointButton("govern", "Govern", "btn btn-outline-info"));
+        actionsGroup.appendChild(createEndpointButton("duplicate", "Duplicate", "btn btn-outline-secondary"));
+        actionsGroup.appendChild(createEndpointButton("toggle", toggleLabel, `btn btn-outline-${endpoint.enabled ? "warning" : "success"}`));
+        actionsGroup.appendChild(createEndpointButton("delete", "Delete", "btn btn-outline-danger"));
+        actionsCell.appendChild(actionsGroup);
+
+        row.appendChild(endpointCell);
+        row.appendChild(providerCell);
+        row.appendChild(modelsCell);
+        row.appendChild(statusCell);
+        row.appendChild(actionsCell);
 
         endpointsTbody.appendChild(row);
     });
@@ -577,6 +610,7 @@ function ensureEndpointDuplicateKeyModal() {
             </div>
         `;
         const wrapper = document.createElement('div');
+        // xss-check: ignore - modalMarkup is a static Bootstrap shell; untrusted values are not interpolated.
         wrapper.innerHTML = modalMarkup.trim();
         modalElement = wrapper.firstElementChild;
         document.body.appendChild(modalElement);

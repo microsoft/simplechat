@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for governance enforcement logic.
-Version: 0.241.010
-Implemented in: 0.241.010
+Version: 0.242.022
+Implemented in: 0.241.010; updated in 0.242.022
 
 This test ensures ensure_governance_access correctly allows and denies access
 based on feature toggles, feature policies, item policies, and caller groups.
@@ -55,7 +55,7 @@ def test_ensure_governance_access_enforces_feature_and_item_policies():
 
     original_get_settings = governance.get_settings
     original_get_feature_policy = governance.get_feature_policy
-    original_get_item_policy = governance.get_item_policy
+    original_get_item_policies = governance.get_item_policies
     original_get_user_governance_group_ids = governance.get_user_governance_group_ids
 
     try:
@@ -67,11 +67,13 @@ def test_ensure_governance_access_enforces_feature_and_item_policies():
             "allowed_groups": ["group-a"],
         }
 
-        governance.get_item_policy = lambda _entity_type, _item_id: {
-            "allow_all": False,
-            "allowed_users": ["user-allowed"],
-            "allowed_groups": [],
-        }
+        governance.get_item_policies = lambda _entity_type, _item_id: [
+            {
+                "allow_all": False,
+                "allowed_users": ["user-allowed"],
+                "allowed_groups": [],
+            }
+        ]
 
         # 1) Allowed by feature policy via group membership and by item policy via user allowlist.
         governance.get_user_governance_group_ids = lambda _user_id: {"group-a"}
@@ -115,7 +117,7 @@ def test_ensure_governance_access_enforces_feature_and_item_policies():
     finally:
         governance.get_settings = original_get_settings
         governance.get_feature_policy = original_get_feature_policy
-        governance.get_item_policy = original_get_item_policy
+        governance.get_item_policies = original_get_item_policies
         governance.get_user_governance_group_ids = original_get_user_governance_group_ids
 
 

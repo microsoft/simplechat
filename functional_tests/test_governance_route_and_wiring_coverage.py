@@ -236,7 +236,7 @@ def test_governance_enforcement_hooks_across_changed_routes():
     admin_agents_js_content = _read("application", "single_app", "static", "js", "admin", "admin_agents.js")
     admin_plugins_js_content = _read("application", "single_app", "static", "js", "admin", "admin_plugins.js")
     plugin_common_js_content = _read("application", "single_app", "static", "js", "plugin_common.js")
-    for marker in ["data-action=\"govern\"", "data-action=\"duplicate\"", "endpoint-duplicate-key-confirm-modal"]:
+    for marker in ["createEndpointButton(\"govern\"", "createEndpointButton(\"duplicate\"", "endpoint-duplicate-key-confirm-modal"]:
         assert marker in model_endpoint_js_content, f"Missing endpoint governance/duplicate marker: {marker}"
     for marker in ["govern-agent-btn", "duplicate-agent-btn", "governAgent", "duplicateAgent"]:
         assert marker in admin_agents_js_content, f"Missing agent governance/duplicate marker: {marker}"

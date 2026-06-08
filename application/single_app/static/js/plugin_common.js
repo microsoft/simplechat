@@ -75,73 +75,69 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
     return;
   }
   tbody.innerHTML = '';
+
+  const createActionButton = (className, title, iconClass, handler, pluginName) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.dataset.pluginName = pluginName;
+    button.title = title;
+    const icon = document.createElement('i');
+    icon.className = iconClass;
+    button.appendChild(icon);
+    button.addEventListener('click', () => {
+      if (handler) {
+        handler(pluginName);
+      }
+    });
+    return button;
+  };
+
   plugins.forEach(plugin => {
     const tr = document.createElement('tr');
-    const safeName = escapeHtml(plugin.name);
+    const pluginName = plugin.name || '';
     const displayName = humanizeName(plugin.display_name || plugin.name);
-    const safeDisplayName = escapeHtml(displayName);
     const description = plugin.description || 'No description available';
-    const truncatedDesc = escapeHtml(truncateDescription(description, 90));
-    let actionButtons = '';
-    let globalBadge = plugin.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : '';
-    
-    // View button always shown
-    let viewButton = `<button type="button" class="btn btn-sm btn-outline-info view-plugin-btn me-1" data-plugin-name="${safeName}" title="View details">
-            <i class="bi bi-eye"></i>
-          </button>`;
-    
-    // Edit/Delete buttons based on context
+    const truncatedDesc = truncateDescription(description, 90);
+
+    const nameCell = document.createElement('td');
+    const nameStrong = document.createElement('strong');
+    nameStrong.title = plugin.display_name || plugin.name || '';
+    nameStrong.textContent = displayName;
+    nameCell.appendChild(nameStrong);
+    if (plugin.is_global) {
+      nameCell.appendChild(document.createTextNode(' '));
+      const globalBadge = document.createElement('span');
+      globalBadge.className = 'badge bg-info text-dark';
+      globalBadge.textContent = 'Global';
+      nameCell.appendChild(globalBadge);
+    }
+
+    const descriptionCell = document.createElement('td');
+    descriptionCell.className = 'text-muted small';
+    descriptionCell.title = description;
+    descriptionCell.textContent = truncatedDesc;
+
+    const actionsCell = document.createElement('td');
+    const actionButtons = document.createElement('div');
+    actionButtons.className = 'd-flex gap-1';
+    actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-info view-plugin-btn me-1', 'View details', 'bi bi-eye', onView, pluginName));
+
     let editDeleteButtons = '';
     if (isAdmin || !plugin.is_global) {
-      editDeleteButtons = `
-          <button type="button" class="btn btn-sm btn-outline-secondary edit-plugin-btn" data-plugin-name="${safeName}" title="Edit action">
-            <i class="bi bi-pencil"></i>
-          </button>
-          ${isAdmin ? `<button type="button" class="btn btn-sm btn-outline-info govern-plugin-btn" data-plugin-name="${safeName}" title="Govern action">
-            <i class="bi bi-shield-check"></i>
-          </button>` : ''}
-          ${isAdmin ? `<button type="button" class="btn btn-sm btn-outline-secondary duplicate-plugin-btn" data-plugin-name="${safeName}" title="Duplicate action">
-            <i class="bi bi-files"></i>
-          </button>` : ''}
-          <button type="button" class="btn btn-sm btn-outline-danger delete-plugin-btn" data-plugin-name="${safeName}" title="Delete action">
-            <i class="bi bi-trash"></i>
-          </button>`;
+      actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-secondary edit-plugin-btn', 'Edit action', 'bi bi-pencil', onEdit, pluginName));
+      if (isAdmin) {
+        actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-info govern-plugin-btn', 'Govern action', 'bi bi-shield-check', onGovern, pluginName));
+        actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-secondary duplicate-plugin-btn', 'Duplicate action', 'bi bi-files', onDuplicate, pluginName));
+      }
+      actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-danger delete-plugin-btn', 'Delete action', 'bi bi-trash', onDelete, pluginName));
     }
-    actionButtons = `<div class="d-flex gap-1">${viewButton}${editDeleteButtons}</div>`;
-    tr.innerHTML = `
-      <td><strong title="${escapeHtml(plugin.display_name || plugin.name || '')}">${safeDisplayName}</strong>${globalBadge}</td>
-      <td class="text-muted small" title="${escapeHtml(description)}">${truncatedDesc}</td>
-      <td>${actionButtons}</td>
-    `;
+
+    actionsCell.appendChild(actionButtons);
+    tr.appendChild(nameCell);
+    tr.appendChild(descriptionCell);
+    tr.appendChild(actionsCell);
     tbody.appendChild(tr);
-  });
-  // Attach event handlers
-  tbody.querySelectorAll('.edit-plugin-btn').forEach(btn => {
-    btn.onclick = () => onEdit(btn.getAttribute('data-plugin-name'));
-  });
-  tbody.querySelectorAll('.delete-plugin-btn').forEach(btn => {
-    btn.onclick = () => onDelete(btn.getAttribute('data-plugin-name'));
-  });
-  tbody.querySelectorAll('.govern-plugin-btn').forEach(btn => {
-    btn.onclick = () => {
-      if (onGovern) {
-        onGovern(btn.getAttribute('data-plugin-name'));
-      }
-    };
-  });
-  tbody.querySelectorAll('.duplicate-plugin-btn').forEach(btn => {
-    btn.onclick = () => {
-      if (onDuplicate) {
-        onDuplicate(btn.getAttribute('data-plugin-name'));
-      }
-    };
-  });
-  tbody.querySelectorAll('.view-plugin-btn').forEach(btn => {
-    btn.onclick = () => {
-      if (onView) {
-        onView(btn.getAttribute('data-plugin-name'));
-      }
-    };
   });
 }
 

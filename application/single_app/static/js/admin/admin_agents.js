@@ -328,22 +328,47 @@ function renderAgentsTable() {
         // Use global_selected_agent for badge logic (compare by name)
         const isSelected = selectedAgent && agent.name === selectedAgent;
         const tr = document.createElement('tr');
-        let selectedBadge = isSelected ? '<span class="badge bg-primary ms-1">Selected</span>' : '';
-        const safeName = escapeHtml(agent.name || '');
-        const safeDisplayName = escapeHtml(agent.display_name || '');
-        const safeDescription = escapeHtml(agent.description || '');
-        tr.innerHTML = `
-            <td>${safeName}</td>
-            <td>${safeDisplayName}</td>
-            <td>${safeDescription}</td>
-            <td>${selectedBadge}</td>
-            <td>
-                <button type="button" class="btn btn-sm btn-secondary edit-agent-btn" data-index="${idx}">Edit</button>
-                <button type="button" class="btn btn-sm btn-outline-info govern-agent-btn" data-index="${idx}">Govern</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary duplicate-agent-btn" data-index="${idx}">Duplicate</button>
-                <button type="button" class="btn btn-sm btn-danger delete-agent-btn" data-index="${idx}" ${isSelected ? 'disabled' : ''}>Delete</button>
-            </td>
-        `;
+
+        const nameCell = document.createElement('td');
+        nameCell.textContent = agent.name || '';
+
+        const displayNameCell = document.createElement('td');
+        displayNameCell.textContent = agent.display_name || '';
+
+        const descriptionCell = document.createElement('td');
+        descriptionCell.textContent = agent.description || '';
+
+        const selectedCell = document.createElement('td');
+        if (isSelected) {
+            const selectedBadge = document.createElement('span');
+            selectedBadge.className = 'badge bg-primary ms-1';
+            selectedBadge.textContent = 'Selected';
+            selectedCell.appendChild(selectedBadge);
+        }
+
+        const actionsCell = document.createElement('td');
+        const createAgentButton = (className, text, disabled = false) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = className;
+            button.dataset.index = String(idx);
+            button.textContent = text;
+            button.disabled = disabled;
+            return button;
+        };
+        actionsCell.appendChild(createAgentButton('btn btn-sm btn-secondary edit-agent-btn', 'Edit'));
+        actionsCell.appendChild(document.createTextNode(' '));
+        actionsCell.appendChild(createAgentButton('btn btn-sm btn-outline-info govern-agent-btn', 'Govern'));
+        actionsCell.appendChild(document.createTextNode(' '));
+        actionsCell.appendChild(createAgentButton('btn btn-sm btn-outline-secondary duplicate-agent-btn', 'Duplicate'));
+        actionsCell.appendChild(document.createTextNode(' '));
+        actionsCell.appendChild(createAgentButton('btn btn-sm btn-danger delete-agent-btn', 'Delete', isSelected));
+
+        tr.appendChild(nameCell);
+        tr.appendChild(displayNameCell);
+        tr.appendChild(descriptionCell);
+        tr.appendChild(selectedCell);
+        tr.appendChild(actionsCell);
         agentsTableBody.appendChild(tr);
     });
     // Attach event listeners for edit and delete buttons (event delegation)
