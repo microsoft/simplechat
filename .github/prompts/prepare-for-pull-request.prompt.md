@@ -13,7 +13,7 @@ The default outcome is a verified PR-readiness report. You may push the branch o
 
 ## Repository Policy
 
-- Work in the SimpleChat repo, normally `c:\Repos\simplechatmsft`.
+- Work in the SimpleChat repository.
 - Target contributor PRs to `Development`, not `main` or `Staging`.
 - Treat `Development` and `Staging` as case-sensitive branch names.
 - Prefer the remote named `upstream` when it exists and has `Development`; otherwise use `origin/Development`.
