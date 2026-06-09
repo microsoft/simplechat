@@ -13,6 +13,7 @@ from semantic_kernel_plugins.plugin_invocation_thoughts import (
     register_plugin_invocation_thought_callback,
 )
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent, resolve_authority, resolve_authority
 import builtins
 import asyncio, types
@@ -78,8 +79,10 @@ from functions_assistant_table_exports import (
     build_assistant_table_csv_export,
 )
 from functions_chart_operations import (
+    CORE_CHART_PLUGIN_NAME,
     INLINE_CHART_BLOCK_LANGUAGE,
     build_proactive_chart_guidance_message,
+    normalize_chart_kind,
     user_request_supports_proactive_charts,
 )
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
@@ -325,6 +328,99 @@ def _build_assigned_knowledge_search_args(assigned_knowledge_filters, *, query, 
     }
 
 
+def _is_search_ready_chat_upload_workspace_document(document_item):
+    if not isinstance(document_item, dict):
+        return False
+    if document_item.get('chat_upload_link_state') == 'unlinked':
+        return False
+    if document_item.get('search_visibility_state') == 'archived':
+        return False
+
+    status = str(document_item.get('status') or '').strip().lower()
+    if 'error' in status or 'failed' in status:
+        return False
+
+    try:
+        indexed_chunk_count = int(document_item.get('number_of_pages') or document_item.get('num_chunks') or 0)
+    except (TypeError, ValueError):
+        indexed_chunk_count = 0
+    if indexed_chunk_count <= 0:
+        return False
+
+    try:
+        percentage_complete = int(document_item.get('percentage_complete') or 0)
+    except (TypeError, ValueError):
+        percentage_complete = 0
+
+    return percentage_complete >= 100 or 'processing complete' in status
+
+
+def _merge_chat_upload_workspace_context(
+    *,
+    user_id,
+    conversation_id,
+    effective_document_scope,
+    effective_selected_document_ids,
+    assigned_knowledge_filters=None,
+    assigned_knowledge_user_context_active=False,
+):
+    if (
+        assigned_knowledge_filters
+        and assigned_knowledge_filters.get('has_workspace_knowledge')
+        and not assigned_knowledge_user_context_active
+    ):
+        return effective_document_scope, list(effective_selected_document_ids or []), []
+
+    try:
+        from functions_documents import get_chat_upload_workspace_documents_for_conversation
+
+        linked_documents = get_chat_upload_workspace_documents_for_conversation(user_id, conversation_id)
+    except Exception as exc:
+        debug_print(f"[ChatUploadWorkspaceContext] Failed to resolve linked workspace documents: {exc}")
+        return effective_document_scope, list(effective_selected_document_ids or []), []
+
+    linked_document_ids = []
+    for document_item in linked_documents:
+        document_id = str(document_item.get('id') or '').strip() if isinstance(document_item, dict) else ''
+        if document_id and _is_search_ready_chat_upload_workspace_document(document_item):
+            linked_document_ids.append(document_id)
+
+    if not linked_document_ids:
+        return effective_document_scope, list(effective_selected_document_ids or []), []
+
+    merged_document_ids = []
+    seen_document_ids = set()
+    for document_id in list(effective_selected_document_ids or []) + linked_document_ids:
+        normalized_document_id = str(document_id or '').strip()
+        if not normalized_document_id or normalized_document_id in seen_document_ids:
+            continue
+        seen_document_ids.add(normalized_document_id)
+        merged_document_ids.append(normalized_document_id)
+
+    explicit_document_id_set = {
+        str(item or '').strip()
+        for item in effective_selected_document_ids or []
+        if str(item or '').strip()
+    }
+    auto_linked_document_ids = [
+        document_id
+        for document_id in linked_document_ids
+        if document_id in seen_document_ids and document_id not in explicit_document_id_set
+    ]
+    if not auto_linked_document_ids:
+        return effective_document_scope, merged_document_ids, []
+
+    normalized_scope = str(effective_document_scope or '').strip().lower()
+    if normalized_scope in ('', 'none', 'null', 'personal'):
+        merged_scope = 'personal'
+    elif normalized_scope == 'all':
+        merged_scope = 'all'
+    else:
+        merged_scope = 'all'
+
+    return merged_scope, merged_document_ids, auto_linked_document_ids
+
+
 def _get_assigned_knowledge_web_source_urls(assigned_knowledge_filters, mode=None):
     if not isinstance(assigned_knowledge_filters, dict):
         return []
@@ -504,6 +600,19 @@ FACT_MEMORY_TYPE_FACT = 'fact'
 FACT_MEMORY_TYPE_INSTRUCTION = 'instruction'
 FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer'
 INLINE_CHART_ID_PATTERN_TEMPLATE = '"chartId":"{}"'
+TABULAR_INLINE_CHART_MAX_POINTS = 12
+TABULAR_INLINE_CHART_MAX_CHARTS = 2
+TABULAR_INLINE_CHARTABLE_FUNCTIONS = {'group_by_aggregate', 'group_by_datetime_component'}
+TABULAR_INLINE_CHART_SUPPORTED_GROUP_KINDS = {
+    'bar',
+    'line',
+    'pie',
+    'doughnut',
+    'area',
+    'radar',
+    'stacked_bar',
+    'stacked_line',
+}
 STREAM_STATUS_NOT_FOUND = 'not_found'
 STREAM_STATUS_STARTED = 'started'
 STREAM_STATUS_STREAMING = 'streaming'
@@ -7098,6 +7207,240 @@ def filter_tabular_citation_invocations(invocations):
     return []
 
 
+def _coerce_tabular_chart_number(value):
+    if value in (None, '') or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    candidate = str(value).strip().replace(',', '')
+    if not candidate:
+        return None
+
+    try:
+        return float(candidate)
+    except ValueError:
+        return None
+
+
+def _humanize_tabular_chart_label(value, fallback='Value'):
+    candidate = str(value or '').strip().replace('_', ' ')
+    if not candidate:
+        candidate = fallback
+    return candidate[:80]
+
+
+def _get_requested_tabular_chart_kind(user_message):
+    normalized_message = re.sub(r'\s+', ' ', str(user_message or '').strip().lower())
+    if not normalized_message:
+        return ''
+
+    chart_kind_patterns = (
+        ('stacked_bar', r'\bstacked\s+bar\s+chart\b'),
+        ('stacked_line', r'\bstacked\s+line\s+chart\b'),
+        ('doughnut', r'\b(?:doughnut|donut)\s+chart\b|\b(?:doughnut|donut)\b'),
+        ('pie', r'\bpie\s+chart\b|\bpie\b'),
+        ('area', r'\barea\s+chart\b|\barea\b'),
+        ('line', r'\bline\s+chart\b|\btrend\s+chart\b|\bline\b'),
+        ('bar', r'\bbar\s+chart\b|\bbar\b'),
+        ('radar', r'\bradar\s+chart\b|\bradar\b'),
+    )
+
+    for chart_kind, pattern in chart_kind_patterns:
+        if re.search(pattern, normalized_message):
+            normalized_kind = normalize_chart_kind(chart_kind)
+            if normalized_kind in TABULAR_INLINE_CHART_SUPPORTED_GROUP_KINDS:
+                return normalized_kind
+
+    if re.search(r'\b(?:histogram|heatmap|scatter|bubble)\s+chart\b', normalized_message):
+        return 'bar'
+
+    return ''
+
+
+def _select_tabular_inline_chart_kind(user_message, invocation_function_name, result_payload, value_items):
+    requested_kind = _get_requested_tabular_chart_kind(user_message)
+    if requested_kind:
+        chart_kind = requested_kind
+    elif invocation_function_name == 'group_by_datetime_component':
+        chart_kind = 'line'
+    else:
+        chart_kind = 'bar'
+
+    values = [item[1] for item in value_items]
+    if chart_kind in {'pie', 'doughnut'}:
+        if any(value < 0 for value in values) or sum(values) <= 0:
+            chart_kind = 'bar'
+
+    if chart_kind in {'stacked_bar', 'stacked_line'} and len(value_items) <= 1:
+        chart_kind = 'bar' if chart_kind == 'stacked_bar' else 'line'
+
+    if chart_kind not in TABULAR_INLINE_CHART_SUPPORTED_GROUP_KINDS:
+        chart_kind = 'bar'
+
+    return chart_kind
+
+
+def _get_tabular_inline_chart_result_items(function_name, result_payload, chart_kind):
+    if not isinstance(result_payload, dict):
+        return []
+
+    result_mapping = None
+    if function_name == 'group_by_datetime_component' and chart_kind in {'line', 'area', 'stacked_line', 'bar', 'stacked_bar'}:
+        result_mapping = result_payload.get('result')
+    if not isinstance(result_mapping, dict) or not result_mapping:
+        result_mapping = result_payload.get('top_results')
+    if not isinstance(result_mapping, dict) or not result_mapping:
+        result_mapping = result_payload.get('result')
+    if not isinstance(result_mapping, dict) or not result_mapping:
+        return []
+
+    value_items = []
+    for label, raw_value in result_mapping.items():
+        numeric_value = _coerce_tabular_chart_number(raw_value)
+        if numeric_value is None:
+            continue
+
+        value_items.append((
+            _humanize_tabular_chart_label(label, fallback=f'Item {len(value_items) + 1}'),
+            numeric_value,
+        ))
+        if len(value_items) >= TABULAR_INLINE_CHART_MAX_POINTS:
+            break
+
+    return value_items
+
+
+def _build_tabular_inline_chart_title(function_name, result_payload):
+    aggregate_column = result_payload.get('aggregate_column') or 'Rows'
+    operation = str(result_payload.get('operation') or '').strip().lower()
+    if operation and operation != 'count':
+        metric_label = f"{operation.title()} {_humanize_tabular_chart_label(aggregate_column)}"
+    elif operation == 'count':
+        metric_label = 'Count'
+    else:
+        metric_label = _humanize_tabular_chart_label(aggregate_column)
+
+    if function_name == 'group_by_datetime_component':
+        group_label = _humanize_tabular_chart_label(result_payload.get('datetime_component'), fallback='Time')
+    else:
+        group_label = _humanize_tabular_chart_label(result_payload.get('group_by'), fallback='Group')
+
+    return f'{metric_label} by {group_label}'
+
+
+def _build_tabular_inline_chart_subtitle(result_payload):
+    filename = str(result_payload.get('filename') or '').strip()
+    selected_sheet = str(result_payload.get('selected_sheet') or '').strip()
+    subtitle_parts = [part for part in (filename, selected_sheet) if part]
+    return ' - '.join(subtitle_parts)[:160]
+
+
+def build_tabular_inline_chart_citations(user_message, invocations, max_charts=TABULAR_INLINE_CHART_MAX_CHARTS):
+    """Create SimpleChat inline chart citations from grouped tabular tool results."""
+    if max_charts <= 0:
+        return []
+    if not (user_requested_chart_visualization(user_message) or user_request_supports_proactive_charts(user_message)):
+        return []
+
+    chart_plugin = ChartPlugin()
+    chart_citations = []
+    seen_chart_sources = set()
+
+    for invocation in invocations or []:
+        if len(chart_citations) >= max_charts:
+            break
+
+        function_name = str(getattr(invocation, 'function_name', '') or '').strip()
+        if function_name not in TABULAR_INLINE_CHARTABLE_FUNCTIONS:
+            continue
+        if get_tabular_invocation_error_message(invocation):
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+        preliminary_kind = _select_tabular_inline_chart_kind(user_message, function_name, result_payload, [])
+        value_items = _get_tabular_inline_chart_result_items(function_name, result_payload, preliminary_kind)
+        if len(value_items) < 2:
+            continue
+
+        chart_kind = _select_tabular_inline_chart_kind(user_message, function_name, result_payload, value_items)
+        source_key = json.dumps({
+            'function_name': function_name,
+            'filename': result_payload.get('filename'),
+            'selected_sheet': result_payload.get('selected_sheet'),
+            'group_by': result_payload.get('group_by') or result_payload.get('datetime_component'),
+            'aggregate_column': result_payload.get('aggregate_column'),
+            'operation': result_payload.get('operation'),
+            'chart_kind': chart_kind,
+            'items': value_items,
+        }, sort_keys=True, default=str)
+        if source_key in seen_chart_sources:
+            continue
+        seen_chart_sources.add(source_key)
+
+        group_label = result_payload.get('group_by') or result_payload.get('datetime_component') or 'Group'
+        metric_label = result_payload.get('aggregate_column') or result_payload.get('operation') or 'Value'
+        chart_data = {
+            'labels': [label for label, _ in value_items],
+            'datasets': [{
+                'label': _humanize_tabular_chart_label(metric_label),
+                'data': [value for _, value in value_items],
+            }],
+        }
+        options = {
+            'showDataTable': True,
+            'beginAtZero': True,
+        }
+
+        chart_result = chart_plugin.create_chart(
+            chart_kind,
+            json.dumps(chart_data, separators=(',', ':'), default=str),
+            title=_build_tabular_inline_chart_title(function_name, result_payload),
+            subtitle=_build_tabular_inline_chart_subtitle(result_payload),
+            description='Generated from computed tabular analysis results.',
+            x_axis_label=_humanize_tabular_chart_label(group_label),
+            y_axis_label=_humanize_tabular_chart_label(metric_label),
+            options_json=json.dumps(options, separators=(',', ':')),
+        )
+        if not isinstance(chart_result, dict) or not chart_result.get('success'):
+            log_event(
+                '[Tabular Charts] Failed to create inline chart from grouped tabular result.',
+                extra={
+                    'function_name': function_name,
+                    'chart_kind': chart_kind,
+                    'error': chart_result.get('error') if isinstance(chart_result, dict) else None,
+                },
+                level=logging.WARNING,
+            )
+            continue
+
+        chart_citations.append({
+            'tool_name': 'Conversation Charts',
+            'function_name': 'create_chart',
+            'plugin_name': CORE_CHART_PLUGIN_NAME,
+            'function_arguments': make_json_serializable({
+                'chart_type': chart_kind,
+                'chart_data_json': chart_data,
+                'title': _build_tabular_inline_chart_title(function_name, result_payload),
+                'source_function': function_name,
+            }),
+            'function_result': make_json_serializable(chart_result),
+            'duration_ms': None,
+            'timestamp': datetime.utcnow().isoformat(),
+            'success': True,
+            'error_message': None,
+            'user_id': getattr(invocation, 'user_id', None),
+        })
+
+    if chart_citations:
+        log_event(
+            f'[Tabular Charts] Prepared {len(chart_citations)} inline chart(s) from tabular results.',
+            level=logging.INFO,
+        )
+
+    return chart_citations
+
+
 def format_tabular_thought_parameter_value(value):
     """Render a concise parameter value for tabular thought details."""
     if value is None:
@@ -11696,6 +12039,31 @@ def register_route_backend_chats(app):
 
             _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
 
+            auto_linked_chat_upload_document_ids = []
+            (
+                effective_document_scope,
+                effective_selected_document_ids,
+                auto_linked_chat_upload_document_ids,
+            ) = _merge_chat_upload_workspace_context(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                effective_document_scope=effective_document_scope,
+                effective_selected_document_ids=effective_selected_document_ids,
+                assigned_knowledge_filters=assigned_knowledge_filters,
+                assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+            )
+            if auto_linked_chat_upload_document_ids:
+                hybrid_search_enabled = True
+                original_hybrid_search_enabled = True
+                effective_selected_document_id = (
+                    effective_selected_document_ids[0]
+                    if len(effective_selected_document_ids) == 1
+                    else None
+                )
+                selected_document_ids = list(effective_selected_document_ids)
+                selected_document_id = effective_selected_document_id
+                document_scope = effective_document_scope
+
             # Clear plugin invocations at start of message processing to ensure
             # each message only shows citations for tools executed during that specific interaction
             plugin_logger = get_plugin_logger()
@@ -11831,6 +12199,9 @@ def register_route_backend_chats(app):
                             'active_group_ids': effective_active_group_ids,
                             'active_public_workspace_ids': effective_active_public_workspace_ids,
                         }
+                    if auto_linked_chat_upload_document_ids:
+                        user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
+                        user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
                 
                 # Get document details if specific document selected
                 if effective_selected_document_id and effective_selected_document_id != "all":
@@ -13096,6 +13467,13 @@ def register_route_backend_chats(app):
                     tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
                     if tabular_sk_citations:
                         agent_citations_list.extend(tabular_sk_citations)
+                    tabular_chart_citations = build_tabular_inline_chart_citations(user_message, tabular_invocations)
+                    if tabular_chart_citations:
+                        agent_citations_list.extend(tabular_chart_citations)
+                        thought_tracker.add_thought(
+                            'tabular_analysis',
+                            f"Prepared {len(tabular_chart_citations)} inline chart{'s' if len(tabular_chart_citations) != 1 else ''} from tabular results",
+                        )
                 else:
                     thought_tracker.add_thought(
                         'tabular_analysis',
@@ -13418,6 +13796,13 @@ def register_route_backend_chats(app):
                         chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
                         if chat_tabular_sk_citations:
                             agent_citations_list.extend(chat_tabular_sk_citations)
+                        chat_tabular_chart_citations = build_tabular_inline_chart_citations(user_message, chat_tabular_invocations)
+                        if chat_tabular_chart_citations:
+                            agent_citations_list.extend(chat_tabular_chart_citations)
+                            thought_tracker.add_thought(
+                                'tabular_analysis',
+                                f"Prepared {len(chat_tabular_chart_citations)} inline chart{'s' if len(chat_tabular_chart_citations) != 1 else ''} from chat-uploaded tabular results",
+                            )
 
                         debug_print(f"[Chat Tabular SK] Analysis injected, {len(chat_tabular_analysis)} chars")
                     else:
@@ -15165,6 +15550,31 @@ def register_route_backend_chats(app):
                     except PermissionError:
                         yield f"data: {json.dumps({'error': 'Forbidden'})}\n\n"
                         return
+
+                auto_linked_chat_upload_document_ids = []
+                (
+                    effective_document_scope,
+                    effective_selected_document_ids,
+                    auto_linked_chat_upload_document_ids,
+                ) = _merge_chat_upload_workspace_context(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    effective_document_scope=effective_document_scope,
+                    effective_selected_document_ids=effective_selected_document_ids,
+                    assigned_knowledge_filters=assigned_knowledge_filters,
+                    assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+                )
+                if auto_linked_chat_upload_document_ids:
+                    hybrid_search_enabled = True
+                    original_hybrid_search_enabled = True
+                    effective_selected_document_id = (
+                        effective_selected_document_ids[0]
+                        if len(effective_selected_document_ids) == 1
+                        else None
+                    )
+                    selected_document_ids = list(effective_selected_document_ids)
+                    selected_document_id = effective_selected_document_id
+                    document_scope = effective_document_scope
                 
                 # Determine chat type
                 actual_chat_type = 'personal_single_user'
@@ -15236,6 +15646,9 @@ def register_route_backend_chats(app):
                             'active_group_ids': effective_active_group_ids,
                             'active_public_workspace_ids': effective_active_public_workspace_ids,
                         }
+                    if auto_linked_chat_upload_document_ids:
+                        user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
+                        user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
                     
                     # Get document details if specific document selected
                     if effective_selected_document_id and effective_selected_document_id != "all":
@@ -16125,6 +16538,13 @@ def register_route_backend_chats(app):
                         tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
                         if tabular_sk_citations:
                             agent_citations_list.extend(tabular_sk_citations)
+                        tabular_chart_citations = build_tabular_inline_chart_citations(user_message, tabular_invocations)
+                        if tabular_chart_citations:
+                            agent_citations_list.extend(tabular_chart_citations)
+                            yield emit_thought(
+                                'tabular_analysis',
+                                f"Prepared {len(tabular_chart_citations)} inline chart{'s' if len(tabular_chart_citations) != 1 else ''} from tabular results",
+                            )
                     else:
                         system_messages_for_augmentation.append({
                             'role': 'system',
@@ -16467,6 +16887,13 @@ def register_route_backend_chats(app):
                             chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
                             if chat_tabular_sk_citations:
                                 agent_citations_list.extend(chat_tabular_sk_citations)
+                            chat_tabular_chart_citations = build_tabular_inline_chart_citations(user_message, chat_tabular_invocations)
+                            if chat_tabular_chart_citations:
+                                agent_citations_list.extend(chat_tabular_chart_citations)
+                                yield emit_thought(
+                                    'tabular_analysis',
+                                    f"Prepared {len(chat_tabular_chart_citations)} inline chart{'s' if len(chat_tabular_chart_citations) != 1 else ''} from chat-uploaded tabular results",
+                                )
 
                             debug_print(f"[Chat Tabular SK] Streaming: Analysis injected, {len(chat_tabular_analysis)} chars")
                         else:

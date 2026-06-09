@@ -1,8 +1,8 @@
 # test_chat_inline_export_action_buttons.py
 """
 UI test for assistant inline export action buttons.
-Version: 0.241.051
-Implemented in: 0.241.050
+Version: 0.241.179
+Implemented in: 0.241.179
 
 This test ensures assistant replies show inline export buttons when the latest
 user prompt explicitly asks for a supported export format such as a
@@ -11,7 +11,9 @@ conversation history is reloaded, that inline create actions show a pending
 label while the export is being prepared, and that PowerPoint exports prefer
 attached generated Markdown artifacts when present. It also ensures streaming
 assistant placeholders do not expose export/create actions before the final
-message is available.
+message is available, and that generic email export buttons are suppressed when
+Microsoft Graph already provides the real mail action or consent prompt. It also
+verifies the consent prompt includes a test-access action.
 """
 
 import json
@@ -20,7 +22,11 @@ import time
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
+
+try:
+    from playwright.sync_api import expect
+except ModuleNotFoundError:
+    pytest.skip("Playwright is not installed in this environment.", allow_module_level=True)
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -140,6 +146,111 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
                                 },
                             ],
                         },
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'You',
+                    'Send an email to ada@example.com about this update.',
+                    null,
+                    'user-graph-email-request',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'user-graph-email-request',
+                        role: 'user',
+                        content: 'Send an email to ada@example.com about this update.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'Done. I created the email draft and it is pending review.',
+                    null,
+                    'assistant-graph-pending-response',
+                    false,
+                    [],
+                    [],
+                    [
+                        {
+                            function_name: 'send_mail',
+                            function_result: {
+                                operation: 'send_mail',
+                                pending_action: {
+                                    id: 'pending-mail-1',
+                                    type: 'msgraph_pending_action',
+                                    operation: 'send_mail',
+                                    graph_resource_type: 'mail',
+                                    status: 'pending',
+                                    action_mode: 'manual',
+                                    subject: 'Update',
+                                    can_send_now: true,
+                                    can_cancel: true,
+                                },
+                            },
+                        },
+                    ],
+                    'Executive Agent',
+                    'executive_agent',
+                    {
+                        id: 'assistant-graph-pending-response',
+                        role: 'assistant',
+                        content: 'Done. I created the email draft and it is pending review.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'You',
+                    'Send an email to grace@example.com about this update.',
+                    null,
+                    'user-graph-consent-request',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'user-graph-consent-request',
+                        role: 'user',
+                        content: 'Send an email to grace@example.com about this update.',
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI',
+                    'Microsoft Graph needs permission before I can send that email.',
+                    null,
+                    'assistant-graph-consent-response',
+                    false,
+                    [],
+                    [],
+                    [
+                        {
+                            function_name: 'send_mail',
+                            function_result: {
+                                error: 'consent_required',
+                                message: 'User consent is required to access this Microsoft Graph resource.',
+                                operation: 'send_mail',
+                                consent_url: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=test&scope=Mail.Send',
+                                scopes: ['Mail.Send'],
+                            },
+                        },
+                    ],
+                    'Executive Agent',
+                    'executive_agent',
+                    {
+                        id: 'assistant-graph-consent-response',
+                        role: 'assistant',
+                        content: 'Microsoft Graph needs permission before I can send that email.',
                     },
                     true
                 );
@@ -311,6 +422,19 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
         expect(email_button).to_be_visible()
         expect(email_button).to_have_attribute('title', 'Opens Message in your default mail program')
         expect(presentation_actions.locator('button', has_text='Create Markdown Document')).to_have_count(0)
+
+        graph_pending_message = page.locator('[data-message-id="assistant-graph-pending-response"]')
+        expect(graph_pending_message.locator('.inline-open-email-btn')).to_have_count(0)
+        expect(graph_pending_message.locator('.dropdown-open-email-btn')).to_have_count(0)
+        expect(graph_pending_message.locator('.msgraph-pending-action-card')).to_be_visible()
+        expect(graph_pending_message.locator('.msgraph-pending-send-btn')).to_be_visible()
+
+        graph_consent_message = page.locator('[data-message-id="assistant-graph-consent-response"]')
+        expect(graph_consent_message.locator('.inline-open-email-btn')).to_have_count(0)
+        expect(graph_consent_message.locator('.dropdown-open-email-btn')).to_have_count(0)
+        expect(graph_consent_message.locator('.msgraph-consent-action-card')).to_be_visible()
+        expect(graph_consent_message.locator('.msgraph-consent-btn')).to_have_text('Grant Microsoft Graph access')
+        expect(graph_consent_message.locator('.msgraph-test-access-btn')).to_have_text('Test access')
 
         powerpoint_button.click()
         expect(powerpoint_button).to_have_text('Creating PowerPoint Presentation...')

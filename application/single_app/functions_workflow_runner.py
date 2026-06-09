@@ -2581,6 +2581,7 @@ def _get_workflow_alert_enrichment_priority(citation):
         'upload_markdown_document': 85,
         'create_group': 80,
         'invite_group_conversation_members': 75,
+        'send_mail': 72,
         'mark_message_as_read': 70,
         'get_my_messages': 40,
         'search_users': 30,
@@ -4118,6 +4119,8 @@ def _execute_document_analysis_workflow(
             previous_request_agent_info = getattr(g, 'request_agent_info', None) if hasattr(g, 'request_agent_info') else None
             previous_request_agent_name = getattr(g, 'request_agent_name', None) if hasattr(g, 'request_agent_name') else None
             previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
+            previous_workflow_id = getattr(g, 'workflow_id', None) if hasattr(g, 'workflow_id') else None
+            previous_workflow_run_id = getattr(g, 'workflow_run_id', None) if hasattr(g, 'workflow_run_id') else None
 
             g.force_enable_agents = True
             g.request_agent_info = dict(selected_agent)
@@ -4126,6 +4129,8 @@ def _execute_document_analysis_workflow(
             if conversation_id:
                 plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
                 g.conversation_id = conversation_id
+            g.workflow_id = workflow.get('id') or ''
+            g.workflow_run_id = run_id or ''
 
             try:
                 kernel = Kernel()
@@ -4236,6 +4241,16 @@ def _execute_document_analysis_workflow(
                     delattr(g, 'conversation_id')
                 else:
                     g.conversation_id = previous_conversation_id
+
+                if previous_workflow_id is None and hasattr(g, 'workflow_id'):
+                    delattr(g, 'workflow_id')
+                else:
+                    g.workflow_id = previous_workflow_id
+
+                if previous_workflow_run_id is None and hasattr(g, 'workflow_run_id'):
+                    delattr(g, 'workflow_run_id')
+                else:
+                    g.workflow_run_id = previous_workflow_run_id
 
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
@@ -4351,6 +4366,8 @@ def _execute_document_comparison_workflow(
             previous_request_agent_info = getattr(g, 'request_agent_info', None) if hasattr(g, 'request_agent_info') else None
             previous_request_agent_name = getattr(g, 'request_agent_name', None) if hasattr(g, 'request_agent_name') else None
             previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
+            previous_workflow_id = getattr(g, 'workflow_id', None) if hasattr(g, 'workflow_id') else None
+            previous_workflow_run_id = getattr(g, 'workflow_run_id', None) if hasattr(g, 'workflow_run_id') else None
 
             g.force_enable_agents = True
             g.request_agent_info = dict(selected_agent)
@@ -4359,6 +4376,8 @@ def _execute_document_comparison_workflow(
             if conversation_id:
                 plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
                 g.conversation_id = conversation_id
+            g.workflow_id = workflow.get('id') or ''
+            g.workflow_run_id = run_id or ''
 
             try:
                 kernel = Kernel()
@@ -4461,6 +4480,16 @@ def _execute_document_comparison_workflow(
                     delattr(g, 'conversation_id')
                 else:
                     g.conversation_id = previous_conversation_id
+
+                if previous_workflow_id is None and hasattr(g, 'workflow_id'):
+                    delattr(g, 'workflow_id')
+                else:
+                    g.workflow_id = previous_workflow_id
+
+                if previous_workflow_run_id is None and hasattr(g, 'workflow_run_id'):
+                    delattr(g, 'workflow_run_id')
+                else:
+                    g.workflow_run_id = previous_workflow_run_id
 
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
@@ -4611,6 +4640,8 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
         previous_request_agent_info = getattr(g, 'request_agent_info', None) if hasattr(g, 'request_agent_info') else None
         previous_request_agent_name = getattr(g, 'request_agent_name', None) if hasattr(g, 'request_agent_name') else None
         previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
+        previous_workflow_id = getattr(g, 'workflow_id', None) if hasattr(g, 'workflow_id') else None
+        previous_workflow_run_id = getattr(g, 'workflow_run_id', None) if hasattr(g, 'workflow_run_id') else None
 
         g.force_enable_agents = True
         g.request_agent_info = dict(selected_agent)
@@ -4619,6 +4650,8 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
         if conversation_id:
             plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
             g.conversation_id = conversation_id
+        g.workflow_id = workflow.get('id') or ''
+        g.workflow_run_id = run_id or ''
 
         if thought_tracker and run_id:
             agent_label = selected_agent.get('display_name') or selected_agent.get('name') or 'Agent'
@@ -4711,6 +4744,16 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 delattr(g, 'conversation_id')
             else:
                 g.conversation_id = previous_conversation_id
+
+            if previous_workflow_id is None and hasattr(g, 'workflow_id'):
+                delattr(g, 'workflow_id')
+            else:
+                g.workflow_id = previous_workflow_id
+
+            if previous_workflow_run_id is None and hasattr(g, 'workflow_run_id'):
+                delattr(g, 'workflow_run_id')
+            else:
+                g.workflow_run_id = previous_workflow_run_id
 
 
 def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):

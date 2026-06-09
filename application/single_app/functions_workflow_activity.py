@@ -207,9 +207,85 @@ def _build_fallback_activity(run_record, workflow):
     }
 
 
-def build_workflow_activity_snapshot(run_record=None, workflow=None, conversation=None, thoughts=None):
+def _normalize_pending_action_activity_status(action_status):
+    normalized_status = _normalize_text(action_status).lower()
+    if normalized_status in {'pending', 'scheduled'}:
+        return 'running'
+    if normalized_status in {'sent'}:
+        return 'completed'
+    if normalized_status in {'cancelled', 'canceled', 'failed'}:
+        return 'failed'
+    return _normalize_status(normalized_status)
+
+
+def _build_pending_action_activity(pending_action, order_index):
+    action = pending_action if isinstance(pending_action, dict) else {}
+    action_id = _normalize_text(action.get('id'))
+    operation = _normalize_text(action.get('operation'))
+    graph_resource_type = _normalize_text(action.get('graph_resource_type'))
+    subject = _normalize_text(action.get('subject') or (action.get('summary') or {}).get('subject'))
+    action_status = _normalize_text(action.get('status')) or 'pending'
+    action_mode = _normalize_text(action.get('action_mode')) or 'manual'
+    activity_status = _normalize_pending_action_activity_status(action_status)
+    resource_label = 'Calendar invite' if graph_resource_type == 'calendar' else 'Mail message'
+    title = f'{resource_label} review'
+    if action_mode == 'delayed':
+        title = f'{resource_label} delayed send'
+
+    auto_send_at = _normalize_text(action.get('auto_send_at_utc'))
+    summary = subject or resource_label
+    if action_status in {'pending', 'scheduled'} and action_mode == 'manual':
+        detail = 'Waiting for the user to send or cancel this Graph action.'
+    elif action_status in {'pending', 'scheduled'} and auto_send_at:
+        detail = f'Waiting until {auto_send_at} before sending unless the user sends now or cancels.'
+    elif action_status == 'sent':
+        detail = 'The Graph action was sent.'
+    elif action_status in {'cancelled', 'canceled'}:
+        detail = 'The Graph action was cancelled.'
+    else:
+        detail = _normalize_text(action.get('error')) or 'Graph action status is available.'
+
+    timestamp = action.get('updated_at') or action.get('created_at')
+    return {
+        'id': f'msgraph-pending:{action_id}',
+        'title': title,
+        'summary': summary,
+        'detail': detail,
+        'kind': 'msgraph_pending_action',
+        'status': activity_status,
+        'action_status': action_status,
+        'lane_key': 'MSGraphPlugin',
+        'lane_label': 'Microsoft Graph',
+        'plugin_name': 'MSGraphPlugin',
+        'function_name': operation,
+        'run_id': _normalize_text(action.get('run_id')) or None,
+        'workflow_id': _normalize_text(action.get('workflow_id')) or None,
+        'started_at': action.get('created_at'),
+        'completed_at': action.get('completed_at') or action.get('cancelled_at') or action.get('failed_at') or None,
+        'duration_ms': None,
+        'timestamp': timestamp,
+        'step_index': None,
+        'events': [
+            {
+                'thought_id': action_id,
+                'step_index': None,
+                'step_type': 'msgraph_pending_action',
+                'state': activity_status,
+                'content': title,
+                'detail': detail,
+                'timestamp': timestamp,
+                'duration_ms': None,
+            }
+        ],
+        'order_index': order_index,
+        'pending_action': action,
+    }
+
+
+def build_workflow_activity_snapshot(run_record=None, workflow=None, conversation=None, thoughts=None, pending_actions=None):
     """Build a frontend-friendly workflow activity snapshot."""
     thoughts = thoughts if isinstance(thoughts, list) else []
+    pending_actions = pending_actions if isinstance(pending_actions, list) else []
 
     sorted_thoughts = sorted(
         thoughts,
@@ -243,6 +319,18 @@ def build_workflow_activity_snapshot(run_record=None, workflow=None, conversatio
             _coerce_datetime(activity.get('started_at')) or datetime.max.replace(tzinfo=timezone.utc),
         ),
     )
+
+    if pending_actions:
+        lane_order.append('MSGraphPlugin') if 'MSGraphPlugin' not in lane_order else None
+        for pending_index, pending_action in enumerate(pending_actions):
+            activities.append(_build_pending_action_activity(pending_action, len(activities) + pending_index))
+        activities = sorted(
+            activities,
+            key=lambda activity: (
+                activity.get('order_index', 0),
+                _coerce_datetime(activity.get('started_at')) or datetime.max.replace(tzinfo=timezone.utc),
+            ),
+        )
 
     if not activities and isinstance(run_record, dict):
         activities = [_build_fallback_activity(run_record, workflow)]

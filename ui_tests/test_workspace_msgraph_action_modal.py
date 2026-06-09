@@ -1,13 +1,13 @@
 # test_workspace_msgraph_action_modal.py
 """
 UI test for the workspace Microsoft Graph action modal.
-Version: 0.241.037
-Implemented in: 0.241.037
+Version: 0.241.179
+Implemented in: 0.241.179
 
 This test ensures users can select the Microsoft Graph action type,
-configure its default capabilities without exposing a user-editable URL,
-review the capability summary, and complete validation plus save without
-calling the admin-only validation endpoint.
+configure its default capabilities and mail/calendar delivery modes without
+exposing a user-editable URL, review the capability summary, and complete
+validation plus save without calling the admin-only validation endpoint.
 """
 
 import json
@@ -15,7 +15,11 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
+
+try:
+    from playwright.sync_api import expect
+except ModuleNotFoundError:
+    pytest.skip("Playwright is not installed in this environment.", allow_module_level=True)
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -113,6 +117,8 @@ def test_workspace_msgraph_action_modal(playwright):
         expect(page.locator("#generic-config-section")).to_be_hidden()
         expect(page.locator("#simplechat-config-section")).to_be_hidden()
         expect(page.locator("#msgraph-config-section")).to_contain_text("delegated permissions")
+        expect(page.locator("#msgraph-mail-send-mode")).to_be_visible()
+        expect(page.locator("#msgraph-calendar-send-mode")).to_be_visible()
 
         get_profile_toggle = page.locator("#msgraph-capability-get_my_profile")
         security_alerts_toggle = page.locator("#msgraph-capability-get_my_security_alerts")
@@ -123,6 +129,10 @@ def test_workspace_msgraph_action_modal(playwright):
         expect(create_invite_toggle).to_be_checked()
         expect(read_mail_toggle).to_be_checked()
 
+        page.locator("#msgraph-calendar-send-mode").select_option("draft_delayed")
+        expect(page.locator("#msgraph-calendar-delay-group")).to_be_visible()
+        page.locator("#msgraph-calendar-delay-seconds").fill("120")
+
         page.locator("#plugin-modal-skip").click()
 
         expect(page.locator("#summary-msgraph-section")).to_be_visible()
@@ -132,6 +142,8 @@ def test_workspace_msgraph_action_modal(playwright):
         expect(page.locator("#summary-msgraph-enabled-list")).to_contain_text("Read my mail")
         expect(page.locator("#summary-msgraph-disabled-list")).to_contain_text("Read my profile")
         expect(page.locator("#summary-msgraph-disabled-list")).to_contain_text("Read my security alerts")
+        expect(page.locator("#summary-msgraph-calendar-send-mode")).to_have_text("Draft with delayed delivery")
+        expect(page.locator("#summary-msgraph-calendar-delay-seconds")).to_have_text("120 seconds")
 
         modal.get_by_role("button", name="Save Action").click()
 
@@ -150,6 +162,8 @@ def test_workspace_msgraph_action_modal(playwright):
         assert capabilities["get_my_security_alerts"] is False
         assert capabilities["create_calendar_invite"] is True
         assert capabilities["get_my_messages"] is True
+        assert saved_plugin["additionalFields"]["msgraph_calendar_send_mode"] == "draft_delayed"
+        assert saved_plugin["additionalFields"]["msgraph_calendar_delay_seconds"] == 120
     finally:
         context.close()
         browser.close()

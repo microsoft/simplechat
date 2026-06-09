@@ -90,9 +90,9 @@ export function showFileUploadingMessage() {
   msgWrapper.innerHTML = `
     <div class="message-content">
       <div class="spinner-border text-primary" role="status" style="margin-right: 8px;">
-        <span class="visually-hidden">Uploading file to chat...</span>
+        <span class="visually-hidden">Uploading file...</span>
       </div>
-      <span>Uploading file to chat...</span>
+      <span>Uploading file...</span>
     </div>
   `;
 

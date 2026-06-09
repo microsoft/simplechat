@@ -1,6 +1,7 @@
 # functions_documents.py that has some changes I need to merge into Development
 
 import re
+import shutil
 import traceback
 from config import *
 from functions_appinsights import log_event
@@ -23,6 +24,7 @@ def allowed_file(filename, allowed_extensions=None):
 ARCHIVED_SCOPE_PREFIX = "__archived__::"
 CURRENT_ALIAS_BLOB_PATH_MODE = "current_alias"
 ARCHIVED_REVISION_BLOB_PATH_MODE = "archived_revision"
+CHAT_UPLOAD_WORKSPACE_TAG = "conversations"
 TAG_COLOR_PATTERN = re.compile(r'^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
 DI_SELECTION_MARK_PATTERNS = (
     "Selection marks detected:",
@@ -76,13 +78,13 @@ def _get_document_intelligence_auto_layout_reason(sampled_pages):
 
 def _resolve_document_intelligence_auto_mode(temp_file_path, is_pdf, is_image, page_count, sample_pages, update_callback):
     if is_image:
-        return 'layout', 'image input benefits from Layout for spatial structure and selection marks'
+        return 'layout', 'image input benefits from Enhanced extraction for spatial structure and selection marks'
 
     if not is_pdf:
         return 'read', 'Auto mode is only evaluated for PDFs and images'
 
     page_range = _build_document_intelligence_page_range(sample_pages, page_count)
-    update_callback(status=f"Auto mode sampling PDF pages {page_range} with Layout...")
+    update_callback(status=f"Auto mode sampling PDF pages {page_range} with Enhanced extraction...")
 
     try:
         sampled_pages = extract_content_with_azure_di(
@@ -3250,6 +3252,114 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
         'deleted_mode': 'current_only',
         'deleted_document_ids': [document_id],
         'promoted_document_id': promoted_document_id,
+    }
+
+
+def get_chat_upload_workspace_documents_for_conversation(user_id, conversation_id):
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not user_id or not normalized_conversation_id:
+        return []
+
+    query = """
+        SELECT *
+        FROM c
+        WHERE c.user_id = @user_id
+            AND c.conversation_id = @conversation_id
+            AND c.created_from_chat_upload = true
+    """
+    parameters = [
+        {"name": "@user_id", "value": user_id},
+        {"name": "@conversation_id", "value": normalized_conversation_id},
+    ]
+
+    documents = list(
+        cosmos_user_documents_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+    return sort_documents(select_current_documents(documents))
+
+
+def serialize_chat_upload_workspace_documents_for_conversation(user_id, conversation_id):
+    documents = get_chat_upload_workspace_documents_for_conversation(user_id, conversation_id)
+    serialized_documents = []
+
+    for document_item in documents:
+        shared_user_ids = ensure_list(document_item.get('shared_user_ids'))
+        serialized_documents.append({
+            'id': document_item.get('id'),
+            'file_name': document_item.get('file_name'),
+            'title': document_item.get('title'),
+            'status': document_item.get('status'),
+            'percentage_complete': document_item.get('percentage_complete', 0),
+            'number_of_pages': document_item.get('number_of_pages', 0),
+            'upload_date': document_item.get('upload_date'),
+            'conversation_id': document_item.get('conversation_id'),
+            'chat_message_id': document_item.get('chat_message_id'),
+            'tags': ensure_list(document_item.get('tags')),
+            'can_delete_with_conversation': document_item.get('chat_upload_delete_with_conversation') is not False,
+            'is_shared': len(shared_user_ids) > 0,
+        })
+
+    return serialized_documents
+
+
+def delete_chat_upload_workspace_documents_for_conversation(user_id, conversation_id, selected_document_ids=None):
+    documents = get_chat_upload_workspace_documents_for_conversation(user_id, conversation_id)
+    selected_document_id_set = {
+        str(document_id).strip()
+        for document_id in ensure_list(selected_document_ids)
+        if str(document_id or '').strip()
+    }
+    deleted_document_ids = []
+    skipped_document_ids = []
+    retained_document_ids = []
+    failed_documents = []
+    processed_families = set()
+
+    if not selected_document_id_set:
+        return {
+            'deleted_document_ids': [],
+            'skipped_document_ids': [],
+            'retained_document_ids': [doc.get('id') for doc in documents if doc.get('id')],
+            'failed_documents': [],
+        }
+
+    for document_item in documents:
+        document_id = document_item.get('id')
+        if not document_id:
+            continue
+        normalized_document_id = str(document_id).strip()
+
+        if normalized_document_id not in selected_document_id_set:
+            retained_document_ids.append(document_id)
+            continue
+
+        family_id = document_item.get('revision_family_id') or document_id
+        if family_id in processed_families:
+            continue
+        processed_families.add(family_id)
+
+        if document_item.get('chat_upload_delete_with_conversation') is False:
+            skipped_document_ids.append(document_id)
+            continue
+
+        try:
+            delete_result = delete_document_revision(user_id, document_id, delete_mode='all_versions')
+            deleted_document_ids.extend(delete_result.get('deleted_document_ids', []))
+        except Exception as delete_error:
+            failed_documents.append({
+                'document_id': document_id,
+                'error': str(delete_error),
+            })
+
+    return {
+        'deleted_document_ids': deleted_document_ids,
+        'skipped_document_ids': skipped_document_ids,
+        'retained_document_ids': retained_document_ids,
+        'failed_documents': failed_documents,
     }
 
 def delete_document_chunks(document_id, group_id=None, public_workspace_id=None):
@@ -6520,12 +6630,12 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
 
 def validate_document_reprocess_source(document_item, user_id=None, group_id=None, public_workspace_id=None):
-    """Validate that a PDF has a stored source blob available for DI reprocessing."""
+    """Validate that a PDF has a stored source blob available for DI extraction changes."""
     if not document_item:
         return False, "Document not found."
 
     if not is_pdf_file_name(document_item.get('file_name')):
-        return False, "Only PDF documents can be reprocessed between Read and Layout."
+        return False, "Only PDF documents can change extraction between Standard and Enhanced."
 
     container_name, blob_path = get_document_blob_storage_info(
         document_item,
@@ -6534,11 +6644,11 @@ def validate_document_reprocess_source(document_item, user_id=None, group_id=Non
         public_workspace_id=public_workspace_id,
     )
     if not container_name or not blob_path:
-        return False, "Source PDF is unavailable. Re-upload this PDF before reprocessing."
+        return False, "Source PDF is unavailable. Re-upload this PDF before changing extraction."
 
     try:
         if not _blob_exists(container_name, blob_path):
-            return False, "Stored source PDF was not found in Blob Storage. Re-upload this PDF before reprocessing."
+            return False, "Stored source PDF was not found in Blob Storage. Re-upload this PDF before changing extraction."
     except Exception as e:
         return False, f"Unable to validate stored source PDF: {str(e)}"
 
@@ -6573,10 +6683,11 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
 
 
 def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
-    """Reprocess a stored PDF with an explicit Document Intelligence Read/Layout mode."""
+    """Extract a stored PDF again with an explicit Standard/Enhanced mode."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
     target_mode = normalize_document_intelligence_manual_extraction_mode(target_extraction_mode)
+    target_mode_label = "Enhanced" if target_mode == "layout" else "Standard"
     temp_file_path = None
 
     def update_doc_callback(**kwargs):
@@ -6609,7 +6720,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
 
         original_filename = document_item.get('file_name') or f'{document_id}.pdf'
         update_doc_callback(
-            status=f"Queued for {target_mode.title()} reprocessing",
+            status=f"Queued to extract again with {target_mode_label}",
             percentage_complete=0,
             current_file_chunk=0,
             num_chunks=0,
@@ -6617,7 +6728,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             document_intelligence_extraction_mode=target_mode,
             document_intelligence_extraction_mode_requested=target_mode,
             document_intelligence_auto_sample_pages=get_document_intelligence_auto_sample_pages(get_settings()),
-            document_intelligence_auto_reason='Manual reprocess requested',
+            document_intelligence_auto_reason='Manual extraction change requested',
         )
 
         temp_file_path = _download_document_source_to_temp_file(
@@ -6627,10 +6738,10 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             public_workspace_id=public_workspace_id,
         )
 
-        update_doc_callback(status=f"Deleting existing chunks before {target_mode.title()} reprocessing...")
+        update_doc_callback(status=f"Deleting existing chunks before extracting again with {target_mode_label}...")
         delete_document_chunks(document_id, group_id=group_id, public_workspace_id=public_workspace_id)
 
-        update_doc_callback(status=f"Reprocessing PDF with Document Intelligence {target_mode.title()}...")
+        update_doc_callback(status=f"Extracting PDF again with Document Intelligence {target_mode_label}...")
         result = process_di_document(
             document_id=document_id,
             user_id=user_id,
@@ -6663,16 +6774,16 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             final_update_args["embedding_model_deployment_name"] = embedding_model_name
         update_doc_callback(**final_update_args)
 
-        print(f"Document {document_id} reprocessed successfully with Document Intelligence {target_mode}.")
+        print(f"Document {document_id} extracted again successfully with Document Intelligence {target_mode}.")
     except Exception as e:
-        print(f"Error reprocessing document {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
+        print(f"Error extracting document {document_id} again: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
         try:
             update_doc_callback(
-                status=f"Error reprocessing document: {str(e)}",
+                status=f"Error changing extraction: {str(e)}",
                 percentage_complete=0,
             )
         except Exception as update_error:
-            print(f"Failed to update reprocess error status for {document_id}: {update_error}")
+            print(f"Failed to update extraction change error status for {document_id}: {update_error}")
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             try:
@@ -7064,6 +7175,269 @@ def _build_document_scope_args(document_id, user_id, group_id=None, public_works
     return args
 
 
+def build_chat_upload_workspace_tags(conversation_id):
+    return [CHAT_UPLOAD_WORKSPACE_TAG]
+
+
+def _copy_workspace_upload_source(temp_file_path, original_filename):
+    file_ext = os.path.splitext(str(original_filename or ''))[-1]
+    suffix = file_ext if file_ext else None
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as workspace_temp_file:
+        workspace_temp_file_path = workspace_temp_file.name
+    shutil.copyfile(temp_file_path, workspace_temp_file_path)
+    return workspace_temp_file_path
+
+
+def _personal_workspace_file_name_exists(user_id, file_name):
+    query = """
+        SELECT TOP 1 VALUE c.id
+        FROM c
+        WHERE c.file_name = @file_name
+            AND c.user_id = @user_id
+    """
+    matches = list(
+        cosmos_user_documents_container.query_items(
+            query=query,
+            parameters=[
+                {"name": "@file_name", "value": file_name},
+                {"name": "@user_id", "value": user_id},
+            ],
+            enable_cross_partition_query=True,
+        )
+    )
+    return bool(matches)
+
+
+def resolve_unique_personal_workspace_file_name(user_id, requested_file_name, identity_suffix=None):
+    normalized_file_name = str(requested_file_name or '').strip()
+    if not normalized_file_name:
+        raise ValueError("requested_file_name is required")
+
+    base_name, file_ext = os.path.splitext(normalized_file_name)
+    if not base_name:
+        base_name = "uploaded-file"
+
+    if not _personal_workspace_file_name_exists(user_id, normalized_file_name):
+        return normalized_file_name
+
+    normalized_identity_suffix = str(identity_suffix or '').strip()
+    if normalized_identity_suffix:
+        identity_candidate = f"{base_name} ({normalized_identity_suffix}){file_ext}"
+        if not _personal_workspace_file_name_exists(user_id, identity_candidate):
+            return identity_candidate
+
+    for suffix_number in range(1, 1000):
+        candidate_file_name = f"{base_name} ({suffix_number}){file_ext}"
+        if not _personal_workspace_file_name_exists(user_id, candidate_file_name):
+            return candidate_file_name
+
+    fallback_suffix = str(uuid.uuid4())[:8]
+    return f"{base_name} ({fallback_suffix}){file_ext}"
+
+
+def _merge_document_tags(existing_tags, new_tags):
+    merged_tags = []
+    seen_tags = set()
+    for tag in ensure_list(existing_tags) + ensure_list(new_tags):
+        normalized_tag = normalize_tag(tag)
+        if not normalized_tag or normalized_tag in seen_tags:
+            continue
+        seen_tags.add(normalized_tag)
+        merged_tags.append(normalized_tag)
+
+    is_valid, error_message, normalized_tags = validate_tags(merged_tags)
+    if not is_valid:
+        raise ValueError(error_message)
+
+    return normalized_tags
+
+
+def sync_chat_upload_workspace_attachment_status(document_metadata):
+    if not isinstance(document_metadata, dict) or not document_metadata.get('created_from_chat_upload'):
+        return False
+
+    conversation_id = str(document_metadata.get('conversation_id') or '').strip()
+    chat_message_id = str(document_metadata.get('chat_message_id') or '').strip()
+    document_id = str(document_metadata.get('id') or '').strip()
+    if not conversation_id or not chat_message_id or not document_id:
+        return False
+
+    try:
+        message_item = cosmos_messages_container.read_item(
+            item=chat_message_id,
+            partition_key=conversation_id,
+        )
+        if str(message_item.get('workspace_document_id') or '').strip() != document_id:
+            message_attachment = (message_item.get('metadata') or {}).get('workspace_attachment') or {}
+            if str(message_attachment.get('document_id') or '').strip() != document_id:
+                return False
+
+        message_metadata = message_item.setdefault('metadata', {})
+        workspace_attachment = message_metadata.setdefault('workspace_attachment', {})
+        workspace_attachment.update({
+            'document_id': document_id,
+            'file_name': document_metadata.get('file_name'),
+            'status': document_metadata.get('status', 'Queued for processing'),
+            'percentage_complete': document_metadata.get('percentage_complete', 0),
+            'tags': document_metadata.get('tags', []),
+            'workspace_url': f"/workspace?document_id={document_id}",
+            'conversation_url': f"/chats?conversation_id={conversation_id}",
+            'scope': 'personal',
+            'link_state': document_metadata.get('chat_upload_link_state', 'linked'),
+        })
+        message_metadata['workspace_attachment'] = workspace_attachment
+        message_item['metadata'] = message_metadata
+        message_item['workspace_document_id'] = document_id
+        message_item['file_content_source'] = 'workspace'
+        cosmos_messages_container.upsert_item(message_item)
+        return True
+    except Exception as sync_error:
+        log_event(
+            f"[ChatUpload] Unable to sync workspace attachment status for document {document_id}: {sync_error}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return False
+
+
+def queue_personal_workspace_upload_from_temp_file(
+    *,
+    user_id,
+    temp_file_path,
+    original_filename,
+    document_id=None,
+    tags=None,
+    source_metadata=None,
+    copy_source_file=False,
+    extraction_mode_override=None,
+    ensure_unique_file_name=False,
+    unique_file_name_suffix=None,
+):
+    if not user_id:
+        raise ValueError("user_id is required")
+    if not temp_file_path or not os.path.exists(temp_file_path):
+        raise ValueError("temp_file_path must point to an existing file")
+
+    safe_original_filename = str(original_filename or '').strip()
+    if not safe_original_filename:
+        raise ValueError("original_filename is required")
+    if not allowed_file(safe_original_filename):
+        raise ValueError(f"Unsupported workspace file type for {safe_original_filename}")
+
+    workspace_document_id = document_id or str(uuid.uuid4())
+    workspace_file_name = safe_original_filename
+    if ensure_unique_file_name:
+        workspace_file_name = resolve_unique_personal_workspace_file_name(
+            user_id,
+            safe_original_filename,
+            identity_suffix=unique_file_name_suffix or workspace_document_id[:8],
+        )
+
+    workspace_temp_file_path = temp_file_path
+    temp_file_queued = False
+    document_created = False
+
+    if copy_source_file:
+        workspace_temp_file_path = _copy_workspace_upload_source(temp_file_path, workspace_file_name)
+
+    try:
+        create_document(
+            workspace_file_name,
+            user_id,
+            workspace_document_id,
+            num_file_chunks=0,
+            status="Queued for processing"
+        )
+        document_created = True
+
+        document_metadata = get_document_metadata(workspace_document_id, user_id) or {}
+        merged_tags = _merge_document_tags(document_metadata.get('tags', []), tags or [])
+        for tag in merged_tags:
+            get_or_create_tag_definition(user_id, tag, workspace_type='personal')
+
+        update_fields = {
+            **(source_metadata or {}),
+            "tags": merged_tags,
+            "status": "Queued for processing",
+            "percentage_complete": 0,
+        }
+        if ensure_unique_file_name:
+            update_fields["source_original_file_name"] = safe_original_filename
+            update_fields["chat_upload_workspace_filename"] = workspace_file_name
+        update_document(
+            document_id=workspace_document_id,
+            user_id=user_id,
+            **update_fields
+        )
+
+        executor = current_app.extensions.get('executor')
+        if not executor:
+            executor = getattr(current_app, 'executor', None)
+        if not executor:
+            raise RuntimeError("Background executor is not configured")
+
+        task_kwargs = {
+            'document_id': workspace_document_id,
+            'user_id': user_id,
+            'temp_file_path': workspace_temp_file_path,
+            'original_filename': workspace_file_name,
+            'extraction_mode_override': extraction_mode_override,
+        }
+        if hasattr(executor, 'submit_stored'):
+            executor.submit_stored(
+                workspace_document_id,
+                process_document_upload_background,
+                **task_kwargs,
+            )
+        elif hasattr(executor, 'submit'):
+            executor.submit(
+                process_document_upload_background,
+                **task_kwargs,
+            )
+        else:
+            raise RuntimeError("Background executor does not support task submission")
+        temp_file_queued = True
+
+        try:
+            from functions_activity_logging import log_document_upload
+
+            file_size = os.path.getsize(workspace_temp_file_path)
+            file_ext = os.path.splitext(workspace_file_name)[-1].lower()
+            log_document_upload(
+                user_id=user_id,
+                document_id=workspace_document_id,
+                container_type='personal',
+                file_size=file_size,
+                file_type=file_ext,
+            )
+        except Exception as log_error:
+            debug_print(f"Activity logging error for chat workspace upload: {log_error}")
+
+        return {
+            'document_id': workspace_document_id,
+            'file_name': workspace_file_name,
+            'original_file_name': safe_original_filename,
+            'tags': merged_tags,
+            'status': 'Queued for processing',
+            'percentage_complete': 0,
+        }
+    except Exception:
+        if document_created and not temp_file_queued:
+            try:
+                cosmos_user_documents_container.delete_item(
+                    item=workspace_document_id,
+                    partition_key=workspace_document_id,
+                )
+            except Exception as cleanup_error:
+                debug_print(f"Failed to clean up queued workspace document metadata: {cleanup_error}")
+        if workspace_temp_file_path and os.path.exists(workspace_temp_file_path) and not temp_file_queued:
+            try:
+                os.remove(workspace_temp_file_path)
+            except Exception as cleanup_error:
+                debug_print(f"Failed to clean up queued workspace temp file: {cleanup_error}")
+        raise
+
+
 def _run_final_metadata_extraction(document_id, user_id, total_chunks_saved, enable_extract_meta_data, update_callback, group_id=None, public_workspace_id=None):
     if total_chunks_saved <= 0:
         return "skipped_no_chunks"
@@ -7353,6 +7727,14 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             
         update_doc_callback(**final_update_args)
 
+        final_document_metadata = get_document_metadata(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id
+        )
+        sync_chat_upload_workspace_attachment_status(final_document_metadata)
+
         print(f"Document {document_id} ({original_filename}) processed successfully with {total_chunks_saved} chunks saved and {total_embedding_tokens} embedding tokens used.")
         
         # Log document creation transaction to activity_logs container
@@ -7542,6 +7924,13 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 status=f"Error: {error_msg[:250]}", # Limit error message length
                 percentage_complete=0 # Indicate failure
             )
+            failed_document_metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id
+            )
+            sync_chat_upload_workspace_attachment_status(failed_document_metadata)
         except Exception as update_e:
             print(f"Critical Error: Failed to update document status to error for {document_id}: {update_e}")
 

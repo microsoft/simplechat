@@ -2,7 +2,7 @@
 # test_file_sync_azure_files_identity.py
 """
 Functional test for Azure Files File Sync identity support.
-Version: 0.241.131
+Version: 0.241.177
 Implemented in: 0.241.127
 
 This test ensures Azure Files sync sources are wired to managed identity,
@@ -39,7 +39,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.241.131"' in config_text
+    assert 'VERSION = "0.241.177"' in config_text
     assert "azure-storage-file-share==12.25.0" in requirements_text
 
 
@@ -110,7 +110,7 @@ def test_frontend_source_workflow_supports_azure_files():
     assert "file_sync_visible_source_type_azure_files" in admin_template
     assert "Azure Files" in admin_template
     for template_text in [workspace_template, group_template, public_template]:
-        assert "default(['smb', 'azure_files', 'onedrive'])" in template_text
+        assert "default(['smb', 'azure_files'])" in template_text
 
 
 def test_synced_document_badges_include_azure_files():
@@ -121,7 +121,7 @@ def test_synced_document_badges_include_azure_files():
 
     for frontend_text in [workspace_utils, group_template, public_js]:
         assert "azure_files" in frontend_text
-        assert "Synced from Azure Files" in frontend_text
+        assert "Managed by File Sync from Azure Files" in frontend_text
 
 
 def run_tests():

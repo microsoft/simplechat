@@ -654,8 +654,6 @@ function buildFolderDocumentsTable(docs) {
 
         const currentUserId = window.current_user_id;
         const isOwner = doc.user_id === currentUserId;
-        const extractionBadge = window.getWorkspaceDocumentExtractionModeBadge?.(doc) || '';
-
         // First column: expand/collapse or status indicator
         let firstColHtml = '';
         if (isComplete && !hasError) {
@@ -757,7 +755,7 @@ function buildFolderDocumentsTable(docs) {
         html += `
             <tr>
                 <td class="align-middle">${firstColHtml}</td>
-                <td class="align-middle" title="${escapeHtml(doc.file_name || '')}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || '')} <span class="ms-1">${extractionBadge}</span></td>
+                <td class="align-middle" title="${escapeHtml(doc.file_name || '')}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || '')}</td>
                 <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || 'N/A')}</td>
                 <td class="align-middle">${chatButton}${actionsDropdown}</td>
             </tr>`;

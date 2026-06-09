@@ -717,11 +717,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
               </button>
               <div class="btn-group me-2" id="group-reprocess-selected-dropdown">
                 <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                  <i class="bi bi-arrow-repeat me-1"></i>Reprocess
+                  <i class="bi bi-arrow-repeat me-1"></i>Change Extraction
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
-                  <li><button type="button" class="dropdown-item" onclick="reprocessGroupSelectedDocumentExtraction('read')">Read</button></li>
-                  <li><button type="button" class="dropdown-item" onclick="reprocessGroupSelectedDocumentExtraction('layout')">Layout</button></li>
+                  <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Standard extraction. Standard is faster for plain text PDFs and images." onclick="reprocessGroupSelectedDocumentExtraction('read')">Extract Again as Standard</button></li>
+                  <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Enhanced extraction. Enhanced preserves tables, page structure, forms, and checkbox states." onclick="reprocessGroupSelectedDocumentExtraction('layout')">Extract Again as Enhanced</button></li>
                 </ul>
               </div>
               <button type="button" class="btn btn-sm btn-info me-2" id="group-bulk-tag-btn"
@@ -856,7 +856,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           data-api-base="/api/file-sync/group"
           data-tags-api="/api/group_documents/tags"
           data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
-          data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb', 'azure_files', 'onedrive'])|join(',') }}"
+          data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb', 'azure_files'])|join(',') }}"
         ></div>
       </div>
     </div>
@@ -1392,7 +1392,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div id="group-doc-sync-status" class="alert alert-secondary py-2 mb-3" aria-live="polite">
             <div class="d-flex align-items-center gap-2 flex-wrap">
               <strong>Synced:</strong>
-              <span class="badge bg-secondary">No</span>
+              <span class="badge bg-secondary" title="This document was uploaded manually and is not managed by File Sync.">No</span>
             </div>
           </div>
           <!-- Document Classification -->
@@ -2783,7 +2783,39 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   function getGroupDocumentExtractionModeLabel(doc) {
     const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-    return mode === 'layout' ? 'Layout' : 'Read';
+    return mode === 'layout' ? 'Enhanced' : 'Standard';
+  }
+
+  function getGroupDocumentTargetExtractionMode(doc) {
+    const currentMode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+    return currentMode === 'layout' ? 'read' : 'layout';
+  }
+
+  function getGroupDocumentExtractionModeIcon(mode) {
+    return mode === 'layout' ? 'bi-layout-text-window-reverse' : 'bi-file-earmark-text';
+  }
+
+  function getGroupDocumentExtractionModeLabelFromMode(mode) {
+    return mode === 'layout' ? 'Enhanced' : 'Standard';
+  }
+
+  function getGroupDocumentExtractionChangeTooltip(targetMode) {
+    return targetMode === 'layout'
+      ? 'Extract again with Enhanced extraction. Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
+      : 'Extract again with Standard extraction. Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+  }
+
+  function getGroupDocumentExtractionModeTooltip(doc) {
+    const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+    return mode === 'layout'
+      ? 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
+      : 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+  }
+
+  function getGroupDocumentCitationTooltip(doc) {
+    return doc?.enhanced_citations
+      ? 'Enhanced citations preserve source-file context for richer citation previews and supported file workflows.'
+      : 'Standard citations reference indexed text chunks.';
   }
 
   function getGroupDocumentExtractionModeBadge(doc) {
@@ -2792,8 +2824,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
 
     const label = getGroupDocumentExtractionModeLabel(doc);
-    const badgeClass = label === 'Layout' ? 'bg-primary' : 'bg-secondary';
-    return `<span class="badge ${badgeClass}"><i class="bi bi-file-earmark-text me-1"></i>${escapeGroupHtml(label)}</span>`;
+    const badgeClass = label === 'Enhanced' ? 'bg-primary' : 'bg-secondary';
+    const tooltip = getGroupDocumentExtractionModeTooltip(doc);
+    return `<span class="badge ${badgeClass}" title="${escapeGroupHtml(tooltip)}"><i class="bi bi-file-earmark-text me-1"></i>${escapeGroupHtml(label)}</span>`;
   }
 
   function getGroupDocumentReprocessDropdownItems(doc) {
@@ -2802,15 +2835,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
 
     const docId = escapeGroupHtml(String(doc.id || ''));
+    const targetMode = getGroupDocumentTargetExtractionMode(doc);
+    const targetLabel = getGroupDocumentExtractionModeLabelFromMode(targetMode);
+    const targetIcon = getGroupDocumentExtractionModeIcon(targetMode);
+    const targetTooltip = getGroupDocumentExtractionChangeTooltip(targetMode);
 
     return `
       <li><hr class="dropdown-divider"></li>
-      <li><h6 class="dropdown-header">Reprocess PDF</h6></li>
-      <li><a class="dropdown-item" href="#" onclick="reprocessGroupDocumentExtraction('${docId}', 'read', event); return false;">
-        <i class="bi bi-file-earmark-text me-2"></i>Read
-      </a></li>
-      <li><a class="dropdown-item" href="#" onclick="reprocessGroupDocumentExtraction('${docId}', 'layout', event); return false;">
-        <i class="bi bi-layout-text-window-reverse me-2"></i>Layout
+      <li><h6 class="dropdown-header">Change Extraction</h6></li>
+      <li><a class="dropdown-item" href="#" title="${escapeGroupHtml(targetTooltip)}" onclick="reprocessGroupDocumentExtraction('${docId}', '${targetMode}', event); return false;">
+        <i class="bi ${targetIcon} me-2"></i>Change to ${targetLabel}
       </a></li>`;
   }
 
@@ -2833,20 +2867,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function getGroupDocumentSyncTypeConfig(doc) {
     const sourceType = String(doc?.file_sync?.source_type || 'smb').trim().toLowerCase();
     const sourceTypeMap = {
-      smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Synced from SMB source' },
-      azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Synced from Azure Files' },
-      m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-      m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-      m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-      sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-      one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
-      onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
-      google: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
-      google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
-      spo: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
-      sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+      smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Managed by File Sync from an SMB source.' },
+      azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Files.' },
+      m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+      m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+      m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+      sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+      one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Managed by File Sync from OneDrive.' },
+      onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Managed by File Sync from OneDrive.' },
+      google: { label: 'Google', className: 'bg-warning text-dark', title: 'Managed by File Sync from Google Workspace.' },
+      google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Managed by File Sync from Google Workspace.' },
+      spo: { label: 'SPO', className: 'bg-success text-white', title: 'Managed by File Sync from on-prem SharePoint.' },
+      sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Managed by File Sync from on-prem SharePoint.' },
     };
-    return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Synced file' };
+    return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Managed by File Sync.' };
   }
 
   function getGroupDocumentSyncTypeBadgeHtml(doc, compact = false) {
@@ -2867,7 +2901,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const synced = isGroupSyncedDocument(doc);
     let details = synced
       ? `<p class="mb-1"><strong>Synced:</strong> ${getGroupDocumentSyncTypeBadgeHtml(doc)}</p>`
-      : '<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary">No</span></p>';
+      : '<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary" title="This document was uploaded manually and is not managed by File Sync.">No</span></p>';
 
     if (synced) {
       const syncMetadata = doc.file_sync;
@@ -3177,8 +3211,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="document-item-card__meta">${getGroupDocumentMetaPills(doc)}</div>
           <div class="document-item-card__badges">
             ${getGroupClassificationBadge(doc)}
-            <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
-            ${getGroupDocumentExtractionModeBadge(doc)}
+            <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}" title="${escapeGroupHtml(getGroupDocumentCitationTooltip(doc))}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
             ${getGroupDocumentSyncBadgeHtml(doc)}
           </div>
           <div class="document-item-card__tags">${renderGroupTagBadges(doc.tags || [], 4)}</div>
@@ -5140,7 +5173,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Complete row HTML
     docRow.innerHTML = `
         ${firstColumnHtml}
-      <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")} <span class="ms-1">${getGroupDocumentExtractionModeBadge(doc)}</span></td>
+      <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")}</td>
       <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
       <td class="align-middle document-actions-cell">
         ${approvalButton}
@@ -5207,8 +5240,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 ${isGroupPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getGroupDocumentExtractionModeBadge(doc)}</p>` : ''}
                 <p class="mb-1"><strong>Citations:</strong> ${
                   doc.enhanced_citations
-                    ? '<span class="badge bg-success">Enhanced</span>'
-                    : '<span class="badge bg-secondary">Standard</span>'
+                    ? `<span class="badge bg-success" title="${escapeHtml(getGroupDocumentCitationTooltip(doc))}">Enhanced</span>`
+                    : `<span class="badge bg-secondary" title="${escapeHtml(getGroupDocumentCitationTooltip(doc))}">Standard</span>`
                 }</p>
                 <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(
                   doc.publication_date || "N/A"
@@ -5241,9 +5274,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
         }
         if (isGroupPdfDocument(doc)) {
           const reprocessDocId = escapeHtml(String(docId || ''));
+          const extractionActionMode = getGroupDocumentTargetExtractionMode(doc);
+          const extractionActionLabel = getGroupDocumentExtractionModeLabelFromMode(extractionActionMode);
+          const extractionActionIcon = getGroupDocumentExtractionModeIcon(extractionActionMode);
+          const extractionActionTooltip = getGroupDocumentExtractionChangeTooltip(extractionActionMode);
           detailsHtml += `
-                      <button class="btn btn-sm btn-outline-secondary" onclick="reprocessGroupDocumentExtraction('${reprocessDocId}', 'read', event)" title="Reprocess PDF with Read"> <i class="bi bi-file-earmark-text"></i> Read </button>
-                      <button class="btn btn-sm btn-outline-secondary" onclick="reprocessGroupDocumentExtraction('${reprocessDocId}', 'layout', event)" title="Reprocess PDF with Layout"> <i class="bi bi-layout-text-window-reverse"></i> Layout </button>`;
+                      <button class="btn btn-sm btn-outline-secondary" onclick="reprocessGroupDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}"> <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel} </button>`;
         }
       }
       detailsHtml += `</div></div></td>`; // Close buttons div, details div, td
@@ -5921,7 +5957,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
-      throw new Error(data.error || data.message || 'Unable to queue PDF reprocessing.');
+      throw new Error(data.error || data.message || 'Unable to queue PDF extraction change.');
     }
     return data;
   }
@@ -5929,10 +5965,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function showGroupDocumentReprocessResult(data, extractionMode) {
     const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
     const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
-    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+    const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
     const message = errorCount > 0
-      ? `Queued ${queuedCount} PDF(s) for ${modeLabel}; ${errorCount} item(s) were skipped.`
-      : (data.message || `Queued ${queuedCount} PDF(s) for ${modeLabel}.`);
+      ? `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}; ${errorCount} item(s) were skipped.`
+      : (data.message || `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}.`);
 
     if (window.showToast) {
       window.showToast(message, errorCount > 0 ? 'warning' : 'success');
@@ -5945,8 +5981,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (event) {
       event.preventDefault();
     }
-    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
-    if (!confirm(`Queue this PDF for ${modeLabel} reprocessing?`)) {
+    const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
+    if (!confirm(`Queue this PDF to extract again with ${modeLabel}?`)) {
       return;
     }
 
@@ -5969,8 +6005,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (documentIds.length === 0) {
       return;
     }
-    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
-    if (!confirm(`Queue ${documentIds.length} selected document(s) for ${modeLabel} PDF reprocessing?`)) {
+    const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
+    if (!confirm(`Queue ${documentIds.length} selected document(s) to extract again with ${modeLabel}?`)) {
       return;
     }
 
@@ -7042,7 +7078,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       html += `<tr>
         <td class="align-middle">${firstColHtml}</td>
-        <td class="align-middle" title="${escapeHtml(doc.file_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || '')} <span class="ms-1">${getGroupDocumentExtractionModeBadge(doc)}</span></td>
+        <td class="align-middle" title="${escapeHtml(doc.file_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${getGroupDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || '')}</td>
         <td class="align-middle" title="${escapeHtml(doc.title || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.title || 'N/A')}</td>
         <td class="align-middle">${approvalButton}${chatButton}${actionsDropdown}</td>
       </tr>`;

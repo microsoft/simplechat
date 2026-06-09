@@ -2,13 +2,12 @@
 # test_file_sync_onedrive_personal.py
 """
 Functional test for personal OneDrive File Sync support.
-Version: 0.241.131
+Version: 0.241.177
 Implemented in: 0.241.128
 
-This test ensures OneDrive sync sources are wired as personal-only File Sync
-sources with global connector identity access, selected-path controls, and
-provider browse support without requiring live Graph, SMB, Azure Files, or
-Cosmos DB access.
+This test ensures OneDrive sync source code remains wired as personal-only File
+Sync support while the admin source-type control keeps OneDrive marked as coming
+soon until validation is complete.
 """
 
 import ast
@@ -35,16 +34,16 @@ def function_names(parsed):
 
 
 def test_version_and_source_defaults():
-    """Validate OneDrive is included in the current version and source defaults."""
+    """Validate OneDrive code remains present while admin defaults exclude it."""
     config_text = read_text("application/single_app/config.py")
     settings_text = read_text("application/single_app/functions_settings.py")
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
 
-    assert 'VERSION = "0.241.131"' in config_text
+    assert 'VERSION = "0.241.177"' in config_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE = \"onedrive\"" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {\"client_secret\"}" in file_sync_text
-    assert "'file_sync_visible_source_types': ['smb', 'azure_files', 'onedrive']" in settings_text
+    assert "'file_sync_visible_source_types': ['smb', 'azure_files']" in settings_text
 
 
 def test_onedrive_backend_provider_wiring():
@@ -89,7 +88,8 @@ def test_global_connector_identity_supports_cloud_drive_sync():
     assert 'allowed_usage_contexts = {"file_sync", "action"}' in identity_text
     assert "admin/workspace-identities/global" in admin_template
     assert 'data-capability-options="file_sync,action"' in admin_template
-    assert "admin-managed global workspace identity" in admin_template
+    assert "Cloud drive connector identities" in admin_template
+    assert "OneDrive, SharePoint, and Google Workspace File Sync connectors are coming soon" in admin_template
     assert "admin-approved cloud drive connectors" in identity_js
     assert "'smb', 'azure_files', 'onedrive', 'google_drive', 'google_shared_drive'" in identity_js
 
@@ -130,8 +130,11 @@ def test_frontend_source_selection_supports_onedrive():
 
     assert "file_sync_visible_source_type_onedrive" in admin_template
     assert "OneDrive" in admin_template
+    assert 'id="file_sync_visible_source_type_onedrive" value="onedrive" disabled' in admin_template
+    assert 'name="file_sync_visible_source_types" value="onedrive"' not in admin_template
+    assert "OneDrive, SharePoint, and Google Workspace connectors are coming soon" in admin_template
     for template_text in [workspace_template, group_template, public_template]:
-        assert "default(['smb', 'azure_files', 'onedrive'])" in template_text
+        assert "default(['smb', 'azure_files'])" in template_text
 
 
 def test_synced_document_badges_include_onedrive():
@@ -142,7 +145,7 @@ def test_synced_document_badges_include_onedrive():
 
     for frontend_text in [workspace_utils, group_template, public_js]:
         assert "onedrive" in frontend_text
-        assert "Synced from OneDrive" in frontend_text
+        assert "Managed by File Sync from OneDrive" in frontend_text
 
 
 def run_tests():

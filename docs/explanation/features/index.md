@@ -17,6 +17,18 @@ category: Version History
 - [Activity Log Auto-Refresh](CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md)
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
 
+## Agent and Action Features
+
+- [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
+
+## Chat Upload Features
+
+- [Chat Upload Personal Workspace Handoff](CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md)
+
+## Workspace Branding Features
+
+- [Group And Public Workspace Custom Hero Colors](GROUP_PUBLIC_WORKSPACE_CUSTOM_HERO_COLORS.md)
+
 ## Versioned Features
 
 - [Deployer Capacity Defaults](v0.241.085/DEPLOYER_CAPACITY_DEFAULTS.md)

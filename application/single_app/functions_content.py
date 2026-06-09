@@ -273,7 +273,7 @@ def extract_content_with_azure_di(file_path, extraction_mode='read', pages=None)
     """
     try:
         document_intelligence_client = CLIENTS['document_intelligence_client'] # Ensure CLIENTS is populated
-        normalized_extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode(extraction_mode)
+        normalized_extraction_mode = functions_settings.normalize_document_intelligence_pdf_image_extraction_mode(extraction_mode)
         model_id = "prebuilt-layout" if normalized_extraction_mode == "layout" else "prebuilt-read"
         analyze_options = {}
         if normalized_extraction_mode == "layout":

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the Microsoft Graph agent action.
-Version: 0.241.037
-Implemented in: 0.241.037
+Version: 0.241.177
+Implemented in: 0.241.176
 
 This test ensures the Microsoft Graph action is discoverable, supports
 per-action capability filtering, and applies both action-level and per-agent
@@ -14,9 +14,31 @@ import importlib
 import os
 import sys
 import traceback
+import types
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
+
+if "olefile" not in sys.modules:
+    sys.modules["olefile"] = types.ModuleType("olefile")
+
+if "semantic_kernel_plugins.mcp_plugin_factory" not in sys.modules:
+    mcp_plugin_factory_stub = types.ModuleType("semantic_kernel_plugins.mcp_plugin_factory")
+
+    class McpPluginFactory:
+        pass
+
+    mcp_plugin_factory_stub.McpPluginFactory = McpPluginFactory
+    sys.modules["semantic_kernel_plugins.mcp_plugin_factory"] = mcp_plugin_factory_stub
+
+if "semantic_kernel_plugins.logged_plugin_loader" not in sys.modules:
+    logged_plugin_loader_stub = types.ModuleType("semantic_kernel_plugins.logged_plugin_loader")
+
+    def create_logged_plugin_loader(*args, **kwargs):
+        return None
+
+    logged_plugin_loader_stub.create_logged_plugin_loader = create_logged_plugin_loader
+    sys.modules["semantic_kernel_plugins.logged_plugin_loader"] = logged_plugin_loader_stub
 
 
 def build_manifest(enabled_functions=None):
@@ -101,6 +123,7 @@ def test_msgraph_runtime_capability_overlay():
                     "create_calendar_invite": True,
                     "get_my_messages": False,
                     "mark_message_as_read": False,
+                    "send_mail": True,
                     "search_users": True,
                     "get_user_by_email": False,
                     "list_drive_items": False,
@@ -115,6 +138,7 @@ def test_msgraph_runtime_capability_overlay():
     assert overlaid_manifest["enabled_functions"] == [
         "get_my_profile",
         "create_calendar_invite",
+        "send_mail",
         "search_users",
     ], "Runtime overlay should translate Microsoft Graph capability toggles into the exact enabled function list"
 
@@ -140,6 +164,7 @@ def test_msgraph_action_defaults_feed_runtime_overlay():
                         "create_calendar_invite": True,
                         "get_my_messages": False,
                         "mark_message_as_read": False,
+                        "send_mail": False,
                         "search_users": True,
                         "get_user_by_email": True,
                         "list_drive_items": False,

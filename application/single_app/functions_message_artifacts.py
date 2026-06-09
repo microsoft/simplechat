@@ -255,6 +255,14 @@ def _build_msgraph_tool_label(function_name: str, arguments: Any, result: Any) -
     if function_name == 'mark_message_as_read':
         return 'Mail status update'
 
+    if function_name == 'send_mail':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'subject'),
+            _get_mapping_value(result, 'subject'),
+            _get_mapping_value(result, 'mail_send_status'),
+        )
+        return _format_tool_label('Mail message', detail, fallback_label='MSGraphPlugin.send_mail')
+
     if function_name in {'search_users', 'get_user_by_email'}:
         detail = _first_non_empty(
             _get_mapping_value(arguments, 'query'),

@@ -19,8 +19,21 @@ from functions_simplechat_operations import upload_chat_image_bytes_for_user
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
+from utils_cache import invalidate_personal_search_cache
 
 logger = logging.getLogger(__name__)
+
+
+CHAT_WORKSPACE_UPLOAD_EXTENSIONS = (
+    DOCUMENT_EXTENSIONS
+    | IMAGE_EXTENSIONS
+    | TABULAR_EXTENSIONS
+    | {'doc', 'docm', 'html', 'txt', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
+)
+
+
+def _is_setting_enabled(value):
+    return value is True or str(value).strip().lower() == 'true'
 
 
 def _serialize_chat_agent_option(agent, *, is_global=False, is_group=False, group_id=None, group_name=None):
@@ -542,10 +555,145 @@ def register_route_frontend_chats(app):
         filename = secure_filename(file.filename)
         file_ext = os.path.splitext(filename)[1].lower()  # e.g., '.png'
         file_ext_nodot = file_ext.lstrip('.')              # e.g., 'png'
+        original_filename = file.filename
+        file_message_id = f"{conversation_id}_file_{int(time.time())}_{random.randint(1000,9999)}"
 
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             file.save(tmp_file.name)
             temp_file_path = tmp_file.name
+
+        workspace_document_info = None
+        if (
+            _is_setting_enabled(settings.get('enable_user_workspace', False))
+            and file_ext_nodot in CHAT_WORKSPACE_UPLOAD_EXTENSIONS
+            and allowed_file(original_filename)
+        ):
+            try:
+                workspace_document_info = queue_personal_workspace_upload_from_temp_file(
+                    user_id=user_id,
+                    temp_file_path=temp_file_path,
+                    original_filename=original_filename,
+                    tags=build_chat_upload_workspace_tags(conversation_id),
+                    source_metadata={
+                        'source_type': 'chat_upload',
+                        'source_subtype': 'personal_conversation_attachment',
+                        'created_from_chat_upload': True,
+                        'chat_upload_delete_with_conversation': True,
+                        'chat_upload_link_state': 'linked',
+                        'chat_upload_linked_at': datetime.utcnow().isoformat(),
+                        'conversation_id': conversation_id,
+                        'conversation_title_at_upload': conversation_item.get('title', 'New Conversation'),
+                        'conversation_url': f"/chats?conversation_id={conversation_id}",
+                        'chat_message_id': file_message_id,
+                        'chat_upload_original_filename': original_filename,
+                        'chat_upload_sanitized_filename': filename,
+                    },
+                    copy_source_file=True,
+                    ensure_unique_file_name=True,
+                    unique_file_name_suffix=file_message_id.rsplit('_file_', 1)[-1],
+                )
+                invalidate_personal_search_cache(user_id)
+            except Exception as workspace_error:
+                log_event(
+                    f"[ChatUpload] Failed to queue workspace document for {filename}: {workspace_error}",
+                    {
+                        'conversation_id': conversation_id,
+                        'filename': filename,
+                    },
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.remove(temp_file_path)
+                    except Exception as cleanup_error:
+                        debug_print(f"Unable to clean up chat upload temp file after workspace queue failure: {cleanup_error}")
+                return jsonify({
+                    'error': 'File could not be queued in the personal workspace. Please try again.'
+                }), 500
+
+        if workspace_document_info:
+            try:
+                workspace_file_name = workspace_document_info.get('file_name') or filename
+                workspace_attachment = {
+                    'document_id': workspace_document_info.get('document_id'),
+                    'file_name': workspace_file_name,
+                    'status': workspace_document_info.get('status', 'Queued for processing'),
+                    'percentage_complete': workspace_document_info.get('percentage_complete', 0),
+                    'tags': workspace_document_info.get('tags', []),
+                    'workspace_url': f"/workspace?document_id={workspace_document_info.get('document_id')}",
+                    'conversation_url': f"/chats?conversation_id={conversation_id}",
+                    'scope': 'personal',
+                    'link_state': 'linked',
+                }
+
+                previous_thread_id = None
+                try:
+                    last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                    last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
+                    if last_msgs:
+                        previous_thread_id = last_msgs[0].get('thread_id')
+                except Exception as thread_error:
+                    debug_print(f"Unable to resolve previous thread for workspace-backed upload: {thread_error}")
+
+                current_thread_id = str(uuid.uuid4())
+                timestamp = datetime.utcnow().isoformat()
+                file_message = {
+                    'id': file_message_id,
+                    'conversation_id': conversation_id,
+                    'role': 'file',
+                    'filename': workspace_file_name,
+                    'content': f"Uploaded {workspace_file_name} to the personal workspace.",
+                    'file_content_source': 'workspace',
+                    'workspace_document_id': workspace_document_info.get('document_id'),
+                    'is_table': file_ext_nodot in TABULAR_EXTENSIONS,
+                    'timestamp': timestamp,
+                    'created_at': timestamp,
+                    'model_deployment_name': None,
+                    'metadata': {
+                        'is_user_upload': True,
+                        'upload_source': 'personal_workspace',
+                        'workspace_attachment': workspace_attachment,
+                        'thread_info': {
+                            'thread_id': current_thread_id,
+                            'previous_thread_id': previous_thread_id,
+                            'active_thread': True,
+                            'thread_attempt': 1
+                        }
+                    }
+                }
+                cosmos_messages_container.upsert_item(file_message)
+
+                conversation_item['last_updated'] = timestamp
+                try:
+                    if conversation_item.get('title') == 'New Conversation':
+                        count_query = f"SELECT VALUE COUNT(1) FROM c WHERE c.conversation_id = '{conversation_id}'"
+                        message_counts = list(cosmos_messages_container.query_items(query=count_query, partition_key=conversation_id))
+                        message_count = message_counts[0] if message_counts else 0
+
+                        if message_count <= 1:
+                            base_filename = os.path.splitext(workspace_file_name)[0]
+                            conversation_item['title'] = base_filename[:50] if len(base_filename) > 50 else base_filename
+                except Exception as title_error:
+                    debug_print(f"Unable to auto-generate conversation title from workspace-backed upload: {title_error}")
+
+                cosmos_conversations_container.upsert_item(conversation_item)
+
+            except Exception as e:
+                return jsonify({
+                    'error': f'Error adding workspace-backed file to conversation: {str(e)}'
+                }), 500
+            finally:
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+
+            return jsonify({
+                'message': 'File uploaded to the personal workspace and added to the conversation successfully',
+                'conversation_id': conversation_id,
+                'title': conversation_item.get('title', 'New Conversation'),
+                'workspace_document': workspace_document_info,
+                'workspace_document_id': workspace_document_info.get('document_id')
+            }), 200
 
         extracted_content  = ''
         is_table = False 
@@ -687,8 +835,18 @@ def register_route_frontend_chats(app):
             os.remove(temp_file_path)
 
         try:
-            file_message_id = f"{conversation_id}_file_{int(time.time())}_{random.randint(1000,9999)}"
-            
+            workspace_attachment = None
+            if workspace_document_info:
+                workspace_attachment = {
+                    'document_id': workspace_document_info.get('document_id'),
+                    'file_name': workspace_document_info.get('file_name'),
+                    'status': workspace_document_info.get('status', 'Queued for processing'),
+                    'percentage_complete': workspace_document_info.get('percentage_complete', 0),
+                    'tags': workspace_document_info.get('tags', []),
+                    'workspace_url': f"/workspace?document_id={workspace_document_info.get('document_id')}",
+                    'conversation_url': f"/chats?conversation_id={conversation_id}",
+                }
+
             # For images, store blob-backed references when enhanced citations is enabled.
             if image_base64_url or image_bytes:
                 previous_thread_id = None
@@ -719,6 +877,8 @@ def register_route_frontend_chats(app):
                         }
                     }
                 }
+                if workspace_attachment:
+                    image_message['metadata']['workspace_attachment'] = workspace_attachment
 
                 if vision_analysis:
                     image_message['vision_analysis'] = vision_analysis
@@ -805,6 +965,8 @@ def register_route_frontend_chats(app):
                             }
                         }
                     }
+                    if workspace_attachment:
+                        file_message['metadata']['workspace_attachment'] = workspace_attachment
                 else:
                     file_message = {
                         'id': file_message_id,
@@ -824,6 +986,8 @@ def register_route_frontend_chats(app):
                             }
                         }
                     }
+                    if workspace_attachment:
+                        file_message['metadata']['workspace_attachment'] = workspace_attachment
 
                 # Add vision analysis if available
                 if vision_analysis:
@@ -864,7 +1028,9 @@ def register_route_frontend_chats(app):
         return jsonify({
             'message': 'File added to the conversation successfully',
             'conversation_id': conversation_id,
-            'title': conversation_item.get('title', 'New Conversation')
+            'title': conversation_item.get('title', 'New Conversation'),
+            'workspace_document': workspace_document_info,
+            'workspace_document_id': workspace_document_info.get('document_id') if workspace_document_info else None
         }), 200
     
     # THIS IS THE OLD ROUTE, KEEPING IT FOR REFERENCE, WILL DELETE LATER

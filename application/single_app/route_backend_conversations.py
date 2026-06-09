@@ -36,6 +36,10 @@ from functions_image_messages import decode_image_content, get_complete_image_co
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request, stream_with_context
 from functions_debug import debug_print
+from functions_documents import (
+    delete_chat_upload_workspace_documents_for_conversation,
+    serialize_chat_upload_workspace_documents_for_conversation,
+)
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -49,6 +53,7 @@ from functions_simplechat_operations import (
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
+from utils_cache import invalidate_personal_search_cache
 
 def normalize_chat_type(conversation_item):
     chat_type = conversation_item.get('chat_type')
@@ -100,6 +105,38 @@ SEARCH_CHAT_TYPE_ALIASES = {
     GROUP_MULTI_USER_CHAT_TYPE: {GROUP_MULTI_USER_CHAT_TYPE},
     'public': {'public'},
 }
+
+
+def _normalize_workspace_document_delete_ids(raw_document_ids):
+    if raw_document_ids is None:
+        return []
+    if not isinstance(raw_document_ids, list):
+        raise ValueError('delete_workspace_document_ids must be an array')
+
+    normalized_document_ids = []
+    seen_document_ids = set()
+    for raw_document_id in raw_document_ids:
+        document_id = str(raw_document_id or '').strip()
+        if not document_id or document_id in seen_document_ids:
+            continue
+        seen_document_ids.add(document_id)
+        normalized_document_ids.append(document_id)
+
+    return normalized_document_ids
+
+
+def _get_requested_workspace_document_delete_ids_for_conversation(payload, conversation_id):
+    if not isinstance(payload, dict):
+        return []
+
+    if 'delete_workspace_document_ids' in payload:
+        return _normalize_workspace_document_delete_ids(payload.get('delete_workspace_document_ids'))
+
+    delete_ids_by_conversation = payload.get('delete_workspace_document_ids_by_conversation')
+    if isinstance(delete_ids_by_conversation, dict):
+        return _normalize_workspace_document_delete_ids(delete_ids_by_conversation.get(conversation_id))
+
+    return []
 
 
 def _normalize_search_match_mode(match_mode):
@@ -1044,6 +1081,15 @@ def register_route_backend_conversations(app):
         archiving_enabled = settings.get('enable_conversation_archiving', False)
 
         try:
+            request_payload = request.get_json(silent=True) or {}
+            delete_workspace_document_ids = _get_requested_workspace_document_delete_ids_for_conversation(
+                request_payload,
+                conversation_id,
+            )
+        except ValueError as validation_error:
+            return jsonify({'error': str(validation_error)}), 400
+
+        try:
             conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
         except LookupError:
             return jsonify({
@@ -1078,6 +1124,31 @@ def register_route_backend_conversations(app):
         ))
 
         if not archiving_enabled:
+            if delete_workspace_document_ids:
+                try:
+                    workspace_delete_result = delete_chat_upload_workspace_documents_for_conversation(
+                        conversation_item.get('user_id'),
+                        conversation_id,
+                        selected_document_ids=delete_workspace_document_ids,
+                    )
+                    if workspace_delete_result.get('deleted_document_ids'):
+                        invalidate_personal_search_cache(conversation_item.get('user_id'))
+                    if workspace_delete_result.get('failed_documents'):
+                        log_event(
+                            f"[ConversationDelete] Failed to delete some selected linked workspace documents for {conversation_id}",
+                            workspace_delete_result,
+                            level=logging.WARNING,
+                        )
+                except Exception as workspace_delete_error:
+                    log_event(
+                        f"[ConversationDelete] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
+                        level=logging.WARNING,
+                        exceptionTraceback=True,
+                    )
+                    return jsonify({
+                        'error': 'Failed to delete selected workspace documents'
+                    }), 500
+
             delete_blob_backed_chat_message_files(results)
 
         for doc in results:
@@ -1453,6 +1524,19 @@ def register_route_backend_conversations(app):
             if updated:
                 cosmos_conversations_container.upsert_item(conversation_item)
 
+            linked_workspace_documents = []
+            try:
+                linked_workspace_documents = serialize_chat_upload_workspace_documents_for_conversation(
+                    user_id,
+                    conversation_id,
+                )
+            except Exception as linked_documents_error:
+                log_event(
+                    f"[ConversationMetadata] Failed to list linked workspace documents for {conversation_id}: {linked_documents_error}",
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+
             # Return the full conversation metadata
             return jsonify({
                 "conversation_id": conversation_id,
@@ -1472,7 +1556,8 @@ def register_route_backend_conversations(app):
                 "locked_contexts": conversation_item.get('locked_contexts', []),
                 "chat_type": conversation_item.get('chat_type'),
                 "workflow_id": conversation_item.get('workflow_id'),
-                "summary": conversation_item.get('summary')
+                "summary": conversation_item.get('summary'),
+                "linked_workspace_documents": linked_workspace_documents,
             }), 200
             
         except CosmosResourceNotFoundError:

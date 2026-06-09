@@ -34,6 +34,9 @@ const deleteConversationOwnerOptionsEl = document.getElementById("delete-convers
 const deleteConversationTransferOptionEl = document.getElementById("delete-conversation-transfer-option");
 const deleteConversationOwnerSelectContainerEl = document.getElementById("delete-conversation-owner-select-container");
 const deleteConversationNewOwnerSelectEl = document.getElementById("delete-conversation-new-owner-select");
+const deleteConversationLinkedDocumentsContainerEl = document.getElementById("delete-conversation-linked-documents-container");
+const deleteConversationLinkedDocumentsListEl = document.getElementById("delete-conversation-linked-documents-list");
+const deleteConversationLinkedDocumentsSelectAllEl = document.getElementById("delete-conversation-linked-documents-select-all");
 const deleteConversationImpactNoteEl = document.getElementById("delete-conversation-impact-note");
 const confirmDeleteConversationBtn = document.getElementById("confirm-delete-conversation-btn");
 
@@ -467,6 +470,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     deleteConversationModalEl.querySelectorAll('input[name="delete-conversation-action"]').forEach(input => {
       input.addEventListener('change', toggleDeleteConversationTransferInputs);
+    });
+  }
+  if (deleteConversationLinkedDocumentsSelectAllEl) {
+    deleteConversationLinkedDocumentsSelectAllEl.addEventListener('change', () => {
+      setDeleteConversationLinkedDocumentsSelection(deleteConversationLinkedDocumentsSelectAllEl.checked);
     });
   }
   
@@ -1744,6 +1752,136 @@ function toggleDeleteConversationTransferInputs() {
   confirmDeleteConversationBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Conversation';
 }
 
+function normalizeDeleteConversationLinkedDocuments(metadata = {}) {
+  const documents = Array.isArray(metadata.linked_workspace_documents)
+    ? metadata.linked_workspace_documents
+    : [];
+
+  return documents
+    .map(documentItem => ({
+      ...documentItem,
+      id: String(documentItem?.id || '').trim(),
+    }))
+    .filter(documentItem => documentItem.id);
+}
+
+function getDeleteConversationLinkedDocumentCheckboxes() {
+  if (!deleteConversationLinkedDocumentsListEl) {
+    return [];
+  }
+
+  return Array.from(deleteConversationLinkedDocumentsListEl.querySelectorAll('.delete-conversation-linked-document-checkbox'));
+}
+
+function updateDeleteConversationLinkedDocumentsSelectAllState() {
+  if (!deleteConversationLinkedDocumentsSelectAllEl) {
+    return;
+  }
+
+  const selectableCheckboxes = getDeleteConversationLinkedDocumentCheckboxes()
+    .filter(checkbox => !checkbox.disabled);
+  const selectedCheckboxes = selectableCheckboxes.filter(checkbox => checkbox.checked);
+
+  deleteConversationLinkedDocumentsSelectAllEl.disabled = selectableCheckboxes.length === 0;
+  deleteConversationLinkedDocumentsSelectAllEl.checked = selectableCheckboxes.length > 0
+    && selectedCheckboxes.length === selectableCheckboxes.length;
+  deleteConversationLinkedDocumentsSelectAllEl.indeterminate = selectedCheckboxes.length > 0
+    && selectedCheckboxes.length < selectableCheckboxes.length;
+}
+
+function setDeleteConversationLinkedDocumentsSelection(checked) {
+  getDeleteConversationLinkedDocumentCheckboxes().forEach(checkbox => {
+    if (!checkbox.disabled) {
+      checkbox.checked = checked;
+    }
+  });
+  updateDeleteConversationLinkedDocumentsSelectAllState();
+}
+
+function getSelectedDeleteConversationLinkedDocumentIds() {
+  return getDeleteConversationLinkedDocumentCheckboxes()
+    .filter(checkbox => checkbox.checked && !checkbox.disabled)
+    .map(checkbox => checkbox.value)
+    .filter(Boolean);
+}
+
+function buildDeleteConversationLinkedDocumentDetails(documentItem) {
+  const details = [];
+  const title = String(documentItem.title || '').trim();
+  const fileName = String(documentItem.file_name || '').trim();
+
+  if (fileName && fileName !== title) {
+    details.push(fileName);
+  }
+  if (documentItem.status) {
+    details.push(`Status: ${documentItem.status}`);
+  }
+  if (Number(documentItem.number_of_pages) > 0) {
+    const pageCount = Number(documentItem.number_of_pages);
+    details.push(`${pageCount} page${pageCount === 1 ? '' : 's'}`);
+  }
+  if (documentItem.can_delete_with_conversation === false) {
+    details.push('Retained by policy');
+  }
+
+  return details.join(' | ');
+}
+
+function renderDeleteConversationLinkedDocuments(documents) {
+  if (!deleteConversationLinkedDocumentsContainerEl || !deleteConversationLinkedDocumentsListEl) {
+    return;
+  }
+
+  deleteConversationLinkedDocumentsListEl.replaceChildren();
+
+  if (!documents.length) {
+    deleteConversationLinkedDocumentsContainerEl.classList.add('d-none');
+    updateDeleteConversationLinkedDocumentsSelectAllState();
+    return;
+  }
+
+  documents.forEach((documentItem, index) => {
+    const item = document.createElement('label');
+    item.className = 'list-group-item d-flex align-items-start gap-2';
+    item.setAttribute('for', `delete-conversation-linked-document-${index}`);
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'form-check-input mt-1 delete-conversation-linked-document-checkbox';
+    checkbox.id = `delete-conversation-linked-document-${index}`;
+    checkbox.value = documentItem.id;
+    checkbox.disabled = documentItem.can_delete_with_conversation === false;
+    checkbox.addEventListener('change', updateDeleteConversationLinkedDocumentsSelectAllState);
+
+    const body = document.createElement('span');
+    body.className = 'd-block flex-grow-1';
+
+    const name = document.createElement('span');
+    name.className = 'fw-semibold d-block';
+    name.textContent = documentItem.title || documentItem.file_name || 'Workspace document';
+
+    const detailsText = buildDeleteConversationLinkedDocumentDetails(documentItem);
+    if (detailsText) {
+      const details = document.createElement('span');
+      details.className = 'text-muted d-block';
+      details.textContent = detailsText;
+      body.append(name, details);
+    } else {
+      body.append(name);
+    }
+
+    item.append(checkbox, body);
+    deleteConversationLinkedDocumentsListEl.append(item);
+  });
+
+  if (deleteConversationLinkedDocumentsSelectAllEl) {
+    deleteConversationLinkedDocumentsSelectAllEl.checked = false;
+    deleteConversationLinkedDocumentsSelectAllEl.indeterminate = false;
+  }
+  deleteConversationLinkedDocumentsContainerEl.classList.remove('d-none');
+  updateDeleteConversationLinkedDocumentsSelectAllState();
+}
+
 function resetDeleteConversationModalState() {
   pendingDeleteConversationContext = null;
 
@@ -1764,6 +1902,17 @@ function resetDeleteConversationModalState() {
   }
   if (deleteConversationNewOwnerSelectEl) {
     deleteConversationNewOwnerSelectEl.innerHTML = '';
+  }
+  if (deleteConversationLinkedDocumentsContainerEl) {
+    deleteConversationLinkedDocumentsContainerEl.classList.add('d-none');
+  }
+  if (deleteConversationLinkedDocumentsListEl) {
+    deleteConversationLinkedDocumentsListEl.replaceChildren();
+  }
+  if (deleteConversationLinkedDocumentsSelectAllEl) {
+    deleteConversationLinkedDocumentsSelectAllEl.checked = false;
+    deleteConversationLinkedDocumentsSelectAllEl.indeterminate = false;
+    deleteConversationLinkedDocumentsSelectAllEl.disabled = false;
   }
   if (deleteConversationImpactNoteEl) {
     deleteConversationImpactNoteEl.textContent = 'This action cannot be undone.';
@@ -1808,12 +1957,14 @@ function configureDeleteConversationModal(conversationId, metadata = {}) {
     ? metadata.participants.filter(participant => participant?.status === 'accepted')
     : [];
   const transferableParticipants = activeParticipants.filter(participant => participant?.user_id && participant.user_id !== currentUserId);
+  const linkedWorkspaceDocuments = normalizeDeleteConversationLinkedDocuments(metadata);
 
   pendingDeleteConversationContext = {
     conversationId,
     isCollaborativeConversation,
     metadata,
     transferableParticipants,
+    linkedWorkspaceDocuments,
   };
 
   if (!isCollaborativeConversation) {
@@ -1821,11 +1972,14 @@ function configureDeleteConversationModal(conversationId, metadata = {}) {
       deleteConversationMessageEl.textContent = 'Are you sure you want to delete this conversation?';
     }
     if (deleteConversationImpactNoteEl) {
-      deleteConversationImpactNoteEl.textContent = 'This action cannot be undone.';
+      deleteConversationImpactNoteEl.textContent = linkedWorkspaceDocuments.length > 0
+        ? 'Deleting removes the conversation. Unselected workspace documents remain available and follow the document retention policy.'
+        : 'This action cannot be undone.';
     }
     if (confirmDeleteConversationBtn) {
       confirmDeleteConversationBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Conversation';
     }
+    renderDeleteConversationLinkedDocuments(linkedWorkspaceDocuments);
     return;
   }
 
@@ -1912,7 +2066,16 @@ async function executeDeleteConversationAction() {
 
   try {
     if (!isCollaborativeConversation) {
-      const response = await fetch(`/api/conversations/${conversationId}`, { method: 'DELETE' });
+      const response = await fetch(`/api/conversations/${conversationId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          delete_workspace_document_ids: getSelectedDeleteConversationLinkedDocumentIds(),
+        }),
+      });
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => ({}));
         throw new Error(errorPayload.error || 'Failed to delete conversation');

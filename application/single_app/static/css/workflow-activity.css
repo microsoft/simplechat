@@ -405,6 +405,66 @@
     font-size: 1rem;
 }
 
+.workflow-activity-pending-action-controls {
+    background: var(--workflow-activity-card-bg);
+    border: 1px solid var(--workflow-activity-card-border);
+    border-radius: 8px;
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.85rem;
+}
+
+.workflow-pending-action-heading {
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.workflow-pending-action-detail {
+    font-size: 0.86rem;
+    line-height: 1.4;
+}
+
+.workflow-pending-action-buttons {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.workflow-pending-action-buttons .btn {
+    align-items: center;
+    display: inline-flex;
+    gap: 0.25rem;
+}
+
+.workflow-pending-action-countdown {
+    background: rgba(13, 110, 253, 0.1);
+    border-radius: 999px;
+    color: #0a58ca;
+    font-size: 0.86rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    padding: 0.35rem 0.65rem;
+}
+
+.workflow-pending-action-consent {
+    background: rgba(13, 110, 253, 0.06);
+    border: 1px solid rgba(13, 110, 253, 0.2);
+    border-radius: 8px;
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.7rem;
+}
+
+.workflow-pending-action-consent .btn {
+    justify-self: start;
+}
+
+[data-bs-theme="dark"] .workflow-pending-action-countdown {
+    background: rgba(13, 202, 240, 0.14);
+    color: #6edff6;
+}
+
 .workflow-activity-detail-block {
     border-radius: 1rem;
     padding: 1rem 1rem 1.1rem;

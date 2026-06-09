@@ -42,6 +42,51 @@ let selectionModeActive = false;
 let selectedDocuments = new Set();
 let lastCardSelectionAnchorId = null;
 
+function getDocumentConversationUrl(doc) {
+    if (doc && doc.conversation_url) {
+        return doc.conversation_url;
+    }
+    if (doc && doc.conversation_id) {
+        return `/chats?conversation_id=${encodeURIComponent(doc.conversation_id)}`;
+    }
+    return "";
+}
+
+function setDocumentConversationStatusElement(element, doc) {
+    if (!element) {
+        return;
+    }
+
+    const isChatUpload = Boolean(doc && doc.created_from_chat_upload && doc.conversation_id);
+    element.classList.toggle("d-none", !isChatUpload);
+    element.replaceChildren();
+
+    if (!isChatUpload) {
+        return;
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "d-flex align-items-center gap-2 flex-wrap";
+
+    const label = document.createElement("strong");
+    label.textContent = "Conversation:";
+    wrapper.appendChild(label);
+
+    const link = document.createElement("a");
+    link.href = getDocumentConversationUrl(doc);
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = doc.conversation_title_at_upload || doc.conversation_id || "Open conversation";
+    wrapper.appendChild(link);
+
+    const badge = document.createElement("span");
+    badge.className = "badge bg-info text-dark";
+    badge.textContent = "chat upload";
+    wrapper.appendChild(badge);
+
+    element.appendChild(wrapper);
+}
+
 function getDocumentSelectionTables() {
     return [
         document.getElementById("documents-table"),
@@ -343,9 +388,46 @@ function isPdfDocument(doc) {
     return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
 }
 
+const DOCUMENT_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+const DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+const DOCUMENT_CITATION_STANDARD_TOOLTIP = 'Standard citations reference indexed text chunks.';
+const DOCUMENT_CITATION_ENHANCED_TOOLTIP = 'Enhanced citations preserve source-file context for richer citation previews and supported file workflows.';
+
+function getDocumentExtractionModeLabelFromMode(mode) {
+    return mode === 'layout' ? 'Enhanced' : 'Standard';
+}
+
+function getDocumentExtractionModeTooltipFromMode(mode) {
+    return mode === 'layout' ? DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP : DOCUMENT_EXTRACTION_STANDARD_TOOLTIP;
+}
+
+function getDocumentExtractionModeIcon(mode) {
+    return mode === 'layout' ? 'bi-layout-text-window-reverse' : 'bi-file-earmark-text';
+}
+
+function getDocumentTargetExtractionMode(doc) {
+    const currentMode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+    return currentMode === 'layout' ? 'read' : 'layout';
+}
+
+function getDocumentExtractionChangeTooltip(targetMode) {
+    return targetMode === 'layout'
+        ? `Extract again with Enhanced extraction. ${DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP}`
+        : `Extract again with Standard extraction. ${DOCUMENT_EXTRACTION_STANDARD_TOOLTIP}`;
+}
+
 function getDocumentExtractionModeLabel(doc) {
     const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-    return mode === 'layout' ? 'Layout' : 'Read';
+    return getDocumentExtractionModeLabelFromMode(mode);
+}
+
+function getDocumentExtractionModeTooltip(doc) {
+    const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+    return getDocumentExtractionModeTooltipFromMode(mode);
+}
+
+function getDocumentCitationTooltip(doc) {
+    return doc?.enhanced_citations ? DOCUMENT_CITATION_ENHANCED_TOOLTIP : DOCUMENT_CITATION_STANDARD_TOOLTIP;
 }
 
 function getDocumentExtractionModeBadge(doc) {
@@ -354,8 +436,9 @@ function getDocumentExtractionModeBadge(doc) {
     }
 
     const label = getDocumentExtractionModeLabel(doc);
-    const badgeClass = label === 'Layout' ? 'bg-primary' : 'bg-secondary';
-    return `<span class="badge ${badgeClass}"><i class="bi bi-file-earmark-text me-1"></i>${label}</span>`;
+    const badgeClass = label === 'Enhanced' ? 'bg-primary' : 'bg-secondary';
+    const tooltip = getDocumentExtractionModeTooltip(doc);
+    return `<span class="badge ${badgeClass}" title="${escapeHtml(tooltip)}"><i class="bi bi-file-earmark-text me-1"></i>${label}</span>`;
 }
 
 function getDocumentReprocessDropdownItems(doc) {
@@ -364,15 +447,16 @@ function getDocumentReprocessDropdownItems(doc) {
     }
 
     const docId = escapeHtml(String(doc.id || ''));
+    const targetMode = getDocumentTargetExtractionMode(doc);
+    const targetLabel = getDocumentExtractionModeLabelFromMode(targetMode);
+    const targetIcon = getDocumentExtractionModeIcon(targetMode);
+    const targetTooltip = getDocumentExtractionChangeTooltip(targetMode);
 
     return `
         <li><hr class="dropdown-divider"></li>
-        <li><h6 class="dropdown-header">Reprocess PDF</h6></li>
-        <li><a class="dropdown-item" href="#" onclick="window.reprocessDocumentExtraction('${docId}', 'read', event); return false;">
-            <i class="bi bi-file-earmark-text me-2"></i>Read
-        </a></li>
-        <li><a class="dropdown-item" href="#" onclick="window.reprocessDocumentExtraction('${docId}', 'layout', event); return false;">
-            <i class="bi bi-layout-text-window-reverse me-2"></i>Layout
+        <li><h6 class="dropdown-header">Change Extraction</h6></li>
+        <li><a class="dropdown-item" href="#" title="${escapeHtml(targetTooltip)}" onclick="window.reprocessDocumentExtraction('${docId}', '${targetMode}', event); return false;">
+            <i class="bi ${targetIcon} me-2"></i>Change to ${targetLabel}
         </a></li>`;
 }
 
@@ -600,8 +684,7 @@ function createDocumentCard(doc) {
                 <div class="document-item-card__meta">${getDocumentMetaPills(doc)}</div>
                 <div class="document-item-card__badges">
                     ${getDocumentClassificationBadge(doc)}
-                    <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
-                    ${getDocumentExtractionModeBadge(doc)}
+                    <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}" title="${escapeHtml(getDocumentCitationTooltip(doc))}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
                     ${getDocumentSyncBadgeHtml(doc)}
                 </div>
                 <div class="document-item-card__tags">${renderTagBadges(doc.tags || [], 4)}</div>
@@ -899,10 +982,92 @@ function promptSyncedDocumentDeleteAction(deleteInfo) {
     });
 }
 
-async function requestDocumentDeletion(documentId, deleteMode, fileSyncDeleteAction = null) {
+function promptConversationLinkedDocumentDeleteAction(deleteInfo) {
+    if (!isDocumentDeleteModalReady()) {
+        showDocumentDeleteFeedback("Delete confirmation dialog is unavailable. Refresh the page and try again.");
+        return Promise.resolve(false);
+    }
+
+    if (documentDeleteModalTitle) {
+        documentDeleteModalTitle.textContent = "Delete Conversation Document";
+    }
+
+    const conversation = deleteInfo.conversation || {};
+    const conversationUrl = conversation.url || (conversation.id ? `/chats?conversation_id=${encodeURIComponent(conversation.id)}` : "/chats");
+    const body = document.createElement("div");
+    const intro = document.createElement("p");
+    intro.className = "mb-2";
+    intro.textContent = deleteInfo.message || "This document is part of a conversation.";
+    body.appendChild(intro);
+
+    const linkParagraph = document.createElement("p");
+    linkParagraph.className = "mb-2";
+    linkParagraph.appendChild(document.createTextNode("Conversation: "));
+    const link = document.createElement("a");
+    link.href = conversationUrl;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = conversation.title || conversation.id || "Open conversation";
+    linkParagraph.appendChild(link);
+    body.appendChild(linkParagraph);
+
+    const choice = document.createElement("p");
+    choice.className = "mb-0";
+    choice.textContent = "Deleting this workspace document will remove the saved workspace copy, but the conversation will remain.";
+    body.appendChild(choice);
+    documentDeleteModalBody.replaceChildren(body);
+
+    const currentLabel = documentDeleteCurrentBtn.textContent;
+    const allLabel = documentDeleteAllBtn.textContent;
+    documentDeleteCurrentBtn.textContent = "Open Conversation";
+    documentDeleteAllBtn.textContent = "Delete Workspace Copy";
+
+    return new Promise((resolve) => {
+        let settled = false;
+        let selectedValue = false;
+
+        const cleanup = () => {
+            documentDeleteModalElement.removeEventListener("hidden.bs.modal", handleHidden);
+            documentDeleteCurrentBtn.removeEventListener("click", handleOpenConversation);
+            documentDeleteAllBtn.removeEventListener("click", handleDeleteWorkspaceCopy);
+            documentDeleteCurrentBtn.textContent = currentLabel;
+            documentDeleteAllBtn.textContent = allLabel;
+        };
+
+        const finalize = () => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            resolve(selectedValue);
+        };
+
+        const handleHidden = () => finalize();
+        const handleOpenConversation = () => {
+            window.open(conversationUrl, "_blank", "noopener");
+            selectedValue = false;
+            documentDeleteModal.hide();
+        };
+        const handleDeleteWorkspaceCopy = () => {
+            selectedValue = true;
+            documentDeleteModal.hide();
+        };
+
+        documentDeleteModalElement.addEventListener("hidden.bs.modal", handleHidden);
+        documentDeleteCurrentBtn.addEventListener("click", handleOpenConversation);
+        documentDeleteAllBtn.addEventListener("click", handleDeleteWorkspaceCopy);
+        documentDeleteModal.show();
+    });
+}
+
+async function requestDocumentDeletion(documentId, deleteMode, fileSyncDeleteAction = null, conversationLinkedDeleteConfirmed = false) {
     const query = new URLSearchParams({ delete_mode: deleteMode });
     if (fileSyncDeleteAction) {
         query.set("file_sync_delete_action", fileSyncDeleteAction);
+    }
+    if (conversationLinkedDeleteConfirmed) {
+        query.set("conversation_linked_delete_confirmed", "true");
     }
     const response = await fetch(`/api/documents/${documentId}?${query.toString()}`, { method: "DELETE" });
 
@@ -919,7 +1084,14 @@ async function requestDocumentDeletion(documentId, deleteMode, fileSyncDeleteAct
             if (!syncAction) {
                 throw { error: "Deletion canceled" };
             }
-            return requestDocumentDeletion(documentId, deleteMode, syncAction);
+            return requestDocumentDeletion(documentId, deleteMode, syncAction, conversationLinkedDeleteConfirmed);
+        }
+        if (response.status === 409 && responseData.error === "conversation_linked_document_delete_requires_confirmation" && !conversationLinkedDeleteConfirmed) {
+            const deleteConfirmed = await promptConversationLinkedDocumentDeleteAction(responseData);
+            if (!deleteConfirmed) {
+                throw { error: "Deletion canceled" };
+            }
+            return requestDocumentDeletion(documentId, deleteMode, fileSyncDeleteAction, true);
         }
         throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
     }
@@ -1604,7 +1776,7 @@ function renderDocumentRow(doc) {
     // Complete row HTML
     docRow.innerHTML = `
         ${firstColumnHtml}
-        <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")} <span class="ms-1">${getDocumentExtractionModeBadge(doc)}</span></td>
+        <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")}</td>
         <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
         <td class="align-middle document-actions-cell">
             ${approvalButton}
@@ -1652,7 +1824,7 @@ function renderDocumentRow(doc) {
                     <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(Array.isArray(doc.authors) ? doc.authors.join(", ") : doc.authors || "N/A")}</p>
                     <p class="mb-1"><strong>Pages:</strong> ${escapeHtml(doc.number_of_pages || "N/A")}</p>
                     ${isPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getDocumentExtractionModeBadge(doc)}</p>` : ''}
-                    <p class="mb-1"><strong>Citations:</strong> ${doc.enhanced_citations ? '<span class="badge bg-success">Enhanced</span>' : '<span class="badge bg-secondary">Standard</span>'}</p>
+                    <p class="mb-1"><strong>Citations:</strong> ${doc.enhanced_citations ? `<span class="badge bg-success" title="${escapeHtml(getDocumentCitationTooltip(doc))}">Enhanced</span>` : `<span class="badge bg-secondary" title="${escapeHtml(getDocumentCitationTooltip(doc))}">Standard</span>`}</p>
                     <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || "N/A")}</p>
                     <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(Array.isArray(doc.keywords) ? doc.keywords.join(", ") : doc.keywords || "N/A")}</p>
                     <p class="mb-1"><strong>Tags:</strong> ${renderTagBadges(doc.tags || [])}</p>
@@ -1675,12 +1847,13 @@ function renderDocumentRow(doc) {
 
         if (isOwner && isPdfDocument(doc)) {
             const reprocessDocId = escapeHtml(String(docId || ''));
+            const extractionActionMode = getDocumentTargetExtractionMode(doc);
+            const extractionActionLabel = getDocumentExtractionModeLabelFromMode(extractionActionMode);
+            const extractionActionIcon = getDocumentExtractionModeIcon(extractionActionMode);
+            const extractionActionTooltip = getDocumentExtractionChangeTooltip(extractionActionMode);
             detailsHtml += `
-                <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessDocumentExtraction('${reprocessDocId}', 'read', event)" title="Reprocess PDF with Read">
-                    <i class="bi bi-file-earmark-text"></i> Read
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessDocumentExtraction('${reprocessDocId}', 'layout', event)" title="Reprocess PDF with Layout">
-                    <i class="bi bi-layout-text-window-reverse"></i> Layout
+                <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}">
+                    <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel}
                 </button>
             `;
         }
@@ -2038,6 +2211,7 @@ window.onEditDocument = function(docId) {
             if (docPubDateInput) docPubDateInput.value = doc.publication_date || "";
             if (docAuthorsInput) docAuthorsInput.value = Array.isArray(doc.authors) ? doc.authors.join(", ") : (doc.authors || "");
             setDocumentSyncStatusElement(document.getElementById("doc-sync-status"), doc);
+            setDocumentConversationStatusElement(document.getElementById("doc-conversation-link-status"), doc);
             
             // Set selected tags in the new tag management system
             const docTags = doc.tags || [];
@@ -2219,7 +2393,7 @@ async function requestDocumentExtractionReprocess(documentIds, extractionMode) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
-        throw new Error(data.error || data.message || 'Unable to queue PDF reprocessing.');
+        throw new Error(data.error || data.message || 'Unable to queue PDF extraction change.');
     }
     return data;
 }
@@ -2227,10 +2401,10 @@ async function requestDocumentExtractionReprocess(documentIds, extractionMode) {
 function showDocumentReprocessResult(data, extractionMode) {
     const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
     const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
-    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+    const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
     const message = errorCount > 0
-        ? `Queued ${queuedCount} PDF(s) for ${modeLabel}; ${errorCount} item(s) were skipped.`
-        : (data.message || `Queued ${queuedCount} PDF(s) for ${modeLabel}.`);
+        ? `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}; ${errorCount} item(s) were skipped.`
+        : (data.message || `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}.`);
 
     if (window.showToast) {
         window.showToast(message, errorCount > 0 ? 'warning' : 'success');
@@ -2243,8 +2417,8 @@ window.reprocessDocumentExtraction = async function(documentId, extractionMode, 
     if (event) {
         event.preventDefault();
     }
-    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
-    if (!confirm(`Queue this PDF for ${modeLabel} reprocessing?`)) {
+    const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
+    if (!confirm(`Queue this PDF to extract again with ${modeLabel}?`)) {
         return;
     }
 
@@ -2266,8 +2440,8 @@ window.reprocessSelectedDocumentExtraction = async function(extractionMode) {
     if (documentIds.length === 0) {
         return;
     }
-    const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
-    if (!confirm(`Queue ${documentIds.length} selected document(s) for ${modeLabel} PDF reprocessing?`)) {
+    const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
+    if (!confirm(`Queue ${documentIds.length} selected document(s) to extract again with ${modeLabel}?`)) {
         return;
     }
 

@@ -73,7 +73,12 @@ from functions_mcp_operations import (
     normalize_mcp_additional_fields,
 )
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
-from functions_msgraph_operations import MSGRAPH_DEFAULT_ENDPOINT, MSGRAPH_PLUGIN_TYPE
+from functions_msgraph_operations import (
+    MSGRAPH_DEFAULT_ENDPOINT,
+    MSGRAPH_PLUGIN_TYPE,
+    normalize_msgraph_calendar_send_options,
+    normalize_msgraph_mail_send_options,
+)
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GLOBAL,
@@ -107,6 +112,10 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
+        additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
+        additional_fields.update(normalize_msgraph_mail_send_options(additional_fields))
+        additional_fields.update(normalize_msgraph_calendar_send_options(additional_fields))
+        plugin_payload['additionalFields'] = additional_fields
     elif plugin_type == MCP_PLUGIN_TYPE:
         additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
         additional_fields = normalize_mcp_additional_fields(additional_fields)

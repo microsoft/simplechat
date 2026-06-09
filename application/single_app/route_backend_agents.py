@@ -4,8 +4,11 @@ import re
 import uuid
 import logging
 import builtins
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from flask import Blueprint, jsonify, request, current_app, session
 from config import (
+    AzureOpenAI,
+    cognitive_services_scope,
     cosmos_global_agents_container,
     cosmos_group_agents_container,
     cosmos_personal_agents_container,
@@ -49,6 +52,118 @@ from functions_activity_logging import (
 )
 
 bpa = Blueprint('admin_agents', __name__)
+
+AGENT_INSTRUCTION_FIELD_LIMIT = 6000
+AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT = 1400
+
+
+def _normalize_agent_instruction_draft_input(value, max_length=AGENT_INSTRUCTION_FIELD_LIMIT):
+    """Normalize user-provided instruction draft context before sending it to the model."""
+    normalized_value = re.sub(r'\s+', ' ', str(value or '')).strip()
+    return normalized_value[:max_length]
+
+
+def _resolve_agent_instruction_model(settings):
+    """Resolve the configured GPT deployment for agent instruction drafting."""
+    if settings.get('enable_gpt_apim', False):
+        model_name = settings.get('azure_apim_gpt_deployment') or settings.get('azure_openai_gpt_deployment')
+    else:
+        gpt_model_settings = settings.get('gpt_model') if isinstance(settings.get('gpt_model'), dict) else {}
+        selected_models = gpt_model_settings.get('selected', [])
+        if not isinstance(selected_models, list):
+            selected_models = []
+        selected_model = selected_models[0] if selected_models else {}
+        model_name = (
+            settings.get('metadata_extraction_model')
+            or settings.get('azure_openai_gpt_deployment')
+            or selected_model.get('deploymentName')
+        )
+
+    if isinstance(model_name, str) and ',' in model_name:
+        model_name = model_name.split(',')[0].strip()
+    model_name = str(model_name or '').strip()
+    if not model_name:
+        raise RuntimeError('No GPT deployment is configured for instruction drafting.')
+    return model_name
+
+
+def _create_agent_instruction_client(settings):
+    """Create an Azure OpenAI client from existing app GPT/APIM settings."""
+    if settings.get('enable_gpt_apim', False):
+        return AzureOpenAI(
+            api_version=settings.get('azure_apim_gpt_api_version') or settings.get('azure_openai_gpt_api_version'),
+            azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+            api_key=settings.get('azure_apim_gpt_subscription_key'),
+        )
+
+    auth_type = str(settings.get('azure_openai_gpt_authentication_type') or 'key').strip().lower()
+    if auth_type == 'managed_identity':
+        token_provider = get_bearer_token_provider(
+            DefaultAzureCredential(),
+            cognitive_services_scope,
+        )
+        return AzureOpenAI(
+            api_version=settings.get('azure_openai_gpt_api_version'),
+            azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+            azure_ad_token_provider=token_provider,
+        )
+
+    return AzureOpenAI(
+        api_version=settings.get('azure_openai_gpt_api_version'),
+        azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+        api_key=settings.get('azure_openai_gpt_key'),
+    )
+
+
+def _build_agent_instruction_messages(display_name, description, brief, existing_instructions):
+    """Build the prompt for drafting editable SimpleChat agent instructions."""
+    display_name = _normalize_agent_instruction_draft_input(display_name, 500)
+    description = _normalize_agent_instruction_draft_input(description)
+    brief = _normalize_agent_instruction_draft_input(brief)
+    existing_instructions = _normalize_agent_instruction_draft_input(existing_instructions)
+
+    user_sections = [
+        f'Agent display name: {display_name or "Not provided"}',
+        f'Agent description: {description or "Not provided"}',
+        f'Author brief: {brief or "Not provided"}',
+    ]
+    if existing_instructions:
+        user_sections.append(f'Existing instructions to improve or preserve where useful:\n{existing_instructions}')
+
+    return [
+        {
+            'role': 'system',
+            'content': (
+                'You write production-ready SimpleChat agent instructions. '
+                'Return only the finished instructions in Markdown. '
+                'Be specific about role, goals, workflow, boundaries, tool use, and response style. '
+                'Do not include code fences, preambles, or commentary about how the instructions were created.'
+            ),
+        },
+        {
+            'role': 'user',
+            'content': (
+                '\n\n'.join(user_sections)
+                + '\n\nDraft concise but complete instructions that the user can edit before saving the agent.'
+            ),
+        },
+    ]
+
+
+def _build_agent_instruction_api_params(model_name, messages):
+    """Build chat-completion parameters compatible with GPT-5/o-series token names."""
+    model_name_lower = str(model_name or '').lower()
+    uses_completion_tokens = any(marker in model_name_lower for marker in ('o1', 'o3', 'gpt-5'))
+    api_params = {
+        'model': model_name,
+        'messages': messages,
+    }
+    if uses_completion_tokens:
+        api_params['max_completion_tokens'] = AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT
+    else:
+        api_params['temperature'] = 0.2
+        api_params['max_tokens'] = AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT
+    return api_params
 
 
 def _build_user_selectable_agents(user_id, requested_agent=None):
@@ -542,6 +657,82 @@ def _maybe_disable_multi_endpoint_migration_notice(settings, preview):
 def generate_agent_id():
     """Generate a new GUID for agent creation (user or admin)."""
     return jsonify({'id': str(uuid.uuid4())})
+
+
+@bpa.route('/api/agents/draft-instructions', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@user_required
+def draft_agent_instructions():
+    """Draft editable agent instructions from a typed or transcribed brief."""
+    settings = get_settings()
+    request_data = request.get_json(silent=True) or {}
+    user_id = get_current_user_id()
+    agent_scope = str(request_data.get('agent_scope') or 'personal').strip().lower()
+    if agent_scope in {'admin', 'user'}:
+        agent_scope = 'global' if agent_scope == 'admin' else 'personal'
+
+    if agent_scope == 'global' and 'Admin' not in session.get('user', {}).get('roles', []):
+        return jsonify({'error': 'Admin role is required to draft global agent instructions.'}), 403
+    if agent_scope == 'group':
+        if not settings.get('allow_group_agents', False):
+            return jsonify({'error': 'Group agents are disabled.'}), 403
+        try:
+            require_active_group(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        except (LookupError, PermissionError, ValueError) as exc:
+            return jsonify({'error': str(exc)}), 403
+    elif agent_scope not in {'personal', 'global'}:
+        return jsonify({'error': 'Invalid agent scope.'}), 400
+    elif agent_scope == 'personal' and not settings.get('allow_user_agents', False):
+        return jsonify({'error': 'Personal agents are disabled.'}), 403
+
+    display_name = request_data.get('display_name')
+    description = request_data.get('description')
+    brief = request_data.get('brief')
+    existing_instructions = request_data.get('existing_instructions')
+    if not any(str(value or '').strip() for value in (display_name, description, brief, existing_instructions)):
+        return jsonify({'error': 'Provide a brief, display name, description, or existing instructions.'}), 400
+
+    try:
+        model_name = _resolve_agent_instruction_model(settings)
+        client = _create_agent_instruction_client(settings)
+        messages = _build_agent_instruction_messages(
+            display_name,
+            description,
+            brief,
+            existing_instructions,
+        )
+        response = client.chat.completions.create(
+            **_build_agent_instruction_api_params(model_name, messages)
+        )
+        instructions = ''
+        if getattr(response, 'choices', None):
+            instructions = str(response.choices[0].message.content or '').strip()
+        if not instructions:
+            return jsonify({'error': 'The model did not return instructions.'}), 502
+
+        log_event(
+            '[AgentInstructions] Agent instructions drafted.',
+            extra={
+                'user_id': str(user_id),
+                'agent_scope': agent_scope,
+                'model_name': model_name,
+            },
+            debug_only=True,
+        )
+        return jsonify({'success': True, 'instructions': instructions})
+    except Exception as exc:
+        log_event(
+            f'[AgentInstructions] Error drafting agent instructions: {exc}',
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({'error': 'Failed to draft instructions.'}), 500
 
 # === USER AGENTS ENDPOINTS ===
 @bpa.route('/api/user/agents', methods=['GET'])

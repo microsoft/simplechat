@@ -36,6 +36,7 @@ from functions_public_workspaces import require_active_public_workspace
 from functions_document_actions import DOCUMENT_ACTION_TYPE_ANALYZE, build_analyze_config
 from functions_thoughts import get_thoughts_for_message
 from functions_workflow_activity import build_workflow_activity_snapshot
+from functions_msgraph_pending_actions import list_msgraph_pending_actions, sanitize_msgraph_pending_action_for_client
 from functions_personal_workflows import (
     compute_next_run_at,
     delete_personal_workflow,
@@ -276,11 +277,23 @@ def _resolve_workflow_activity_context(user_id, conversation_id='', workflow_id=
             user_id,
         )
 
+    pending_actions = []
+    if run_record or conversation_id or workflow_id:
+        raw_pending_actions = list_msgraph_pending_actions(
+            user_id,
+            conversation_id=conversation_id or _normalize_identifier((run_record or {}).get('conversation_id')),
+            workflow_id=workflow_id or _normalize_identifier((workflow or {}).get('id')),
+            run_id=_normalize_identifier((run_record or {}).get('id')),
+            limit=100,
+        )
+        pending_actions = [sanitize_msgraph_pending_action_for_client(action) for action in raw_pending_actions]
+
     return build_workflow_activity_snapshot(
         run_record=run_record,
         workflow=workflow,
         conversation=conversation,
         thoughts=thoughts,
+        pending_actions=pending_actions,
     )
 
 

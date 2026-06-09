@@ -88,6 +88,10 @@ FILE_SYNC_IMPLEMENTED_SOURCE_TYPES = {
     FILE_SYNC_SOURCE_TYPE_AZURE_FILES,
     FILE_SYNC_SOURCE_TYPE_ONEDRIVE,
 }
+FILE_SYNC_ADMIN_VISIBLE_SOURCE_TYPES = {
+    FILE_SYNC_SOURCE_TYPE_SMB,
+    FILE_SYNC_SOURCE_TYPE_AZURE_FILES,
+}
 FILE_SYNC_SOURCE_TYPE_LABELS = {
     FILE_SYNC_SOURCE_TYPE_SMB: "SMB",
     FILE_SYNC_SOURCE_TYPE_AZURE_FILES: "Azure Files",
@@ -111,7 +115,7 @@ FILE_SYNC_DEFAULTS = {
     "file_sync_personal_admin_only": False,
     "file_sync_group_admin_only": False,
     "file_sync_public_admin_only": False,
-    "file_sync_visible_source_types": [FILE_SYNC_SOURCE_TYPE_SMB, FILE_SYNC_SOURCE_TYPE_AZURE_FILES, FILE_SYNC_SOURCE_TYPE_ONEDRIVE],
+    "file_sync_visible_source_types": [FILE_SYNC_SOURCE_TYPE_SMB, FILE_SYNC_SOURCE_TYPE_AZURE_FILES],
     "file_sync_max_sources_per_scope": 10,
     "file_sync_min_schedule_interval_minutes": 15,
     "file_sync_max_files_per_run": 1000,
@@ -198,12 +202,15 @@ def _user_info_has_app_role(user_info: Optional[Dict[str, Any]], role_name: str)
     return any(str(role).strip().lower() == normalized_role for role in roles)
 
 
-def _normalize_source_type_list(value: Any) -> List[str]:
+def _normalize_source_type_list(value: Any, allowed_source_types: Optional[Iterable[str]] = None) -> List[str]:
+    allowed_types = {str(source_type).strip().lower() for source_type in allowed_source_types} if allowed_source_types is not None else FILE_SYNC_KNOWN_SOURCE_TYPES
     source_types = []
     seen_source_types = set()
     for source_type in parse_file_sync_list(value):
         normalized_source_type = str(source_type or "").strip().lower()
         if normalized_source_type not in FILE_SYNC_KNOWN_SOURCE_TYPES:
+            continue
+        if normalized_source_type not in allowed_types:
             continue
         if normalized_source_type in seen_source_types:
             continue
@@ -298,7 +305,10 @@ def get_file_sync_config(settings: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     remote_delete_policy = str(config.get("file_sync_default_remote_delete_policy") or "ignore").strip().lower()
     config["file_sync_default_remote_delete_policy"] = remote_delete_policy if remote_delete_policy in FILE_SYNC_REMOTE_DELETE_POLICIES else "ignore"
-    config["file_sync_visible_source_types"] = _normalize_source_type_list(config.get("file_sync_visible_source_types"))
+    config["file_sync_visible_source_types"] = _normalize_source_type_list(
+        config.get("file_sync_visible_source_types"),
+        FILE_SYNC_ADMIN_VISIBLE_SOURCE_TYPES,
+    )
 
     config["requested_enable_file_sync"] = config["enable_file_sync"]
     config["redis_ready"] = _is_redis_ready(source_settings)

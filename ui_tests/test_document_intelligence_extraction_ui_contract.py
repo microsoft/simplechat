@@ -2,12 +2,16 @@
 """
 UI test for Document Intelligence extraction mode controls.
 
-Version: 0.241.163
+Version: 0.241.167
 Implemented in: 0.241.163
+Fixed in: 0.241.164
+UI terminology updated in: 0.241.166
+Extraction action terminology updated in: 0.241.167
 
-This test ensures the admin Auto guidance, workspace Read/Layout badges, and
-single/bulk PDF reprocess controls are present across personal, group, and
-public workspace document surfaces.
+This test ensures the admin Auto guidance, workspace Standard/Enhanced badges, and
+single/bulk PDF extraction-change controls are present across personal, group, and
+public workspace document surfaces. It also ensures extraction badges stay in
+expanded metadata/details views instead of top-level document rows or cards.
 """
 
 import re
@@ -51,24 +55,62 @@ def test_document_intelligence_extraction_ui_static_contract():
     assert 'id="document_intelligence_auto_sample_pages_group"' in admin_template
     assert 'id="documentIntelligenceExtractionHelpModal"' in admin_template
     assert '6X increase for every 1000 pages' in admin_template
+    assert 'Standard - faster text extraction' in admin_template
+    assert 'Enhanced - richer structure, tables, and checkbox states' in admin_template
+    assert 'Auto - sample first pages, then choose Standard or Enhanced' in admin_template
     assert 'updateDocumentIntelligenceAutoControls' in admin_js
     assert 'document_intelligence_auto_sample_pages: autoSamplePages' in admin_js
 
     assert 'id="reprocess-selected-dropdown"' in workspace_template
+    assert 'Change Extraction' in workspace_template
+    assert "window.reprocessSelectedDocumentExtraction('read')\">Extract Again as Standard" in workspace_template
+    assert "window.reprocessSelectedDocumentExtraction('layout')\">Extract Again as Enhanced" in workspace_template
     assert 'getDocumentExtractionModeBadge' in workspace_js
     assert 'window.reprocessDocumentExtraction' in workspace_js
     assert 'window.reprocessSelectedDocumentExtraction' in workspace_js
+    assert 'getDocumentTargetExtractionMode' in workspace_js
+    assert 'Change to ${targetLabel}' in workspace_js
+    assert 'Reprocess PDF' not in workspace_js
+    assert 'Standard extraction uses Document Intelligence Read' in workspace_js
+    assert 'Enhanced extraction uses Document Intelligence Layout' in workspace_js
+    assert 'Standard citations reference indexed text chunks' in workspace_js
+    assert 'Enhanced citations preserve source-file context' in workspace_js
     assert 'getWorkspaceDocumentReprocessDropdownItems' in workspace_tags_js
+    assert '<strong>Extraction:</strong> ${getDocumentExtractionModeBadge(doc)}' in workspace_js
+    assert '<span class="ms-1">${getDocumentExtractionModeBadge(doc)}</span>' not in workspace_js
+    assert 'extractionBadge' not in workspace_tags_js
 
     assert 'id="group-reprocess-selected-dropdown"' in group_template
+    assert 'Change Extraction' in group_template
+    assert "reprocessGroupSelectedDocumentExtraction('read')\">Extract Again as Standard" in group_template
+    assert "reprocessGroupSelectedDocumentExtraction('layout')\">Extract Again as Enhanced" in group_template
     assert 'getGroupDocumentExtractionModeBadge' in group_template
     assert 'reprocessGroupDocumentExtraction' in group_template
     assert 'reprocessGroupSelectedDocumentExtraction' in group_template
+    assert 'getGroupDocumentTargetExtractionMode' in group_template
+    assert 'Change to ${targetLabel}' in group_template
+    assert 'Reprocess PDF' not in group_template
+    assert 'Standard extraction uses Document Intelligence Read' in group_template
+    assert 'Enhanced extraction uses Document Intelligence Layout' in group_template
+    assert '<strong>Extraction:</strong> ${getGroupDocumentExtractionModeBadge(doc)}' in group_template
+    assert '<span class="ms-1">${getGroupDocumentExtractionModeBadge(doc)}</span>' not in group_template
 
     assert 'id="public-reprocess-selected-dropdown"' in public_template
+    assert 'Change Extraction' in public_template
+    assert "reprocessPublicSelectedDocumentExtraction('read')\">Extract Again as Standard" in public_template
+    assert "reprocessPublicSelectedDocumentExtraction('layout')\">Extract Again as Enhanced" in public_template
     assert 'getPublicDocumentExtractionModeBadgeHtml' in public_js
     assert 'reprocessPublicDocumentExtraction' in public_js
     assert 'reprocessPublicSelectedDocumentExtraction' in public_js
+    assert 'getPublicDocumentTargetExtractionMode' in public_js
+    assert 'Change to ${extractionActionLabel}' in public_js
+    assert 'Reprocess PDF' not in public_js
+    assert 'Standard extraction uses Document Intelligence Read' in public_js
+    assert 'Enhanced extraction uses Document Intelligence Layout' in public_js
+    assert 'This document was uploaded manually and is not managed by File Sync.' in public_js
+    assert '<strong>Extraction:</strong> ${getPublicDocumentExtractionModeBadgeHtml(doc)}' in public_js
+    assert '<span class="ms-1">${getPublicDocumentExtractionModeBadgeHtml(doc)}</span>' not in public_js
+    assert 'createPublicDocumentExtractionModeBadge(doc);' not in public_js
 
 
 @pytest.mark.ui
@@ -99,6 +141,8 @@ def test_document_intelligence_admin_controls_render_from_template():
         expect(page.locator("#document_intelligence_auto_sample_pages")).to_have_attribute("min", "1")
         expect(page.locator("#document_intelligence_auto_sample_pages")).to_have_attribute("max", "20")
         expect(page.locator("#documentIntelligenceExtractionHelpModal")).to_be_attached()
+        expect(page.locator("#document_intelligence_pdf_image_extraction_mode option[value='read']")).to_contain_text("Standard - faster text extraction")
+        expect(page.locator("#document_intelligence_pdf_image_extraction_mode option[value='layout']")).to_contain_text("Enhanced - richer structure, tables, and checkbox states")
         expect(page.get_by_text("6X increase for every 1000 pages").first).to_be_visible()
     finally:
         browser.close()

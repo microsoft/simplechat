@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow activity view snapshot aggregation.
-Version: 0.241.042
-Implemented in: 0.241.040
+Version: 0.241.179
+Implemented in: 0.241.179
 
 This test ensures that workflow activity snapshots merge lifecycle events,
-preserve branch lanes for tool calls, and fall back to a summary card for
-legacy workflow runs without structured thought activity.
+preserve branch lanes for tool calls, expose pending Microsoft Graph actions,
+and fall back to a summary card for legacy workflow runs without structured
+thought activity.
 """
 
 import os
@@ -269,8 +270,88 @@ def test_running_snapshot_live_flag():
     return True
 
 
+def test_pending_msgraph_actions_are_activity_rows():
+    print("Testing workflow activity pending Microsoft Graph actions...")
+
+    snapshot = build_workflow_activity_snapshot(
+        run_record={
+            "id": "run-with-pending-graph",
+            "workflow_id": WORKFLOW_ID,
+            "workflow_name": "Security Events",
+            "status": "running",
+            "success": False,
+            "started_at": "2025-01-04T00:00:00+00:00",
+            "conversation_id": CONVERSATION_ID,
+        },
+        workflow={
+            "id": WORKFLOW_ID,
+            "name": "Security Events",
+        },
+        conversation={
+            "id": CONVERSATION_ID,
+            "title": "Workflow: Security Events",
+            "chat_type": "workflow",
+        },
+        thoughts=[
+            {
+                "id": "thought-graph-1",
+                "step_index": 0,
+                "step_type": "workflow",
+                "content": "Workflow run started",
+                "detail": "trigger_source=manual",
+                "timestamp": "2025-01-04T00:00:00+00:00",
+                "duration_ms": None,
+                "activity": {
+                    "activity_key": "run:run-with-pending-graph",
+                    "workflow_id": WORKFLOW_ID,
+                    "run_id": "run-with-pending-graph",
+                    "kind": "workflow_run",
+                    "title": "Workflow run",
+                    "status": "running",
+                    "lane_key": "main",
+                    "lane_label": "Main",
+                },
+            }
+        ],
+        pending_actions=[
+            {
+                "id": "pending-calendar-1",
+                "type": "msgraph_pending_action",
+                "operation": "create_calendar_invite",
+                "graph_resource_type": "calendar",
+                "status": "scheduled",
+                "action_mode": "delayed",
+                "subject": "Review planning invite",
+                "workflow_id": WORKFLOW_ID,
+                "run_id": "run-with-pending-graph",
+                "created_at": "2025-01-04T00:00:05+00:00",
+                "updated_at": "2025-01-04T00:00:05+00:00",
+                "auto_send_at_utc": "2025-01-04T00:02:05Z",
+                "delay_seconds": 120,
+                "can_cancel": True,
+                "can_send_now": True,
+            }
+        ],
+    )
+
+    pending_activity = next(activity for activity in snapshot["activities"] if activity["kind"] == "msgraph_pending_action")
+    assert_equal(pending_activity["title"], "Calendar invite delayed send", "pending activity title")
+    assert_equal(pending_activity["status"], "running", "pending activity status")
+    assert_equal(pending_activity["lane_label"], "Microsoft Graph", "pending activity lane label")
+    assert_equal(pending_activity["lane_index"], 1, "pending activity lane index")
+    assert_equal(pending_activity["pending_action"]["can_send_now"], True, "pending action send-now flag")
+
+    print("Workflow activity pending Microsoft Graph actions passed.")
+    return True
+
+
 if __name__ == "__main__":
-    tests = [test_activity_merging, test_legacy_run_fallback, test_running_snapshot_live_flag]
+    tests = [
+        test_activity_merging,
+        test_legacy_run_fallback,
+        test_running_snapshot_live_flag,
+        test_pending_msgraph_actions_are_activity_rows,
+    ]
     results = []
 
     for test in tests:

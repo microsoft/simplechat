@@ -910,11 +910,11 @@
                 </button>
                 <div class="btn-group ms-2" id="reprocess-selected-dropdown">
                   <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="bi bi-arrow-repeat me-1"></i>Reprocess
+                    <i class="bi bi-arrow-repeat me-1"></i>Change Extraction
                   </button>
                   <ul class="dropdown-menu dropdown-menu-end">
-                    <li><button type="button" class="dropdown-item" onclick="window.reprocessSelectedDocumentExtraction('read')">Read</button></li>
-                    <li><button type="button" class="dropdown-item" onclick="window.reprocessSelectedDocumentExtraction('layout')">Layout</button></li>
+                    <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Standard extraction. Standard is faster for plain text PDFs and images." onclick="window.reprocessSelectedDocumentExtraction('read')">Extract Again as Standard</button></li>
+                    <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Enhanced extraction. Enhanced preserves tables, page structure, forms, and checkbox states." onclick="window.reprocessSelectedDocumentExtraction('layout')">Extract Again as Enhanced</button></li>
                   </ul>
                 </div>
                 <button type="button" class="btn btn-sm btn-danger ms-2" id="delete-selected-btn">
@@ -1043,7 +1043,7 @@
             data-api-base="/api/file-sync/personal"
             data-tags-api="/api/documents/tags"
             data-recursive-allowed="{{ 'true' if settings.file_sync_allow_recursive_sources else 'false' }}"
-            data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb', 'azure_files', 'onedrive'])|join(',') }}"
+            data-visible-source-types="{{ settings.file_sync_visible_source_types|default(['smb', 'azure_files'])|join(',') }}"
           ></div>
         </div>
       </div>
@@ -1803,6 +1803,8 @@
                 <span class="badge bg-secondary">No</span>
               </div>
             </div>
+
+            <div id="doc-conversation-link-status" class="alert alert-info py-2 mb-3 d-none" aria-live="polite"></div>
 
             <!-- Document Classification -->
             {% if enable_document_classification in [True, 'True', 'true'] %}

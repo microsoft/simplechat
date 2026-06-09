@@ -98,7 +98,7 @@ function initializeFileSyncRoot(root) {
         .filter((item, index, allItems) => item && allItems.indexOf(item) === index);
 
     const visibleSourceTypeValues = new Set(
-        parseList(root.dataset.visibleSourceTypes === undefined ? 'smb,azure_files,onedrive' : root.dataset.visibleSourceTypes)
+        parseList(root.dataset.visibleSourceTypes === undefined ? 'smb,azure_files' : root.dataset.visibleSourceTypes)
             .map((sourceTypeValue) => sourceTypeValue.toLowerCase())
             .filter((sourceTypeValue) => sourceTypes.some((sourceType) => sourceType.value === sourceTypeValue)),
     );

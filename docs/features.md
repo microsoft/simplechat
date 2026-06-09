@@ -168,6 +168,28 @@ Simple Chat starts with a grounded chat experience, then expands through optiona
         <p class="latest-release-card-summary">Scale session handling, inspect ingestion activity, and connect agent workflows to SQL data sources through configurable plugins.</p>
       </div>
     </article>
+
+    <article class="latest-release-card latest-release-accent--blue">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-microsoft"></i></span>
+          <span class="latest-release-card-badge">Actions</span>
+        </div>
+        <h3 class="latest-release-card-title">Microsoft Graph agent actions</h3>
+        <p class="latest-release-card-summary">Expose delegated Microsoft Graph operations to agents, including profile, calendar, mail, directory, OneDrive, security alert, and configurable send-mail workflows.</p>
+      </div>
+    </article>
+
+    <article class="latest-release-card latest-release-accent--teal">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-palette"></i></span>
+          <span class="latest-release-card-badge">Branding</span>
+        </div>
+        <h3 class="latest-release-card-title">Workspace branding controls</h3>
+        <p class="latest-release-card-summary">Let group and public workspace owners tune hero colors with preset or custom swatches so users can recognize shared workspace context at a glance.</p>
+      </div>
+    </article>
   </div>
 </section>
 

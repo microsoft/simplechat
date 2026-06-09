@@ -294,6 +294,16 @@
           <div class="mb-3" id="agent-instructions-container">
             <label for="agent-instructions" class="form-label">Agent Instructions <span class="text-danger" title="Required">*</span></label>
             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Well-crafted instructions guide the agent's behavior, ensuring it performs tasks correctly, consistently, and within scope. These are incredibly important and have a massive effect on how the agent operates."></i>
+            <div class="mb-3 mt-2" id="agent-instructions-draft-container">
+              <label for="agent-instruction-brief" class="form-label">Instruction Brief</label>
+              <textarea class="form-control" id="agent-instruction-brief" rows="3" placeholder="Describe the agent you want to build..."></textarea>
+              <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                <button type="button" class="btn btn-outline-primary btn-sm" id="agent-draft-instructions-btn">
+                  <i class="bi bi-stars me-1"></i>Draft Instructions
+                </button>
+                <span class="text-muted small" id="agent-draft-instructions-status" aria-live="polite"></span>
+              </div>
+            </div>
             <textarea class="form-control" id="agent-instructions" rows="8" placeholder="Define how this agent should behave, what it should do, and any specific guidelines it should follow..."></textarea>
             <div class="form-text">
               <strong>Tips:</strong> Be specific about the agent's role, capabilities, and limitations. Include examples of good behavior if relevant.

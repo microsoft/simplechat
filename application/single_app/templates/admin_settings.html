@@ -6717,17 +6717,17 @@
                             name="document_intelligence_pdf_image_extraction_mode"
                         >
                             <option value="read" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'read' %}selected{% endif %}>
-                                Read - faster text extraction
+                                Standard - faster text extraction
                             </option>
                             <option value="layout" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'layout' %}selected{% endif %}>
-                                Layout - richer structure, tables, and checkbox states
+                                Enhanced - richer structure, tables, and checkbox states
                             </option>
                             <option value="auto" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'auto' %}selected{% endif %}>
-                                Auto - sample first pages, then choose Read or Layout
+                                Auto - sample first pages, then choose Standard or Enhanced
                             </option>
                         </select>
                         <div class="form-text">
-                            Layout captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected.
+                            Enhanced captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected.
                         </div>
                         <div
                             class="mt-3 {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') != 'auto' %}d-none{% endif %}"
@@ -6746,26 +6746,26 @@
                                 value="{{ settings.document_intelligence_auto_sample_pages|default(3) }}"
                             >
                             <div class="form-text">
-                                Auto samples this many first PDF pages with Layout. If it detects tables or selection marks, the full PDF uses Layout; otherwise it finishes with Read. Images use Layout in Auto mode.
+                                Auto samples this many first PDF pages with Enhanced extraction. If it detects tables or selection marks, the full PDF uses Enhanced; otherwise it finishes with Standard. Images use Enhanced in Auto mode.
                             </div>
                         </div>
                         <div class="alert alert-light border mt-3 mb-0 small" role="note">
-                            <div><strong>Read:</strong> fastest and lowest-cost path for plain text PDFs and images.</div>
-                            <div><strong>Layout:</strong> best for tables, section structure, page layout, forms, and checkbox states. Expect more latency and a 6X increase for every 1000 pages.</div>
-                            <div><strong>Auto:</strong> samples the first pages, then uses Layout only when the sample shows tables or selection marks.</div>
+                            <div><strong>Standard:</strong> fastest and lowest-cost path for plain text PDFs and images.</div>
+                            <div><strong>Enhanced:</strong> best for tables, section structure, page layout, forms, and checkbox states. Expect more latency and a 6X increase for every 1000 pages.</div>
+                            <div><strong>Auto:</strong> samples the first pages, then uses Enhanced only when the sample shows tables or selection marks.</div>
                         </div>
                     </div>
                     <div class="modal fade" id="documentIntelligenceExtractionHelpModal" tabindex="-1" aria-labelledby="documentIntelligenceExtractionHelpModalLabel" aria-hidden="true">
                         <div class="modal-dialog modal-lg modal-dialog-scrollable">
                             <div class="modal-content">
                                 <div class="modal-header">
-                                    <h5 class="modal-title" id="documentIntelligenceExtractionHelpModalLabel">Read, Layout, and Auto</h5>
+                                    <h5 class="modal-title" id="documentIntelligenceExtractionHelpModalLabel">Standard, Enhanced, and Auto</h5>
                                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                                 </div>
                                 <div class="modal-body">
-                                    <p><strong>Choose Read</strong> for mostly text-based PDFs and images when speed and cost matter most.</p>
-                                    <p><strong>Choose Layout</strong> when document structure matters: tables, page layout, headings, forms, checked or unchecked boxes, and selection marks. Layout is the better extraction path for those documents, but it adds latency and has a 6X increase for every 1000 pages.</p>
-                                    <p><strong>Choose Auto</strong> when admins want the platform to decide. Auto samples the configured number of first PDF pages with Layout. If those pages contain tables or selection marks, the full PDF is extracted with Layout; otherwise it is extracted with Read. Images are extracted with Layout in Auto mode because they are single-page inputs and benefit from spatial structure detection.</p>
+                                    <p><strong>Choose Standard</strong> for mostly text-based PDFs and images when speed and cost matter most.</p>
+                                    <p><strong>Choose Enhanced</strong> when document structure matters: tables, page layout, headings, forms, checked or unchecked boxes, and selection marks. Enhanced is the better extraction path for those documents, but it adds latency and has a 6X increase for every 1000 pages.</p>
+                                    <p><strong>Choose Auto</strong> when admins want the platform to decide. Auto samples the configured number of first PDF pages with Enhanced extraction. If those pages contain tables or selection marks, the full PDF is extracted with Enhanced; otherwise it is extracted with Standard. Images are extracted with Enhanced in Auto mode because they are single-page inputs and benefit from spatial structure detection.</p>
                                 </div>
                                 <div class="modal-footer">
                                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>

@@ -1018,6 +1018,35 @@ def register_route_backend_documents(app):
         delete_mode = request.args.get('delete_mode', 'all_versions')
         if delete_mode not in {'all_versions', 'current_only'}:
             return jsonify({'error': 'Invalid delete mode'}), 400
+        conversation_linked_delete_confirmed = request.args.get('conversation_linked_delete_confirmed') == 'true'
+        try:
+            document_record = get_document_record(user_id=user_id, document_id=document_id)
+        except Exception:
+            document_record = None
+        if not document_record:
+            return jsonify({'error': 'Document not found or access denied'}), 404
+
+        if (
+            document_record.get('created_from_chat_upload')
+            and document_record.get('conversation_id')
+            and not conversation_linked_delete_confirmed
+        ):
+            conversation_id = document_record.get('conversation_id')
+            conversation_url = document_record.get('conversation_url') or f'/chats?conversation_id={conversation_id}'
+            return jsonify({
+                'error': 'conversation_linked_document_delete_requires_confirmation',
+                'message': 'This document was uploaded through chat and is part of a conversation.',
+                'conversation': {
+                    'id': conversation_id,
+                    'title': document_record.get('conversation_title_at_upload') or 'Conversation',
+                    'url': conversation_url,
+                },
+                'document': {
+                    'id': document_id,
+                    'file_name': document_record.get('file_name'),
+                },
+            }), 409
+
         file_sync_delete_action = request.args.get('file_sync_delete_action')
         file_sync_guard = build_synced_document_delete_guard(
             FILE_SYNC_SCOPE_PERSONAL,
@@ -1093,7 +1122,7 @@ def register_route_backend_documents(app):
         payload = request.get_json(silent=True) or {}
         raw_mode = str(payload.get('extraction_mode') or payload.get('target_extraction_mode') or '').strip().lower()
         if raw_mode not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
-            return jsonify({'error': 'Extraction mode must be Read or Layout.'}), 400
+            return jsonify({'error': 'Extraction mode must be Standard or Enhanced.'}), 400
         target_mode = normalize_document_intelligence_manual_extraction_mode(raw_mode)
 
         document_ids = payload.get('document_ids')
@@ -1113,7 +1142,7 @@ def register_route_backend_documents(app):
                     errors.append({'document_id': document_id, 'error': 'Document not found.'})
                     continue
                 if document_item.get('user_id') != user_id:
-                    errors.append({'document_id': document_id, 'error': 'Only the document owner can reprocess this PDF.'})
+                    errors.append({'document_id': document_id, 'error': 'Only the document owner can change extraction for this PDF.'})
                     continue
 
                 is_valid, validation_message = validate_document_reprocess_source(document_item, user_id=user_id)
@@ -1136,8 +1165,9 @@ def register_route_backend_documents(app):
             invalidate_personal_search_cache(user_id)
 
         status_code = 202 if queued and not errors else (207 if queued else 400)
+        target_mode_label = "Enhanced" if target_mode == "layout" else "Standard"
         return jsonify({
-            'message': f'Queued {len(queued)} document(s) for {target_mode.title()} reprocessing.',
+            'message': f'Queued {len(queued)} document(s) to extract again with {target_mode_label}.',
             'queued': queued,
             'errors': errors,
         }), status_code

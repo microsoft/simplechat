@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, selectPersonalWorkspaceDocumentForChatUpload } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -65,6 +65,8 @@ let comparisonSelectedDocumentIdsSnapshot = [];
 let comparisonDocumentSelectionOrder = [];
 let selectedComparisonTargetIds = [];
 const comparisonPickerPlacements = new Map();
+const chatWorkspaceUploadPolls = new Map();
+const chatWorkspaceUploadCompletionWatchers = new Map();
 const COMPARISON_PICKER_FIELD_NAMES = ['scope', 'tags', 'document'];
 const DOCUMENT_ACTION_NONE = 'none';
 const DOCUMENT_ACTION_ANALYZE = 'analyze';
@@ -86,6 +88,403 @@ const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
     workflow_max_documents: 10,
   },
 };
+
+function getChatWorkspaceProgressValue(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, numericValue));
+}
+
+function isChatWorkspaceDocumentComplete(doc) {
+  const statusText = String(doc?.status || '').toLowerCase();
+  return getChatWorkspaceProgressValue(doc?.percentage_complete) >= 100
+    || statusText.includes('processing complete')
+    || statusText.includes('complete')
+    || statusText.includes('error')
+    || statusText.includes('failed');
+}
+
+function isChatWorkspaceDocumentFailure(doc) {
+  const statusText = String(doc?.status || '').toLowerCase();
+  return statusText.includes('error') || statusText.includes('failed');
+}
+
+function isChatWorkspaceDocumentSuccessComplete(doc) {
+  const statusText = String(doc?.status || '').toLowerCase();
+  return !isChatWorkspaceDocumentFailure(doc)
+    && (
+      getChatWorkspaceProgressValue(doc?.percentage_complete) >= 100
+      || statusText.includes('processing complete')
+      || statusText.includes('complete')
+    );
+}
+
+function normalizeChatWorkspaceDocumentResponse(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return {};
+  }
+  if (payload.document && typeof payload.document === 'object') {
+    return payload.document;
+  }
+  if (payload.document_record && typeof payload.document_record === 'object') {
+    return payload.document_record;
+  }
+  return payload;
+}
+
+function getChatWorkspaceDocumentId(doc, fallbackDocumentId = '') {
+  return String(doc?.id || doc?.document_id || doc?.documentId || fallbackDocumentId || '').trim();
+}
+
+function getChatWorkspaceProgressDetailsId(workspaceDocumentId) {
+  return `chat-workspace-progress-details-${String(workspaceDocumentId || '').replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+function createCompletedChatWorkspaceAttachmentElement(attachment) {
+  const workspaceDocumentId = String(attachment?.document_id || attachment?.id || '').trim();
+  if (!workspaceDocumentId) {
+    return null;
+  }
+
+  const pct = getChatWorkspaceProgressValue(attachment?.percentage_complete);
+  const statusText = String(attachment?.status || 'Processing complete').trim() || 'Processing complete';
+  const detailsId = getChatWorkspaceProgressDetailsId(workspaceDocumentId);
+
+  const container = document.createElement('div');
+  container.className = 'chat-workspace-upload-progress chat-workspace-upload-progress-complete mt-2';
+  container.dataset.workspaceDocumentId = workspaceDocumentId;
+  container.dataset.workspaceUploadComplete = 'true';
+
+  const toggleButton = document.createElement('button');
+  toggleButton.type = 'button';
+  toggleButton.className = 'btn btn-sm btn-link text-muted p-0 chat-workspace-progress-toggle';
+  toggleButton.setAttribute('aria-expanded', 'false');
+  toggleButton.setAttribute('aria-controls', detailsId);
+  toggleButton.title = 'Show processing details';
+
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-chevron-right';
+  toggleButton.appendChild(icon);
+
+  const details = document.createElement('div');
+  details.id = detailsId;
+  details.className = 'chat-workspace-upload-progress-details d-none mt-1 small text-muted';
+
+  const status = document.createElement('span');
+  status.className = 'chat-workspace-upload-status-text';
+  status.textContent = `${statusText} (${pct.toFixed(0)}%)`;
+  details.appendChild(status);
+
+  container.append(toggleButton, details);
+  return container;
+}
+
+function buildCompletedChatWorkspaceAttachmentHtml(attachment) {
+  return createCompletedChatWorkspaceAttachmentElement(attachment)?.outerHTML || '';
+}
+
+function buildChatWorkspaceAttachmentHtml(attachment) {
+  const workspaceDocumentId = String(attachment?.document_id || '').trim();
+  if (!workspaceDocumentId) {
+    return '';
+  }
+
+  if (isChatWorkspaceDocumentSuccessComplete(attachment)) {
+    return buildCompletedChatWorkspaceAttachmentHtml(attachment);
+  }
+
+  const pct = getChatWorkspaceProgressValue(attachment?.percentage_complete);
+  const statusText = String(attachment?.status || 'Queued for workspace processing').trim() || 'Queued for workspace processing';
+  const detailsId = getChatWorkspaceProgressDetailsId(workspaceDocumentId);
+  const statusLower = statusText.toLowerCase();
+  const progressClass = statusLower.includes('error') || statusLower.includes('failed')
+    ? 'bg-danger'
+    : (pct >= 100 || statusLower.includes('complete') ? 'bg-success' : 'progress-bar-striped progress-bar-animated bg-info');
+
+  return `
+    <div class="chat-workspace-upload-progress mt-2 p-2 border rounded bg-body-tertiary"
+         data-workspace-document-id="${escapeHtml(workspaceDocumentId)}">
+      <div class="d-flex align-items-center gap-2">
+        <button type="button"
+                class="btn btn-sm btn-link text-muted p-0 chat-workspace-progress-toggle flex-shrink-0"
+                aria-expanded="false"
+                aria-controls="${escapeHtml(detailsId)}"
+                title="Show processing details">
+          <i class="bi bi-chevron-right"></i>
+        </button>
+        <div class="progress flex-grow-1" style="height: 8px;" title="${escapeHtml(statusText)} (${pct.toFixed(0)}%)">
+          <div class="progress-bar ${progressClass}"
+               role="progressbar"
+               style="width: ${pct}%;"
+               aria-valuenow="${pct}"
+               aria-valuemin="0"
+               aria-valuemax="100"></div>
+        </div>
+      </div>
+      <div id="${escapeHtml(detailsId)}" class="chat-workspace-upload-progress-details d-none mt-1 small text-muted">
+        <span class="chat-workspace-upload-status-text text-muted">${escapeHtml(statusText)} (${pct.toFixed(0)}%)</span>
+      </div>
+    </div>
+  `;
+}
+
+function stopChatWorkspaceAttachmentPolling(workspaceDocumentId) {
+  const intervalId = chatWorkspaceUploadPolls.get(workspaceDocumentId);
+  if (intervalId) {
+    clearInterval(intervalId);
+    chatWorkspaceUploadPolls.delete(workspaceDocumentId);
+  }
+}
+
+function replaceChatWorkspaceProgressWithCompleted(container, doc) {
+  if (!container) {
+    return null;
+  }
+
+  const workspaceDocumentId = getChatWorkspaceDocumentId(doc, container.dataset.workspaceDocumentId);
+  const replacement = createCompletedChatWorkspaceAttachmentElement({
+    ...doc,
+    document_id: workspaceDocumentId,
+  });
+  if (!replacement) {
+    return null;
+  }
+
+  container.replaceWith(replacement);
+  hydrateChatWorkspaceProgressDetailsToggle(replacement);
+  return replacement;
+}
+
+function updateChatWorkspaceProgressContainer(container, doc) {
+  if (!container) {
+    return;
+  }
+
+  if (isChatWorkspaceDocumentSuccessComplete(doc)) {
+    replaceChatWorkspaceProgressWithCompleted(container, doc);
+    return;
+  }
+
+  const pct = getChatWorkspaceProgressValue(doc?.percentage_complete);
+  const statusText = String(doc?.status || 'Processing workspace document...').trim() || 'Processing workspace document...';
+  const statusLower = statusText.toLowerCase();
+  const hasFailure = statusLower.includes('error') || statusLower.includes('failed');
+  const hasCompleted = !hasFailure && (pct >= 100 || statusLower.includes('complete'));
+  const progressBar = container.querySelector('.progress-bar');
+  const statusElement = container.querySelector('.chat-workspace-upload-status-text');
+  const progressElement = container.querySelector('.progress');
+
+  if (statusElement) {
+    statusElement.textContent = `${statusText} (${pct.toFixed(0)}%)`;
+    statusElement.classList.toggle('text-danger', hasFailure);
+    statusElement.classList.remove('text-warning');
+    statusElement.classList.toggle('text-muted', !hasFailure);
+  }
+  if (progressElement) {
+    progressElement.setAttribute('title', `${statusText} (${pct.toFixed(0)}%)`);
+  }
+  if (progressBar) {
+    progressBar.style.width = `${pct}%`;
+    progressBar.setAttribute('aria-valuenow', String(pct));
+    progressBar.classList.remove('bg-warning');
+    progressBar.classList.toggle('bg-danger', hasFailure);
+    progressBar.classList.toggle('bg-success', hasCompleted);
+    progressBar.classList.toggle('bg-info', !hasFailure && !hasCompleted);
+    progressBar.classList.toggle('progress-bar-striped', !hasFailure && !hasCompleted);
+    progressBar.classList.toggle('progress-bar-animated', !hasFailure && !hasCompleted);
+  }
+}
+
+function updateChatWorkspaceDocumentProgressEverywhere(workspaceDocumentId, doc) {
+  const normalizedDocumentId = String(workspaceDocumentId || '').trim();
+  if (!normalizedDocumentId) {
+    return;
+  }
+
+  document.querySelectorAll('.chat-workspace-upload-progress[data-workspace-document-id]').forEach(container => {
+    if (String(container.dataset.workspaceDocumentId || '').trim() === normalizedDocumentId) {
+      updateChatWorkspaceProgressContainer(container, doc);
+    }
+  });
+}
+
+function hydrateChatWorkspaceProgressDetailsToggle(rootElement) {
+  rootElement?.querySelectorAll?.('.chat-workspace-progress-toggle')?.forEach(button => {
+    if (button.dataset.toggleInitialized === 'true') {
+      return;
+    }
+
+    button.dataset.toggleInitialized = 'true';
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      const container = button.closest('.chat-workspace-upload-progress');
+      const details = container?.querySelector('.chat-workspace-upload-progress-details');
+      if (!details) {
+        return;
+      }
+
+      const isExpanded = !details.classList.contains('d-none');
+      details.classList.toggle('d-none', isExpanded);
+      button.setAttribute('aria-expanded', String(!isExpanded));
+      button.title = isExpanded ? 'Show processing details' : 'Hide processing details';
+
+      const icon = button.querySelector('i');
+      if (icon) {
+        icon.classList.toggle('bi-chevron-right', isExpanded);
+        icon.classList.toggle('bi-chevron-down', !isExpanded);
+      }
+    });
+  });
+}
+
+function fetchChatWorkspaceDocumentStatus(workspaceDocumentId) {
+  return fetch(`/api/documents/${encodeURIComponent(workspaceDocumentId)}`, {
+    cache: 'no-store',
+    credentials: 'same-origin',
+  })
+    .then(response => {
+      if (response.status === 404) {
+        const notFoundError = new Error('Workspace copy was deleted or is unavailable.');
+        notFoundError.isPermanent = true;
+        throw notFoundError;
+      }
+      return response.ok
+        ? response.json()
+        : response.json().catch(() => ({})).then(errorBody => {
+            const statusError = new Error(errorBody?.error || 'Workspace copy status is temporarily unavailable.');
+            statusError.status = response.status;
+            throw statusError;
+          });
+    })
+    .then(payload => normalizeChatWorkspaceDocumentResponse(payload));
+}
+
+function stopChatWorkspaceUploadCompletionWatcher(workspaceDocumentId) {
+  const watcher = chatWorkspaceUploadCompletionWatchers.get(workspaceDocumentId);
+  if (!watcher) {
+    return;
+  }
+
+  clearInterval(watcher.intervalId);
+  chatWorkspaceUploadCompletionWatchers.delete(workspaceDocumentId);
+}
+
+function autoSelectCompletedChatWorkspaceDocument(workspaceDocumentId) {
+  selectPersonalWorkspaceDocumentForChatUpload(workspaceDocumentId, {
+    replaceSelection: true,
+  }).catch(error => {
+    console.warn('Unable to select completed chat upload workspace document:', error);
+  });
+}
+
+export function watchChatWorkspaceUploadDocument(workspaceDocumentId, options = {}) {
+  const normalizedDocumentId = String(workspaceDocumentId || '').trim();
+  if (!normalizedDocumentId) {
+    return false;
+  }
+
+  stopChatWorkspaceUploadCompletionWatcher(normalizedDocumentId);
+  const watcher = {
+    autoSelect: options.autoSelect !== false,
+    errorCount: 0,
+    intervalId: null,
+  };
+
+  const pollOnce = () => {
+    fetchChatWorkspaceDocumentStatus(normalizedDocumentId)
+      .then(doc => {
+        watcher.errorCount = 0;
+        updateChatWorkspaceDocumentProgressEverywhere(normalizedDocumentId, doc);
+
+        if (!isChatWorkspaceDocumentComplete(doc)) {
+          return;
+        }
+
+        stopChatWorkspaceUploadCompletionWatcher(normalizedDocumentId);
+        if (watcher.autoSelect && isChatWorkspaceDocumentSuccessComplete(doc)) {
+          autoSelectCompletedChatWorkspaceDocument(normalizedDocumentId);
+        }
+      })
+      .catch(error => {
+        watcher.errorCount += 1;
+        if (error?.isPermanent || watcher.errorCount >= 5) {
+          stopChatWorkspaceUploadCompletionWatcher(normalizedDocumentId);
+        }
+      });
+  };
+
+  watcher.intervalId = setInterval(pollOnce, 3000);
+  chatWorkspaceUploadCompletionWatchers.set(normalizedDocumentId, watcher);
+  pollOnce();
+  return true;
+}
+
+function markChatWorkspaceProgressUnavailable(container, message) {
+  if (!container) {
+    return;
+  }
+  const statusElement = container.querySelector('.chat-workspace-upload-status-text');
+  const progressBar = container.querySelector('.progress-bar');
+  if (statusElement) {
+    statusElement.textContent = message || 'Workspace copy status is unavailable.';
+    statusElement.classList.remove('text-muted');
+    statusElement.classList.add('text-warning');
+  }
+  if (progressBar) {
+    progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated', 'bg-info', 'bg-success');
+    progressBar.classList.add('bg-warning');
+  }
+}
+
+function startChatWorkspaceAttachmentPolling(container) {
+  const workspaceDocumentId = String(container?.dataset?.workspaceDocumentId || '').trim();
+  if (!workspaceDocumentId) {
+    return;
+  }
+
+  stopChatWorkspaceAttachmentPolling(workspaceDocumentId);
+  let disconnectedPolls = 0;
+
+  const pollOnce = () => {
+    if (!container.isConnected) {
+      disconnectedPolls += 1;
+      if (disconnectedPolls > 1) {
+        stopChatWorkspaceAttachmentPolling(workspaceDocumentId);
+      }
+      return;
+    }
+    disconnectedPolls = 0;
+
+    fetchChatWorkspaceDocumentStatus(workspaceDocumentId)
+      .then(doc => {
+        updateChatWorkspaceProgressContainer(container, doc);
+        if (isChatWorkspaceDocumentComplete(doc)) {
+          stopChatWorkspaceAttachmentPolling(workspaceDocumentId);
+        }
+      })
+      .catch(error => {
+        if (error?.isPermanent) {
+          stopChatWorkspaceAttachmentPolling(workspaceDocumentId);
+        }
+        markChatWorkspaceProgressUnavailable(container, error?.error || error?.message || 'Workspace copy status is unavailable.');
+      });
+  };
+
+  pollOnce();
+  chatWorkspaceUploadPolls.set(workspaceDocumentId, setInterval(pollOnce, 5000));
+}
+
+function hydrateChatWorkspaceAttachmentProgress(rootElement) {
+  hydrateChatWorkspaceProgressDetailsToggle(rootElement);
+  rootElement?.querySelectorAll('.chat-workspace-upload-progress[data-workspace-document-id]').forEach(container => {
+    if (container.dataset.workspaceUploadComplete === 'true') {
+      return;
+    }
+    startChatWorkspaceAttachmentPolling(container);
+  });
+}
 
 function getDocumentActionCapability(actionType) {
   const defaultCapability = DEFAULT_DOCUMENT_ACTION_CAPABILITIES[actionType] || {
@@ -4601,7 +5000,16 @@ export function appendMessage(
       avatarAltText = "";
       const filename = escapeHtml(messageContent.filename);
       const fileId = escapeHtml(messageContent.id);
-      messageContentHtml = `<a href="#" class="file-link" data-conversation-id="${currentConversationId}" data-file-id="${fileId}"><i class="bi bi-file-earmark-arrow-up me-1"></i>${filename}</a>`;
+      const workspaceAttachment = fullMessageObject?.metadata?.workspace_attachment;
+      const workspaceAttachmentHtml = buildChatWorkspaceAttachmentHtml(workspaceAttachment);
+      const isWorkspaceBackedFile = String(fullMessageObject?.file_content_source || '').trim().toLowerCase() === 'workspace'
+        && String(workspaceAttachment?.document_id || '').trim();
+      if (isWorkspaceBackedFile) {
+        const workspaceUrl = `/workspace?document_id=${encodeURIComponent(String(workspaceAttachment.document_id).trim())}`;
+        messageContentHtml = `<a href="${escapeHtml(workspaceUrl)}" class="workspace-file-link"><i class="bi bi-file-earmark-arrow-up me-1"></i>${filename}</a>${workspaceAttachmentHtml}`;
+      } else {
+        messageContentHtml = `<a href="#" class="file-link" data-conversation-id="${currentConversationId}" data-file-id="${fileId}"><i class="bi bi-file-earmark-arrow-up me-1"></i>${filename}</a>${workspaceAttachmentHtml}`;
+      }
     } else if (sender === "image") {
       // Make sure this matches the case used in loadMessages/actuallySendMessage
       messageClass = "image-message"; // Use a distinct class if needed, or reuse ai-message
@@ -4639,6 +5047,9 @@ export function appendMessage(
         messageContentHtml = `<img src="${messageContent}" alt="${isUserUpload ? 'Uploaded' : 'Generated'} Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
       } else {
         messageContentHtml = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>Failed to ${isUserUpload ? 'load' : 'generate'} image - invalid response from image service</div>`;
+      }
+      if (isUserUpload) {
+        messageContentHtml += buildChatWorkspaceAttachmentHtml(fullMessageObject?.metadata?.workspace_attachment);
       }
     } else if (sender === "safety") {
       messageClass = "safety-message";
@@ -4820,6 +5231,7 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+    hydrateChatWorkspaceAttachmentProgress(messageDiv);
 
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {

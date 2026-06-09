@@ -791,7 +791,7 @@ def register_route_backend_public_documents(app):
         payload = request.get_json(silent=True) or {}
         raw_mode = str(payload.get('extraction_mode') or payload.get('target_extraction_mode') or '').strip().lower()
         if raw_mode not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
-            return jsonify({'error': 'Extraction mode must be Read or Layout.'}), 400
+            return jsonify({'error': 'Extraction mode must be Standard or Enhanced.'}), 400
         target_mode = normalize_document_intelligence_manual_extraction_mode(raw_mode)
 
         document_ids = payload.get('document_ids')
@@ -815,7 +815,7 @@ def register_route_backend_public_documents(app):
                     errors.append({'document_id': document_id, 'error': 'Document not found.'})
                     continue
                 if document_item.get('public_workspace_id') != active_ws:
-                    errors.append({'document_id': document_id, 'error': 'Only documents in the active public workspace can be reprocessed.'})
+                    errors.append({'document_id': document_id, 'error': 'Only documents in the active public workspace can have extraction changed.'})
                     continue
 
                 is_valid, validation_message = validate_document_reprocess_source(
@@ -843,8 +843,9 @@ def register_route_backend_public_documents(app):
             invalidate_public_workspace_search_cache(active_ws)
 
         status_code = 202 if queued and not errors else (207 if queued else 400)
+        target_mode_label = "Enhanced" if target_mode == "layout" else "Standard"
         return jsonify({
-            'message': f'Queued {len(queued)} document(s) for {target_mode.title()} reprocessing.',
+            'message': f'Queued {len(queued)} document(s) to extract again with {target_mode_label}.',
             'queued': queued,
             'errors': errors,
         }), status_code

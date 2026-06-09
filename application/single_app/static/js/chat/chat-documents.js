@@ -2206,8 +2206,56 @@ export async function ensureSearchDocumentsVisible() {
     return false;
   }
 
+  userWorkspaceContextActive = true;
+  syncAssignedKnowledgeButtonState();
   await showSearchDocumentsPanel();
   return ensureDocumentPickerReady({ reload: true, showLoading: !hasResolvedTagsState });
+}
+
+
+export async function selectPersonalWorkspaceDocumentForChatUpload(documentId, options = {}) {
+  const normalizedDocumentId = String(documentId || '').trim();
+  if (!normalizedDocumentId) {
+    return false;
+  }
+
+  if (assignedKnowledgeActive && !assignedKnowledgeAllowsUserContext) {
+    return false;
+  }
+
+  const currentScopes = getEffectiveScopes();
+  if (!currentScopes.personal && scopeLocked !== true) {
+    await setEffectiveScopes(
+      {
+        ...currentScopes,
+        personal: true,
+      },
+      {
+        source: 'chat-upload-workspace-document',
+        reload: true,
+      }
+    );
+  }
+
+  await ensureSearchDocumentsVisible();
+
+  let documentOption = getDocumentOptionById(normalizedDocumentId);
+  if (!documentOption) {
+    await ensureDocumentPickerReady({ reload: true, showLoading: false });
+    documentOption = getDocumentOptionById(normalizedDocumentId);
+  }
+
+  if (!documentOption) {
+    return false;
+  }
+
+  applyDocumentSelectionForIds([normalizedDocumentId], {
+    replaceSelection: options.replaceSelection !== false,
+  });
+  syncDropdownButtonText();
+  handleDocumentSelectChange();
+  syncAssignedKnowledgeButtonState();
+  return true;
 }
 
 

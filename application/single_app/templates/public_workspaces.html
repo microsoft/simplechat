@@ -376,11 +376,11 @@
               </button>
               <div class="btn-group ms-2" id="public-reprocess-selected-dropdown">
                 <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                  <i class="bi bi-arrow-repeat me-1"></i>Reprocess
+                  <i class="bi bi-arrow-repeat me-1"></i>Change Extraction
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
-                  <li><button type="button" class="dropdown-item" onclick="reprocessPublicSelectedDocumentExtraction('read')">Read</button></li>
-                  <li><button type="button" class="dropdown-item" onclick="reprocessPublicSelectedDocumentExtraction('layout')">Layout</button></li>
+                    <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Standard extraction. Standard is faster for plain text PDFs and images." onclick="reprocessPublicSelectedDocumentExtraction('read')">Extract Again as Standard</button></li>
+                    <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Enhanced extraction. Enhanced preserves tables, page structure, forms, and checkbox states." onclick="reprocessPublicSelectedDocumentExtraction('layout')">Extract Again as Enhanced</button></li>
                 </ul>
               </div>
               <button type="button" class="btn btn-sm btn-info ms-2" id="public-bulk-tag-btn"
@@ -539,7 +539,7 @@
           <div id="public-doc-sync-status" class="alert alert-secondary py-2 mb-3" aria-live="polite">
             <div class="d-flex align-items-center gap-2 flex-wrap">
               <strong>Synced:</strong>
-              <span class="badge bg-secondary">No</span>
+              <span class="badge bg-secondary" title="This document was uploaded manually and is not managed by File Sync.">No</span>
             </div>
           </div>
 

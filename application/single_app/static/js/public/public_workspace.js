@@ -1006,20 +1006,20 @@ function getPublicDocumentSyncSourceLabel(doc) {
 function getPublicDocumentSyncTypeConfig(doc) {
   const sourceType = String(doc?.file_sync?.source_type || 'smb').trim().toLowerCase();
   const sourceTypeMap = {
-    smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Synced from SMB source' },
-    azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Synced from Azure Files' },
-    m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-    m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-    m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-    sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-    one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
-    onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
-    google: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
-    google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
-    spo: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
-    sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+    smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Managed by File Sync from an SMB source.' },
+    azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Files.' },
+    m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+    m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+    m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+    sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+    one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Managed by File Sync from OneDrive.' },
+    onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Managed by File Sync from OneDrive.' },
+    google: { label: 'Google', className: 'bg-warning text-dark', title: 'Managed by File Sync from Google Workspace.' },
+    google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Managed by File Sync from Google Workspace.' },
+    spo: { label: 'SPO', className: 'bg-success text-white', title: 'Managed by File Sync from on-prem SharePoint.' },
+    sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Managed by File Sync from on-prem SharePoint.' },
   };
-  return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Synced file' };
+  return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Managed by File Sync.' };
 }
 
 function getPublicDocumentSyncTypeBadgeHtml(doc, compact = false) {
@@ -1059,7 +1059,7 @@ function getPublicDocumentSyncDetailsHtml(doc) {
   const synced = isPublicSyncedDocument(doc);
   let details = synced
     ? `<p class="mb-1"><strong>Synced:</strong> ${getPublicDocumentSyncTypeBadgeHtml(doc)}</p>`
-    : '<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary">No</span></p>';
+    : '<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary" title="This document was uploaded manually and is not managed by File Sync.">No</span></p>';
 
   if (synced) {
     const syncMetadata = doc.file_sync;
@@ -1103,6 +1103,7 @@ function setPublicDocumentSyncStatusElement(doc) {
     badge.appendChild(document.createTextNode(syncType.label));
   } else {
     badge.className = 'badge bg-secondary';
+    badge.title = 'This document was uploaded manually and is not managed by File Sync.';
     badge.textContent = 'No';
   }
 
@@ -1176,7 +1177,39 @@ function isPublicPdfDocument(doc) {
 
 function getPublicDocumentExtractionModeLabel(doc) {
   const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-  return mode === 'layout' ? 'Layout' : 'Read';
+  return mode === 'layout' ? 'Enhanced' : 'Standard';
+}
+
+function getPublicDocumentTargetExtractionMode(doc) {
+  const currentMode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+  return currentMode === 'layout' ? 'read' : 'layout';
+}
+
+function getPublicDocumentExtractionModeIcon(mode) {
+  return mode === 'layout' ? 'bi-layout-text-window-reverse' : 'bi-file-earmark-text';
+}
+
+function getPublicDocumentExtractionModeLabelFromMode(mode) {
+  return mode === 'layout' ? 'Enhanced' : 'Standard';
+}
+
+function getPublicDocumentExtractionChangeTooltip(targetMode) {
+  return targetMode === 'layout'
+    ? 'Extract again with Enhanced extraction. Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
+    : 'Extract again with Standard extraction. Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+}
+
+function getPublicDocumentExtractionModeTooltip(doc) {
+  const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
+  return mode === 'layout'
+    ? 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
+    : 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+}
+
+function getPublicDocumentCitationTooltip(doc) {
+  return doc?.enhanced_citations
+    ? 'Enhanced citations preserve source-file context for richer citation previews and supported file workflows.'
+    : 'Standard citations reference indexed text chunks.';
 }
 
 function createPublicDocumentExtractionModeBadge(doc) {
@@ -1186,7 +1219,8 @@ function createPublicDocumentExtractionModeBadge(doc) {
 
   const label = getPublicDocumentExtractionModeLabel(doc);
   const badge = document.createElement('span');
-  badge.className = `badge ${label === 'Layout' ? 'bg-primary' : 'bg-secondary'}`;
+  badge.className = `badge ${label === 'Enhanced' ? 'bg-primary' : 'bg-secondary'}`;
+  badge.title = getPublicDocumentExtractionModeTooltip(doc);
   const icon = document.createElement('i');
   icon.className = 'bi bi-file-earmark-text me-1';
   badge.appendChild(icon);
@@ -1200,8 +1234,8 @@ function getPublicDocumentExtractionModeBadgeHtml(doc) {
   }
 
   const label = getPublicDocumentExtractionModeLabel(doc);
-  const badgeClass = label === 'Layout' ? 'bg-primary' : 'bg-secondary';
-  return `<span class="badge ${badgeClass}"><i class="bi bi-file-earmark-text me-1"></i>${escapeHtml(label)}</span>`;
+  const badgeClass = label === 'Enhanced' ? 'bg-primary' : 'bg-secondary';
+  return `<span class="badge ${badgeClass}" title="${escapeHtml(getPublicDocumentExtractionModeTooltip(doc))}"><i class="bi bi-file-earmark-text me-1"></i>${escapeHtml(label)}</span>`;
 }
 
 function createPublicDropdownHeader(label) {
@@ -1293,10 +1327,9 @@ function createPublicDocumentCard(doc) {
   badges.appendChild(createPublicDocumentClassificationBadge(doc));
   const citationBadge = document.createElement('span');
   citationBadge.className = `badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}`;
+  citationBadge.title = getPublicDocumentCitationTooltip(doc);
   citationBadge.textContent = doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations';
   badges.appendChild(citationBadge);
-  const extractionBadge = createPublicDocumentExtractionModeBadge(doc);
-  if (extractionBadge) badges.appendChild(extractionBadge);
   appendPublicDocumentSyncBadge(badges, doc);
 
   const tags = document.createElement('div');
@@ -1342,10 +1375,13 @@ function createPublicDocumentCard(doc) {
       dropdownItems.push(createPublicDropdownItem('bi-pencil-fill', 'Edit Metadata', () => window.onEditPublicDocument(docId)));
       dropdownItems.push(createPublicDropdownItem('bi-magic', 'Extract Metadata', () => window.onExtractPublicMetadata(docId, null)));
       if (isPublicPdfDocument(doc)) {
+        const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
+        const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
+        const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
+        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
         dropdownItems.push(createPublicDropdownDivider());
-        dropdownItems.push(createPublicDropdownHeader('Reprocess PDF'));
-        dropdownItems.push(createPublicDropdownItem('bi-file-earmark-text', 'Read', () => window.reprocessPublicDocumentExtraction(docId, 'read', null)));
-        dropdownItems.push(createPublicDropdownItem('bi-layout-text-window-reverse', 'Layout', () => window.reprocessPublicDocumentExtraction(docId, 'layout', null)));
+        dropdownItems.push(createPublicDropdownHeader('Change Extraction'));
+        dropdownItems.push(createPublicDropdownItem(extractionActionIcon, `Change to ${extractionActionLabel}`, () => window.reprocessPublicDocumentExtraction(docId, extractionActionMode, null), false, extractionActionTooltip));
       }
       dropdownItems.push(createPublicDropdownDivider());
       dropdownItems.push(createPublicDropdownItem('bi-trash-fill', 'Delete', () => window.deletePublicDocument(docId, null), true));
@@ -1498,6 +1534,10 @@ function renderPublicDocumentRow(doc) {
 
     if (canManage) {
       const reprocessDocId = escapeHtml(String(doc.id || ''));
+      const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
+      const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
+      const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
+      const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
       actionsDropdown += `
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;">
@@ -1508,12 +1548,9 @@ function renderPublicDocumentRow(doc) {
           </a></li>
           ${isPublicPdfDocument(doc) ? `
           <li><hr class="dropdown-divider"></li>
-          <li><h6 class="dropdown-header">Reprocess PDF</h6></li>
-          <li><a class="dropdown-item" href="#" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'read', event); return false;">
-            <i class="bi bi-file-earmark-text me-2"></i>Read
-          </a></li>
-          <li><a class="dropdown-item" href="#" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'layout', event); return false;">
-            <i class="bi bi-layout-text-window-reverse me-2"></i>Layout
+          <li><h6 class="dropdown-header">Change Extraction</h6></li>
+          <li><a class="dropdown-item" href="#" title="${escapeHtml(extractionActionTooltip)}" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event); return false;">
+            <i class="bi ${extractionActionIcon} me-2"></i>Change to ${extractionActionLabel}
           </a></li>` : ''}
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item text-danger" href="#" onclick="deletePublicDocument('${doc.id}', event); return false;">
@@ -1541,7 +1578,7 @@ function renderPublicDocumentRow(doc) {
   tr.classList.add('document-row');
   tr.innerHTML = `
     <td class="align-middle">${firstTdHtml}</td>
-    <td class="align-middle" title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)} <span class="ms-1">${getPublicDocumentExtractionModeBadgeHtml(doc)}</span></td>
+    <td class="align-middle" title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)}</td>
     <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
     <td class="align-middle">${chatButton}${actionsDropdown}</td>`;
 
@@ -1569,11 +1606,15 @@ function renderPublicDocumentRow(doc) {
   // Helper function to get citation badge
   function getCitationBadge(enhanced_citations) {
     return enhanced_citations ?
-      '<span class="badge bg-success">Enhanced</span>' :
-      '<span class="badge bg-secondary">Standard</span>';
+      `<span class="badge bg-success" title="${escapeHtml(getPublicDocumentCitationTooltip({ enhanced_citations }))}">Enhanced</span>` :
+      `<span class="badge bg-secondary" title="${escapeHtml(getPublicDocumentCitationTooltip({ enhanced_citations }))}">Standard</span>`;
   }
 
   const reprocessDocId = escapeHtml(String(doc.id || ''));
+  const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
+  const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
+  const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
+  const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
 
   detailsRow.innerHTML = `
     <td colspan="4">
@@ -1599,11 +1640,8 @@ function renderPublicDocumentRow(doc) {
               <i class="bi bi-magic"></i> Extract Metadata
             </button>
             ${isPublicPdfDocument(doc) ? `
-            <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'read', event)" title="Reprocess PDF with Read">
-              <i class="bi bi-file-earmark-text"></i> Read
-            </button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'layout', event)" title="Reprocess PDF with Layout">
-              <i class="bi bi-layout-text-window-reverse"></i> Layout
+            <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}">
+              <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel}
             </button>` : ''}
           ` : ''}
         </div>
@@ -2294,7 +2332,7 @@ async function requestPublicDocumentExtractionReprocess(documentIds, extractionM
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
-    throw new Error(data.error || data.message || 'Unable to queue PDF reprocessing.');
+    throw new Error(data.error || data.message || 'Unable to queue PDF extraction change.');
   }
   return data;
 }
@@ -2302,10 +2340,10 @@ async function requestPublicDocumentExtractionReprocess(documentIds, extractionM
 function showPublicDocumentReprocessResult(data, extractionMode) {
   const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
   const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
-  const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
+  const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
   const message = errorCount > 0
-    ? `Queued ${queuedCount} PDF(s) for ${modeLabel}; ${errorCount} item(s) were skipped.`
-    : (data.message || `Queued ${queuedCount} PDF(s) for ${modeLabel}.`);
+    ? `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}; ${errorCount} item(s) were skipped.`
+    : (data.message || `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}.`);
   showPublicWorkspaceToast(message, errorCount > 0 ? 'warning' : 'success');
 }
 
@@ -2313,8 +2351,8 @@ async function reprocessPublicDocumentExtraction(documentId, extractionMode, eve
   if (event) {
     event.preventDefault();
   }
-  const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
-  if (!confirm(`Queue this PDF for ${modeLabel} reprocessing?`)) {
+  const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
+  if (!confirm(`Queue this PDF to extract again with ${modeLabel}?`)) {
     return;
   }
 
@@ -2332,8 +2370,8 @@ async function reprocessPublicSelectedDocumentExtraction(extractionMode) {
   if (documentIds.length === 0) {
     return;
   }
-  const modeLabel = extractionMode === 'layout' ? 'Layout' : 'Read';
-  if (!confirm(`Queue ${documentIds.length} selected document(s) for ${modeLabel} PDF reprocessing?`)) {
+  const modeLabel = extractionMode === 'layout' ? 'Enhanced' : 'Standard';
+  if (!confirm(`Queue ${documentIds.length} selected document(s) to extract again with ${modeLabel}?`)) {
     return;
   }
 
@@ -3119,12 +3157,15 @@ function buildPublicFolderDocumentsTable(docs) {
             <li><a class="dropdown-item" href="#" onclick="searchPublicDocumentInChat('${doc.id}'); return false;"><i class="bi bi-chat-dots-fill me-2"></i>Chat</a></li>`;
       if (canManage) {
         const reprocessDocId = escapeHtml(String(doc.id || ''));
+        const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
+        const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
+        const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
+        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
         actionsHtml += `<li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;"><i class="bi bi-pencil-fill me-2"></i>Edit Metadata</a></li>
             <li><a class="dropdown-item" href="#" onclick="window.onExtractPublicMetadata('${doc.id}', event); return false;"><i class="bi bi-magic me-2"></i>Extract Metadata</a></li>
         ${isPublicPdfDocument(doc) ? `<li><hr class="dropdown-divider"></li>
-        <li><h6 class="dropdown-header">Reprocess PDF</h6></li>
-        <li><a class="dropdown-item" href="#" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'read', event); return false;"><i class="bi bi-file-earmark-text me-2"></i>Read</a></li>
-        <li><a class="dropdown-item" href="#" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', 'layout', event); return false;"><i class="bi bi-layout-text-window-reverse me-2"></i>Layout</a></li>` : ''}
+        <li><h6 class="dropdown-header">Change Extraction</h6></li>
+        <li><a class="dropdown-item" href="#" title="${escapeHtml(extractionActionTooltip)}" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event); return false;"><i class="bi ${extractionActionIcon} me-2"></i>Change to ${extractionActionLabel}</a></li>` : ''}
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item text-danger" href="#" onclick="deletePublicDocument('${doc.id}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>`;
       }
@@ -3137,7 +3178,7 @@ function buildPublicFolderDocumentsTable(docs) {
 
     html += `<tr>
       <td>${firstColHtml}</td>
-      <td title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)} <span class="ms-1">${getPublicDocumentExtractionModeBadgeHtml(doc)}</span></td>
+      <td title="${escapeHtml(doc.file_name)}">${getPublicDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name)}</td>
       <td title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
       <td>${actionsHtml}</td>
     </tr>`;
@@ -3434,11 +3475,14 @@ function createPublicTagBadgeElement(tagName, color, className = 'tag-badge') {
   return badge;
 }
 
-function createPublicDropdownItem(iconClasses, label, onClick, danger = false) {
+function createPublicDropdownItem(iconClasses, label, onClick, danger = false, title = '') {
   const listItem = document.createElement('li');
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `dropdown-item${danger ? ' text-danger' : ''}`;
+  if (title) {
+    button.title = title;
+  }
 
   const icon = document.createElement('i');
   icon.className = `bi ${iconClasses} me-2`;

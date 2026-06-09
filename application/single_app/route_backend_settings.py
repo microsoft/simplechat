@@ -1534,8 +1534,9 @@ def _test_azure_doc_intelligence_connection(payload):
 
     if status == "succeeded":
         if extraction_mode == "auto":
-            return jsonify({'message': 'Azure document intelligence Auto connection successful. Auto samples PDFs with Layout during ingestion, then finishes with Read or Layout.'}), 200
-        return jsonify({'message': f'Azure document intelligence {extraction_mode} connection successful'}), 200
+            return jsonify({'message': 'Azure document intelligence Auto connection successful. Auto samples PDFs with Enhanced extraction during ingestion, then finishes with Standard or Enhanced.'}), 200
+        extraction_mode_label = "Enhanced" if extraction_mode == "layout" else "Standard"
+        return jsonify({'message': f'Azure document intelligence {extraction_mode_label} connection successful'}), 200
     else:
         return jsonify({'error': f"Document Intelligence error: {status}"}), 500
 

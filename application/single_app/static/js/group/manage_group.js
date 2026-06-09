@@ -4,6 +4,13 @@ import { showToast } from "../chat/chat-toast.js";
 let currentUserRole = null;
 let currentStatsWindow = { days: 30, startDate: "", endDate: "" };
 let currentStatsData = null;
+const defaultWorkspaceHeroColor = '#0078d4';
+const workspaceHeroColorPattern = /^#[0-9a-fA-F]{6}$/;
+
+function normalizeWorkspaceHeroColor(color) {
+  const candidate = String(color || '').trim();
+  return workspaceHeroColorPattern.test(candidate) ? candidate : defaultWorkspaceHeroColor;
+}
 
 function getDateInputValueDaysAgo(daysAgo) {
   const dateValue = new Date();
@@ -496,6 +503,7 @@ function loadGroupInfo(doneCallback) {
         $("#groupLogoFile").prop('disabled', false);
         $("#editGroupForm button[type='submit']").show();
       }
+      window.SimpleChatVoiceInput?.refreshButtons?.();
     } else {
       $("#leaveGroupContainer").show();
     }
@@ -640,10 +648,20 @@ function updateGroupHeroMedia(group) {
 }
 
 function setSelectedGroupHeroColor(color) {
-  const normalizedColor = color || '#0078d4';
+  const normalizedColor = normalizeWorkspaceHeroColor(color);
+  const matchingPreset = $('.color-option').filter(function () {
+    return String($(this).data('color') || '').toLowerCase() === normalizedColor.toLowerCase();
+  });
+  const customColorInput = $('#customHeroColor');
+
   $('#selectedColor').val(normalizedColor);
   $('.color-option').removeClass('selected');
-  $(`.color-option[data-color="${normalizedColor}"]`).addClass('selected');
+  customColorInput.removeClass('selected').val(normalizedColor);
+  if (matchingPreset.length > 0) {
+    matchingPreset.addClass('selected');
+  } else {
+    customColorInput.addClass('selected');
+  }
   updateGroupHeroColor(normalizedColor);
 }
 
@@ -653,7 +671,7 @@ function updateGroupHeroColor(color) {
     return;
   }
 
-  const normalizedColor = color || '#0078d4';
+  const normalizedColor = normalizeWorkspaceHeroColor(color);
   heroElement.style.setProperty('--hero-color', normalizedColor);
   heroElement.style.setProperty('--hero-color-dark', adjustColorBrightness(normalizedColor, -30));
 }
@@ -663,10 +681,14 @@ function initializeColorPicker() {
     const color = $(this).data('color');
     setSelectedGroupHeroColor(color);
   });
+  $('#customHeroColor').on('input change', function () {
+    setSelectedGroupHeroColor(this.value);
+  });
 }
 
 function adjustColorBrightness(color, percent) {
-  const numericColor = parseInt(String(color).replace('#', ''), 16);
+  const normalizedColor = normalizeWorkspaceHeroColor(color);
+  const numericColor = parseInt(String(normalizedColor).replace('#', ''), 16);
   const amount = Math.round(2.55 * percent);
   const red = (numericColor >> 16) + amount;
   const green = ((numericColor >> 8) & 0x00FF) + amount;

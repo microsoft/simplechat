@@ -1,7 +1,7 @@
 # test_admin_latest_features_previous_release_images.py
 """
 UI test for admin Latest Features previous-release images.
-Version: 0.241.002
+Version: 0.241.166
 Implemented in: 0.241.002
 
 This test ensures the admin Latest Features page can expand the Previous

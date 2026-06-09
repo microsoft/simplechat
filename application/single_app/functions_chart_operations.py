@@ -229,7 +229,8 @@ def build_proactive_chart_guidance_message():
         "When the user asks for specific colors, or when labels have obvious semantic colors, set dataset backgroundColor and borderColor explicitly; for pie, doughnut, and polar-area charts use one color per slice in array order. "
         "Use tool-backed tabular results, computed aggregates, or explicitly cited source values as chart data. Do not invent values, and summarize omitted categories when charting top-N slices. "
         "When a chart action/tool is available, call it for each useful chart and insert the returned chart_markdown exactly where the visual belongs in the generated content. "
-        f"If a chart action/tool is unavailable but inline chart blocks are supported, emit compact ```{INLINE_CHART_BLOCK_LANGUAGE}``` blocks with version 1, kind, chartType, title, data.labels, data.datasets, options, and summary fields."
+        f"Use SimpleChat inline chart blocks only: emit compact ```{INLINE_CHART_BLOCK_LANGUAGE}``` blocks with version 1, kind, chartType, title, data.labels, data.datasets, options, and summary fields when a tool call cannot return chart_markdown. "
+        "Do not output Mermaid, matplotlib/Python, Vega, or other chart code blocks as the visual chart response unless the user explicitly asks for source code instead of an inline chart."
     )
 
 

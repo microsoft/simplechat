@@ -1,5 +1,7 @@
 // workspace-utils.js
 
+const DOCUMENT_NOT_SYNCED_TOOLTIP = 'This document was uploaded manually and is not managed by File Sync.';
+
 export function escapeHtml(unsafe) {
     if (unsafe === null || typeof unsafe === 'undefined') return '';
     return unsafe.toString()
@@ -29,20 +31,20 @@ export function getDocumentSyncSourceLabel(doc) {
 function getDocumentSyncTypeConfig(doc) {
     const sourceType = String(doc?.file_sync?.source_type || 'smb').trim().toLowerCase();
     const sourceTypeMap = {
-        smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Synced from SMB source' },
-        azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Synced from Azure Files' },
-        m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-        m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-        m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-        sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Synced from Microsoft 365 SharePoint' },
-        one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
-        onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Synced from OneDrive' },
-        google: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
-        google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Synced from Google Workspace' },
-        spo: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
-        sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Synced from on-prem SharePoint' },
+        smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Managed by File Sync from an SMB source.' },
+        azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Files.' },
+        m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+        m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+        m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+        sharepoint_online: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
+        one_drive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Managed by File Sync from OneDrive.' },
+        onedrive: { label: 'OneDrive', className: 'bg-dark text-white', title: 'Managed by File Sync from OneDrive.' },
+        google: { label: 'Google', className: 'bg-warning text-dark', title: 'Managed by File Sync from Google Workspace.' },
+        google_workspace: { label: 'Google', className: 'bg-warning text-dark', title: 'Managed by File Sync from Google Workspace.' },
+        spo: { label: 'SPO', className: 'bg-success text-white', title: 'Managed by File Sync from on-prem SharePoint.' },
+        sharepoint_on_prem: { label: 'SPO', className: 'bg-success text-white', title: 'Managed by File Sync from on-prem SharePoint.' },
     };
-    return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Synced file' };
+    return sourceTypeMap[sourceType] || { label: sourceType.toUpperCase() || 'SYNC', className: 'bg-secondary text-white', title: 'Managed by File Sync.' };
 }
 
 function getDocumentSyncTypeBadgeHtml(doc, compact = false) {
@@ -76,7 +78,7 @@ export function getDocumentSyncDetailsHtml(doc) {
     const synced = isSyncedDocument(doc);
     let details = synced
         ? `<p class="mb-1"><strong>Synced:</strong> ${getDocumentSyncTypeBadgeHtml(doc)}</p>`
-        : '<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary">No</span></p>';
+        : `<p class="mb-1"><strong>Synced:</strong> <span class="badge bg-secondary" title="${escapeHtml(DOCUMENT_NOT_SYNCED_TOOLTIP)}">No</span></p>`;
 
     if (synced) {
         const syncMetadata = doc.file_sync;
@@ -113,6 +115,7 @@ export function setDocumentSyncStatusElement(element, doc) {
     } else {
         const badge = document.createElement('span');
         badge.className = 'badge bg-secondary';
+        badge.title = DOCUMENT_NOT_SYNCED_TOOLTIP;
         badge.textContent = 'No';
         statusLine.appendChild(badge);
     }

@@ -2,13 +2,14 @@
 """
 Functional test for support menu sidebar visibility, access behavior, and
 latest-feature image preview support.
-Version: 0.241.002
-Implemented in: 0.240.061; 0.240.085; 0.241.002
+Version: 0.241.167
+Implemented in: 0.240.061; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.167
 
 This test ensures the Support menu renders for signed-in app users when enabled,
 the sidebar and top-nav templates expose the expected links, and the user-facing
 Latest Features page supports clickable image previews, richer guidance, action
-links, and feature parity with the admin latest-features catalog.
+links, user workflow screenshots, and feature parity with the admin latest-features
+catalog.
 """
 
 import os
@@ -34,6 +35,32 @@ SUPPORT_FEEDBACK_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app',
 ADMIN_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'admin', 'admin_settings.js')
 LATEST_FEATURES_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'support', 'latest_features.js')
 SUPPORT_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'support', 'support_feedback.js')
+FEATURE_IMAGE_DIR = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'images', 'features')
+
+USER_CURRENT_FEATURE_IMAGE_FILES = {
+    'document_intelligence': ['document_intelligence_user_details.png'],
+    'file_sync': ['file_sync_user_sources.png', 'file_sync_user_identities.png'],
+    'source_review': ['source_review_user_grounded_search.png', 'source_review_user_deep_research.png'],
+    'agent_knowledge_actions': ['agent_knowledge_user_agents.png', 'agent_knowledge_user_actions.png'],
+    'generated_artifacts': ['generated_artifacts_user_chat_output.png'],
+    'chat_productivity': ['chat_productivity_user_chat.png'],
+    'workspace_experience': [
+        'workspace_experience_user_list_view.png',
+        'workspace_experience_user_cards_view.png',
+        'workspace_experience_user_folders_view.png',
+        'workspace_experience_user_folders_cards_view.png',
+    ],
+    'workflow_automation': ['workflow_automation_user_list.png', 'workflow_automation_user_file_sync_trigger.png'],
+    'visio_ingestion': ['visio_ingestion_user_upload.png'],
+    'stats_reporting': ['stats_reporting_user_profile.png'],
+}
+
+ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
+    'document_intelligence': ['document_intelligence_admin_controls.png'],
+    'file_sync': ['file_sync_admin_scope_controls.png'],
+    'source_review': ['source_review_admin_policy.png'],
+    'workflow_automation': ['workflow_automation_admin_controls.png'],
+}
 
 
 def read_text(path):
@@ -162,6 +189,49 @@ def test_support_menu_settings_defaults_and_persistence():
     print('✅ Support menu settings and catalog markers are present')
 
 
+def test_latest_features_user_media_overrides_admin_preview():
+    print('🔍 Testing user-facing Latest Features media split...')
+
+    support_config = load_module(SUPPORT_CONFIG, 'support_menu_config_user_media_test')
+    admin_release_groups = support_config.get_support_latest_feature_release_groups()
+    admin_current = {
+        feature['id']: feature
+        for feature in admin_release_groups[0]['features']
+    }
+
+    for feature_id, image_names in ADMIN_CURRENT_FEATURE_IMAGE_FILES.items():
+        expected_paths = [f'images/features/{image_name}' for image_name in image_names]
+        assert [image['path'] for image in admin_current[feature_id]['images']] == expected_paths, f'Admin preview image mismatch for {feature_id}'
+
+    visible_groups = support_config.get_visible_support_latest_feature_groups({
+        'enable_user_workspace': True,
+    })
+    visible_current = next(group for group in visible_groups if group['id'] == 'current_release')
+    visible_by_id = {
+        feature['id']: feature
+        for feature in visible_current['features']
+    }
+
+    assert 'cosmos_autoscale' not in visible_by_id, 'Cosmos autoscale should remain hidden by default for users'
+
+    for feature_id, image_names in USER_CURRENT_FEATURE_IMAGE_FILES.items():
+        expected_paths = [f'images/features/{image_name}' for image_name in image_names]
+        feature = visible_by_id.get(feature_id)
+        assert feature, f'Missing visible support feature {feature_id}'
+        assert feature.get('image') == expected_paths[0], f'Primary user image mismatch for {feature_id}'
+        assert [image['path'] for image in feature.get('images', [])] == expected_paths, f'User gallery image mismatch for {feature_id}'
+        assert all(image.get('caption', '').startswith('1 ') or image.get('caption', '').startswith('1 opens') or '1 ' in image.get('caption', '') for image in feature.get('images', [])), f'Numbered caption missing for {feature_id}'
+        assert all(os.path.exists(os.path.join(FEATURE_IMAGE_DIR, image_name)) for image_name in image_names), f'Missing user screenshot assets for {feature_id}'
+        admin_actions = [
+            action.get('href', '')
+            for action in feature.get('actions', [])
+            if action.get('href', '').startswith('/admin/settings')
+        ]
+        assert not admin_actions, f'User-facing feature {feature_id} exposes admin settings links: {admin_actions}'
+
+    print('✅ User-facing Latest Features use user workflow screenshots and keep admin preview screenshots separate')
+
+
 def test_support_menu_admin_template_and_js():
     print('🔍 Testing support menu admin template and JavaScript...')
 
@@ -179,11 +249,11 @@ def test_support_menu_admin_template_and_js():
         'name="support_latest_feature_{{ feature.id }}"',
         '{{ feature.title }}',
         'Enable Support Menu for End Users',
-        'Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics.',
+        'Cosmos autoscale, deployment, and Redis items start unchecked because they are mainly admin-facing rollout and infrastructure topics.',
         "release_group.id == 'previous_release'",
         "release_group.collapse_id ~ 'Checklist'",
         'Show {{ release_group.label }}',
-        '<i class="bi bi-life-preserver me-2"></i>Support Menu',
+        '<i class="bi bi-life-preserver me-2"></i>Support',
     ]
     missing_template = [marker for marker in template_markers if marker not in template_content]
     assert not missing_template, f'Missing support menu admin template markers: {missing_template}'
@@ -361,6 +431,7 @@ def test_support_menu_feedback_backend_and_templates():
 if __name__ == '__main__':
     tests = [
         test_support_menu_settings_defaults_and_persistence,
+        test_latest_features_user_media_overrides_admin_preview,
         test_support_menu_admin_template_and_js,
         test_support_menu_navigation_and_routes,
         test_support_menu_feedback_backend_and_templates,

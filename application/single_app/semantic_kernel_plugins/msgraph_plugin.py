@@ -1,10 +1,12 @@
 # msgraph_plugin.py
 
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import requests
+from flask import g, has_request_context
 from requests import RequestException
 
 from functions_authentication import get_current_user_info, get_valid_access_token_for_plugins
@@ -13,11 +15,34 @@ from semantic_kernel.functions import kernel_function
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from functions_group import assert_group_role, find_group_by_id, require_active_group
 from functions_msgraph_operations import (
+    MSGRAPH_CALENDAR_SEND_MODE_AUTO_SEND,
+    MSGRAPH_CALENDAR_SEND_MODE_DRAFT_DELAYED,
+    MSGRAPH_CALENDAR_SEND_MODE_DRAFT_MANUAL,
     MSGRAPH_CAPABILITY_DEFINITIONS,
     MSGRAPH_DEFAULT_ENDPOINT,
+    MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+    MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+    MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
     MSGRAPH_PLUGIN_TYPE,
     get_msgraph_enabled_function_names,
+    normalize_msgraph_calendar_send_options,
+    normalize_msgraph_mail_send_options,
     normalize_msgraph_capabilities,
+)
+from functions_msgraph_pending_actions import (
+    MSGRAPH_PENDING_ACTION_DELAYED,
+    MSGRAPH_PENDING_ACTION_MANUAL,
+    MSGRAPH_PENDING_OPERATION_CREATE_CALENDAR_INVITE,
+    MSGRAPH_PENDING_OPERATION_SEND_MAIL,
+    MSGRAPH_PENDING_RESOURCE_CALENDAR,
+    MSGRAPH_PENDING_RESOURCE_MAIL,
+    MSGRAPH_PENDING_STATUS_PENDING,
+    MSGRAPH_PENDING_STATUS_SCHEDULED,
+    build_calendar_pending_action_summary,
+    build_mail_pending_action_summary,
+    create_msgraph_pending_action,
+    sanitize_msgraph_pending_action_for_client,
+    schedule_msgraph_pending_action_auto_commit,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
@@ -28,17 +53,45 @@ class MSGraphPlugin(BasePlugin):
     DEFAULT_TIMEOUT_SECONDS = 30
     MAX_ITEMS_PER_RESULT = 25
     MAX_PAGES_PER_REQUEST = 5
+    DEFERRED_DELIVERY_EXTENDED_PROPERTY_ID = "SystemTime 0x000F"
 
     def __init__(self, manifest: Optional[Dict[str, Any]] = None):
         super().__init__(manifest)
         self.manifest = manifest or {}
         self._metadata = self.manifest.get("metadata", {})
         self._endpoint = str(self.manifest.get("endpoint") or self.DEFAULT_ENDPOINT).rstrip("/")
+        additional_fields = self.manifest.get("additionalFields") if isinstance(self.manifest.get("additionalFields"), dict) else {}
         scope_overrides = self.manifest.get("scopes") or self._metadata.get("scopes") or {}
         self._scope_overrides = scope_overrides if isinstance(scope_overrides, dict) else {}
         self._capabilities = normalize_msgraph_capabilities(
             self.manifest.get("msgraph_capabilities")
         )
+        mail_send_options = normalize_msgraph_mail_send_options({
+            **additional_fields,
+            "msgraph_mail_send_mode": self.manifest.get(
+                "msgraph_mail_send_mode",
+                additional_fields.get("msgraph_mail_send_mode"),
+            ),
+            "msgraph_mail_delay_seconds": self.manifest.get(
+                "msgraph_mail_delay_seconds",
+                additional_fields.get("msgraph_mail_delay_seconds"),
+            ),
+        })
+        self._mail_send_mode = mail_send_options["msgraph_mail_send_mode"]
+        self._mail_delay_seconds = mail_send_options["msgraph_mail_delay_seconds"]
+        calendar_send_options = normalize_msgraph_calendar_send_options({
+            **additional_fields,
+            "msgraph_calendar_send_mode": self.manifest.get(
+                "msgraph_calendar_send_mode",
+                additional_fields.get("msgraph_calendar_send_mode"),
+            ),
+            "msgraph_calendar_delay_seconds": self.manifest.get(
+                "msgraph_calendar_delay_seconds",
+                additional_fields.get("msgraph_calendar_delay_seconds"),
+            ),
+        })
+        self._calendar_send_mode = calendar_send_options["msgraph_calendar_send_mode"]
+        self._calendar_delay_seconds = calendar_send_options["msgraph_calendar_delay_seconds"]
         self._enabled_function_names = set(
             self.manifest.get("enabled_functions")
             or get_msgraph_enabled_function_names(self._capabilities)
@@ -152,6 +205,39 @@ class MSGraphPlugin(BasePlugin):
                     },
                 ],
                 "returns": {"type": "dict", "description": "Updated mail message result from Microsoft Graph."},
+            },
+            "send_mail": {
+                "name": "send_mail",
+                "description": "Create or send an email from the signed-in user's mailbox using this action's configured delivery mode: manual draft, delayed delivery, or automatic send.",
+                "parameters": [
+                    {
+                        "name": "to_recipients",
+                        "type": "str",
+                        "description": "Required recipient email addresses separated by commas, semicolons, or new lines.",
+                        "required": True,
+                    },
+                    {"name": "subject", "type": "str", "description": "Email subject.", "required": True},
+                    {"name": "body_content", "type": "str", "description": "Plain-text email body content.", "required": False},
+                    {
+                        "name": "cc_recipients",
+                        "type": "str",
+                        "description": "Optional CC recipient email addresses separated by commas, semicolons, or new lines.",
+                        "required": False,
+                    },
+                    {
+                        "name": "bcc_recipients",
+                        "type": "str",
+                        "description": "Optional BCC recipient email addresses separated by commas, semicolons, or new lines.",
+                        "required": False,
+                    },
+                    {
+                        "name": "save_to_sent_items",
+                        "type": "bool",
+                        "description": "For automatic send mode, save the message to Sent Items when true.",
+                        "required": False,
+                    },
+                ],
+                "returns": {"type": "dict", "description": "Draft or send status from Microsoft Graph."},
             },
             "search_users": {
                 "name": "search_users",
@@ -419,6 +505,133 @@ class MSGraphPlugin(BasePlugin):
         if strict and str(raw_attendees or "").strip():
             invalid_entries.append(str(raw_attendees))
 
+    def _collect_mail_recipients(
+        self,
+        raw_recipients: Any,
+        parameter_name: str,
+        operation_name: str,
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        recipients_by_email: Dict[str, Dict[str, Any]] = {}
+        invalid_entries: List[str] = []
+        self._collect_attendees(
+            recipients_by_email,
+            raw_recipients,
+            invalid_entries,
+            strict=True,
+        )
+        if invalid_entries:
+            invalid_sample = ", ".join(invalid_entries[:5])
+            return [], self._invalid_parameter_error(
+                operation_name,
+                f"{parameter_name} must contain valid email addresses. Invalid entries: {invalid_sample}",
+            )
+
+        return [
+            {"emailAddress": recipient.get("emailAddress", {})}
+            for recipient in recipients_by_email.values()
+        ], None
+
+    def _build_deferred_delivery_time(self, delay_seconds: int) -> str:
+        scheduled_time = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+        return scheduled_time.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def _get_execution_context(self) -> Dict[str, str]:
+        context = {
+            "user_id": "",
+            "conversation_id": "",
+            "workflow_id": "",
+            "run_id": "",
+        }
+        current_user = get_current_user_info() or {}
+        context["user_id"] = str(
+            current_user.get("userId")
+            or current_user.get("oid")
+            or current_user.get("id")
+            or ""
+        ).strip()
+        if has_request_context():
+            context["conversation_id"] = str(getattr(g, "conversation_id", "") or "").strip()
+            context["workflow_id"] = str(getattr(g, "workflow_id", "") or "").strip()
+            context["run_id"] = str(getattr(g, "workflow_run_id", "") or "").strip()
+        return context
+
+    def _build_pending_action_tool_result(
+        self,
+        operation_name: str,
+        delivery_mode: str,
+        pending_action: Dict[str, Any],
+        status_key: str,
+        message: str,
+    ) -> Dict[str, Any]:
+        return {
+            "operation": operation_name,
+            "delivery_mode": delivery_mode,
+            status_key: pending_action.get("status") or MSGRAPH_PENDING_STATUS_PENDING,
+            "pending_user_action": True,
+            "pending_action": sanitize_msgraph_pending_action_for_client(pending_action),
+            "message": message,
+        }
+
+    def _create_mail_pending_action(
+        self,
+        message_payload: Dict[str, Any],
+        draft_result: Dict[str, Any],
+        action_mode: str,
+        auto_send_at_utc: str = "",
+        delay_seconds: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        execution_context = self._get_execution_context()
+        user_id = execution_context.get("user_id")
+        if not user_id:
+            return self._invalid_parameter_error("send_mail", "Signed-in user context is required to track the pending mail action.")
+
+        pending_action = create_msgraph_pending_action(
+            user_id,
+            operation=MSGRAPH_PENDING_OPERATION_SEND_MAIL,
+            graph_resource_type=MSGRAPH_PENDING_RESOURCE_MAIL,
+            action_mode=action_mode,
+            status=MSGRAPH_PENDING_STATUS_SCHEDULED if action_mode == MSGRAPH_PENDING_ACTION_DELAYED else MSGRAPH_PENDING_STATUS_PENDING,
+            graph_message_id=draft_result.get("id") or "",
+            summary=build_mail_pending_action_summary(message_payload),
+            conversation_id=execution_context.get("conversation_id", ""),
+            workflow_id=execution_context.get("workflow_id", ""),
+            run_id=execution_context.get("run_id", ""),
+            auto_send_at_utc=auto_send_at_utc,
+            delay_seconds=delay_seconds,
+            graph_endpoint=self._endpoint,
+            web_link=draft_result.get("webLink") or "",
+        )
+        return pending_action
+
+    def _create_calendar_pending_action(
+        self,
+        event_payload: Dict[str, Any],
+        action_mode: str,
+        auto_send_at_utc: str = "",
+        delay_seconds: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        execution_context = self._get_execution_context()
+        user_id = execution_context.get("user_id")
+        if not user_id:
+            return self._invalid_parameter_error("create_calendar_invite", "Signed-in user context is required to track the pending calendar invite.")
+
+        pending_action = create_msgraph_pending_action(
+            user_id,
+            operation=MSGRAPH_PENDING_OPERATION_CREATE_CALENDAR_INVITE,
+            graph_resource_type=MSGRAPH_PENDING_RESOURCE_CALENDAR,
+            action_mode=action_mode,
+            status=MSGRAPH_PENDING_STATUS_SCHEDULED if action_mode == MSGRAPH_PENDING_ACTION_DELAYED else MSGRAPH_PENDING_STATUS_PENDING,
+            graph_payload=event_payload,
+            summary=build_calendar_pending_action_summary(event_payload),
+            conversation_id=execution_context.get("conversation_id", ""),
+            workflow_id=execution_context.get("workflow_id", ""),
+            run_id=execution_context.get("run_id", ""),
+            auto_send_at_utc=auto_send_at_utc,
+            delay_seconds=delay_seconds,
+            graph_endpoint=self._endpoint,
+        )
+        return pending_action
+
     def _resolve_group_attendees(
         self,
         group_id: str,
@@ -608,6 +821,7 @@ class MSGraphPlugin(BasePlugin):
         paginate: bool = False,
         max_items: int = 5,
         additional_headers: Optional[Dict[str, str]] = None,
+        expect_json_response: bool = True,
     ) -> Dict[str, Any]:
         token, scopes, token_error = self._get_token(operation_name, default_scopes)
         if token_error:
@@ -659,6 +873,22 @@ class MSGraphPlugin(BasePlugin):
             pages_fetched += 1
             if response.status_code >= 400:
                 return self._build_graph_error(operation_name, scopes, response=response)
+
+            if not expect_json_response:
+                response_payload = None
+                try:
+                    response_payload = response.json()
+                except ValueError:
+                    response_payload = None
+
+                result_payload: Dict[str, Any] = {
+                    "operation": operation_name,
+                    "status_code": response.status_code,
+                    "accepted": response.status_code in {200, 201, 202, 204},
+                }
+                if response_payload is not None:
+                    result_payload["value"] = response_payload
+                return result_payload
 
             try:
                 payload = response.json()
@@ -901,6 +1131,56 @@ class MSGraphPlugin(BasePlugin):
             event_payload["isOnlineMeeting"] = True
             event_payload["onlineMeetingProvider"] = "teamsForBusiness"
 
+        if self._calendar_send_mode in {
+            MSGRAPH_CALENDAR_SEND_MODE_DRAFT_MANUAL,
+            MSGRAPH_CALENDAR_SEND_MODE_DRAFT_DELAYED,
+        }:
+            scheduled_send_time = ""
+            delay_seconds = None
+            action_mode = MSGRAPH_PENDING_ACTION_MANUAL
+            if self._calendar_send_mode == MSGRAPH_CALENDAR_SEND_MODE_DRAFT_DELAYED:
+                scheduled_send_time = self._build_deferred_delivery_time(self._calendar_delay_seconds)
+                delay_seconds = self._calendar_delay_seconds
+                action_mode = MSGRAPH_PENDING_ACTION_DELAYED
+                token, _, token_error = self._get_token("create_calendar_invite_delayed_delivery", ["Calendars.ReadWrite"])
+                if token_error:
+                    return token_error
+            else:
+                token = None
+
+            pending_action = self._create_calendar_pending_action(
+                event_payload,
+                action_mode,
+                auto_send_at_utc=scheduled_send_time,
+                delay_seconds=delay_seconds,
+            )
+            if pending_action.get("error"):
+                return pending_action
+            if token:
+                schedule_msgraph_pending_action_auto_commit(pending_action, token)
+
+            result = self._build_pending_action_tool_result(
+                operation_name,
+                self._calendar_send_mode,
+                pending_action,
+                "calendar_invite_status",
+                (
+                    "Calendar invite is waiting for the delayed send window. It can be cancelled or sent now before the timer ends."
+                    if action_mode == MSGRAPH_PENDING_ACTION_DELAYED
+                    else "Calendar invite is waiting for review. Send or cancel it from the action card."
+                ),
+            )
+            result["requested_attendee_count"] = len(attendees)
+            result["included_group_member_count"] = group_attendee_count
+            result["event_timezone"] = normalized_timezone
+            result["teams_meeting_requested"] = bool(normalized_make_teams_meeting)
+            if resolved_group_id:
+                result["group_id"] = resolved_group_id
+            if scheduled_send_time:
+                result["scheduled_send_time_utc"] = scheduled_send_time
+                result["delay_seconds"] = delay_seconds
+            return result
+
         result = self._perform_graph_request(
             operation_name,
             "POST",
@@ -989,6 +1269,166 @@ class MSGraphPlugin(BasePlugin):
             f"/v1.0/me/messages/{quote(normalized_message_id, safe='')}",
             ["Mail.ReadWrite"],
             json_body={"isRead": bool(normalized_is_read)},
+        )
+
+    @plugin_function_logger("MSGraphPlugin")
+    @kernel_function(description="Create or send an email from the signed-in user's mailbox using this action's configured delivery mode.")
+    def send_mail(
+        self,
+        to_recipients: Any,
+        subject: str,
+        body_content: str = "",
+        cc_recipients: Any = "",
+        bcc_recipients: Any = "",
+        save_to_sent_items: Any = True,
+    ) -> dict:
+        operation_name = "send_mail"
+        normalized_subject = str(subject or "").strip()
+        normalized_body = str(body_content or "")
+
+        if not normalized_subject:
+            return self._invalid_parameter_error(operation_name, "subject is required to send mail.")
+
+        to_payload, recipient_error = self._collect_mail_recipients(
+            to_recipients,
+            "to_recipients",
+            operation_name,
+        )
+        if recipient_error:
+            return recipient_error
+        if not to_payload:
+            return self._invalid_parameter_error(operation_name, "to_recipients must include at least one valid email address.")
+
+        cc_payload, recipient_error = self._collect_mail_recipients(
+            cc_recipients,
+            "cc_recipients",
+            operation_name,
+        )
+        if recipient_error:
+            return recipient_error
+
+        bcc_payload, recipient_error = self._collect_mail_recipients(
+            bcc_recipients,
+            "bcc_recipients",
+            operation_name,
+        )
+        if recipient_error:
+            return recipient_error
+
+        normalized_save_to_sent_items, boolean_error = self._normalize_boolean_parameter(
+            save_to_sent_items,
+            "save_to_sent_items",
+            operation_name,
+        )
+        if boolean_error:
+            return boolean_error
+
+        message_payload: Dict[str, Any] = {
+            "subject": normalized_subject,
+            "body": {
+                "contentType": "Text",
+                "content": normalized_body,
+            },
+            "toRecipients": to_payload,
+        }
+        if cc_payload:
+            message_payload["ccRecipients"] = cc_payload
+        if bcc_payload:
+            message_payload["bccRecipients"] = bcc_payload
+
+        if self._mail_send_mode == MSGRAPH_MAIL_SEND_MODE_AUTO_SEND:
+            send_result = self._perform_graph_request(
+                operation_name,
+                "POST",
+                "/v1.0/me/sendMail",
+                ["Mail.Send"],
+                json_body={
+                    "message": message_payload,
+                    "saveToSentItems": bool(normalized_save_to_sent_items),
+                },
+                expect_json_response=False,
+            )
+            if not isinstance(send_result, dict) or send_result.get("error"):
+                return send_result
+
+            send_result.update({
+                "operation": operation_name,
+                "delivery_mode": self._mail_send_mode,
+                "mail_send_status": "sent",
+                "saved_to_sent_items": bool(normalized_save_to_sent_items),
+            })
+            return send_result
+
+        if self._mail_send_mode == MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED:
+            scheduled_send_time = self._build_deferred_delivery_time(self._mail_delay_seconds)
+            draft_result = self._perform_graph_request(
+                operation_name,
+                "POST",
+                "/v1.0/me/messages",
+                ["Mail.ReadWrite"],
+                json_body=message_payload,
+            )
+            if not isinstance(draft_result, dict) or draft_result.get("error"):
+                return draft_result
+
+            message_id = str(draft_result.get("id") or "").strip()
+            if not message_id:
+                return self._invalid_parameter_error(
+                    operation_name,
+                    "Microsoft Graph created the mail draft but did not return a message id for delayed delivery.",
+                )
+
+            token, _, token_error = self._get_token("send_mail_delayed_delivery", ["Mail.Send"])
+            if token_error:
+                return token_error
+
+            pending_action = self._create_mail_pending_action(
+                message_payload,
+                draft_result,
+                MSGRAPH_PENDING_ACTION_DELAYED,
+                auto_send_at_utc=scheduled_send_time,
+                delay_seconds=self._mail_delay_seconds,
+            )
+            if pending_action.get("error"):
+                return pending_action
+            schedule_msgraph_pending_action_auto_commit(pending_action, token)
+
+            return {
+                "operation": operation_name,
+                "delivery_mode": self._mail_send_mode,
+                "mail_send_status": "scheduled_pending",
+                "message_id": message_id,
+                "delay_seconds": self._mail_delay_seconds,
+                "scheduled_send_time_utc": scheduled_send_time,
+                "pending_user_action": True,
+                "pending_action": sanitize_msgraph_pending_action_for_client(pending_action),
+                "message": "Mail draft is waiting for the delayed send window. It can be cancelled or sent now before the timer ends.",
+            }
+
+        draft_result = self._perform_graph_request(
+            operation_name,
+            "POST",
+            "/v1.0/me/messages",
+            ["Mail.ReadWrite"],
+            json_body=message_payload,
+        )
+        if not isinstance(draft_result, dict) or draft_result.get("error"):
+            return draft_result
+
+        pending_action = self._create_mail_pending_action(
+            message_payload,
+            draft_result,
+            MSGRAPH_PENDING_ACTION_MANUAL,
+        )
+        if pending_action.get("error"):
+            return pending_action
+
+        return self._build_pending_action_tool_result(
+            operation_name,
+            MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+            pending_action,
+            "mail_send_status",
+            "Mail draft is waiting for review. Send or cancel it from the action card.",
         )
 
     @plugin_function_logger("MSGraphPlugin")

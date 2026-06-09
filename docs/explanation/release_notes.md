@@ -1,8 +1,101 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.163, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.177, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.177)**
+
+#### New Features
+
+*   **Voice-Assisted Form Inputs and Agent Instruction Drafting**
+    *   Added speech-to-text microphone controls to supported agent, group, public workspace, document metadata, and tag-name fields when speech input is enabled.
+    *   Added an agent Instruction Brief field and Draft Instructions action that sends typed or dictated context to the configured GPT/APIM model, then inserts editable Markdown instructions before save.
+    *   Dictated tag names are normalized to lowercase safe tag values, and dictated document keywords are normalized to comma-separated values.
+    *   (Ref: `form-voice-input.js`, `agent_modal_stepper.js`, `/api/agents/draft-instructions`, `VOICE_ASSISTED_FORM_INPUTS.md`)
+
+### **(v0.241.176)**
+
+#### New Features
+
+*   **Microsoft Graph Send Mail Action**
+    *   Microsoft Graph actions can now create manual drafts, prepare delayed-delivery drafts from 5 to 600 seconds, or send mail automatically from the signed-in user's mailbox.
+    *   Added plugin configuration for default delivery mode and delay seconds, with runtime validation and Graph scopes for draft creation, delayed draft submission, and immediate send flows.
+    *   (Ref: Microsoft Graph action, `MSGraphPlugin.send_mail`, `plugin_modal_stepper.js`, `MSGRAPH_SEND_MAIL_ACTION.md`)
+
+#### User Interface Enhancements
+
+*   **Custom Workspace Hero Color Swatches**
+    *   Added a custom color swatch to group and public workspace manage pages so workspace owners can choose any valid hero color in addition to the preset palette.
+    *   Saved custom colors now reselect the custom swatch and update the live hero preview before saving.
+    *   (Ref: `manage_group.html`, `manage_public_workspace.html`, `manage_group.js`, `manage_public_workspace.js`, `GROUP_PUBLIC_WORKSPACE_CUSTOM_HERO_COLORS.md`)
+
+### **(v0.241.169)**
+
+#### New Features
+
+*   **Workspace-Backed Chat Upload Replacement**
+    *   Eligible chat uploads now use the personal workspace document as the source of truth instead of also running the legacy chat-local extraction and chat blob storage path.
+    *   Chat creates a lightweight workspace-backed file message with processing progress and automatically includes ready linked workspace documents in regular and streaming chat search context for enhanced citations.
+    *   Fixed the chat handoff queue helper to use the configured Flask executor extension, preventing orphaned personal workspace rows from remaining at queued 0% when background processing was not submitted.
+    *   (Ref: `route_frontend_chats.py`, `route_backend_chats.py`, `functions_documents.py`, `CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md`)
+
+### **(v0.241.168)**
+
+#### User Interface Enhancements
+
+*   **Selectable Conversation-Linked Workspace Document Deletion**
+    *   Conversation delete now lists workspace documents created from chat uploads and lets users select one, many, or all documents to delete with the conversation.
+    *   Leaving all documents unchecked keeps them in the personal workspace so they follow the normal document retention policy.
+    *   Bulk conversation delete no longer removes linked workspace documents automatically.
+    *   (Ref: conversation delete modal, `chat-conversations.js`, `route_backend_conversations.py`, `functions_documents.py`)
+
+### **(v0.241.167)**
+
+#### New Features
+
+*   **Chat Upload Personal Workspace Handoff**
+    *   Eligible chat uploads now queue a personal workspace document while preserving the existing chat attachment/image message behavior and fallback flow.
+    *   Chat-uploaded workspace documents receive the `conversations` tag plus the conversation ID tag, store explicit source metadata, and surface processing progress in the chat message with the same document status fields used by workspace uploads.
+    *   Workspace metadata and delete flows now show when a document is linked to a conversation.
+    *   (Ref: `route_frontend_chats.py`, `functions_documents.py`, `workspace-documents.js`, `chat-messages.js`, `CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md`)
+
+### **(v0.241.166)**
+
+#### New Features
+
+*   **Chat Upload Personal Workspace Handoff Design**
+    *   Added a proposed implementation plan for routing eligible chat file uploads into the user's personal workspace while preserving the existing chat attachment experience and fallback flow.
+    *   Documented the recommended metadata, conversation tags, delete lifecycle, search/analyze/compare implications, security checks, failure modes, testing plan, and staged rollout for the handoff.
+    *   (Ref: `CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md`, chat uploads, personal workspace documents, conversation-linked document lifecycle)
+
+#### User Interface Enhancements
+
+*   **Document Intelligence Extraction Terminology**
+    *   Renamed user-facing PDF/image extraction choices from Read/Layout to Standard/Enhanced while preserving the underlying `read` and `layout` settings and API values.
+    *   Added hover text for extraction, citation, and File Sync badges so workspace users can understand Standard, Enhanced, synced, and manually uploaded document states without extra visual clutter.
+    *   (Ref: Admin Settings Search & Extract, personal/group/public workspace document details)
+
+#### Bug Fixes
+
+*   **Tabular Inline Chart Handoff**
+    *   Fixed tabular analysis chart requests so successful grouped CSV/XLSX results now produce SimpleChat inline chart citations instead of relying on the model to emit supported chart syntax.
+    *   Workspace-search and chat-uploaded tabular results now share the same deterministic chart handoff in both streaming and non-streaming responses, preventing unsupported Mermaid chart blocks from appearing when users request charts.
+    *   (Ref: `route_backend_chats.py`, `functions_chart_operations.py`, `test_tabular_inline_chart_handoff.py`, `TABULAR_INLINE_CHART_HANDOFF_FIX.md`)
+
+### **(v0.241.165)**
+
+#### Bug Fixes
+
+*   **Document Intelligence Upload Normalizer Import**
+    *   Fixed Azure Document Intelligence upload processing so the shared extractor resolves the extraction-mode normalizer through the existing settings module import, preventing Read/Layout/Auto uploads from failing with a missing normalizer name while avoiding the startup circular import path.
+    *   (Ref: `functions_content.py`, Document Intelligence extraction mode)
+
+#### User Interface Enhancements
+
+*   **Extraction Badge Placement**
+    *   Removed Read/Layout extraction badges from top-level document rows and cards while preserving them in expanded document details and metadata views.
+    *   (Ref: personal, group, and public workspace document views)
 
 ### **(v0.241.163)**
 

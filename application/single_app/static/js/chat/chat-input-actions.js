@@ -11,7 +11,7 @@ import {
   showLoadingIndicator,
   hideLoadingIndicator,
 } from "./chat-loading-indicator.js";
-import { loadMessages } from "./chat-messages.js";
+import { loadMessages, watchChatWorkspaceUploadDocument } from "./chat-messages.js";
 import { loadUserSettings, saveUserSetting } from "./chat-layout.js";
 
 const imageGenBtn = document.getElementById("image-generate-btn");
@@ -485,6 +485,7 @@ export function uploadFileToConversation(file) {
     .then((data) => {
       if (data.conversation_id) {
         currentConversationId = data.conversation_id;
+        window.currentConversationId = data.conversation_id;
         
         // If a title was returned and it's different from "New Conversation",
         // update the conversation title in the UI
@@ -495,7 +496,12 @@ export function uploadFileToConversation(file) {
           }
         }
         
-        loadMessages(currentConversationId);
+        const loadMessagesPromise = loadMessages(currentConversationId);
+        if (data.workspace_document_id) {
+          Promise.resolve(loadMessagesPromise).finally(() => {
+            watchChatWorkspaceUploadDocument(data.workspace_document_id, { autoSelect: true });
+          });
+        }
         loadConversations();
       } else {
         console.error("No conversation_id returned from server.");

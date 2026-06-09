@@ -7,6 +7,13 @@ const userId = window.userId;
 let currentUserRole = null;
 let currentStatsWindow = { days: 30, startDate: '', endDate: '' };
 let currentStatsData = null;
+const defaultWorkspaceHeroColor = '#0078d4';
+const workspaceHeroColorPattern = /^#[0-9a-fA-F]{6}$/;
+
+function normalizeWorkspaceHeroColor(color) {
+  const candidate = String(color || '').trim();
+  return workspaceHeroColorPattern.test(candidate) ? candidate : defaultWorkspaceHeroColor;
+}
 
 function showStatsToast(message, type = 'info') {
   if (typeof showPublicWorkspaceToast === 'function') {
@@ -513,6 +520,7 @@ function loadWorkspaceInfo(callback) {
         $("#workspaceLogoFile").val('');
 
         setSelectedWorkspaceHeroColor(ws.heroColor || '#0078d4');
+        window.SimpleChatVoiceInput?.refreshButtons?.();
       }
 
       // Show member actions for non-owners
@@ -876,14 +884,17 @@ function updateProfileHero(workspace, owner) {
 
 // Update hero color
 function updateHeroColor(color) {
-  const darker = adjustColorBrightness(color, -30);
-  document.documentElement.style.setProperty('--hero-color', color);
-  document.documentElement.style.setProperty('--hero-color-dark', darker);
+  const normalizedColor = normalizeWorkspaceHeroColor(color);
+  const darker = adjustColorBrightness(normalizedColor, -30);
+  const heroElement = document.getElementById('workspaceHero') || document.documentElement;
+  heroElement.style.setProperty('--hero-color', normalizedColor);
+  heroElement.style.setProperty('--hero-color-dark', darker);
 }
 
 // Adjust color brightness
 function adjustColorBrightness(color, percent) {
-  const num = parseInt(color.replace('#', ''), 16);
+  const normalizedColor = normalizeWorkspaceHeroColor(color);
+  const num = parseInt(normalizedColor.replace('#', ''), 16);
   const amt = Math.round(2.55 * percent);
   const R = (num >> 16) + amt;
   const G = (num >> 8 & 0x00FF) + amt;
@@ -900,12 +911,25 @@ function initializeColorPicker() {
     const color = $(this).data('color');
     setSelectedWorkspaceHeroColor(color);
   });
+  $('#customHeroColor').on('input change', function () {
+    setSelectedWorkspaceHeroColor(this.value);
+  });
 }
 
 function setSelectedWorkspaceHeroColor(color) {
-  const normalizedColor = color || '#0078d4';
+  const normalizedColor = normalizeWorkspaceHeroColor(color);
+  const matchingPreset = $('.color-option').filter(function () {
+    return String($(this).data('color') || '').toLowerCase() === normalizedColor.toLowerCase();
+  });
+  const customColorInput = $('#customHeroColor');
+
   $('.color-option').removeClass('selected');
-  $(`.color-option[data-color="${normalizedColor}"]`).addClass('selected');
+  customColorInput.removeClass('selected').val(normalizedColor);
+  if (matchingPreset.length > 0) {
+    matchingPreset.addClass('selected');
+  } else {
+    customColorInput.addClass('selected');
+  }
   $('#selectedColor').val(normalizedColor);
   updateHeroColor(normalizedColor);
 }

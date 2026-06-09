@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route_backend_agents.py swagger integration.
-Version: 0.239.146
+Version: 0.241.177
 Implemented in: 0.239.146
 
 This test ensures that all endpoints in route_backend_agents.py are properly decorated 
@@ -10,7 +10,25 @@ with @swagger_route decorators and will be included in the automatic swagger doc
 
 import sys
 import os
+import types
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
+
+sys.modules.setdefault('olefile', types.SimpleNamespace())
+
+
+class _DummyMcpConnector:
+    """Minimal stand-in for optional Semantic Kernel MCP connectors."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+semantic_kernel_mcp = types.ModuleType('semantic_kernel.connectors.mcp')
+semantic_kernel_mcp.MCPSsePlugin = _DummyMcpConnector
+semantic_kernel_mcp.MCPStdioPlugin = _DummyMcpConnector
+semantic_kernel_mcp.MCPStreamableHttpPlugin = _DummyMcpConnector
+semantic_kernel_mcp.MCPWebsocketPlugin = _DummyMcpConnector
+sys.modules.setdefault('semantic_kernel.connectors.mcp', semantic_kernel_mcp)
 
 def test_backend_agents_swagger_integration():
     """Test that all backend agents endpoints have swagger decorators."""
@@ -88,6 +106,7 @@ def test_backend_agents_swagger_integration():
         # Expected endpoints based on our analysis
         expected_endpoints = [
             'generate_agent_id',
+            'draft_agent_instructions',
             'get_user_agents',
             'set_user_agents', 
             'delete_user_agent',

@@ -93,7 +93,41 @@
     transform: scale(1.1);
   }
 
+  .custom-color-option {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 3px solid transparent;
+    padding: 0;
+    background: transparent;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+
+  .custom-color-option:hover {
+    transform: scale(1.1);
+  }
+
+  .custom-color-option::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+
+  .custom-color-option::-webkit-color-swatch {
+    border: 0;
+    border-radius: 5px;
+  }
+
+  .custom-color-option::-moz-color-swatch {
+    border: 0;
+    border-radius: 5px;
+  }
+
   .color-option.selected {
+    border-color: white;
+    box-shadow: 0 0 0 2px var(--bs-primary);
+  }
+
+  .custom-color-option.selected {
     border-color: white;
     box-shadow: 0 0 0 2px var(--bs-primary);
   }
@@ -281,6 +315,7 @@
                     <div class="color-option" data-color="#7719aa" style="background: linear-gradient(135deg, #7719aa 0%, #531277 100%);"></div>
                     <div class="color-option" data-color="#ca5010" style="background: linear-gradient(135deg, #ca5010 0%, #8e3a0d 100%);"></div>
                     <div class="color-option" data-color="#0099bc" style="background: linear-gradient(135deg, #0099bc 0%, #006d85 100%);"></div>
+                    <input type="color" class="custom-color-option" id="customHeroColor" value="#0078d4" aria-label="Custom hero color" title="Custom hero color">
                   </div>
                   <input type="hidden" id="selectedColor" value="#0078d4">
                 </div>

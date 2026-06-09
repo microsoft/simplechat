@@ -1,12 +1,13 @@
 # test_manage_public_workspace_page_load.py
 """
 UI test for manage public workspace page load.
-Version: 0.241.125
+Version: 0.241.177
 Implemented in: 0.241.125
 
 This test ensures the manage public workspace page loads without JavaScript
 parse errors, keeps the hero branding UI interactive, and preserves the pending
-request actions after initialization.
+request actions after initialization. Updated in 0.241.176 to validate the
+custom hero color swatch.
 """
 
 import base64
@@ -154,14 +155,32 @@ def test_manage_public_workspace_loads_without_script_parse_errors(playwright):
         expect(page.locator("#workspaceLogoImage")).to_be_visible()
         expect(page.locator("#workspaceInitial")).to_be_hidden()
         expect(page.locator("#selectedColor")).to_have_value("#225577")
+        expect(page.locator("#customHeroColor")).to_have_value("#225577")
+        expect(page.locator("#customHeroColor")).to_have_class("custom-color-option selected")
 
         page.locator('.color-option[data-color="#107c10"]').click()
         expect(page.locator("#selectedColor")).to_have_value("#107c10")
 
         hero_color = page.locator("#workspaceHero").evaluate(
-            "el => el.style.getPropertyValue('--profile-hero-color').trim()"
+            "el => el.style.getPropertyValue('--hero-color').trim()"
         )
         assert hero_color == "#107c10", f"Expected updated hero color picker value, saw {hero_color!r}."
+
+        page.locator("#customHeroColor").evaluate(
+            """(element) => {
+                element.value = '#8844cc';
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+            }"""
+        )
+        expect(page.locator("#selectedColor")).to_have_value("#8844cc")
+        expect(page.locator("#customHeroColor")).to_have_class("custom-color-option selected")
+
+        custom_hero_color = page.locator("#workspaceHero").evaluate(
+            "el => el.style.getPropertyValue('--hero-color').trim()"
+        )
+        assert custom_hero_color == "#8844cc", (
+            f"Expected custom workspace hero color, saw {custom_hero_color!r}."
+        )
 
         expect(page.locator("#membersTable tbody")).to_contain_text("Member User")
         expect(page.locator("#pendingRequestsTable tbody")).to_contain_text("Requester User")

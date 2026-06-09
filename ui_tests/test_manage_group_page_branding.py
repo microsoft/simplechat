@@ -1,11 +1,13 @@
 # test_manage_group_page_branding.py
 """
 UI test for group manage page branding.
-Version: 0.241.125
+Version: 0.241.177
 Implemented in: 0.241.125
 
 This test ensures the manage group page renders the branded hero metadata and
 logo without client-side errors when the group branding payload is present.
+Updated in 0.241.176 to validate the custom hero color swatch updates the
+preview and saved color payload.
 """
 
 import base64
@@ -107,9 +109,25 @@ def test_manage_group_page_renders_branding_without_page_errors(playwright):
         expect(page.locator("#groupInitial")).to_be_hidden()
 
         hero_color = page.locator("#groupHero").evaluate(
-            "el => el.style.getPropertyValue('--profile-hero-color').trim()"
+            "el => el.style.getPropertyValue('--hero-color').trim()"
         )
         assert hero_color == "#107c10", f"Expected branded group hero color, saw {hero_color!r}."
+
+        page.locator("#customHeroColor").evaluate(
+            """(element) => {
+                element.value = '#8844cc';
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+            }"""
+        )
+        expect(page.locator("#selectedColor")).to_have_value("#8844cc")
+        expect(page.locator("#customHeroColor")).to_have_class("custom-color-option selected")
+
+        custom_hero_color = page.locator("#groupHero").evaluate(
+            "el => el.style.getPropertyValue('--hero-color').trim()"
+        )
+        assert custom_hero_color == "#8844cc", (
+            f"Expected custom group hero color, saw {custom_hero_color!r}."
+        )
         assert page_errors == [], f"Expected no page errors while loading the manage group page. Saw: {page_errors}"
     finally:
         context.close()

@@ -1,8 +1,8 @@
 # test_support_menu_sidebar_visibility.py
 """
 UI test for support menu sidebar visibility.
-Version: 0.240.069
-Implemented in: 0.240.058
+Version: 0.241.166
+Implemented in: 0.240.058; 0.241.164; 0.241.165; 0.241.166
 
 This test ensures that when the Support menu is enabled in Admin Settings and the
 page is using the left sidebar layout, the sidebar renders the Support section
@@ -61,7 +61,7 @@ def test_admin_settings_support_sidebar_visible_when_enabled(playwright):
         send_feedback_toggle = page.locator("#enable_support_send_feedback")
         recipient_field = page.locator("#support_feedback_recipient_email")
         feature_visibility_note = page.get_by_text(
-            "Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics."
+            "Cosmos autoscale, deployment, and Redis items start unchecked because they are mainly admin-facing rollout and infrastructure topics."
         )
 
         if not support_toggle.is_checked():

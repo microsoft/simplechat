@@ -3,24 +3,44 @@ current_release:
   description: "These guides map to the feature set currently highlighted in the app for end users."
   badge: "Shared in the app"
   slugs:
-    - guided-tutorials
-    - background-chat
-    - gpt-selection
-    - tabular-analysis
-    - citation-improvements
-    - document-versioning
-    - summaries-and-export
-    - agent-operations
-    - ai-transparency
-    - fact-memory
-    - deployment
-    - redis-and-key-vault
-    - send-feedback
-    - support-menu
+    - document-intelligence
+    - cosmos-autoscale
+    - file-sync
+    - source-review
+    - agent-knowledge-actions
+    - generated-artifacts
+    - chat-productivity
+    - workspace-experience
+    - workflow-automation
+    - visio-ingestion
+    - stats-reporting
 
 previous_release_groups:
   - label: "Previous Release Features"
-    description: "The earlier v0.239.001 release guides remain available for reference."
+    description: "The v0.241.001 through v0.241.008 guides remain available for reference."
+    badge: "Previous release"
+    release_version: "0.241.001 - 0.241.008"
+    slugs:
+      - guided-tutorials
+      - background-chat
+      - gpt-selection
+      - tabular-analysis
+      - citation-improvements
+      - document-versioning
+      - summaries-and-export
+      - agent-operations
+      - ai-transparency
+      - fact-memory
+      - deployment
+      - redis-and-key-vault
+      - send-feedback
+      - support-menu
+    highlights:
+      - "Guided tutorials, background chat completion, and fact memory helped users onboard faster and carry useful context forward."
+      - "GPT selection, citation improvements, document versioning, and tabular analysis made core chat and document workflows more transparent."
+      - "Support Menu, Send Feedback, deployment guidance, and Redis/Key Vault setup improved the admin-to-user release communication loop."
+  - label: "Earlier Release Features"
+    description: "The v0.239.001 release guides remain available for longer-term archive reference."
     badge: "Earlier release"
     release_version: "0.239.001"
     slugs:
@@ -35,8 +55,204 @@ previous_release_groups:
     bug_fixes:
       - "Citation parsing fixes resolved edge cases where page range references failed to create the right clickable links."
       - "Public workspace activation fixed a 403 path for non-owner users activating a public workspace for chat."
-
 lookup:
+  document-intelligence:
+    title: "Document Intelligence Auto Mode"
+    description: "How Read, Layout, and Auto extraction help PDF and image uploads balance speed with richer structure"
+    summary: "PDF and image uploads can now use Read, Layout, or Auto extraction, with workspace badges and PDF reprocessing actions for richer document structure when it is needed."
+    why: "Teams can keep fast extraction for simple files while still capturing tables, forms, and selection marks when a document needs richer layout understanding."
+    icon: "bi-file-earmark-richtext"
+    accent: "blue"
+    url: "/latest-release/document-intelligence/"
+    release_label: "Current Release"
+    image: "/images/latest-release/document_intelligence_admin_controls.png"
+    image_alt: "Annotated Document Intelligence Auto Mode admin settings screenshot"
+    images:
+      - path: "/images/latest-release/document_intelligence_admin_controls.png"
+        alt: "Annotated Document Intelligence Auto Mode admin settings screenshot"
+        title: "Configure Document Intelligence Auto Mode"
+        caption: "Numbers highlight extraction mode selection, Auto sample-page tuning, and where users review extraction badges or reprocess PDFs."
+        label: "Admin Controls"
+
+  cosmos-autoscale:
+    title: "Cosmos Throughput Autoscale"
+    description: "How admins can monitor RU pressure, scale throughput, and convert eligible Cosmos resources to native autoscale"
+    summary: "Admins can monitor Cosmos DB RU pressure, scale database or dedicated container throughput, enforce global policies, and convert eligible manual throughput to native autoscale."
+    why: "Administrators can respond to capacity pressure without exposing Cosmos data-plane permissions to agents, actions, or end users."
+    icon: "bi-speedometer2"
+    accent: "emerald"
+    url: "/latest-release/cosmos-autoscale/"
+    release_label: "Current Release"
+    image: "/images/latest-release/cosmos_autoscale_admin_controls.png"
+    image_alt: "Annotated Cosmos throughput autoscale admin settings screenshot"
+    images:
+      - path: "/images/latest-release/cosmos_autoscale_admin_controls.png"
+        alt: "Annotated Cosmos throughput autoscale admin settings screenshot"
+        title: "Configure Cosmos Throughput Autoscale"
+        caption: "Numbers highlight access validation, global scale-up and scale-down policy, and container-level guardrails for dedicated throughput."
+        label: "Autoscale Controls"
+
+  file-sync:
+    title: "File Sync Connectors"
+    description: "How SMB, Azure Files, and OneDrive sources keep workspace documents synchronized"
+    summary: "File Sync expanded from SMB into Azure Files and OneDrive, with improved source selection, reusable identities, sync badges, history, and change detection."
+    why: "Workspace documents can stay closer to authoritative external stores instead of depending on manual re-upload habits."
+    icon: "bi-arrow-repeat"
+    accent: "teal"
+    url: "/latest-release/file-sync/"
+    release_label: "Current Release"
+    image: "/images/latest-release/file_sync_admin_scope_controls.png"
+    image_alt: "Annotated File Sync connector settings screenshot"
+    images:
+      - path: "/images/latest-release/file_sync_admin_scope_controls.png"
+        alt: "Annotated File Sync connector settings screenshot"
+        title: "Configure File Sync Connectors"
+        caption: "Numbers highlight connector source enablement, reusable identity configuration, and sync status or history review."
+        label: "Connector Controls"
+
+  source-review:
+    title: "Source Review and Deep Research"
+    description: "How Source Review inspects web evidence before final chat answers"
+    summary: "The Sources experience can review pasted URLs and web-search citations, follow bounded source links, use optional model-assisted planning, and hydrate Load More pages when enabled."
+    why: "Users can ground answers in reviewed source-page evidence instead of depending only on snippets or unsupported browsing assumptions."
+    icon: "bi-search-heart"
+    accent: "violet"
+    url: "/latest-release/source-review/"
+    release_label: "Current Release"
+    image: "/images/latest-release/source_review_admin_policy.png"
+    image_alt: "Annotated Source Review and Deep Research policy screenshot"
+    images:
+      - path: "/images/latest-release/source_review_admin_policy.png"
+        alt: "Annotated Source Review and Deep Research policy screenshot"
+        title: "Configure Source Review Policies"
+        caption: "Numbers highlight Source Review enablement, Deep Research policy options, and bounded allow or block controls."
+        label: "Policy Controls"
+
+  agent-knowledge-actions:
+    title: "Agent Knowledge and Actions"
+    description: "How assigned knowledge, reusable identities, Databricks actions, and MCP actions expand agent governance"
+    summary: "Agents can be bound to Assigned Knowledge, and action support expanded with Databricks, MCP, reusable identities, and clearer identity workflows."
+    why: "Agent creators can make assistants more predictable while admins keep cleaner credential and action governance."
+    icon: "bi-diagram-3"
+    accent: "cyan"
+    url: "/latest-release/agent-knowledge-actions/"
+    release_label: "Current Release"
+    image: "/images/latest-release/agent_knowledge_actions_assigned_knowledge.png"
+    image_alt: "Annotated Assigned Knowledge setup screenshot for agents"
+    images:
+      - path: "/images/latest-release/agent_knowledge_actions_assigned_knowledge.png"
+        alt: "Annotated Assigned Knowledge setup screenshot for agents"
+        title: "Assign Agent Knowledge and Actions"
+        caption: "Numbers highlight Assigned Knowledge enablement, source workspace and document selection, and optional web sources or user actions."
+        label: "Agent Setup"
+
+  generated-artifacts:
+    title: "Generated Artifacts"
+    description: "How generated Markdown and analysis outputs become reusable chat and workspace artifacts"
+    summary: "Generated Markdown and analysis outputs are easier to inspect in chat, export as artifacts, enrich with related document evidence, and promote into workspaces with approval where needed."
+    why: "Large or reusable generated outputs can move from conversation context into durable workspace documents without making chat answers unwieldy."
+    icon: "bi-file-earmark-arrow-up"
+    accent: "amber"
+    url: "/latest-release/generated-artifacts/"
+    release_label: "Current Release"
+    image: "/images/latest-release/generated_artifacts_chat_artifacts.png"
+    image_alt: "Annotated generated artifact card screenshot in chat"
+    images:
+      - path: "/images/latest-release/generated_artifacts_chat_artifacts.png"
+        alt: "Annotated generated artifact card screenshot in chat"
+        title: "Use Generated Artifacts in Chat"
+        caption: "Numbers highlight the generated Markdown artifact, rendered structured output, and the action to promote reusable work into a workspace."
+        label: "Artifact Workflow"
+
+  chat-productivity:
+    title: "Chat Productivity"
+    description: "How everyday chat flows became faster with paste uploads, paging, masking, charts, and prompt actions"
+    summary: "Chat now includes clipboard paste uploads, paged conversation loading, layered masking, follow-up prompt actions, inline charts, and generated Markdown viewing."
+    why: "Frequent chat tasks should feel lighter, especially when users have many conversations, pasted images, long-running answers, or reusable generated outputs."
+    icon: "bi-chat-square-text"
+    accent: "rose"
+    url: "/latest-release/chat-productivity/"
+    release_label: "Current Release"
+    image: "/images/latest-release/chat_productivity_chat_toolbar.png"
+    image_alt: "Annotated chat productivity toolbar screenshot"
+    images:
+      - path: "/images/latest-release/chat_productivity_chat_toolbar.png"
+        alt: "Annotated chat productivity toolbar screenshot"
+        title: "Use Chat Productivity Controls"
+        caption: "Numbers highlight prompt, model, and agent selection, attachment and paste upload controls, and Source Review before sending."
+        label: "Chat Controls"
+
+  workspace-experience:
+    title: "Workspace Experience"
+    description: "How document cards, workspace branding, approvals, and shortcuts improve shared workspace navigation"
+    summary: "Workspace document views, branding heroes, group share approvals, public workspace cards, and active workspace shortcuts make shared spaces easier to scan and manage."
+    why: "Document-heavy spaces need fast scanning, clear ownership context, and predictable approval workflows when content moves between teams."
+    icon: "bi-folder2-open"
+    accent: "orange"
+    url: "/latest-release/workspace-experience/"
+    release_label: "Current Release"
+    image: "/images/latest-release/workspace_experience_document_cards.png"
+    image_alt: "Annotated workspace document cards screenshot"
+    images:
+      - path: "/images/latest-release/workspace_experience_document_cards.png"
+        alt: "Annotated workspace document cards screenshot"
+        title: "Navigate Workspace Document Views"
+        caption: "Numbers highlight view switching, card and folder scanning, and document actions such as open, compare, or reprocess."
+        label: "Workspace Views"
+
+  workflow-automation:
+    title: "Workflow Automation"
+    description: "How workflows can run after File Sync changes and resume failed analysis batches"
+    summary: "Personal workflows gained dedicated access governance, File Sync before-run triggers, monitor-for-changes mode, dynamic Analyze targeting, and resume-failed batch runs."
+    why: "Repeatable document analysis can run when source files change rather than waiting for someone to manually refresh and restart every item."
+    icon: "bi-play-circle"
+    accent: "blue"
+    url: "/latest-release/workflow-automation/"
+    release_label: "Current Release"
+    image: "/images/latest-release/workflow_automation_admin_controls.png"
+    image_alt: "Annotated workflow automation admin settings screenshot"
+    images:
+      - path: "/images/latest-release/workflow_automation_admin_controls.png"
+        alt: "Annotated workflow automation admin settings screenshot"
+        title: "Configure Workflow Automation"
+        caption: "Numbers highlight workflow access enablement, optional Enterprise App role enforcement, and File Sync before-run automation."
+        label: "Workflow Controls"
+
+  visio-ingestion:
+    title: "Visio Ingestion and Previews"
+    description: "How VSDX diagrams become searchable, citable workspace knowledge"
+    summary: "Users can upload `.vsdx` diagrams, search structured page content, open rendered citation previews, and download the original Visio file when exact inspection is needed."
+    why: "Architecture and process diagrams become searchable knowledge instead of opaque attachments."
+    icon: "bi-diagram-2"
+    accent: "teal"
+    url: "/latest-release/visio-ingestion/"
+    release_label: "Current Release"
+    image: "/images/latest-release/visio_ingestion_workspace_upload.png"
+    image_alt: "Annotated Visio diagram upload screenshot in a workspace"
+    images:
+      - path: "/images/latest-release/visio_ingestion_workspace_upload.png"
+        alt: "Annotated Visio diagram upload screenshot in a workspace"
+        title: "Upload and Search Visio Diagrams"
+        caption: "Numbers highlight .vsdx upload, page and shape indexing, and citation or original-file inspection workflows."
+        label: "Visio Workflow"
+
+  stats-reporting:
+    title: "Stats and Control Center Reporting"
+    description: "How stats windows, CSV exports, pagination, and group token totals improve reporting"
+    summary: "Stats pages gained consistent time windows and CSV exports, while Control Center management tables gained better pagination, group token totals, and export visibility."
+    why: "Usage, token, and activity trends are easier to compare when the same date windows and exports are available across surfaces."
+    icon: "bi-bar-chart-line"
+    accent: "slate"
+    url: "/latest-release/stats-reporting/"
+    release_label: "Current Release"
+    image: "/images/latest-release/stats_reporting_profile_dashboard.png"
+    image_alt: "Annotated profile stats reporting dashboard screenshot"
+    images:
+      - path: "/images/latest-release/stats_reporting_profile_dashboard.png"
+        alt: "Annotated profile stats reporting dashboard screenshot"
+        title: "Review Stats and Reporting"
+        caption: "Numbers highlight reporting windows, cached usage totals, and export controls for offline reporting."
+        label: "Reporting Dashboard"
   guided-tutorials:
     title: "Guided Tutorials"
     description: "How guided walkthroughs help users learn chat and workspace flows inside the app"
@@ -45,7 +261,8 @@ lookup:
     icon: "bi-signpost-split"
     accent: "blue"
     url: "/latest-release/guided-tutorials/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/guided_tutorials_chat.png"
     image_alt: "Guided chat tutorial screenshot"
     images:
@@ -68,7 +285,8 @@ lookup:
     icon: "bi-hourglass-split"
     accent: "teal"
     url: "/latest-release/background-chat/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/background_completion_notifications-01.png"
     image_alt: "Background completion notification screenshot"
     images:
@@ -91,7 +309,8 @@ lookup:
     icon: "bi-sliders2"
     accent: "violet"
     url: "/latest-release/gpt-selection/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/model_selection_chat_selector.png"
     image_alt: "User chat model selector screenshot"
     images:
@@ -114,7 +333,8 @@ lookup:
     icon: "bi-table"
     accent: "emerald"
     url: "/latest-release/tabular-analysis/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/tabular_analysis_enhanced_citations.png"
     image_alt: "Tabular analysis enhanced citations screenshot"
     images:
@@ -132,7 +352,8 @@ lookup:
     icon: "bi-journal-richtext"
     accent: "amber"
     url: "/latest-release/citation-improvements/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/citation_improvements_history_replay.png"
     image_alt: "Conversation history citation replay screenshot"
     images:
@@ -155,7 +376,8 @@ lookup:
     icon: "bi-clock-history"
     accent: "rose"
     url: "/latest-release/document-versioning/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/document_revision_workspace.png"
     image_alt: "Document revision workspace screenshot"
     images:
@@ -178,7 +400,8 @@ lookup:
     icon: "bi-box-arrow-down"
     accent: "orange"
     url: "/latest-release/summaries-and-export/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/conversation_summary_card.png"
     image_alt: "Conversation summary card screenshot"
     images:
@@ -206,7 +429,8 @@ lookup:
     icon: "bi-diagram-3"
     accent: "cyan"
     url: "/latest-release/agent-operations/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/agent_action_grid_view.png"
     image_alt: "Agent and action grid view screenshot"
     images:
@@ -229,7 +453,8 @@ lookup:
     icon: "bi-eye"
     accent: "blue"
     url: "/latest-release/ai-transparency/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/thoughts_visibility.png"
     image_alt: "Processing thoughts visibility screenshot"
     images:
@@ -247,7 +472,8 @@ lookup:
     icon: "bi-person-lines-fill"
     accent: "teal"
     url: "/latest-release/fact-memory/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/facts_memory_view_profile.png"
     image_alt: "Profile fact memory section screenshot"
     images:
@@ -275,7 +501,8 @@ lookup:
     icon: "bi-rocket-takeoff"
     accent: "orange"
     url: "/latest-release/deployment/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/gunicorn_startup_guidance.png"
     image_alt: "Deployment startup guidance screenshot"
     images:
@@ -293,7 +520,8 @@ lookup:
     icon: "bi-shield-lock"
     accent: "emerald"
     url: "/latest-release/redis-and-key-vault/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/redis_key_vault.png"
     image_alt: "Redis Key Vault configuration screenshot"
     images:
@@ -311,7 +539,8 @@ lookup:
     icon: "bi-envelope-paper"
     accent: "rose"
     url: "/latest-release/send-feedback/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/support_menu_entry.png"
     image_alt: "Support menu entry screenshot"
     images:
@@ -329,7 +558,8 @@ lookup:
     icon: "bi-life-preserver"
     accent: "violet"
     url: "/latest-release/support-menu/"
-    release_label: "Current Release"
+    release_label: "Previous Release"
+    release_version: "0.241.001 - 0.241.008"
     image: "/images/latest-release/support_menu_entry.png"
     image_alt: "Support menu entry screenshot"
     images:
@@ -347,7 +577,7 @@ lookup:
     icon: "bi-download"
     accent: "slate"
     url: "/latest-release/export-conversation/"
-    release_label: "Previous Release"
+    release_label: "Earlier Release"
     release_version: "0.239.001"
     image: "/images/latest-release/conversation_export.png"
     image_alt: "Conversation export workflow screenshot"
@@ -371,7 +601,7 @@ lookup:
     icon: "bi-hourglass"
     accent: "slate"
     url: "/latest-release/retention-policy/"
-    release_label: "Previous Release"
+    release_label: "Earlier Release"
     release_version: "0.239.001"
     image: "/images/latest-release/retention_policy-personal_profile.png"
     image_alt: "Personal retention settings screenshot"
@@ -395,7 +625,7 @@ lookup:
     icon: "bi-lock"
     accent: "slate"
     url: "/latest-release/workspace-scope-lock/"
-    release_label: "Previous Release"
+    release_label: "Earlier Release"
     release_version: "0.239.001"
     image: "/images/latest-release/workspace_scope_lock.png"
     image_alt: "Workspace scope lock screenshot"
@@ -414,7 +644,7 @@ lookup:
     icon: "bi-grid-3x3-gap"
     accent: "slate"
     url: "/latest-release/tags-grid-view-chat-filtering/"
-    release_label: "Previous Release"
+    release_label: "Earlier Release"
     release_version: "0.239.001"
     image: "/images/latest-release/workspace_grid_view.png"
     image_alt: "Workspace folder grid view screenshot"

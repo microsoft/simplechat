@@ -105,6 +105,11 @@ const MSGRAPH_CAPABILITY_DEFINITIONS = [
     description: 'Allow the agent to mark mail messages as read or unread.'
   },
   {
+    key: 'send_mail',
+    label: 'Send mail',
+    description: 'Allow the agent to create manual drafts, delayed-delivery drafts, or send mail.'
+  },
+  {
     key: 'search_users',
     label: 'Search directory users',
     description: 'Allow the agent to search Microsoft 365 directory users by name or email prefix.'
@@ -215,6 +220,7 @@ export class AgentModalStepper {
     const skipBtn = document.getElementById('agent-modal-skip');
     const powerUserToggle = document.getElementById('agent-power-user-toggle');
     const agentTypeRadios = document.querySelectorAll('input[name="agent-type"]');
+    const draftInstructionsBtn = document.getElementById('agent-draft-instructions-btn');
     
     if (nextBtn) {
       nextBtn.addEventListener('click', () => this.nextStep());
@@ -231,6 +237,9 @@ export class AgentModalStepper {
     if (powerUserToggle) {
       powerUserToggle.addEventListener('change', (e) => this.togglePowerUserMode(e.target.checked));
     }
+    if (draftInstructionsBtn) {
+      draftInstructionsBtn.addEventListener('click', () => this.draftInstructions());
+    }
 
     if (agentTypeRadios && agentTypeRadios.length) {
       agentTypeRadios.forEach(r => {
@@ -242,6 +251,7 @@ export class AgentModalStepper {
     if (agentModal) {
       agentModal.addEventListener('shown.bs.modal', () => {
         this.initializeInstructionsEditor();
+        this.initializeVoiceControls();
         this.refreshInstructionsEditor(this.currentStep === 3 && !this.isAnyFoundryType());
       });
     }
@@ -1462,6 +1472,20 @@ export class AgentModalStepper {
     }
   }
 
+  initializeVoiceControls() {
+    if (!window.SimpleChatVoiceInput) {
+      return;
+    }
+
+    window.SimpleChatVoiceInput.initializeDefaultFields?.();
+    window.SimpleChatVoiceInput.enhanceFieldById('agent-instructions', {
+      label: 'Dictate instructions',
+      getValue: () => this.getInstructionsValue(),
+      setValue: value => this.setInstructionsValue(value),
+      onValueChanged: () => this.refreshInstructionsEditor(true)
+    });
+  }
+
   getInstructionsValue() {
     if (this.instructionsEditor) {
       return this.instructionsEditor.value();
@@ -1635,6 +1659,7 @@ export class AgentModalStepper {
     const actionsHeader = actionsSection?.querySelector('.card');
     const summaryActionsSection = document.getElementById('summary-actions-section');
     const instructionsContainer = document.getElementById('agent-instructions-container');
+    const instructionsDraftContainer = document.getElementById('agent-instructions-draft-container');
     const instructionsFoundryNote = document.getElementById('agent-instructions-foundry-note');
     const instructionsInput = document.getElementById('agent-instructions');
     const advancedFoundryNote = document.getElementById('agent-advanced-foundry-note');
@@ -1664,6 +1689,7 @@ export class AgentModalStepper {
     }
 
     if (instructionsContainer) instructionsContainer.classList.toggle('d-none', isFoundry);
+  if (instructionsDraftContainer) instructionsDraftContainer.classList.toggle('d-none', isFoundry);
     if (instructionsFoundryNote) instructionsFoundryNote.classList.toggle('d-none', !isFoundry);
     if (instructionsInput) {
       if (isFoundry) {
@@ -1855,6 +1881,11 @@ export class AgentModalStepper {
     if (errorDiv) {
       errorDiv.classList.add('d-none');
     }
+
+    const instructionBrief = document.getElementById('agent-instruction-brief');
+    const draftStatus = document.getElementById('agent-draft-instructions-status');
+    if (instructionBrief) instructionBrief.value = '';
+    if (draftStatus) draftStatus.textContent = '';
     
     // If editing an existing agent, populate fields and generate name if missing
     if (agent) {
@@ -1869,6 +1900,7 @@ export class AgentModalStepper {
     // Ensure generated name is populated for both new and existing agents
     this.updateGeneratedName();
     this.initializeInstructionsEditor();
+    this.initializeVoiceControls();
     this.syncAgentTypeSelector();
     this.applyAgentTypeVisibility();
     this.updateAgentTypeLock();
@@ -1958,6 +1990,8 @@ export class AgentModalStepper {
     const foundryNotesInput = document.getElementById('agent-foundry-notes');
     const foundryStatus = document.getElementById('agent-foundry-fetch-status');
     const additionalSettings = document.getElementById('agent-additional-settings');
+    const instructionBrief = document.getElementById('agent-instruction-brief');
+    const draftStatus = document.getElementById('agent-draft-instructions-status');
     
     if (displayName) displayName.value = '';
     if (generatedName) generatedName.value = '';
@@ -1986,6 +2020,8 @@ export class AgentModalStepper {
     if (foundryNotesInput) foundryNotesInput.value = '';
     if (foundryStatus) foundryStatus.textContent = '';
     if (additionalSettings) additionalSettings.value = '{}';
+    if (instructionBrief) instructionBrief.value = '';
+    if (draftStatus) draftStatus.textContent = '';
     this.resetAssignedKnowledgeControls();
     
     // Clear any selected actions
@@ -3966,6 +4002,74 @@ export class AgentModalStepper {
       this.showError(error.message || 'Failed to save agent.');
       if (window.showToast) {
         window.showToast('Agent could not be saved. Review the error shown in the modal.', 'danger');
+      }
+    }
+  }
+
+  async draftInstructions() {
+    if (this.isAnyFoundryType()) {
+      return;
+    }
+
+    const draftButton = document.getElementById('agent-draft-instructions-btn');
+    const draftStatus = document.getElementById('agent-draft-instructions-status');
+    const briefInput = document.getElementById('agent-instruction-brief');
+    const brief = briefInput?.value.trim() || '';
+    const displayName = document.getElementById('agent-display-name')?.value.trim() || '';
+    const description = document.getElementById('agent-description')?.value.trim() || '';
+    const existingInstructions = this.getInstructionsValue().trim();
+
+    if (!brief && !displayName && !description && !existingInstructions) {
+      this.showError('Add a brief, display name, description, or existing instructions before drafting.');
+      briefInput?.focus();
+      return;
+    }
+
+    const originalButtonHtml = draftButton?.innerHTML || '';
+    if (draftButton) {
+      draftButton.disabled = true;
+      draftButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Drafting';
+    }
+    if (draftStatus) {
+      draftStatus.textContent = 'Drafting...';
+    }
+
+    try {
+      const response = await fetch('/api/agents/draft-instructions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_scope: this.workspaceScope,
+          display_name: displayName,
+          description,
+          brief,
+          existing_instructions: existingInstructions
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Failed to draft instructions.');
+      }
+
+      this.setInstructionsValue(result.instructions || '');
+      this.refreshInstructionsEditor(true);
+      this.hideError();
+      if (draftStatus) {
+        draftStatus.textContent = 'Draft inserted.';
+      }
+      if (window.showToast) {
+        window.showToast('Draft instructions inserted.', 'success');
+      }
+    } catch (error) {
+      console.error('Error drafting instructions:', error);
+      this.showError(error.message || 'Failed to draft instructions.');
+      if (draftStatus) {
+        draftStatus.textContent = '';
+      }
+    } finally {
+      if (draftButton) {
+        draftButton.disabled = false;
+        draftButton.innerHTML = originalButtonHtml;
       }
     }
   }

@@ -1,13 +1,17 @@
 # test_document_intelligence_pdf_image_extraction_mode.py
 """
 Functional test for Document Intelligence PDF/image extraction mode.
-Version: 0.241.163
+Version: 0.241.167
 Implemented in: 0.241.158
 Enhanced in: 0.241.163
+Fixed in: 0.241.165
+UI terminology updated in: 0.241.166
+Extraction action terminology updated in: 0.241.167
 
-This test ensures admins can select Read, Layout, or Auto extraction for
-PDFs/images, the setting is saved and tested, and ingestion records the
-resolved mode as document metadata.
+This test ensures admins can select Standard, Enhanced, or Auto extraction for
+PDFs/images while internal values remain read/layout/auto, the setting is saved and tested, and ingestion records the
+resolved mode as document metadata. It also validates that the shared
+Document Intelligence extractor imports its mode normalizer directly.
 """
 
 import sys
@@ -54,12 +58,16 @@ def test_document_intelligence_pdf_image_extraction_mode_contract():
 
     assert_contains(admin_html, 'id="document_intelligence_pdf_image_extraction_mode"', "admin extraction mode selector")
     assert_contains(admin_html, 'name="document_intelligence_pdf_image_extraction_mode"', "admin extraction mode form field")
-    assert_contains(admin_html, '<option value="read"', "Read option")
-    assert_contains(admin_html, '<option value="layout"', "Layout option")
+    assert_contains(admin_html, '<option value="read"', "Standard option value")
+    assert_contains(admin_html, 'Standard - faster text extraction', "Standard option label")
+    assert_contains(admin_html, '<option value="layout"', "Enhanced option value")
+    assert_contains(admin_html, 'Enhanced - richer structure, tables, and checkbox states', "Enhanced option label")
     assert_contains(admin_html, '<option value="auto"', "Auto option")
+    assert_contains(admin_html, 'Auto - sample first pages, then choose Standard or Enhanced', "Auto option label")
     assert_contains(admin_html, 'id="document_intelligence_auto_sample_pages"', "Auto sample pages input")
-    assert_contains(admin_html, "6X increase for every 1000 pages", "Layout cost explanation")
+    assert_contains(admin_html, "6X increase for every 1000 pages", "Enhanced cost explanation")
     assert_contains(admin_html, "documentIntelligenceExtractionHelpModal", "extraction guidance modal")
+    assert_contains(admin_html, "Standard, Enhanced, and Auto", "extraction guidance modal title")
 
     assert_contains(admin_route, "document_intelligence_pdf_image_extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode", "admin save normalizer")
     assert_contains(admin_route, "document_intelligence_auto_sample_pages = normalize_document_intelligence_auto_sample_pages", "admin save Auto sample normalizer")
@@ -76,8 +84,10 @@ def test_document_intelligence_pdf_image_extraction_mode_contract():
     assert_contains(backend_route, 'test_extraction_mode = "layout" if extraction_mode in ("layout", "auto") else "read"', "backend Auto test mode selection")
     assert_contains(backend_route, 'model_id = "prebuilt-layout" if test_extraction_mode == "layout" else "prebuilt-read"', "backend test model selection")
     assert_contains(backend_route, 'analyze_options["output_content_format"] = "markdown"', "backend layout markdown option")
+    assert_contains(backend_route, 'extraction_mode_label = "Enhanced" if extraction_mode == "layout" else "Standard"', "backend test mode label")
 
     assert_contains(extractor, "def extract_content_with_azure_di(file_path, extraction_mode='read', pages=None)", "extractor mode and pages parameter")
+    assert_contains(extractor, "functions_settings.normalize_document_intelligence_pdf_image_extraction_mode(extraction_mode)", "extractor module-qualified mode normalizer call")
     assert_contains(extractor, 'model_id = "prebuilt-layout" if normalized_extraction_mode == "layout" else "prebuilt-read"', "extractor model selection")
     assert_contains(extractor, 'analyze_options["output_content_format"] = "markdown"', "extractor layout markdown option")
     assert_contains(extractor, 'analyze_options["pages"] = str(pages)', "extractor page sampling option")

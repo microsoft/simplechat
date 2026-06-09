@@ -27,12 +27,14 @@ const timelineEl = document.getElementById("workflow-activity-timeline");
 const detailTitleEl = document.getElementById("workflow-activity-detail-title");
 const detailMetaEl = document.getElementById("workflow-activity-detail-meta");
 const detailSummaryEl = document.getElementById("workflow-activity-detail-summary");
+const pendingActionControlsEl = document.getElementById("workflow-activity-pending-action-controls");
 const detailTextEl = document.getElementById("workflow-activity-detail-text");
 const eventHistoryEl = document.getElementById("workflow-activity-event-history");
 const statRunEl = document.getElementById("workflow-activity-stat-run");
 const statTotalEl = document.getElementById("workflow-activity-stat-total");
 const statToolsEl = document.getElementById("workflow-activity-stat-tools");
 const statStartedEl = document.getElementById("workflow-activity-stat-started");
+const workflowPendingActionTimers = new Map();
 
 function normalizeText(value) {
     return String(value || "").trim();
@@ -43,7 +45,7 @@ function escapeHtml(value) {
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
+        .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 }
 
@@ -81,6 +83,286 @@ function formatDuration(value) {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.round(seconds % 60);
     return `${minutes}m ${remainingSeconds}s`;
+}
+
+function calculatePendingActionSeconds(action) {
+    const dueAt = normalizeText(action?.auto_send_at_utc);
+    if (!dueAt) {
+        return null;
+    }
+    const dueDate = new Date(dueAt);
+    if (Number.isNaN(dueDate.getTime())) {
+        return null;
+    }
+    return Math.max(0, Math.ceil((dueDate.getTime() - Date.now()) / 1000));
+}
+
+function formatPendingActionCountdown(seconds) {
+    if (seconds === null || seconds === undefined) {
+        return "";
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainderSeconds = seconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(remainderSeconds).padStart(2, "0")}`;
+}
+
+function clearWorkflowPendingActionTimers() {
+    workflowPendingActionTimers.forEach(timerId => window.clearInterval(timerId));
+    workflowPendingActionTimers.clear();
+}
+
+function createPendingActionButton(label, iconClass, buttonClass) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = buttonClass;
+
+    const icon = document.createElement("i");
+    icon.className = iconClass;
+    icon.setAttribute("aria-hidden", "true");
+    button.appendChild(icon);
+
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+    button.appendChild(labelEl);
+    return button;
+}
+
+function setPendingActionInlineMessage(container, message, tone = "muted") {
+    const messageEl = container.querySelector(".workflow-pending-action-message");
+    if (!messageEl) {
+        return;
+    }
+    messageEl.className = `workflow-pending-action-message small text-${tone}`;
+    messageEl.textContent = message || "";
+}
+
+function getWorkflowMsGraphConsentUrl(payload) {
+    const consentUrl = normalizeText(payload?.consent_url || payload?.auth_url);
+    if (!consentUrl) {
+        return "";
+    }
+    try {
+        const parsedUrl = new URL(consentUrl, window.location.origin);
+        return parsedUrl.protocol === "https:" ? parsedUrl.href : "";
+    } catch (error) {
+        return "";
+    }
+}
+
+function openWorkflowMsGraphConsentPopup(consentUrl) {
+    const normalizedUrl = getWorkflowMsGraphConsentUrl({ consent_url: consentUrl });
+    if (!normalizedUrl) {
+        return;
+    }
+    const popup = window.open(
+        normalizedUrl,
+        "simplechat-msgraph-consent",
+        "popup,width=720,height=780,resizable=yes,scrollbars=yes"
+    );
+    if (popup) {
+        popup.focus();
+        return;
+    }
+    window.location.assign(normalizedUrl);
+}
+
+async function testWorkflowMsGraphAccess(scopes = []) {
+    const response = await fetch("/api/msgraph/test-access", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scopes }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.access_granted !== true) {
+        const error = new Error(payload.message || payload.error || "Microsoft Graph access is not available yet.");
+        error.payload = payload;
+        throw error;
+    }
+    return payload;
+}
+
+async function testWorkflowMsGraphConsentAccess(container, prompt, scopes, messageEl) {
+    if (!container || !prompt) {
+        return;
+    }
+    const buttons = Array.from(prompt.querySelectorAll("button"));
+    buttons.forEach(button => {
+        button.disabled = true;
+    });
+    if (messageEl) {
+        messageEl.textContent = "Checking Microsoft Graph access...";
+    }
+
+    try {
+        await testWorkflowMsGraphAccess(scopes);
+        prompt.remove();
+        setPendingActionInlineMessage(container, "Microsoft Graph access verified. You can send or cancel now.", "success");
+        container.querySelectorAll("button").forEach(button => {
+            button.disabled = false;
+        });
+    } catch (error) {
+        const payload = error.payload || {};
+        if (messageEl) {
+            messageEl.textContent = payload.message || error.message || "Microsoft Graph access is not available yet.";
+        }
+        buttons.forEach(button => {
+            button.disabled = false;
+        });
+    }
+}
+
+function renderWorkflowMsGraphConsentPrompt(container, payload) {
+    const consentUrl = getWorkflowMsGraphConsentUrl(payload);
+    if (!container || !consentUrl) {
+        return false;
+    }
+
+    const existingPrompt = container.querySelector(".workflow-pending-action-consent");
+    if (existingPrompt) {
+        existingPrompt.remove();
+    }
+
+    const prompt = document.createElement("div");
+    prompt.className = "workflow-pending-action-consent";
+
+    const message = document.createElement("div");
+    message.className = "small text-muted";
+    message.textContent = normalizeText(payload?.message) || "Microsoft Graph needs permission before this action can continue.";
+    prompt.appendChild(message);
+
+    const grantButton = createPendingActionButton("Grant access", "bi bi-shield-lock me-1", "btn btn-sm btn-outline-primary");
+    grantButton.addEventListener("click", () => {
+        openWorkflowMsGraphConsentPopup(consentUrl);
+    });
+    prompt.appendChild(grantButton);
+
+    const testAccessButton = createPendingActionButton("Test access", "bi bi-check-circle me-1", "btn btn-sm btn-outline-primary");
+    testAccessButton.addEventListener("click", () => {
+        const scopes = Array.isArray(payload?.scopes) ? payload.scopes : [];
+        void testWorkflowMsGraphConsentAccess(container, prompt, scopes, message);
+    });
+    prompt.appendChild(testAccessButton);
+
+    const hint = document.createElement("div");
+    hint.className = "small text-muted";
+    hint.textContent = "After access is granted in the popup, test access here.";
+    prompt.appendChild(hint);
+
+    container.appendChild(prompt);
+    return true;
+}
+
+async function submitWorkflowPendingAction(actionId, routeAction, container) {
+    const normalizedActionId = normalizeText(actionId);
+    if (!normalizedActionId) {
+        setPendingActionInlineMessage(container, "Missing Microsoft Graph action metadata.", "danger");
+        return;
+    }
+
+    container.querySelectorAll("button").forEach(button => {
+        button.disabled = true;
+    });
+    setPendingActionInlineMessage(container, "Updating Microsoft Graph action...", "muted");
+
+    try {
+        const response = await fetch(`/api/msgraph/pending-actions/${encodeURIComponent(normalizedActionId)}/${routeAction}`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({}),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            renderWorkflowMsGraphConsentPrompt(container, payload);
+            throw new Error(payload.message || payload.error || "Unable to update the Microsoft Graph action.");
+        }
+        await loadSnapshot();
+    } catch (error) {
+        setPendingActionInlineMessage(container, error.message || "Unable to update the Microsoft Graph action.", "danger");
+        container.querySelectorAll("button").forEach(button => {
+            button.disabled = false;
+        });
+    }
+}
+
+function renderPendingActionControls(activity) {
+    if (!pendingActionControlsEl) {
+        return;
+    }
+
+    clearWorkflowPendingActionTimers();
+    pendingActionControlsEl.replaceChildren();
+    const action = activity?.pending_action;
+    if (!action || action.type !== "msgraph_pending_action") {
+        pendingActionControlsEl.classList.add("d-none");
+        return;
+    }
+
+    pendingActionControlsEl.classList.remove("d-none");
+    const status = normalizeText(action.status).toLowerCase();
+    const terminal = ["sent", "cancelled", "canceled", "failed"].includes(status);
+    const isDelayed = normalizeText(action.action_mode).toLowerCase() === "delayed";
+
+    const heading = document.createElement("div");
+    heading.className = "workflow-pending-action-heading";
+    heading.textContent = isDelayed ? "Delayed Microsoft Graph action" : "Microsoft Graph action awaiting review";
+    pendingActionControlsEl.appendChild(heading);
+
+    const detail = document.createElement("div");
+    detail.className = "workflow-pending-action-detail text-muted";
+    if (terminal) {
+        detail.textContent = status === "sent" ? "This action has been sent." : `This action is ${status}.`;
+    } else if (isDelayed) {
+        detail.textContent = `This action will send at ${formatDateTime(action.auto_send_at_utc)} unless it is sent now or cancelled.`;
+    } else {
+        detail.textContent = "Workflow execution is waiting for this action to be sent or cancelled.";
+    }
+    pendingActionControlsEl.appendChild(detail);
+
+    const controls = document.createElement("div");
+    controls.className = "workflow-pending-action-buttons";
+    pendingActionControlsEl.appendChild(controls);
+
+    const countdownEl = document.createElement("span");
+    countdownEl.className = "workflow-pending-action-countdown d-none";
+    controls.appendChild(countdownEl);
+
+    if (!terminal) {
+        const sendButton = createPendingActionButton(isDelayed ? "Send now" : "Send", "bi bi-send me-1", "btn btn-sm btn-primary");
+        sendButton.addEventListener("click", () => {
+            void submitWorkflowPendingAction(action.id, "send-now", pendingActionControlsEl);
+        });
+        controls.appendChild(sendButton);
+
+        const cancelButton = createPendingActionButton("Cancel", "bi bi-x-circle me-1", "btn btn-sm btn-outline-secondary");
+        cancelButton.addEventListener("click", () => {
+            void submitWorkflowPendingAction(action.id, "cancel", pendingActionControlsEl);
+        });
+        controls.appendChild(cancelButton);
+    }
+
+    const messageEl = document.createElement("div");
+    messageEl.className = "workflow-pending-action-message small text-muted";
+    pendingActionControlsEl.appendChild(messageEl);
+
+    if (isDelayed && !terminal) {
+        const updateCountdown = () => {
+            const secondsRemaining = calculatePendingActionSeconds(action);
+            countdownEl.classList.remove("d-none");
+            countdownEl.textContent = formatPendingActionCountdown(secondsRemaining);
+            if (secondsRemaining !== null && secondsRemaining <= 0) {
+                clearWorkflowPendingActionTimers();
+                void submitWorkflowPendingAction(action.id, "send-now", pendingActionControlsEl);
+            }
+        };
+        updateCountdown();
+        workflowPendingActionTimers.set(action.id, window.setInterval(updateCountdown, 1000));
+    }
 }
 
 function getQueryParam(name) {
@@ -440,6 +722,7 @@ function renderSelectedActivity(activity) {
         if (eventHistoryEl) {
             eventHistoryEl.innerHTML = "Select an activity to inspect its event history.";
         }
+        renderPendingActionControls(null);
         return;
     }
 
@@ -452,6 +735,7 @@ function renderSelectedActivity(activity) {
     if (detailTextEl) {
         detailTextEl.textContent = normalizeText(activity.detail) || "No additional technical detail recorded.";
     }
+    renderPendingActionControls(activity);
     renderDetailMeta(activity);
     renderEventHistory(activity);
 }

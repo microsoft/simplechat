@@ -1,7 +1,7 @@
 # test_support_latest_features_image_modal.py
 """
 UI test for support latest-features image previews.
-Version: 0.241.002
+Version: 0.241.166
 Implemented in: 0.240.061; 0.241.002
 
 This test ensures the user-facing Latest Features page opens a full-size image
@@ -78,6 +78,12 @@ def test_support_latest_features_image_modal(playwright):
                 expect(page.locator("#latestFeatureImageModalImage")).to_be_visible()
                 page.locator("#latestFeatureImageModal .btn-close").click()
                 expect(modal).not_to_be_visible()
+
+        earlier_release_toggle = page.get_by_role("button", name="Show Earlier Release Features")
+        if earlier_release_toggle.count() > 0:
+            earlier_release_toggle.first.click()
+            expect(page.locator("#supportLatestFeaturesEarlierRelease")).to_be_visible()
+            expect(page.get_by_role("heading", name="Earlier Release Features")).to_be_visible()
 
         thumbnail_trigger = page.locator(".support-feature-thumbnail-trigger").first
         if thumbnail_trigger.count() == 0:

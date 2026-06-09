@@ -4241,7 +4241,7 @@ function openFileSyncAdminManager(scope, targetId, targetLabel) {
 function getSelectedFileSyncVisibleSourceTypes() {
     const checkboxes = Array.from(document.querySelectorAll('input[name="file_sync_visible_source_types"]'));
     if (checkboxes.length === 0) {
-        return ['smb', 'azure_files', 'onedrive'];
+        return ['smb', 'azure_files'];
     }
     return checkboxes
         .filter((checkbox) => checkbox.checked)

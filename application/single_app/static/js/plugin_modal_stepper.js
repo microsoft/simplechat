@@ -19,6 +19,15 @@ const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
 const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
+const MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL = 'draft_manual';
+const MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED = 'draft_delayed';
+const MSGRAPH_MAIL_SEND_MODE_AUTO_SEND = 'auto_send';
+const MSGRAPH_DEFAULT_MAIL_DELAY_SECONDS = 60;
+const MSGRAPH_MIN_MAIL_DELAY_SECONDS = 5;
+const MSGRAPH_MAX_MAIL_DELAY_SECONDS = 600;
+const MSGRAPH_DEFAULT_CALENDAR_DELAY_SECONDS = 60;
+const MSGRAPH_MIN_CALENDAR_DELAY_SECONDS = 5;
+const MSGRAPH_MAX_CALENDAR_DELAY_SECONDS = 600;
 const MCP_STDIO_ENDPOINT = 'stdio://local';
 const BLOB_STORAGE_CAPABILITY_DEFINITIONS = [
   {
@@ -126,6 +135,11 @@ const MSGRAPH_CAPABILITY_DEFINITIONS = [
     key: 'mark_message_as_read',
     label: 'Update message read state',
     description: 'Allow this action to mark mail messages as read or unread.'
+  },
+  {
+    key: 'send_mail',
+    label: 'Send mail',
+    description: 'Allow this action to create manual drafts, delayed-delivery drafts, or send mail.'
   },
   {
     key: 'search_users',
@@ -544,6 +558,14 @@ export class PluginModalStepper {
     document.getElementById('databricks-auth-method').addEventListener('change', () => this.toggleDatabricksAuthFields());
     document.getElementById('databricks-identity-select').addEventListener('change', () => this.handleActionIdentityChange('databricks'));
     document.getElementById('plugin-auth-identity-select-generic').addEventListener('change', () => this.handleActionIdentityChange('generic'));
+    const msGraphMailSendMode = document.getElementById('msgraph-mail-send-mode');
+    if (msGraphMailSendMode) {
+      msGraphMailSendMode.addEventListener('change', () => this.updateMsGraphMailDelayVisibility());
+    }
+    const msGraphCalendarSendMode = document.getElementById('msgraph-calendar-send-mode');
+    if (msGraphCalendarSendMode) {
+      msGraphCalendarSendMode.addEventListener('change', () => this.updateMsGraphCalendarDelayVisibility());
+    }
     
     // File upload handler
     document.getElementById('plugin-openapi-file').addEventListener('change', (e) => this.handleFileUpload(e));
@@ -1110,6 +1132,140 @@ export class PluginModalStepper {
 
   getSelectedMsGraphCapabilities() {
     return this.normalizeMsGraphCapabilities(this.msGraphCapabilityState);
+  }
+
+  normalizeMsGraphMailSendMode(rawMode = '') {
+    const normalizedMode = String(rawMode || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const aliases = {
+      draft: MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+      manual: MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+      draft_manual: MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+      manual_draft: MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+      delayed: MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+      delay: MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+      draft_delayed: MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+      delayed_delivery: MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+      auto: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+      autosend: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+      auto_send: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+      send: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+      send_now: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND
+    };
+    return aliases[normalizedMode] || MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL;
+  }
+
+  normalizeMsGraphCalendarSendMode(rawMode = '') {
+    const normalizedMode = String(rawMode || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const aliases = {
+      draft: MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+      manual: MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+      draft_manual: MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+      manual_review: MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL,
+      delayed: MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+      delay: MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+      draft_delayed: MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+      delayed_delivery: MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED,
+      auto: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+      autosend: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+      auto_send: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+      send: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND,
+      send_now: MSGRAPH_MAIL_SEND_MODE_AUTO_SEND
+    };
+    return aliases[normalizedMode] || MSGRAPH_MAIL_SEND_MODE_AUTO_SEND;
+  }
+
+  normalizeMsGraphMailDelaySeconds(rawDelay = null) {
+    const parsedDelay = parseInt(rawDelay, 10);
+    if (Number.isNaN(parsedDelay)) {
+      return MSGRAPH_DEFAULT_MAIL_DELAY_SECONDS;
+    }
+    return Math.max(MSGRAPH_MIN_MAIL_DELAY_SECONDS, Math.min(parsedDelay, MSGRAPH_MAX_MAIL_DELAY_SECONDS));
+  }
+
+  normalizeMsGraphCalendarDelaySeconds(rawDelay = null) {
+    const parsedDelay = parseInt(rawDelay, 10);
+    if (Number.isNaN(parsedDelay)) {
+      return MSGRAPH_DEFAULT_CALENDAR_DELAY_SECONDS;
+    }
+    return Math.max(MSGRAPH_MIN_CALENDAR_DELAY_SECONDS, Math.min(parsedDelay, MSGRAPH_MAX_CALENDAR_DELAY_SECONDS));
+  }
+
+  getMsGraphMailSendConfiguration() {
+    const mode = this.normalizeMsGraphMailSendMode(document.getElementById('msgraph-mail-send-mode')?.value);
+    const delaySeconds = this.normalizeMsGraphMailDelaySeconds(document.getElementById('msgraph-mail-delay-seconds')?.value);
+    return {
+      msgraph_mail_send_mode: mode,
+      msgraph_mail_delay_seconds: delaySeconds
+    };
+  }
+
+  getMsGraphCalendarSendConfiguration() {
+    const mode = this.normalizeMsGraphCalendarSendMode(document.getElementById('msgraph-calendar-send-mode')?.value);
+    const delaySeconds = this.normalizeMsGraphCalendarDelaySeconds(document.getElementById('msgraph-calendar-delay-seconds')?.value);
+    return {
+      msgraph_calendar_send_mode: mode,
+      msgraph_calendar_delay_seconds: delaySeconds
+    };
+  }
+
+  setMsGraphMailSendConfiguration(additionalFields = {}) {
+    const modeSelect = document.getElementById('msgraph-mail-send-mode');
+    const delayInput = document.getElementById('msgraph-mail-delay-seconds');
+    if (modeSelect) {
+      modeSelect.value = this.normalizeMsGraphMailSendMode(additionalFields.msgraph_mail_send_mode || additionalFields.mail_send_mode);
+    }
+    if (delayInput) {
+      delayInput.value = String(this.normalizeMsGraphMailDelaySeconds(additionalFields.msgraph_mail_delay_seconds || additionalFields.mail_delay_seconds));
+    }
+    this.updateMsGraphMailDelayVisibility();
+  }
+
+  setMsGraphCalendarSendConfiguration(additionalFields = {}) {
+    const modeSelect = document.getElementById('msgraph-calendar-send-mode');
+    const delayInput = document.getElementById('msgraph-calendar-delay-seconds');
+    if (modeSelect) {
+      modeSelect.value = this.normalizeMsGraphCalendarSendMode(additionalFields.msgraph_calendar_send_mode || additionalFields.calendar_send_mode);
+    }
+    if (delayInput) {
+      delayInput.value = String(this.normalizeMsGraphCalendarDelaySeconds(additionalFields.msgraph_calendar_delay_seconds || additionalFields.calendar_delay_seconds));
+    }
+    this.updateMsGraphCalendarDelayVisibility();
+  }
+
+  updateMsGraphMailDelayVisibility() {
+    const delayGroup = document.getElementById('msgraph-mail-delay-group');
+    if (!delayGroup) {
+      return;
+    }
+    const mode = this.normalizeMsGraphMailSendMode(document.getElementById('msgraph-mail-send-mode')?.value);
+    delayGroup.classList.toggle('d-none', mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+  }
+
+  updateMsGraphCalendarDelayVisibility() {
+    const delayGroup = document.getElementById('msgraph-calendar-delay-group');
+    if (!delayGroup) {
+      return;
+    }
+    const mode = this.normalizeMsGraphCalendarSendMode(document.getElementById('msgraph-calendar-send-mode')?.value);
+    delayGroup.classList.toggle('d-none', mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+  }
+
+  formatMsGraphMailSendMode(mode) {
+    const labels = {
+      [MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL]: 'Draft with manual send',
+      [MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED]: 'Draft with delayed delivery',
+      [MSGRAPH_MAIL_SEND_MODE_AUTO_SEND]: 'Auto send'
+    };
+    return labels[this.normalizeMsGraphMailSendMode(mode)] || labels[MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL];
+  }
+
+  formatMsGraphCalendarSendMode(mode) {
+    const labels = {
+      [MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL]: 'Draft with manual send',
+      [MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED]: 'Draft with delayed delivery',
+      [MSGRAPH_MAIL_SEND_MODE_AUTO_SEND]: 'Auto send'
+    };
+    return labels[this.normalizeMsGraphCalendarSendMode(mode)] || labels[MSGRAPH_MAIL_SEND_MODE_AUTO_SEND];
   }
 
   getDefaultChartCapabilities() {
@@ -1996,6 +2152,8 @@ export class PluginModalStepper {
     } else if (this.isMsGraphType()) {
       showOnly('msGraph');
       this.renderMsGraphConfiguration();
+      this.updateMsGraphMailDelayVisibility();
+      this.updateMsGraphCalendarDelayVisibility();
     } else if (this.isAzureMapsType()) {
       showOnly('azureMaps');
     } else if (this.isChartType()) {
@@ -2543,6 +2701,22 @@ export class PluginModalStepper {
           if (!capabilityValues.some(Boolean)) {
             this.showError('Enable at least one Microsoft Graph capability before continuing.');
             return false;
+          }
+          const mailConfig = this.getMsGraphMailSendConfiguration();
+          const rawDelaySeconds = parseInt(document.getElementById('msgraph-mail-delay-seconds')?.value, 10);
+          if (mailConfig.msgraph_mail_send_mode === MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED) {
+            if (Number.isNaN(rawDelaySeconds) || rawDelaySeconds < MSGRAPH_MIN_MAIL_DELAY_SECONDS || rawDelaySeconds > MSGRAPH_MAX_MAIL_DELAY_SECONDS) {
+              this.showError('Microsoft Graph delayed mail delivery must be between 5 and 600 seconds.');
+              return false;
+            }
+          }
+          const calendarConfig = this.getMsGraphCalendarSendConfiguration();
+          const rawCalendarDelaySeconds = parseInt(document.getElementById('msgraph-calendar-delay-seconds')?.value, 10);
+          if (calendarConfig.msgraph_calendar_send_mode === MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED) {
+            if (Number.isNaN(rawCalendarDelaySeconds) || rawCalendarDelaySeconds < MSGRAPH_MIN_CALENDAR_DELAY_SECONDS || rawCalendarDelaySeconds > MSGRAPH_MAX_CALENDAR_DELAY_SECONDS) {
+              this.showError('Microsoft Graph delayed calendar invite delivery must be between 5 and 600 seconds.');
+              return false;
+            }
           }
         } else if (isAzureMapsVisible) {
           const azureMapsKey = document.getElementById('azure-maps-key').value.trim();
@@ -3573,6 +3747,8 @@ export class PluginModalStepper {
     } else if (this.isMsGraphType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setMsGraphCapabilities(additionalFields.msgraph_capabilities || plugin.msgraph_capabilities || null);
+      this.setMsGraphMailSendConfiguration(additionalFields);
+      this.setMsGraphCalendarSendConfiguration(additionalFields);
     } else if (this.isAzureMapsType(plugin.type)) {
       const auth = plugin.auth || {};
       document.getElementById('azure-maps-key').value = auth.key || '';
@@ -3889,6 +4065,8 @@ export class PluginModalStepper {
       endpoint = MSGRAPH_DEFAULT_ENDPOINT;
       auth.type = 'user';
       additionalFields.msgraph_capabilities = this.getSelectedMsGraphCapabilities();
+      Object.assign(additionalFields, this.getMsGraphMailSendConfiguration());
+      Object.assign(additionalFields, this.getMsGraphCalendarSendConfiguration());
     } else if (isAzureMapsVisible) {
       endpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
       auth.type = 'key';
@@ -4495,6 +4673,34 @@ export class PluginModalStepper {
 
     enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
     disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+
+    const mailConfig = this.getMsGraphMailSendConfiguration();
+    const modeElement = document.getElementById('summary-msgraph-mail-send-mode');
+    const delayElement = document.getElementById('summary-msgraph-mail-delay-seconds');
+    const delayRow = document.getElementById('summary-msgraph-mail-delay-row');
+    if (modeElement) {
+      modeElement.textContent = this.formatMsGraphMailSendMode(mailConfig.msgraph_mail_send_mode);
+    }
+    if (delayElement) {
+      delayElement.textContent = `${mailConfig.msgraph_mail_delay_seconds} seconds`;
+    }
+    if (delayRow) {
+      delayRow.classList.toggle('d-none', mailConfig.msgraph_mail_send_mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+    }
+
+    const calendarConfig = this.getMsGraphCalendarSendConfiguration();
+    const calendarModeElement = document.getElementById('summary-msgraph-calendar-send-mode');
+    const calendarDelayElement = document.getElementById('summary-msgraph-calendar-delay-seconds');
+    const calendarDelayRow = document.getElementById('summary-msgraph-calendar-delay-row');
+    if (calendarModeElement) {
+      calendarModeElement.textContent = this.formatMsGraphCalendarSendMode(calendarConfig.msgraph_calendar_send_mode);
+    }
+    if (calendarDelayElement) {
+      calendarDelayElement.textContent = `${calendarConfig.msgraph_calendar_delay_seconds} seconds`;
+    }
+    if (calendarDelayRow) {
+      calendarDelayRow.classList.toggle('d-none', calendarConfig.msgraph_calendar_send_mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+    }
     msGraphSection.style.display = '';
   }
 
@@ -4677,7 +4883,9 @@ export class PluginModalStepper {
         }, null, 2);
       } else if (isMsGraphType) {
         currentAdditionalFields = JSON.stringify({
-          msgraph_capabilities: this.getSelectedMsGraphCapabilities()
+          msgraph_capabilities: this.getSelectedMsGraphCapabilities(),
+          ...this.getMsGraphMailSendConfiguration(),
+          ...this.getMsGraphCalendarSendConfiguration()
         }, null, 2);
       } else if (isAzureMapsType) {
         currentAdditionalFields = '{}';
@@ -5054,6 +5262,8 @@ export class PluginModalStepper {
     this.renderSimpleChatConfiguration();
     this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
     this.renderMsGraphConfiguration();
+    this.setMsGraphMailSendConfiguration({});
+    this.setMsGraphCalendarSendConfiguration({});
     this.chartCapabilityState = this.getDefaultChartCapabilities();
     this.renderChartConfiguration();
     this.blobStorageCapabilityState = this.getDefaultBlobStorageCapabilities();

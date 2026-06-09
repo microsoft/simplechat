@@ -2,13 +2,14 @@
 """
 UI test for Admin Settings File Sync management.
 
-Version: 0.241.129
+Version: 0.241.177
 Implemented in: 0.241.073
-Updated in: 0.241.129
+Updated in: 0.241.176
 
 This test ensures the Admin Settings File Sync tab renders as its own section,
-uses app-role gate controls, stacks scope cards as separate rows, and opens the
-admin-managed source workflow modal for a target user.
+uses app-role gate controls, stacks scope cards as separate rows, shows delayed
+cloud connectors as coming soon, and opens the admin-managed source workflow
+modal for a target user.
 """
 
 import json
@@ -124,6 +125,10 @@ def test_admin_file_sync_tab_and_target_manager():
         expect(page.get_by_label("OneDrive")).to_be_visible()
         expect(page.get_by_label("On-prem SharePoint")).to_be_visible()
         expect(page.get_by_label("Google Workspace")).to_be_visible()
+        expect(page.get_by_label("OneDrive")).to_be_disabled()
+        expect(page.get_by_label("On-prem SharePoint")).to_be_disabled()
+        expect(page.get_by_label("Google Workspace")).to_be_disabled()
+        expect(file_sync_section.get_by_text("Coming soon.")).to_have_count(3)
         expect(file_sync_section.get_by_text("Cloud drive connector identities")).to_be_visible()
         expect(file_sync_section.get_by_text("Blocked Users")).to_have_count(0)
         expect(file_sync_section.get_by_text("Allowed Users")).to_have_count(0)
@@ -155,7 +160,7 @@ def test_admin_file_sync_tab_and_target_manager():
         expect(source_modal.get_by_role("heading", name="Add Sync Source")).to_be_visible()
         expect(source_modal.get_by_text("SMB Share")).to_be_visible()
         expect(source_modal.get_by_text("Azure Files")).to_be_visible()
-        expect(source_modal.get_by_text("OneDrive")).to_be_visible()
+        expect(source_modal.get_by_text("OneDrive")).to_have_count(0)
         source_modal.get_by_role("button", name="Configure Source").click()
         expect(source_modal.get_by_label("UNC path")).to_be_visible()
         source_modal.get_by_label("Close").click()

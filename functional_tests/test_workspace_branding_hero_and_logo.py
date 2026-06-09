@@ -1,7 +1,7 @@
 # test_workspace_branding_hero_and_logo.py
 """
 Functional test for workspace branding hero and logo support.
-Version: 0.241.152
+Version: 0.241.177
 Implemented in: 0.241.125
 
 This test ensures that group and public workspace branding metadata, logo
@@ -11,6 +11,8 @@ workspace hero cards render before page selectors without redundant headings.
 Updated in 0.241.150 to validate compact public workspace selector controls.
 Updated in 0.241.151 to validate public workspace dropdown search wiring.
 Updated in 0.241.152 to keep public workspace search visible for any list size.
+Updated in 0.241.176 to validate custom hero color swatches for group and
+public workspace manage pages.
 """
 
 import os
@@ -188,6 +190,8 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
             'id="groupLogoImage"',
             'id="groupLogoFile"',
             'id="selectedColor"',
+            'id="customHeroColor"',
+            'aria-label="Custom hero color"',
         ],
         "manage group template",
     )
@@ -198,6 +202,8 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
             'id="workspaceLogoImage"',
             'id="workspaceLogoFile"',
             'id="selectedColor"',
+            'id="customHeroColor"',
+            'aria-label="Custom hero color"',
         ],
         "manage public template",
     )
@@ -209,6 +215,9 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
             'const response = await fetch(`/api/groups/${groupId}/logo`',
             "const logoInput = document.getElementById('groupLogoFile');",
             'await uploadGroupLogo(logoFile);',
+            "$('#customHeroColor').on('input change'",
+            "customColorInput.addClass('selected');",
+            'function normalizeWorkspaceHeroColor(color)',
         ],
         "manage group script",
     )
@@ -220,6 +229,9 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
             "const logoInput = document.getElementById('workspaceLogoFile');",
             'await uploadWorkspaceLogo(logoFile);',
             'updateProfileHero(ws, owner);',
+            "$('#customHeroColor').on('input change'",
+            "customColorInput.addClass('selected');",
+            'function normalizeWorkspaceHeroColor(color)',
         ],
         "manage public script",
     )
@@ -237,7 +249,8 @@ def test_workspace_manage_and_active_pages_include_branding_hooks():
     assert_ordered_snippets(
         group_workspaces_template,
         [
-            '<div class="container">',
+            '<div class="container workspace-page">',
+            '<div class="workspace-page-header">',
             '<div class="workspace-hero-card d-none" id="active-group-hero">',
             '<!-- Group Selector and Role Display -->',
         ],
@@ -304,7 +317,7 @@ def test_config_version_is_bumped_for_workspace_hero_layout_changes():
     print("[check] Testing config version bump...")
 
     config_content = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.241.152"' in config_content, "Expected config.py version 0.241.152"
+    assert 'VERSION = "0.241.177"' in config_content, "Expected config.py version 0.241.177"
 
     print("[pass] Config version bump passed")
 

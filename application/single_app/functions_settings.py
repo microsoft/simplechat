@@ -65,7 +65,7 @@ def get_document_intelligence_auto_sample_pages(settings):
 
 
 def normalize_document_intelligence_manual_extraction_mode(value):
-    """Normalize an explicit reprocess target mode, limited to Read or Layout."""
+    """Normalize an explicit reprocess target mode, limited to Standard/Read or Enhanced/Layout."""
     normalized_value = str(value or "read").strip().lower()
     if normalized_value not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
         return "read"
