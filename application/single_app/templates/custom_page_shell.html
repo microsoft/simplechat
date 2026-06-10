@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block head %}
+    {% for stylesheet in custom_page.css_files %}
+        <link rel="stylesheet" href="{{ url_for('custom_page_asset', slug=custom_page.slug, folder='css', filename=stylesheet) }}" />
+    {% endfor %}
+{% endblock %}
+
+{% block content %}
+<section class="custom-page" data-custom-page-slug="{{ custom_page.slug }}">
+    <header class="mb-4">
+        <h1>{{ custom_page.title }}</h1>
+        {% if custom_page.description %}
+            <p class="text-muted">{{ custom_page.description }}</p>
+        {% endif %}
+    </header>
+    <div class="custom-page-content">
+        {# xss-check: ignore - Custom page HTML files are deployment-time trusted app-team content loaded from the deployed artifact, not end-user input. #}
+        {{ custom_page_html | safe }}
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+    {% for script in custom_page.js_files %}
+        <script type="module" src="{{ url_for('custom_page_asset', slug=custom_page.slug, folder='js', filename=script) }}"></script>
+    {% endfor %}
+{% endblock %}

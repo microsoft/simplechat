@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.242.022"
+VERSION = "0.242.037"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -355,6 +355,12 @@ cosmos_collaboration_user_state_container = cosmos_database.create_container_if_
 cosmos_settings_container_name = "settings"
 cosmos_settings_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_settings_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_custom_pages_container_name = "custom_pages"
+cosmos_custom_pages_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_custom_pages_container_name,
     partition_key=PartitionKey(path="/id")
 )
 

@@ -135,6 +135,40 @@ body {
   background: rgba(13, 110, 253, 0.08);
 }
 
+.custom-pages-dropdown-menu {
+  max-height: min(24rem, 70vh);
+  overflow-y: auto;
+}
+
+.custom-pages-mobile-list {
+  max-height: min(24rem, 55vh);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.custom-pages-top-drawer-trigger {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 0.25rem;
+  text-decoration: none;
+}
+
+.custom-pages-drawer {
+  max-width: min(92vw, 26rem);
+}
+
+.custom-pages-drawer-list {
+  max-height: calc(100vh - 9rem);
+  overflow-y: auto;
+}
+
+.custom-pages-drawer-item {
+  align-items: center;
+  display: flex;
+  gap: 0.25rem;
+}
+
 .top-nav-user-nav {
   align-items: center;
   flex-direction: row;

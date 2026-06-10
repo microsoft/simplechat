@@ -52,6 +52,7 @@ from route_frontend_safety import *
 from route_frontend_feedback import *
 from route_frontend_support import *
 from route_frontend_notifications import *
+from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
 from route_backend_conversations import *
@@ -85,6 +86,7 @@ from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
+from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
 
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
@@ -545,6 +547,11 @@ def inject_settings():
     public_settings = sanitize_settings_for_user(settings)
     idle_timeout_enabled = is_idle_timeout_enabled(settings)
     idle_timeout_minutes, idle_warning_minutes = get_idle_timeout_settings(settings)
+    custom_pages_nav = []
+    try:
+        custom_pages_nav = get_custom_pages_nav(settings)
+    except Exception as e:
+        log_event(f"[CustomPages] Error injecting custom page navigation: {e}", level=logging.ERROR, exceptionTraceback=True)
     # Inject per-user settings if logged in
     user_settings = {}
     try:
@@ -559,6 +566,7 @@ def inject_settings():
     return dict(
         app_settings=public_settings,
         user_settings=user_settings,
+        custom_pages_nav=custom_pages_nav,
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes
@@ -889,6 +897,9 @@ register_route_frontend_support(app)
 
 # ------------------- Notifications Routes --------------
 register_route_frontend_notifications(app)
+
+# ------------------- Custom Pages Routes ---------------
+register_route_custom_pages(app)
 
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)

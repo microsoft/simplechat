@@ -4,6 +4,15 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.242.033)**
+
+#### New Features
+
+*   **Custom Pages**
+    *   Added administrator-managed custom pages with static HTML/CSS/JS assets, optional Python-backed page extensions, and authenticated host routes for publishing internal experiences inside SimpleChat.
+    *   Added Admin Settings controls, navigation wiring, example page templates, documentation, and functional coverage for disabled-by-default fail-closed behavior.
+    *   (Ref: custom pages, Admin Settings Custom Pages tab, `route_custom_pages.py`, `functions_custom_pages.py`)
+
 ### **(v0.242.022)**
 
 #### New Features

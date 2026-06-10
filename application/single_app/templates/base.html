@@ -285,6 +285,7 @@
       {% set left_sidebar_enabled = true %}
     {% endif %}
   {% endif %}
+  {% include "_custom_pages_drawer.html" %}
 
   <!-- Main Content Area -->
   <div class="container main-content{% if left_sidebar_enabled %} sidebar-padding{% endif %}" id="main-content">

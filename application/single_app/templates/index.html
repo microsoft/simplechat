@@ -64,6 +64,11 @@
             <p class="lead">
                 {{ app_settings.access_denied_message | nl2br }}
             </p>
+            {% if app_settings.access_request_button_enabled and app_settings.access_request_page_url %}
+                <a href="{{ app_settings.access_request_page_url }}" class="btn btn-primary btn-lg">
+                    {{ app_settings.access_request_button_text or 'Request Access' }}
+                </a>
+            {% endif %}
         {% else %}
             <div>
                 {{ landing_html | safe }}

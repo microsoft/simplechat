@@ -183,6 +183,7 @@ function scrollToSection(sectionId) {
         'home-page-text-section': 'home-page-text-section',
         'appearance-section': 'appearance-section',
         'classification-banner-section': 'classification-banner-section',
+        'custom-pages-section': 'custom-pages-section',
         'external-links-section': 'external-links-section',
         'health-check-section': 'health-check-section',
         'system-settings-section': 'system-settings-section',

@@ -9,6 +9,7 @@ from functions_search import *
 from functions_logging import *
 from functions_authentication import *
 from functions_debug import *
+from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 import azure.cognitiveservices.speech as speechsdk
 
 def allowed_file(filename, allowed_extensions=None):
@@ -16,6 +17,161 @@ def allowed_file(filename, allowed_extensions=None):
         allowed_extensions = ALLOWED_EXTENSIONS
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
+
+def _normalize_model_endpoint_selection(selection):
+    if not isinstance(selection, dict):
+        selection = {}
+
+    return {
+        "endpoint_id": str(selection.get("endpoint_id") or "").strip(),
+        "model_id": str(selection.get("model_id") or "").strip(),
+        "provider": str(selection.get("provider") or "").strip().lower(),
+    }
+
+
+def _resolve_model_endpoint_authority(auth_settings):
+    management_cloud = str(auth_settings.get("management_cloud") or "public").lower()
+    if management_cloud == "government":
+        return "https://login.microsoftonline.us"
+    if management_cloud == "custom":
+        custom_authority = auth_settings.get("custom_authority") or ""
+        return custom_authority.strip() or None
+    return None
+
+
+def _resolve_model_endpoint_scope(provider, auth_settings, endpoint=None):
+    custom_scope = str(auth_settings.get("foundry_scope") or "").strip()
+    if custom_scope:
+        return custom_scope
+
+    normalized_provider = str(provider or "aoai").lower()
+    if normalized_provider not in ("aifoundry", "new_foundry"):
+        return cognitive_services_scope
+
+    management_cloud = str(auth_settings.get("management_cloud") or "public").lower()
+    if management_cloud in ("government", "usgovernment", "usgov"):
+        return "https://ai.azure.us/.default"
+    if management_cloud == "china":
+        return "https://ai.azure.cn/.default"
+    if management_cloud == "germany":
+        return "https://ai.azure.de/.default"
+
+    endpoint_value = str(endpoint or "").lower()
+    if "azure.us" in endpoint_value:
+        return "https://ai.azure.us/.default"
+    if "azure.cn" in endpoint_value:
+        return "https://ai.azure.cn/.default"
+    if "azure.de" in endpoint_value:
+        return "https://ai.azure.de/.default"
+
+    return "https://ai.azure.com/.default"
+
+
+def _build_model_endpoint_client(auth_settings, provider, endpoint, api_version):
+    auth_settings = auth_settings or {}
+    auth_type = str(auth_settings.get("type") or "managed_identity").lower()
+
+    if auth_type in ("api_key", "key"):
+        api_key = auth_settings.get("api_key")
+        if not api_key:
+            raise ValueError("Selected metadata extraction endpoint is missing an API key.")
+        return AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            api_key=api_key,
+        )
+
+    if auth_type == "service_principal":
+        credential = ClientSecretCredential(
+            tenant_id=auth_settings.get("tenant_id"),
+            client_id=auth_settings.get("client_id"),
+            client_secret=auth_settings.get("client_secret"),
+            authority=_resolve_model_endpoint_authority(auth_settings),
+        )
+    else:
+        managed_identity_client_id = auth_settings.get("managed_identity_client_id") or None
+        credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
+
+    scope = _resolve_model_endpoint_scope(provider, auth_settings, endpoint=endpoint)
+    token_provider = get_bearer_token_provider(credential, scope)
+    return AzureOpenAI(
+        api_version=api_version,
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+    )
+
+
+def _resolve_metadata_extraction_client(settings):
+    selection = _normalize_model_endpoint_selection(settings.get("metadata_extraction_model_selection"))
+
+    if (
+        settings.get("enable_multi_model_endpoints", False)
+        and selection["endpoint_id"]
+        and selection["model_id"]
+    ):
+        endpoints, _ = normalize_model_endpoints(settings.get("model_endpoints", []) or [])
+        endpoint_cfg = next((e for e in endpoints if e.get("id") == selection["endpoint_id"]), None)
+        if not endpoint_cfg:
+            raise LookupError("Selected metadata extraction endpoint could not be found.")
+        if not endpoint_cfg.get("enabled", True):
+            raise ValueError("Selected metadata extraction endpoint is disabled.")
+
+        endpoint_cfg = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            endpoint_cfg.get("id") or selection["endpoint_id"],
+            scope="global",
+            return_type=SecretReturnType.VALUE,
+        )
+
+        models = endpoint_cfg.get("models", []) or []
+        model_cfg = next((m for m in models if m.get("id") == selection["model_id"]), None)
+        if not model_cfg:
+            raise LookupError("Selected metadata extraction model could not be found on the endpoint.")
+        if not model_cfg.get("enabled", True):
+            raise ValueError("Selected metadata extraction model is disabled.")
+
+        provider = str(endpoint_cfg.get("provider") or selection["provider"] or "aoai").lower()
+        connection = endpoint_cfg.get("connection", {}) or {}
+        auth_settings = endpoint_cfg.get("auth", {}) or {}
+        deployment = str(model_cfg.get("deploymentName") or model_cfg.get("deployment") or "").strip()
+        endpoint = str(connection.get("endpoint") or "").strip()
+        api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
+
+        if provider not in ("aoai", "aifoundry", "new_foundry"):
+            raise ValueError(f"Selected metadata extraction provider '{provider}' is not supported.")
+        if not endpoint or not api_version or not deployment:
+            raise ValueError("Selected metadata extraction endpoint is missing endpoint, API version, or deployment configuration.")
+
+        return _build_model_endpoint_client(auth_settings, provider, endpoint, api_version), deployment
+
+    gpt_model = settings.get('metadata_extraction_model')
+    if not gpt_model:
+        raise ValueError("No metadata extraction model is selected.")
+
+    if settings.get('enable_gpt_apim', False):
+        return AzureOpenAI(
+            api_version=settings.get('azure_apim_gpt_api_version'),
+            azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+            api_key=settings.get('azure_apim_gpt_subscription_key')
+        ), gpt_model
+
+    if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
+        token_provider = get_bearer_token_provider(
+            DefaultAzureCredential(),
+            cognitive_services_scope
+        )
+        return AzureOpenAI(
+            api_version=settings.get('azure_openai_gpt_api_version'),
+            azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+            azure_ad_token_provider=token_provider
+        ), gpt_model
+
+    return AzureOpenAI(
+        api_version=settings.get('azure_openai_gpt_api_version'),
+        azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+        api_key=settings.get('azure_openai_gpt_key')
+    ), gpt_model
 
 
 ARCHIVED_SCOPE_PREFIX = "__archived__::"
@@ -3318,7 +3474,6 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     """
 
     settings = get_settings()
-    enable_gpt_apim = settings.get('enable_gpt_apim', False)
     enable_user_workspace = settings.get('enable_user_workspace', False)
     enable_group_workspaces = settings.get('enable_group_workspaces', False)
 
@@ -3608,34 +3763,17 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         print(f"Error processing Hybrid search for document {document_id}: {e}")
         search_results = "No Hybrid results"
 
-    gpt_model = settings.get('metadata_extraction_model')
-
     # --- Step 5: Prepare GPT Client ---
-    if enable_gpt_apim:
-        # APIM-based GPT client
-        gpt_client = AzureOpenAI(
-            api_version=settings.get('azure_apim_gpt_api_version'),
-            azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key')
+    try:
+        gpt_client, gpt_model = _resolve_metadata_extraction_client(settings)
+    except Exception as e:
+        add_file_task_to_file_processing_log(
+            document_id=document_id,
+            user_id=group_id if is_group else user_id,
+            content=f"Error resolving metadata extraction model for document {document_id}: {e}"
         )
-    else:
-        # Standard Azure OpenAI approach
-        if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
-            token_provider = get_bearer_token_provider(
-                DefaultAzureCredential(), 
-                cognitive_services_scope
-            )
-            gpt_client = AzureOpenAI(
-                api_version=settings.get('azure_openai_gpt_api_version'),
-                azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-                azure_ad_token_provider=token_provider
-            )
-        else:
-            gpt_client = AzureOpenAI(
-                api_version=settings.get('azure_openai_gpt_api_version'),
-                azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-                api_key=settings.get('azure_openai_gpt_key')
-            )
+        print(f"Error resolving metadata extraction model for document {document_id}: {e}")
+        return meta_data
 
     # --- Step 6: GPT Prompt and JSON Parsing ---
     try:

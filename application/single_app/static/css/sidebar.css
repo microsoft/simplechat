@@ -294,6 +294,52 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   padding-bottom: 0.25rem !important;
 }
 
+/* Custom Pages navigation menu */
+.custom-pages-menu-toggle,
+.custom-pages-inline-label {
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.35rem 0.5rem 0.35rem 1rem;
+  user-select: none;
+}
+
+.custom-pages-menu-toggle {
+  background: rgba(13, 110, 253, 0.06);
+  border: 1px solid var(--bs-border-color-translucent);
+  border-radius: 0.5rem;
+}
+
+.custom-pages-menu-list {
+  max-height: min(18rem, 45vh);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.custom-pages-menu-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-pages-menu-list::-webkit-scrollbar-thumb {
+  background: var(--bs-border-color);
+  border-radius: 999px;
+}
+
+.custom-pages-count-badge {
+  font-size: 0.65rem;
+  min-width: 1.5rem;
+}
+
+.custom-pages-caret {
+  font-size: 0.9em;
+  transition: transform 0.2s;
+}
+
+[data-bs-theme="dark"] .custom-pages-menu-toggle {
+  background: rgba(13, 110, 253, 0.14);
+}
+
 .sidebar-resize-handle {
   position: absolute;
   top: 0;

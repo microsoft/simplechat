@@ -1,0 +1,98 @@
+/* example-static.css */
+.custom-static-example {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    padding: 1.25rem;
+    background: var(--bs-body-bg);
+}
+
+.custom-static-example__hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.custom-static-example__eyebrow,
+.custom-static-example__label {
+    color: var(--bs-secondary-color);
+    font-size: 0.8125rem;
+    text-transform: uppercase;
+}
+
+.custom-static-example__title {
+    margin-bottom: 0.5rem;
+    font-size: 1.5rem;
+}
+
+.custom-static-example__summary {
+    max-width: 48rem;
+    margin-bottom: 0;
+    color: var(--bs-secondary-color);
+}
+
+.custom-static-example__badge {
+    border: 1px solid var(--bs-success-border-subtle);
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    color: var(--bs-success-text-emphasis);
+    background: var(--bs-success-bg-subtle);
+    white-space: nowrap;
+}
+
+.custom-static-example__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.custom-static-example__panel {
+    border: 1px solid var(--bs-border-color-translucent);
+    border-radius: 8px;
+    padding: 1rem;
+    background: var(--bs-tertiary-bg);
+}
+
+.custom-static-example__metric {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.custom-static-example__viewer {
+    border: 1px solid var(--bs-border-color-translucent);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+    background: var(--bs-tertiary-bg);
+}
+
+.custom-static-example__viewer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--bs-border-color-translucent);
+}
+
+.custom-static-example__viewer-file {
+    color: var(--bs-secondary-color);
+    font-size: 0.875rem;
+}
+
+.custom-static-example__video {
+    display: block;
+    width: 100%;
+    max-height: 28rem;
+    background: #000;
+}
+
+.custom-static-example__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}

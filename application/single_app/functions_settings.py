@@ -278,6 +278,11 @@ def get_settings(use_cosmos=False, include_source=False):
         # Metadata Extraction
         'enable_extract_meta_data': False,
         'metadata_extraction_model': '',
+        'metadata_extraction_model_selection': {
+            'endpoint_id': '',
+            'model_id': '',
+            'provider': ''
+        },
         
         # Multimodal Vision
         'enable_multimodal_vision': False,
@@ -307,6 +312,11 @@ def get_settings(use_cosmos=False, include_source=False):
             {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
             {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
         ],
+
+        # Custom Pages
+        'enable_custom_pages': False,
+        'custom_pages_menu_name': 'Custom Pages',
+        'custom_pages_force_menu': False,
 
         # Support Menu
         'enable_support_menu': False,
@@ -434,6 +444,9 @@ def get_settings(use_cosmos=False, include_source=False):
         # Access denied message shown on the home page for signed-in users who lack required roles.
         # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
         'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.',
+        'access_request_button_enabled': False,
+        'access_request_button_text': 'Request Access',
+        'access_request_page_url': '/custom/request-access',
         'enable_file_processing_logs': True,
         'file_processing_logs_timer_enabled': False,
         'file_timer_value': 1,

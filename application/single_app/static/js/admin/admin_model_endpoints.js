@@ -10,6 +10,8 @@ const endpointsInput = document.getElementById("model_endpoints_json");
 const defaultModelSelect = document.getElementById("default-model-selection");
 const defaultModelInput = document.getElementById("default_model_selection_json");
 const defaultModelWrapper = document.getElementById("default-model-selection-wrapper");
+const metadataExtractionModelSelect = document.getElementById("metadata_extraction_model");
+const metadataExtractionModelInput = document.getElementById("metadata_extraction_model_selection_json");
 const migrationPanel = document.getElementById("agent-default-model-migration-panel");
 const migrationStatus = document.getElementById("agent-default-model-migration-status");
 const migrationCallout = document.getElementById("agent-default-model-migration-callout");
@@ -86,6 +88,10 @@ let endpointDuplicateKeyModal = null;
 let defaultModelSelection = window.defaultModelSelection && typeof window.defaultModelSelection === "object"
     ? { ...window.defaultModelSelection }
     : {};
+let metadataExtractionModelSelection = window.metadataExtractionModelSelection && typeof window.metadataExtractionModelSelection === "object"
+    ? { ...window.metadataExtractionModelSelection }
+    : {};
+const legacyMetadataExtractionModel = String(window.legacyMetadataExtractionModel || "").trim();
 let migrationPreviewState = null;
 let migrationSelectedKeys = new Set();
 
@@ -132,6 +138,13 @@ function updateDefaultModelInput() {
         return;
     }
     defaultModelInput.value = JSON.stringify(defaultModelSelection || {});
+}
+
+function updateMetadataExtractionModelInput() {
+    if (!metadataExtractionModelInput) {
+        return;
+    }
+    metadataExtractionModelInput.value = JSON.stringify(metadataExtractionModelSelection || {});
 }
 
 function isAdminSettingsFormModified() {
@@ -272,6 +285,7 @@ function renderEndpoints() {
         `;
         updateHiddenInput();
         buildDefaultModelOptions();
+        buildMetadataExtractionModelOptions();
         return;
     }
 
@@ -341,6 +355,39 @@ function renderEndpoints() {
 
     updateHiddenInput();
     buildDefaultModelOptions();
+    buildMetadataExtractionModelOptions();
+}
+
+function buildEndpointModelOption(endpoint, model) {
+    const modelId = model.id
+        || model.deploymentName
+        || model.deployment
+        || model.modelName
+        || model.name
+        || generateId();
+    if (!model.id) {
+        model.id = modelId;
+    }
+
+    const endpointLabel = endpoint.name || endpoint.connection?.endpoint || "Endpoint";
+    const provider = (endpoint.provider || "aoai").toLowerCase();
+    const providerLabel = formatProviderLabel(provider);
+    const endpointEnabled = endpoint.enabled !== false;
+    const modelEnabled = model.enabled !== false;
+    const modelLabel = model.displayName || model.deploymentName || model.modelName || "Unnamed model";
+    const option = document.createElement("option");
+    option.value = `${endpoint.id}:${modelId}`;
+    option.dataset.endpointId = endpoint.id || "";
+    option.dataset.modelId = modelId || "";
+    option.dataset.provider = provider;
+    option.dataset.deploymentName = model.deploymentName || model.deployment || "";
+    option.disabled = !(endpointEnabled && modelEnabled);
+    option.textContent = `${endpointLabel} — ${modelLabel} (${providerLabel})`;
+    if (option.disabled) {
+        option.textContent += " (disabled)";
+    }
+
+    return option;
 }
 
 function buildDefaultModelOptions() {
@@ -357,38 +404,77 @@ function buildDefaultModelOptions() {
 
     modelEndpoints.forEach((endpoint) => {
         const models = Array.isArray(endpoint.models) ? endpoint.models : [];
-        const endpointLabel = endpoint.name || endpoint.connection?.endpoint || "Endpoint";
-        const provider = (endpoint.provider || "aoai").toLowerCase();
-        const providerLabel = formatProviderLabel(provider);
-        const endpointEnabled = endpoint.enabled !== false;
 
         models.forEach((model) => {
-            const modelId = model.id
-                || model.deploymentName
-                || model.deployment
-                || model.modelName
-                || model.name
-                || generateId();
-            if (!model.id) {
-                model.id = modelId;
-            }
-            const modelEnabled = model.enabled !== false;
-            const modelLabel = model.displayName || model.deploymentName || model.modelName || "Unnamed model";
-            const option = document.createElement("option");
-            option.value = `${endpoint.id}:${modelId}`;
-            option.dataset.endpointId = endpoint.id || "";
-            option.dataset.modelId = modelId || "";
-            option.dataset.provider = provider;
-            option.disabled = !(endpointEnabled && modelEnabled);
-            option.textContent = `${endpointLabel} — ${modelLabel} (${providerLabel})`;
-            if (option.disabled) {
-                option.textContent += " (disabled)";
-            }
-            defaultModelSelect.appendChild(option);
+            defaultModelSelect.appendChild(buildEndpointModelOption(endpoint, model));
         });
     });
 
     applyDefaultModelSelection(defaultModelSelection);
+}
+
+function buildMetadataExtractionModelOptions() {
+    if (!metadataExtractionModelSelect) {
+        return;
+    }
+
+    metadataExtractionModelSelect.innerHTML = "";
+
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "No metadata extraction model selected";
+    metadataExtractionModelSelect.appendChild(emptyOption);
+
+    modelEndpoints.forEach((endpoint) => {
+        const models = Array.isArray(endpoint.models) ? endpoint.models : [];
+        models.forEach((model) => {
+            metadataExtractionModelSelect.appendChild(buildEndpointModelOption(endpoint, model));
+        });
+    });
+
+    applyMetadataExtractionModelSelection(metadataExtractionModelSelection);
+}
+
+function applyMetadataExtractionModelSelection(selection) {
+    if (!metadataExtractionModelSelect) {
+        return;
+    }
+
+    metadataExtractionModelSelection = normalizeDefaultModelSelection(selection);
+    const hasSelection = metadataExtractionModelSelection.endpoint_id && metadataExtractionModelSelection.model_id;
+    let matchingOption = null;
+
+    if (hasSelection) {
+        matchingOption = Array.from(metadataExtractionModelSelect.options).find((option) => {
+            return option.dataset.endpointId === metadataExtractionModelSelection.endpoint_id
+                && option.dataset.modelId === metadataExtractionModelSelection.model_id;
+        });
+    } else if (legacyMetadataExtractionModel) {
+        matchingOption = Array.from(metadataExtractionModelSelect.options).find((option) => {
+            return option.dataset.deploymentName === legacyMetadataExtractionModel;
+        });
+        if (matchingOption && !matchingOption.disabled) {
+            metadataExtractionModelSelection = {
+                endpoint_id: matchingOption.dataset.endpointId || "",
+                model_id: matchingOption.dataset.modelId || "",
+                provider: matchingOption.dataset.provider || ""
+            };
+        }
+    }
+
+    if (!matchingOption || matchingOption.disabled) {
+        metadataExtractionModelSelection = {
+            endpoint_id: "",
+            model_id: "",
+            provider: ""
+        };
+        metadataExtractionModelSelect.value = "";
+        updateMetadataExtractionModelInput();
+        return;
+    }
+
+    metadataExtractionModelSelect.value = matchingOption.value;
+    updateMetadataExtractionModelInput();
 }
 
 function applyDefaultModelSelection(selection) {
@@ -448,6 +534,29 @@ function handleDefaultModelChange() {
     updateDefaultModelInput();
     markModified();
     handleMigrationConfigurationChange();
+}
+
+function handleMetadataExtractionModelChange() {
+    if (!metadataExtractionModelSelect) {
+        return;
+    }
+
+    const selectedOption = metadataExtractionModelSelect.selectedOptions[0];
+    if (!selectedOption || !selectedOption.value) {
+        metadataExtractionModelSelection = {
+            endpoint_id: "",
+            model_id: "",
+            provider: ""
+        };
+    } else {
+        metadataExtractionModelSelection = {
+            endpoint_id: selectedOption.dataset.endpointId || "",
+            model_id: selectedOption.dataset.modelId || "",
+            provider: selectedOption.dataset.provider || ""
+        };
+    }
+    updateMetadataExtractionModelInput();
+    markModified();
 }
 
 function updateAuthVisibility() {
@@ -1497,6 +1606,10 @@ function init() {
 
     if (defaultModelSelect) {
         defaultModelSelect.addEventListener("change", handleDefaultModelChange);
+    }
+
+    if (metadataExtractionModelSelect) {
+        metadataExtractionModelSelect.addEventListener("change", handleMetadataExtractionModelChange);
     }
 
     if (previewMigrationBtn) {
