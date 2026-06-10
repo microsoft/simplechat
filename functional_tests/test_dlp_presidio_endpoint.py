@@ -131,7 +131,7 @@ def test_analyze_with_presidio_endpoint_omits_auth_header_without_env_secret(mon
 
 
 def test_analyze_with_presidio_endpoint_raises_safe_error_without_raw_text(monkeypatch):
-    """Endpoint exceptions should not leak raw scanned text in their messages."""
+    """Endpoint exceptions should not retain raw scanned text in messages or exception chains."""
     from functions_dlp_presidio import PresidioEndpointRequestError, analyze_with_presidio_endpoint
 
     def fake_post(url, json=None, headers=None, timeout=None):
@@ -146,7 +146,10 @@ def test_analyze_with_presidio_endpoint_raises_safe_error_without_raw_text(monke
         )
     except PresidioEndpointRequestError as exc:
         assert RAW_TEXT not in str(exc)
+        assert RAW_TEXT not in repr(exc)
         assert "RuntimeError" in str(exc)
+        assert exc.__cause__ is None
+        assert exc.__context__ is None
         return
 
     raise AssertionError("Expected endpoint request error.")

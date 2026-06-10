@@ -115,12 +115,16 @@ def analyze_with_presidio_endpoint(text, settings):
         **_get_auth_headers(settings),
     }
 
+    request_error_type = None
     try:
         response = requests.post(endpoint_url, json=payload, headers=headers, timeout=timeout_seconds)
         response.raise_for_status()
         body = response.json()
     except Exception as exc:
-        raise PresidioEndpointRequestError(f"Presidio analyzer request failed: {type(exc).__name__}") from exc
+        request_error_type = type(exc).__name__
+
+    if request_error_type:
+        raise PresidioEndpointRequestError(f"Presidio analyzer request failed: {request_error_type}") from None
 
     if not isinstance(body, list):
         raise PresidioEndpointRequestError("Presidio analyzer response must be a list.")
