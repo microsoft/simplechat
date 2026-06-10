@@ -216,6 +216,22 @@ def _build_simplechat_tool_label(function_name: str, arguments: Any, result: Any
         )
         return _format_tool_label('Markdown file', detail, fallback_label='SimpleChatPlugin.upload_markdown_document')
 
+    if function_name == 'upload_word_document':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'file_name'),
+            _get_mapping_value(result, 'file_name'),
+            _get_mapping_value(_get_mapping_value(result, 'document'), 'file_name'),
+        )
+        return _format_tool_label('Word file', detail, fallback_label='SimpleChatPlugin.upload_word_document')
+
+    if function_name == 'upload_powerpoint_document':
+        detail = _first_non_empty(
+            _get_mapping_value(arguments, 'file_name'),
+            _get_mapping_value(result, 'file_name'),
+            _get_mapping_value(_get_mapping_value(result, 'document'), 'file_name'),
+        )
+        return _format_tool_label('PowerPoint file', detail, fallback_label='SimpleChatPlugin.upload_powerpoint_document')
+
     if function_name == 'create_personal_workflow':
         detail = _first_non_empty(
             _get_mapping_value(arguments, 'name'),

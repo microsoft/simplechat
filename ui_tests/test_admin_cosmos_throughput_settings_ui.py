@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Cosmos throughput controls.
 
-Version: 0.241.181
+Version: 0.241.184
 Implemented in: 0.241.147
 
 This test ensures the Scale tab exposes Cosmos throughput monitoring and
@@ -18,6 +18,8 @@ grouped scale-up/scale-down policy UI and save-blocking validation coverage.
 Version 0.241.162 adds Validate Access setup testing coverage.
 Version 0.241.180 adds container table sorting and filtering coverage.
 Version 0.241.181 adds container table refresh button coverage.
+Version 0.241.183 adds explicit setup guidance and detailed Validate Access diagnostics coverage.
+Version 0.241.184 adds neutral informational copy for normal container-targeted throughput mode.
 """
 
 import re
@@ -95,6 +97,10 @@ def test_admin_cosmos_throughput_controls_render_from_template():
     assert 'Scale Up Policy' in template
     assert 'Scale Down Policy' in template
     assert 'Validate Access runs the same read checks automation depends on using the current form values' in template
+    assert 'Assign roles to the Azure App Service managed identity service principal' in template
+    assert 'Object (principal) ID' in template
+    assert 'SimpleChat Cosmos Throughput Operator' in template
+    assert 'Microsoft.Insights/metrics' in template
     assert 'data-sort-field="container_name"' in template
     assert 'data-sort-field="current_ru"' in template
     assert 'data-sort-field="ru_utilization"' in template
@@ -151,9 +157,9 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         expect(page.get_by_label("Convert manual throughput to Cosmos autoscale")).to_be_visible()
         expect(page.get_by_label("Enforce global policy for all containers")).to_be_visible()
         expect(page.get_by_role("button", name="Setup Guide")).to_be_visible()
-        expect(page.get_by_role("button", name="Refresh")).to_be_visible()
+        expect(page.get_by_role("button", name="Refresh", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="Validate Access")).to_be_visible()
-        expect(page.get_by_role("button", name="Containers")).to_be_visible()
+        expect(page.get_by_role("button", name="Containers", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="Convert")).to_be_visible()
         expect(page.get_by_role("button", name="Scale Up")).to_be_visible()
         expect(page.get_by_role("button", name="Scale Down")).to_be_visible()
@@ -272,3 +278,10 @@ def test_cosmos_throughput_validate_access_uses_current_form_values():
     assert "cosmos_throughput_database_name: getFieldValue('cosmos_throughput_database_name')" in source
     assert "document.getElementById('cosmos-throughput-validate-access-btn')" in source
     assert "document.getElementById('cosmos-throughput-run-setup-test-btn')" in source
+    assert "function setCosmosThroughputValidationResult" in source
+    assert "Passed" in source
+    assert "Failed" in source
+    assert "Database throughput read access" in (REPO_ROOT / "application" / "single_app" / "functions_cosmos_throughput.py").read_text(encoding="utf-8")
+    assert "Cosmos database throughput could not be read." in source
+    assert "Container-targeted throughput is active." in source
+    assert "Database-level throughput was not found. Container-targeted throughput controls" not in source

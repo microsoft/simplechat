@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_prompts import count_public_prompts_for_workspace
 from functions_public_workspaces import *
+from functions_settings import get_settings, is_public_workspace_file_download_enabled
 from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
@@ -169,6 +170,7 @@ def register_route_backend_public_workspaces(app):
         active_id = settings["settings"].get("activePublicWorkspaceOid", "")
 
         mapped = []
+        app_settings = get_settings()
         for ws in slice_ws:
             role = get_user_role_in_public_workspace(ws, user_id)
             owner = ws.get("owner", {}) or {}
@@ -189,6 +191,8 @@ def register_route_backend_public_workspaces(app):
                 **logo_metadata,
                 "userRole": role,
                 "status": ws.get("status", "active"),
+                "disable_file_downloads": bool(ws.get("disable_file_downloads", False)),
+                "file_downloads_enabled": is_public_workspace_file_download_enabled(app_settings, ws),
                 "isActive": (ws["id"] == active_id)
             })
 
@@ -242,6 +246,37 @@ def register_route_backend_public_workspaces(app):
             return jsonify(build_public_workspace_member_payload(ws, user_id)), 200
 
         return jsonify(build_public_workspace_public_summary(ws)), 200
+
+    @app.route("/api/public_workspaces/<ws_id>/download-settings", methods=["PATCH"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def api_update_public_workspace_download_settings(ws_id):
+        info = get_current_user_info()
+        user_id = info["userId"]
+
+        ws = find_public_workspace_by_id(ws_id)
+        if not ws:
+            return jsonify({"error": "Workspace not found"}), 404
+
+        role = get_user_role_in_public_workspace(ws, user_id)
+        if role not in ["Owner", "Admin"]:
+            return jsonify({"error": "Only workspace owners and admins can update download settings"}), 403
+
+        data = request.get_json(silent=True) or {}
+        ws["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))
+        ws["modifiedDate"] = datetime.utcnow().isoformat()
+
+        try:
+            cosmos_public_workspaces_container.upsert_item(ws)
+        except exceptions.CosmosHttpResponseError as ex:
+            return jsonify({"error": str(ex)}), 400
+
+        return jsonify({
+            "message": "Download settings updated",
+            "disable_file_downloads": ws["disable_file_downloads"],
+        }), 200
 
     @app.route("/api/public_workspaces/<ws_id>", methods=["PATCH", "PUT"])
     @swagger_route(security=get_auth_security())

@@ -40,6 +40,7 @@ let publicWorkspaceTags = [];
 let publicDocsSortBy = '_ts';
 let publicDocsSortOrder = 'desc';
 let publicDocsTagsFilter = '';
+let publicFileDownloadsEnabled = false;
 let publicBulkSelectedTags = new Set();
 let publicDocSelectedTags = new Set();
 let publicEditingTag = null;
@@ -144,6 +145,70 @@ function showPublicDocumentDeleteFeedback(message, variant = 'danger') {
   alertElement.appendChild(closeButton);
   container.appendChild(alertElement);
 }
+
+function getPublicDownloadFileNameFromResponse(response, fallbackFileName) {
+  const disposition = response.headers.get('Content-Disposition') || response.headers.get('content-disposition') || '';
+  const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encodedMatch && encodedMatch[1]) {
+    try {
+      return decodeURIComponent(encodedMatch[1].replace(/"/g, ''));
+    } catch (error) {
+      console.warn('Unable to decode public download filename', error);
+    }
+  }
+
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  if (plainMatch && plainMatch[1]) {
+    return plainMatch[1];
+  }
+
+  return fallbackFileName;
+}
+
+async function downloadPublicFile(endpoint, options = {}, fallbackFileName = 'document') {
+  const response = await fetch(endpoint, options);
+  if (!response.ok) {
+    let message = 'Unable to download document';
+    try {
+      const errorData = await response.json();
+      message = errorData.error || message;
+    } catch (error) {
+      message = response.statusText || message;
+    }
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const fileName = getPublicDownloadFileNameFromResponse(response, fallbackFileName);
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = fileName;
+  link.classList.add('d-none');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(objectUrl);
+}
+
+async function downloadPublicDocumentFile(documentId, event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  if (!publicFileDownloadsEnabled) {
+    showPublicDocumentDeleteFeedback('File downloads are disabled for this public workspace.', 'warning');
+    return;
+  }
+
+  try {
+    await downloadPublicFile(`/api/public_documents/${encodeURIComponent(documentId)}/download`);
+  } catch (error) {
+    console.error('Error downloading public document:', error);
+    showPublicDocumentDeleteFeedback(error.message || 'Unable to download document', 'danger');
+  }
+}
+window.downloadPublicDocumentFile = downloadPublicDocumentFile;
 
 function isPublicDocumentDeleteModalReady() {
   return Boolean(
@@ -546,10 +611,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
   // Bulk action buttons
   const publicDeleteSelectedBtn = document.getElementById('public-delete-selected-btn');
+  const publicDownloadSelectedBtn = document.getElementById('public-download-selected-btn');
   const publicClearSelectionBtn = document.getElementById('public-clear-selection-btn');
   const publicChatSelectedBtn = document.getElementById('public-chat-selected-btn');
 
   if (publicDeleteSelectedBtn) publicDeleteSelectedBtn.addEventListener('click', deletePublicSelectedDocuments);
+  if (publicDownloadSelectedBtn) publicDownloadSelectedBtn.addEventListener('click', downloadPublicSelectedDocuments);
   if (publicClearSelectionBtn) publicClearSelectionBtn.addEventListener('click', clearPublicSelection);
   if (publicChatSelectedBtn) publicChatSelectedBtn.addEventListener('click', chatWithPublicSelected);
   document.getElementById('public-toggle-selection-btn')?.addEventListener('click', togglePublicSelectionMode);
@@ -1371,6 +1438,7 @@ function createPublicDocumentCard(doc) {
   if (isComplete && !hasError) {
     dropdownItems.push(createPublicDropdownItem('bi-check-square', 'Select', () => togglePublicSelectionMode()));
     if (canChat) dropdownItems.push(createPublicDropdownItem('bi-chat-dots-fill', 'Chat', () => window.searchPublicDocumentInChat(docId)));
+    if (publicFileDownloadsEnabled) dropdownItems.push(createPublicDropdownItem('bi-download', 'Download file', (event) => window.downloadPublicDocumentFile(docId, event)));
     if (canManage) {
       dropdownItems.push(createPublicDropdownItem('bi-pencil-fill', 'Edit Metadata', () => window.onEditPublicDocument(docId)));
       dropdownItems.push(createPublicDropdownItem('bi-magic', 'Extract Metadata', () => window.onExtractPublicMetadata(docId, null)));
@@ -1463,6 +1531,7 @@ async function fetchPublicDocs(){
   try {
     const r=await fetch(`/api/public_documents?${params}`);
     if(!r.ok) throw await r.json(); const data=await r.json();
+    publicFileDownloadsEnabled = Boolean(data.file_downloads_enabled);
     publicDocsTableBody.innerHTML='';
     if (publicDocumentsCardView) publicDocumentsCardView.innerHTML = '';
     if(!data.documents.length){
@@ -1531,6 +1600,13 @@ function renderPublicDocumentRow(doc) {
           <li><a class="dropdown-item" href="#" onclick="searchPublicDocumentInChat('${doc.id}'); return false;">
             <i class="bi bi-chat-dots-fill me-2"></i>Chat
           </a></li>`;
+
+    if (publicFileDownloadsEnabled) {
+      actionsDropdown += `
+          <li><a class="dropdown-item" href="#" onclick="window.downloadPublicDocumentFile('${doc.id}', event); return false;">
+            <i class="bi bi-download me-2"></i>Download file
+          </a></li>`;
+    }
 
     if (canManage) {
       const reprocessDocId = escapeHtml(String(doc.id || ''));
@@ -2148,6 +2224,7 @@ function updatePublicBulkActionButtons() {
   const bulkActionsBar = document.getElementById('publicBulkActionsBar');
   const selectedCountSpan = document.getElementById('publicSelectedCount');
   const deleteBtn = document.getElementById('public-delete-selected-btn');
+  const downloadBtn = document.getElementById('public-download-selected-btn');
   const reprocessDropdown = document.getElementById('public-reprocess-selected-dropdown');
 
   if (publicSelectedDocuments.size > 0) {
@@ -2155,9 +2232,11 @@ function updatePublicBulkActionButtons() {
     if (selectedCountSpan) selectedCountSpan.textContent = publicSelectedDocuments.size;
     const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
     if (deleteBtn) deleteBtn.style.display = canManage ? 'inline-block' : 'none';
+    if (downloadBtn) downloadBtn.classList.toggle('d-none', !publicFileDownloadsEnabled);
     if (reprocessDropdown) reprocessDropdown.classList.toggle('d-none', !canManage);
   } else {
     if (bulkActionsBar) bulkActionsBar.style.display = 'none';
+    if (downloadBtn) downloadBtn.classList.add('d-none');
   }
 }
 
@@ -2385,6 +2464,43 @@ async function reprocessPublicSelectedDocumentExtraction(extractionMode) {
     showPublicWorkspaceToast(error.message, 'danger');
   }
 }
+
+async function downloadPublicSelectedDocuments() {
+  if (publicSelectedDocuments.size === 0) {
+    return;
+  }
+  if (!publicFileDownloadsEnabled) {
+    showPublicDocumentDeleteFeedback('File downloads are disabled for this public workspace.', 'warning');
+    return;
+  }
+
+  const downloadBtn = document.getElementById('public-download-selected-btn');
+  if (downloadBtn) {
+    downloadBtn.disabled = true;
+    downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Downloading...';
+  }
+
+  try {
+    await downloadPublicFile(
+      '/api/public_documents/download',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: Array.from(publicSelectedDocuments) })
+      },
+      publicSelectedDocuments.size === 1 ? 'document' : 'public_workspace_documents.zip'
+    );
+  } catch (error) {
+    console.error('Error downloading selected public documents:', error);
+    showPublicDocumentDeleteFeedback(error.message || 'Unable to download selected documents', 'danger');
+  } finally {
+    if (downloadBtn) {
+      downloadBtn.disabled = false;
+      downloadBtn.innerHTML = '<i class="bi bi-download me-1"></i>Download Selected';
+    }
+  }
+}
+window.downloadPublicSelectedDocuments = downloadPublicSelectedDocuments;
 
 // Expose selection functions globally
 window.updatePublicSelectedDocuments = updatePublicSelectedDocuments;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.241.060
+Version: 0.241.186
 Implemented in: 0.241.060
 
 This test ensures that large tabular structured exports are wired through the
@@ -82,6 +82,9 @@ def test_export_runner_module():
     assert_contains(source_text, 'transient_failure_count', 'bounded transient failure counter')
     assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5', 'non-starving scheduler scan limit')
     assert_contains(source_text, 'APIConnectionError', 'OpenAI connection error retry classification')
+    assert_contains(source_text, 'build_semantic_kernel_chat_service_for_model', 'provider-aware background model service')
+    assert_contains(source_text, 'model_context=run.get(\'model_context\')', 'background model context rehydration')
+    assert_contains(source_text, "'model_context': model_context if isinstance(model_context, dict) else {}", 'persisted non-secret model context')
     assert_contains(source_text, 'TABULAR_EXPORT_STATUS_FAILED', 'retryable failed-run scheduler pickup')
     assert_contains(source_text, 'TABULAR_EXPORT_SCHEDULER_STATUSES', 'status-specific scheduler scans')
     assert_contains(source_text, '_query_scheduler_candidates_by_status', 'simple scheduler status query helper')
@@ -125,10 +128,13 @@ def test_chat_route_wires_background_exports():
     maybe_create_arg_names = [arg.arg for arg in maybe_create.args.args]
     if 'user_id' not in maybe_create_arg_names:
         raise AssertionError('maybe_create_tabular_generated_output must accept user_id')
+    if 'model_context' not in maybe_create_arg_names:
+        raise AssertionError('maybe_create_tabular_generated_output must accept model_context')
 
     source_text = read_text(CHAT_ROUTE)
     assert_contains(source_text, 'should_queue_tabular_generated_output_background', 'background queue decision')
     assert_contains(source_text, 'queue_tabular_generated_output_run(', 'background queue creation')
+    assert_contains(source_text, 'model_context=model_context', 'background queue model context handoff')
     assert_contains(source_text, 'build_background_tabular_generated_output_metadata', 'background metadata handoff')
     assert_contains(source_text, "'/api/tabular/generated-output/runs/<run_id>'", 'run status API route')
     assert_contains(source_text, "'/api/tabular/generated-output/runs/<run_id>/resume'", 'run resume API route')

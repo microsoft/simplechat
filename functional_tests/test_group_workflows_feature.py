@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for group workflows.
-Version: 0.241.182
-Implemented in: 0.241.182
+Version: 0.241.179
+Implemented in: 0.241.179
 
 This test ensures that group workflow storage, settings, routes, scheduler,
 runtime wiring, activity deep links, and workspace UI contracts are present.
@@ -46,7 +46,7 @@ def test_group_workflow_feature_contracts():
     activity_js = _read("application/single_app/static/js/workflow/workflow-activity.js")
 
     checks = [
-        _assert_contains(config, 'VERSION = "0.241.182"', "version bump"),
+        _assert_contains(config, 'VERSION = "0.241.179"', "version bump"),
         _assert_contains(config, 'cosmos_group_workflows_container_name = "group_workflows"', "group workflow container"),
         _assert_contains(config, 'cosmos_group_workflow_runs_container_name = "group_workflow_runs"', "group workflow runs container"),
         _assert_contains(config, 'cosmos_group_workflow_run_items_container_name = "group_workflow_run_items"', "group workflow run items container"),

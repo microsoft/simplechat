@@ -14,6 +14,12 @@ from functions_search import normalize_search_id_list
 DOCUMENT_ACTION_TYPE_NONE = 'none'
 DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
+DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED = 'combined'
+DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT = 'per_document'
+VALID_DOCUMENT_ACTION_ANALYSIS_MODES = {
+    DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED,
+    DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT,
+}
 DOCUMENT_ACTION_CONTEXT_CHAT = 'chat'
 DOCUMENT_ACTION_CONTEXT_WORKFLOW = 'workflow'
 VALID_DOCUMENT_ACTION_TYPES = {
@@ -50,6 +56,16 @@ def normalize_document_action_type(action_type):
     if normalized_type not in VALID_DOCUMENT_ACTION_TYPES:
         return DOCUMENT_ACTION_TYPE_NONE
     return normalized_type
+
+
+def normalize_document_action_analysis_mode(analysis_mode):
+    normalized_mode = str(analysis_mode or DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED).strip().lower()
+    normalized_mode = normalized_mode.replace('-', '_').replace(' ', '_')
+    if normalized_mode in {'each', 'for_each', 'per_file', 'per_doc', 'individual'}:
+        return DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT
+    if normalized_mode not in VALID_DOCUMENT_ACTION_ANALYSIS_MODES:
+        return DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED
+    return normalized_mode
 
 
 def _coerce_document_action_limit(value, default_value, execution_context):
@@ -203,6 +219,7 @@ def normalize_document_action_config(
         'document_ids': [],
         'left_document_id': '',
         'right_document_ids': [],
+        'analysis_mode': DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED,
     }
     if action_type == DOCUMENT_ACTION_TYPE_NONE:
         return normalized_action
@@ -235,6 +252,7 @@ def normalize_document_action_config(
             max_documents=resolved_max_documents,
         )
         normalized_action.update(normalized_targets)
+        normalized_action['analysis_mode'] = normalize_document_action_analysis_mode(source_action.get('analysis_mode'))
         return normalized_action
 
     left_candidates = normalize_search_id_list([source_action.get('left_document_id')])
@@ -295,6 +313,7 @@ def build_analyze_config(action_config=None):
             'window_size': None,
             'window_percent': None,
             'max_retries_per_window': 1,
+            'analysis_mode': DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED,
         }
 
     return {
@@ -307,4 +326,5 @@ def build_analyze_config(action_config=None):
         'window_size': action_config.get('window_size'),
         'window_percent': action_config.get('window_percent'),
         'max_retries_per_window': action_config.get('max_retries_per_window', 1),
+        'analysis_mode': normalize_document_action_analysis_mode(action_config.get('analysis_mode')),
     }

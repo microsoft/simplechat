@@ -27,6 +27,7 @@ from functions_group import (
     get_group_model_endpoints,
     get_user_groups,
     get_user_role_in_group,
+    require_active_group,
 )
 from functions_group_agents import get_group_agents
 from functions_global_agents import get_global_agents
@@ -51,10 +52,46 @@ CHAT_WORKSPACE_UPLOAD_EXTENSIONS = (
 )
 
 GROUP_CHAT_UPLOAD_ROLES = ('Owner', 'Admin', 'DocumentManager')
+GROUP_WORKFLOW_ACTIVITY_ROLES = ('Owner', 'Admin', 'DocumentManager', 'User')
 
 
 def _is_setting_enabled(value):
     return value is True or str(value).strip().lower() == 'true'
+
+
+def _normalize_workflow_activity_scope(value):
+    normalized_scope = str(value or '').strip().lower()
+    return 'group' if normalized_scope == 'group' else 'personal'
+
+
+def _resolve_workflow_activity_group_id(user_id):
+    requested_group_id = str(request.args.get('group_id') or request.args.get('groupId') or '').strip()
+    if requested_group_id:
+        assert_group_role(user_id, requested_group_id, allowed_roles=GROUP_WORKFLOW_ACTIVITY_ROLES)
+        return requested_group_id
+    return require_active_group(user_id, allowed_roles=GROUP_WORKFLOW_ACTIVITY_ROLES)
+
+
+def _authorize_workflow_activity_view(user_id, settings):
+    scope = _normalize_workflow_activity_scope(request.args.get('scope'))
+    if scope == 'group':
+        if not settings.get('enable_group_workspaces', False):
+            return 'Group workspaces are disabled.', 400
+        if not settings.get('allow_group_workflows', False):
+            return 'Group workflows are disabled.', 400
+
+        group_id = _resolve_workflow_activity_group_id(user_id)
+        if not is_group_workflows_enabled_for_group(settings, group_id):
+            return 'This group is not assigned to use workflows.', 403
+        return None
+
+    user_roles = (session.get('user') or {}).get('roles', [])
+    if is_user_workflows_enabled_for_user(settings, user_roles=user_roles):
+        return None
+
+    if not settings.get('allow_user_workflows', False):
+        return 'Personal workflows are disabled.', 400
+    return 'Forbidden: Personal workflows require the WorkflowUser app role.', 403
 
 
 def _build_new_chat_conversation(user_id):
@@ -777,14 +814,24 @@ def register_route_frontend_chats(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    @enabled_required('allow_user_workflows')
-    @workflow_user_required
     def workflow_activity():
         user_id = get_current_user_id()
         if not user_id:
             return redirect(url_for('login'))
 
         settings = get_settings()
+        try:
+            authorization_error = _authorize_workflow_activity_view(user_id, settings)
+            if authorization_error:
+                message, status_code = authorization_error
+                return message, status_code
+        except PermissionError as exc:
+            return str(exc), 403
+        except LookupError as exc:
+            return str(exc), 404
+        except ValueError as exc:
+            return str(exc), 400
+
         public_settings = sanitize_settings_for_user(settings)
 
         return render_template(

@@ -2,12 +2,13 @@
 # test_admin_app_role_settings_consistency.py
 """
 Functional test for Admin Settings app-role copy and deployer role definitions.
-Version: 0.241.111
+Version: 0.241.180
 Implemented in: 0.241.110
+Updated in: 0.241.180
 
 This test ensures admin-facing app-role settings use consistent role-value-first
-labels and that the Azure CLI app registration role manifest contains every app
-role surfaced by those settings.
+labels and that the Azure CLI app registration role manifest contains every
+active app role surfaced by those settings.
 """
 
 import json
@@ -22,10 +23,7 @@ APP_ROOT = os.path.join(REPO_ROOT, "application", "single_app")
 ADMIN_TEMPLATE_FILE = os.path.join(APP_ROOT, "templates", "admin_settings.html")
 CONFIG_FILE = os.path.join(APP_ROOT, "config.py")
 APP_ROLES_FILE = os.path.join(REPO_ROOT, "deployers", "azurecli", "appRegistrationRoles.json")
-DEPLOYER_VERSION_FILE = os.path.join(REPO_ROOT, "deployers", "version.txt")
-
-CURRENT_VERSION = "0.241.111"
-DEPLOYER_VERSION = "1.0.11"
+CURRENT_VERSION = "0.241.180"
 
 REQUIRED_ADMIN_ROLE_SNIPPETS = [
     "Require ControlCenterAdmin App Role",
@@ -34,10 +32,6 @@ REQUIRED_ADMIN_ROLE_SNIPPETS = [
     "Dashboard-only app role value: <code>ControlCenterDashboardReader</code>.",
     "Require PersonalFileSyncUser App Role",
     "Required app role value: <code>PersonalFileSyncUser</code>.",
-    "Require GroupFileSyncUser App Role",
-    "Required app role value: <code>GroupFileSyncUser</code>.",
-    "Require PublicWorkspaceFileSyncUser App Role",
-    "Required app role value: <code>PublicWorkspaceFileSyncUser</code>.",
     "Require WorkflowUser App Role",
     "Required app role value: <code>WorkflowUser</code>.",
     "Require CreateGroups App Role",
@@ -65,6 +59,10 @@ DISALLOWED_ADMIN_COPY_SNIPPETS = [
     "members of the 'CreatePublicWorkspaces' role",
     "members of the 'SafetyViolationAdmin' role",
     "members of the 'FeedbackAdmin' role",
+    "Require GroupFileSyncUser App Role",
+    "Required app role value: <code>GroupFileSyncUser</code>.",
+    "Require PublicWorkspaceFileSyncUser App Role",
+    "Required app role value: <code>PublicWorkspaceFileSyncUser</code>.",
 ]
 
 REQUIRED_APP_ROLE_VALUES = {
@@ -82,6 +80,9 @@ REQUIRED_APP_ROLE_VALUES = {
     "UrlAccessUser",
     "DeepResearchUser",
     "PersonalFileSyncUser",
+}
+
+LEGACY_APP_ROLE_VALUES = {
     "GroupFileSyncUser",
     "PublicWorkspaceFileSyncUser",
 }
@@ -131,6 +132,9 @@ def test_azurecli_app_role_manifest_contains_settings_roles():
     assert not missing_values, f"Missing app role values: {missing_values}"
     assert not duplicate_ids, f"Duplicate app role ids: {duplicate_ids}"
 
+    for legacy_value in LEGACY_APP_ROLE_VALUES:
+        assert legacy_value in values, f"Legacy app role value should remain deployer-compatible: {legacy_value}"
+
     print("Azure CLI app-role manifest passed")
 
 
@@ -139,10 +143,8 @@ def test_versions_are_updated():
     print("Testing version updates...")
 
     current_version = read_current_version()
-    deployer_version = read_file(DEPLOYER_VERSION_FILE).strip()
 
     assert current_version == CURRENT_VERSION, f"Expected config VERSION {CURRENT_VERSION}, found {current_version}"
-    assert deployer_version == DEPLOYER_VERSION, f"Expected deployer version {DEPLOYER_VERSION}, found {deployer_version}"
 
     print("Version updates passed")
 

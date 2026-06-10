@@ -2,6 +2,7 @@
 
 import fnmatch
 import hashlib
+import json
 import logging
 import os
 import re
@@ -52,7 +53,11 @@ from functions_keyvault import (
     ui_trigger_word,
 )
 from functions_public_workspaces import find_public_workspace_by_id, get_user_role_in_public_workspace
-from functions_settings import get_settings
+from functions_settings import (
+    get_settings,
+    normalize_file_sync_allowed_group_ids,
+    normalize_file_sync_allowed_public_workspace_ids,
+)
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GLOBAL,
     get_workspace_identity,
@@ -101,8 +106,6 @@ FILE_SYNC_SOURCE_TYPE_LABELS = {
 }
 FILE_SYNC_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 FILE_SYNC_PERSONAL_APP_ROLE = "PersonalFileSyncUser"
-FILE_SYNC_GROUP_APP_ROLE = "GroupFileSyncUser"
-FILE_SYNC_PUBLIC_APP_ROLE = "PublicWorkspaceFileSyncUser"
 
 FILE_SYNC_DEFAULTS = {
     "enable_file_sync": False,
@@ -110,8 +113,10 @@ FILE_SYNC_DEFAULTS = {
     "enable_file_sync_group": True,
     "enable_file_sync_public": False,
     "file_sync_personal_require_app_role": False,
-    "file_sync_group_require_app_role": False,
-    "file_sync_public_require_app_role": False,
+    "require_group_assignment_for_file_sync": False,
+    "file_sync_allowed_group_ids": [],
+    "require_public_workspace_assignment_for_file_sync": False,
+    "file_sync_allowed_public_workspace_ids": [],
     "file_sync_personal_admin_only": False,
     "file_sync_group_admin_only": False,
     "file_sync_public_admin_only": False,
@@ -171,6 +176,12 @@ def parse_file_sync_list(value: Any) -> List[str]:
         return []
     if isinstance(value, list):
         values = value
+    elif isinstance(value, str) and value.strip().startswith("["):
+        try:
+            parsed_value = json.loads(value.strip())
+            values = parsed_value if isinstance(parsed_value, list) else re.split(r"[\n,;]+", value)
+        except (TypeError, ValueError):
+            values = re.split(r"[\n,;]+", value)
     else:
         values = re.split(r"[\n,;]+", str(value))
 
@@ -309,6 +320,12 @@ def get_file_sync_config(settings: Optional[Dict[str, Any]] = None) -> Dict[str,
         config.get("file_sync_visible_source_types"),
         FILE_SYNC_ADMIN_VISIBLE_SOURCE_TYPES,
     )
+    config["file_sync_allowed_group_ids"] = normalize_file_sync_allowed_group_ids(
+        config.get("file_sync_allowed_group_ids")
+    )
+    config["file_sync_allowed_public_workspace_ids"] = normalize_file_sync_allowed_public_workspace_ids(
+        config.get("file_sync_allowed_public_workspace_ids")
+    )
 
     config["requested_enable_file_sync"] = config["enable_file_sync"]
     config["redis_ready"] = _is_redis_ready(source_settings)
@@ -346,13 +363,20 @@ def is_file_sync_enabled_for_group(
     user_info: Optional[Dict[str, Any]] = None,
     admin_management: bool = False,
 ) -> bool:
+    normalized_group_id = str(group_id or "").strip()
     config = get_file_sync_config(settings)
     if not config["enable_file_sync"] or not config["enable_file_sync_group"]:
+        return False
+    if not normalized_group_id:
         return False
 
     if config.get("file_sync_group_admin_only") and not admin_management and not _user_info_has_admin_role(user_info):
         return False
-    if config.get("file_sync_group_require_app_role") and not admin_management and not _user_info_has_app_role(user_info, FILE_SYNC_GROUP_APP_ROLE):
+    if (
+        config.get("require_group_assignment_for_file_sync")
+        and not admin_management
+        and normalized_group_id not in config.get("file_sync_allowed_group_ids", [])
+    ):
         return False
     return True
 
@@ -363,13 +387,20 @@ def is_file_sync_enabled_for_public_workspace(
     user_info: Optional[Dict[str, Any]] = None,
     admin_management: bool = False,
 ) -> bool:
+    normalized_workspace_id = str(public_workspace_id or "").strip()
     config = get_file_sync_config(settings)
     if not config["enable_file_sync"] or not config["enable_file_sync_public"]:
+        return False
+    if not normalized_workspace_id:
         return False
 
     if config.get("file_sync_public_admin_only") and not admin_management and not _user_info_has_admin_role(user_info):
         return False
-    if config.get("file_sync_public_require_app_role") and not admin_management and not _user_info_has_app_role(user_info, FILE_SYNC_PUBLIC_APP_ROLE):
+    if (
+        config.get("require_public_workspace_assignment_for_file_sync")
+        and not admin_management
+        and normalized_workspace_id not in config.get("file_sync_allowed_public_workspace_ids", [])
+    ):
         return False
     return True
 
@@ -2657,6 +2688,11 @@ def check_due_file_sync_sources_once() -> List[Dict[str, Any]]:
             continue
         due_sources.extend(_get_due_sources_for_scope(scope_type))
 
+    due_sources = [
+        source for source in due_sources
+        if _is_scheduled_source_allowed(source, settings)
+    ]
+
     runs = []
     for source in due_sources:
         try:
@@ -2664,6 +2700,24 @@ def check_due_file_sync_sources_once() -> List[Dict[str, Any]]:
         except Exception as error:
             log_event(f"[FileSync] Error queueing scheduled sync for {source.get('id')}: {error}", level=logging.ERROR, exceptionTraceback=True)
     return runs
+
+
+def _is_scheduled_source_allowed(source: Dict[str, Any], settings: Dict[str, Any]) -> bool:
+    config = get_file_sync_config(settings)
+    scope_type = source.get("scope_type")
+    if scope_type == FILE_SYNC_SCOPE_GROUP:
+        group_id = _source_scope_id(source)
+        if not config.get("require_group_assignment_for_file_sync"):
+            return True
+        return group_id in config.get("file_sync_allowed_group_ids", [])
+    if scope_type == FILE_SYNC_SCOPE_PUBLIC:
+        public_workspace_id = _source_scope_id(source)
+        if not config.get("require_public_workspace_assignment_for_file_sync"):
+            return True
+        return public_workspace_id in config.get("file_sync_allowed_public_workspace_ids", [])
+    if scope_type == FILE_SYNC_SCOPE_PERSONAL:
+        return True
+    return False
 
 
 def _get_due_sources_for_scope(scope_type: str) -> List[Dict[str, Any]]:

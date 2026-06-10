@@ -40,6 +40,7 @@ def create_group(name, description):
             }
         ],
         "pendingUsers": [],
+        "disable_file_downloads": False,
         "createdDate": now_str,
         "modifiedDate": now_str
     }

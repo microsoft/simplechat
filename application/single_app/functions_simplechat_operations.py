@@ -73,6 +73,8 @@ SIMPLECHAT_CAPABILITY_TO_FUNCTION = {
     "invite_group_conversation_members": "invite_group_conversation_members",
     "add_conversation_message": "add_conversation_message",
     "upload_markdown_document": "upload_markdown_document",
+    "upload_word_document": "upload_word_document",
+    "upload_powerpoint_document": "upload_powerpoint_document",
     "create_personal_conversation": "create_personal_conversation",
     "create_personal_workflow": "create_personal_workflow",
     "create_personal_collaboration_conversation": "create_personal_collaboration_conversation",
@@ -121,6 +123,18 @@ SIMPLECHAT_CAPABILITY_DEFINITIONS = [
         "description": "Create and upload a Markdown document into the current user's personal workspace or an allowed group workspace.",
     },
     {
+        "key": "upload_word_document",
+        "function_name": SIMPLECHAT_CAPABILITY_TO_FUNCTION["upload_word_document"],
+        "label": "Upload Word Documents",
+        "description": "Create and upload a Word document into the current user's personal workspace or an allowed group workspace.",
+    },
+    {
+        "key": "upload_powerpoint_document",
+        "function_name": SIMPLECHAT_CAPABILITY_TO_FUNCTION["upload_powerpoint_document"],
+        "label": "Upload PowerPoint Documents",
+        "description": "Create and upload a PowerPoint presentation into the current user's personal workspace or an allowed group workspace.",
+    },
+    {
         "key": "create_personal_conversation",
         "function_name": SIMPLECHAT_CAPABILITY_TO_FUNCTION["create_personal_conversation"],
         "label": "Create Personal Conversations",
@@ -155,6 +169,11 @@ def normalize_simplechat_capabilities(raw_capabilities: Any = None) -> Dict[str,
         for capability_key in normalized:
             if capability_key in raw_capabilities:
                 normalized[capability_key] = bool(raw_capabilities[capability_key])
+        if "upload_markdown_document" in raw_capabilities:
+            upload_enabled = bool(raw_capabilities["upload_markdown_document"])
+            for upload_capability_key in ("upload_word_document", "upload_powerpoint_document"):
+                if upload_capability_key not in raw_capabilities:
+                    normalized[upload_capability_key] = upload_enabled
         return normalized
 
     if isinstance(raw_capabilities, (list, tuple, set)):
@@ -440,6 +459,80 @@ def upload_generated_document_for_current_user(
         group_id=group_id,
         default_group_id=default_group_id,
         process_inline=process_inline,
+    )
+
+
+def upload_word_document_for_current_user(
+    file_name: str,
+    title: str = "",
+    markdown_content: str = "",
+    workspace_scope: str = "personal",
+    group_id: str = "",
+    default_group_id: str = "",
+) -> Dict[str, Any]:
+    """Create a simple DOCX document from markdown-like text and upload it."""
+    # Optional Office rendering dependency; keep lazy so non-export SimpleChat actions still import locally.
+    from docx import Document as DocxDocument
+
+    normalized_file_name = _normalize_generated_document_file_name(file_name or title or "generated_word_document.docx")
+    if not normalized_file_name.lower().endswith(".docx"):
+        normalized_file_name = f"{os.path.splitext(normalized_file_name)[0] or 'generated_word_document'}.docx"
+
+    normalized_title = str(title or os.path.splitext(normalized_file_name)[0] or "Generated Document").strip()
+    normalized_content = str(markdown_content or "").strip()
+    if not normalized_content:
+        raise ValueError("markdown_content is required")
+
+    document = DocxDocument()
+    if normalized_title:
+        document.add_heading(normalized_title, level=1)
+    _append_markdown_like_content_to_docx(document, normalized_content)
+
+    buffer = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024)
+    document.save(buffer)
+    buffer.seek(0)
+    return upload_generated_document_for_current_user(
+        file_name=normalized_file_name,
+        file_content=buffer.read(),
+        workspace_scope=workspace_scope,
+        group_id=group_id,
+        default_group_id=default_group_id,
+    )
+
+
+def upload_powerpoint_document_for_current_user(
+    file_name: str,
+    title: str = "",
+    markdown_content: str = "",
+    workspace_scope: str = "personal",
+    group_id: str = "",
+    default_group_id: str = "",
+) -> Dict[str, Any]:
+    """Create a simple PPTX presentation from markdown-like text and upload it."""
+    # Optional Office rendering dependency; keep lazy so non-export SimpleChat actions still import locally.
+    from pptx import Presentation
+
+    normalized_file_name = _normalize_generated_document_file_name(file_name or title or "generated_presentation.pptx")
+    if not normalized_file_name.lower().endswith(".pptx"):
+        normalized_file_name = f"{os.path.splitext(normalized_file_name)[0] or 'generated_presentation'}.pptx"
+
+    normalized_title = str(title or os.path.splitext(normalized_file_name)[0] or "Generated Presentation").strip()
+    normalized_content = str(markdown_content or "").strip()
+    if not normalized_content:
+        raise ValueError("markdown_content is required")
+
+    presentation = Presentation()
+    _populate_simple_presentation(presentation, normalized_title, normalized_content)
+
+    buffer = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024)
+    presentation.save(buffer)
+    buffer.seek(0)
+    return upload_generated_document_for_current_user(
+        file_name=normalized_file_name,
+        file_content=buffer.read(),
+        workspace_scope=workspace_scope,
+        group_id=group_id,
+        default_group_id=default_group_id,
     )
 
 
@@ -1289,6 +1382,134 @@ def _normalize_generated_document_file_name(file_name: str) -> str:
 
     normalized_base_name = base_name.strip() or normalized_file_name.strip() or "generated_tabular_output"
     return f"{normalized_base_name}.json"
+
+
+def _clean_markdown_like_text(value: str) -> str:
+    cleaned_text = str(value or "").strip()
+    cleaned_text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", cleaned_text)
+    cleaned_text = cleaned_text.replace("**", "").replace("__", "").replace("`", "")
+    cleaned_text = cleaned_text.replace("*_", "").replace("_*", "")
+    return cleaned_text.strip()
+
+
+def _append_markdown_like_content_to_docx(document, markdown_content: str) -> None:
+    in_code_block = False
+    for raw_line in str(markdown_content or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw_line.rstrip()
+        stripped_line = line.strip()
+        if stripped_line.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if not stripped_line:
+            document.add_paragraph("")
+            continue
+        if in_code_block:
+            document.add_paragraph(line)
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped_line)
+        if heading_match:
+            heading_level = min(len(heading_match.group(1)) + 1, 4)
+            document.add_heading(_clean_markdown_like_text(heading_match.group(2)), level=heading_level)
+            continue
+
+        bullet_match = re.match(r"^[-*+]\s+(.+)$", stripped_line)
+        if bullet_match:
+            document.add_paragraph(_clean_markdown_like_text(bullet_match.group(1)), style="List Bullet")
+            continue
+
+        number_match = re.match(r"^\d+[.)]\s+(.+)$", stripped_line)
+        if number_match:
+            document.add_paragraph(_clean_markdown_like_text(number_match.group(1)), style="List Number")
+            continue
+
+        document.add_paragraph(_clean_markdown_like_text(stripped_line))
+
+
+def _split_markdown_like_content_for_slides(markdown_content: str, fallback_title: str) -> List[Dict[str, Any]]:
+    sections = []
+    current_section = {
+        "title": fallback_title or "Overview",
+        "bullets": [],
+    }
+
+    for raw_line in str(markdown_content or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        stripped_line = raw_line.strip()
+        if not stripped_line or stripped_line.startswith("```"):
+            continue
+
+        heading_match = re.match(r"^(#{1,3})\s+(.+)$", stripped_line)
+        if heading_match:
+            if current_section["bullets"]:
+                sections.append(current_section)
+            current_section = {
+                "title": _clean_markdown_like_text(heading_match.group(2)) or fallback_title or "Overview",
+                "bullets": [],
+            }
+            continue
+
+        bullet_match = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", stripped_line)
+        bullet_text = bullet_match.group(1) if bullet_match else stripped_line
+        cleaned_bullet = _clean_markdown_like_text(bullet_text)
+        if cleaned_bullet:
+            current_section["bullets"].append(cleaned_bullet)
+
+    if current_section["bullets"] or not sections:
+        sections.append(current_section)
+
+    split_sections = []
+    for section in sections:
+        bullets = section.get("bullets") or ["No content recorded."]
+        for start_index in range(0, len(bullets), 8):
+            split_sections.append({
+                "title": str(section.get("title") or fallback_title or "Overview")[:120],
+                "bullets": [str(item or "")[:220] for item in bullets[start_index:start_index + 8]],
+            })
+            if len(split_sections) >= 20:
+                return split_sections
+    return split_sections
+
+
+def _get_slide_body_shape(slide):
+    # Optional PowerPoint rendering dependency used only while creating generated presentations.
+    from pptx.util import Inches as PptxInches
+
+    for placeholder in slide.placeholders:
+        if placeholder.placeholder_format.idx == 1:
+            return placeholder
+    return slide.shapes.add_textbox(PptxInches(0.8), PptxInches(1.6), PptxInches(11.7), PptxInches(5.2))
+
+
+def _add_simple_content_slide(presentation, title: str, bullets: List[str]) -> None:
+    slide_layout = presentation.slide_layouts[1] if len(presentation.slide_layouts) > 1 else presentation.slide_layouts[0]
+    slide = presentation.slides.add_slide(slide_layout)
+    if slide.shapes.title:
+        slide.shapes.title.text = str(title or "Overview")[:120]
+
+    body_shape = _get_slide_body_shape(slide)
+    text_frame = body_shape.text_frame
+    text_frame.clear()
+    for index, bullet in enumerate(bullets or ["No content recorded."]):
+        paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
+        paragraph.text = str(bullet or "")[:220]
+        paragraph.level = 0
+
+
+def _populate_simple_presentation(presentation, title: str, markdown_content: str) -> None:
+    normalized_title = str(title or "Generated Presentation").strip() or "Generated Presentation"
+    title_slide_layout = presentation.slide_layouts[0]
+    title_slide = presentation.slides.add_slide(title_slide_layout)
+    if title_slide.shapes.title:
+        title_slide.shapes.title.text = normalized_title[:120]
+    if len(title_slide.placeholders) > 1:
+        title_slide.placeholders[1].text = "Generated by SimpleChat"
+
+    for section in _split_markdown_like_content_for_slides(markdown_content, normalized_title):
+        _add_simple_content_slide(
+            presentation,
+            section.get("title") or normalized_title,
+            section.get("bullets") or [],
+        )
 
 
 def _write_temp_markdown_file(markdown_content: str) -> str:

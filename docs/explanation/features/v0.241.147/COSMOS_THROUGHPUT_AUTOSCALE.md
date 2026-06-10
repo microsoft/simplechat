@@ -18,6 +18,10 @@ Enhanced in version: **0.241.180** with container table filtering and sortable c
 
 Enhanced in version: **0.241.181** with a table-local Refresh Table action for reloading container rows beside the container filter.
 
+Enhanced in version: **0.241.183** with explicit setup guidance for the web app managed identity RBAC assignment and detailed Validate Access pass/fail diagnostics.
+
+Enhanced in version: **0.241.184** with neutral informational status copy when the environment uses container-targeted throughput instead of database-level throughput.
+
 Dependencies
 
 - Admin Settings Scale tab in `application/single_app/templates/admin_settings.html`
@@ -36,6 +40,7 @@ Architecture overview
 - The card header includes a Setup Guide button, while operational actions such as Refresh and Validate Access are grouped separately in the card body.
 - Current SimpleChat Bicep deployments use database-level autoscale throughput on the `SimpleChat` database, so the preferred path scales the database autoscale max RU/s.
 - Environments without database-level throughput fall back to container-targeted management for containers with dedicated throughput.
+- Container-targeted management is a normal supported capacity mode, so the Admin Settings status message is informational unless metrics or permissions fail.
 - Azure Monitor metrics provide recent normalized RU utilization and per-container request-unit visibility.
 - The per-container metrics table can be filtered by container name and sorted by container, current RU/s, RU utilization, request units, or policy.
 - The per-container metrics table includes a Refresh Table action so admins can reload rows directly from the table controls.
@@ -54,6 +59,7 @@ Automation behavior
 - Admins can explicitly ignore the minimum or maximum guardrail when needed.
 - Runtime state is saved back into app settings for last check, last observed utilization, last scale action, and last error.
 - Validate Access runs a non-mutating setup check with the current form values and does not update the saved runtime status cache.
+- Validate Access reports each setup dependency independently: resource configuration, database throughput read, scalable throughput target discovery, container discovery, and Azure Monitor metrics read access.
 - Container-targeted runtime state stores last scale-up/down timestamps per container so cooldowns are enforced independently.
 
 Container policy controls
@@ -69,15 +75,49 @@ Security model
 - Throughput operations are available only through admin-only Flask routes and the internal background scheduler.
 - The deployer adds resource metadata app settings so the backend can target the deployed Cosmos account without user-supplied resource IDs.
 - The deployer adds a custom `SimpleChat Cosmos Throughput Operator` role for the web app identity. This role allows throughput-setting reads/writes and metric reads without adding Cosmos data-plane permissions.
+- Role assignments must target the Azure App Service managed identity service principal for the running SimpleChat web app. In the Azure portal this is the Object (principal) ID shown under the Web App Identity blade, and in Microsoft Entra ID it appears as the matching Enterprise Application. Do not assign throughput-management RBAC to the user-facing Microsoft Entra sign-in app registration unless that app registration is also the credential used by the running web app.
+- Assign `SimpleChat Cosmos Throughput Operator` at the resource group scope containing the Cosmos account, or directly on the Cosmos account when a narrower scope is required.
+- The custom role includes these management-plane actions: `Microsoft.DocumentDB/databaseAccounts/read`, `Microsoft.DocumentDB/databaseAccounts/sqlDatabases/read`, `Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/read`, database and container `throughputSettings/read`, `throughputSettings/write`, `throughputSettings/migrateToAutoscale/action`, throughput operation-result reads, and `Microsoft.Insights/metrics/read`.
+- If a deployment does not have the SimpleChat custom role, create an equivalent custom Azure RBAC role with those actions and assign it to the web app managed identity. Broad built-in roles such as Contributor can satisfy the checks but are not the recommended least-privilege path.
 - Managed identity deployments still retain the existing Cosmos Contributor role because other deployment/runtime flows depend on it.
 - Key-auth deployments can still use the system-assigned web app identity for management-plane throughput changes.
+
+Manual RBAC assignment example
+
+Use these commands when the deployer did not create or assign the throughput role automatically. Replace the placeholder values with the deployed resource names.
+
+```bash
+web_app_principal_id=$(az webapp identity show --resource-group <app-resource-group> --name <web-app-name> --query principalId -o tsv)
+cosmos_account_id=$(az cosmosdb show --resource-group <cosmos-resource-group> --name <cosmos-account-name> --query id -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$web_app_principal_id" \
+  --assignee-principal-type ServicePrincipal \
+  --role "SimpleChat Cosmos Throughput Operator" \
+  --scope "$cosmos_account_id"
+```
+
+To assign at the resource group scope instead, use:
+
+```bash
+resource_group_id=$(az group show --name <cosmos-resource-group> --query id -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$web_app_principal_id" \
+  --assignee-principal-type ServicePrincipal \
+  --role "SimpleChat Cosmos Throughput Operator" \
+  --scope "$resource_group_id"
+```
+
+After assigning the role, wait a few minutes for Azure RBAC propagation, then run **Validate Access** from Admin Settings. A failed result now identifies which dependency failed and preserves successful checks for comparison.
 
 API endpoints
 
 - `GET /api/admin/settings/cosmos-throughput/status`
   - Returns configured resource metadata, database throughput mode/current RU, recent metrics, and per-container metric rows.
 - `POST /api/admin/settings/cosmos-throughput/validate-access`
-  - Accepts the current Cosmos throughput form values and validates resource configuration, throughput read access, container discovery, and Azure Monitor metrics without saving settings or changing RU/s.
+  - Accepts the current Cosmos throughput form values and validates resource configuration, database throughput read access, scalable target discovery, container discovery, and Azure Monitor metrics without saving settings or changing RU/s.
+  - Returns a `checks` array with `name`, `label`, `passed`, and `message` values so admins can see what succeeded, what failed, and the Azure error detail for failed checks.
 - `POST /api/admin/settings/cosmos-throughput/scale`
   - Accepts `{ "direction": "up" }` or `{ "direction": "down" }` and applies the configured step and guardrails.
   - Accepts an optional `container_name` value for dedicated container throughput scaling.
@@ -120,6 +160,7 @@ Admin workflow
 - Use Refresh Table to reload the container rows from the same controls after changing the filter or reviewing sorted results.
 - Save Admin Settings.
 - Use Validate Access after changing resource identity or permissions to confirm the current form values work before enabling automation.
+- When Validate Access fails, review the pass/fail list. Database throughput read failures usually point to missing `throughputSettings/read`; container discovery failures point to missing `containers/read`; metric failures point to missing `Microsoft.Insights/metrics/read`; and write or conversion failures during manual actions point to missing `throughputSettings/write` or `migrateToAutoscale/action`.
 - Use Refresh to view current throughput and metrics.
 - Use Scale Up or Scale Down for guarded manual changes.
 
@@ -152,4 +193,6 @@ Related config.py version update
 - Application version updated to `0.241.162` in `application/single_app/config.py` for the Validate Access setup test action.
 - Application version updated to `0.241.180` in `application/single_app/config.py` for container table sorting and filtering.
 - Application version updated to `0.241.181` in `application/single_app/config.py` for the table-local Refresh Table action.
+- Application version updated to `0.241.183` in `application/single_app/config.py` for explicit Cosmos throughput access guidance and detailed Validate Access diagnostics.
+- Application version updated to `0.241.184` in `application/single_app/config.py` for neutral container-targeted throughput status language.
 - Deployer version updated to `1.0.12` in `deployers/version.txt` for Bicep app-setting and RBAC changes.

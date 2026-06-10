@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.241.179
+Version: 0.241.186
 Implemented in: 0.241.179
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
@@ -54,6 +54,16 @@ def test_model_endpoint_protocol_inference():
         infer_model_endpoint_protocol("new_foundry", project_endpoint, "claude-sonnet-4"),
         MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
         "Claude deployment names should use Anthropic",
+    )
+    assert_equal(
+        infer_model_endpoint_protocol("claude", project_endpoint, "sonnet-4"),
+        MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+        "Literal Claude providers should use Anthropic",
+    )
+    assert_equal(
+        infer_model_endpoint_protocol("anthropic", project_endpoint, "sonnet-4"),
+        MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+        "Literal Anthropic providers should use Anthropic",
     )
     assert_equal(
         infer_model_endpoint_protocol("new_foundry", anthropic_endpoint, "gpt-4o"),

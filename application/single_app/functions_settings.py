@@ -12,6 +12,7 @@ from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
 import copy
+import json
 from support_menu_config import (
     get_default_support_latest_features_visibility,
     has_visible_support_latest_features,
@@ -100,7 +101,17 @@ def normalize_group_workflow_allowed_group_ids(value):
     if value is None:
         return []
     if isinstance(value, str):
-        candidates = value.replace('\r', '\n').replace(',', '\n').split('\n')
+        stripped_value = value.strip()
+        candidates = None
+        if stripped_value.startswith('['):
+            try:
+                parsed_value = json.loads(stripped_value)
+                if isinstance(parsed_value, list):
+                    candidates = parsed_value
+            except (TypeError, ValueError):
+                candidates = None
+        if candidates is None:
+            candidates = value.replace('\r', '\n').replace(',', '\n').split('\n')
     elif isinstance(value, (list, tuple, set)):
         candidates = value
     else:
@@ -115,6 +126,110 @@ def normalize_group_workflow_allowed_group_ids(value):
         normalized_ids.append(group_id)
         seen_ids.add(group_id)
     return normalized_ids
+
+
+def normalize_file_sync_allowed_group_ids(value):
+    """Normalize File Sync group assignment settings into unique group ids."""
+    return normalize_group_workflow_allowed_group_ids(value)
+
+
+def normalize_file_sync_allowed_public_workspace_ids(value):
+    """Normalize File Sync public workspace assignment settings into unique workspace ids."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        candidates = None
+        if stripped_value.startswith('['):
+            try:
+                parsed_value = json.loads(stripped_value)
+                if isinstance(parsed_value, list):
+                    candidates = parsed_value
+            except (TypeError, ValueError):
+                candidates = None
+        if candidates is None:
+            candidates = value.replace('\r', '\n').replace(',', '\n').split('\n')
+    elif isinstance(value, (list, tuple, set)):
+        candidates = value
+    else:
+        candidates = [value]
+
+    normalized_ids = []
+    seen_ids = set()
+    for candidate in candidates:
+        workspace_id = str(candidate or '').strip()
+        if not workspace_id or workspace_id in seen_ids:
+            continue
+        normalized_ids.append(workspace_id)
+        seen_ids.add(workspace_id)
+    return normalized_ids
+
+
+def normalize_file_download_allowed_group_ids(value):
+    """Normalize file download group assignment settings into unique group ids."""
+    return normalize_group_workflow_allowed_group_ids(value)
+
+
+def normalize_file_download_allowed_public_workspace_ids(value):
+    """Normalize file download public workspace assignment settings into unique workspace ids."""
+    return normalize_file_sync_allowed_public_workspace_ids(value)
+
+
+def is_personal_workspace_file_download_enabled(settings):
+    """Return True when admins allow personal workspace file downloads."""
+    return bool((settings or {}).get('allow_personal_workspace_file_downloads', False))
+
+
+def is_group_workspace_file_download_enabled(settings, group_doc_or_id):
+    """Return True when admins and group owners allow downloads for a group workspace."""
+    source_settings = settings or {}
+    if not source_settings.get('allow_group_workspace_file_downloads', False):
+        return False
+
+    group_id = ''
+    group_doc = {}
+    if isinstance(group_doc_or_id, dict):
+        group_doc = group_doc_or_id
+        group_id = str(group_doc.get('id') or '').strip()
+    else:
+        group_id = str(group_doc_or_id or '').strip()
+
+    if not group_id:
+        return False
+    if bool(group_doc.get('disable_file_downloads', False)):
+        return False
+    if source_settings.get('require_group_assignment_for_file_downloads', False):
+        allowed_group_ids = normalize_file_download_allowed_group_ids(
+            source_settings.get('file_download_allowed_group_ids')
+        )
+        return group_id in allowed_group_ids
+    return True
+
+
+def is_public_workspace_file_download_enabled(settings, workspace_doc_or_id):
+    """Return True when admins and workspace owners allow downloads for a public workspace."""
+    source_settings = settings or {}
+    if not source_settings.get('allow_public_workspace_file_downloads', False):
+        return False
+
+    workspace_id = ''
+    workspace_doc = {}
+    if isinstance(workspace_doc_or_id, dict):
+        workspace_doc = workspace_doc_or_id
+        workspace_id = str(workspace_doc.get('id') or '').strip()
+    else:
+        workspace_id = str(workspace_doc_or_id or '').strip()
+
+    if not workspace_id:
+        return False
+    if bool(workspace_doc.get('disable_file_downloads', False)):
+        return False
+    if source_settings.get('require_public_workspace_assignment_for_file_downloads', False):
+        allowed_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
+            source_settings.get('file_download_allowed_public_workspace_ids')
+        )
+        return workspace_id in allowed_workspace_ids
+    return True
 
 
 def is_group_workflows_enabled_for_group(settings, group_id):
@@ -385,6 +500,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
         'enable_file_sharing': False,
+        'allow_personal_workspace_file_downloads': False,
+        'allow_group_workspace_file_downloads': False,
+        'require_group_assignment_for_file_downloads': False,
+        'file_download_allowed_group_ids': [],
+        'allow_public_workspace_file_downloads': False,
+        'require_public_workspace_assignment_for_file_downloads': False,
+        'file_download_allowed_public_workspace_ids': [],
         'enable_chat_file_uploads': True,
         'require_member_of_chat_file_upload_user': False,
         'enforce_workspace_scope_lock': True,
@@ -395,8 +517,10 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_file_sync_group': True,
         'enable_file_sync_public': False,
         'file_sync_personal_require_app_role': False,
-        'file_sync_group_require_app_role': False,
-        'file_sync_public_require_app_role': False,
+        'require_group_assignment_for_file_sync': False,
+        'file_sync_allowed_group_ids': [],
+        'require_public_workspace_assignment_for_file_sync': False,
+        'file_sync_allowed_public_workspace_ids': [],
         'file_sync_personal_admin_only': False,
         'file_sync_group_admin_only': False,
         'file_sync_public_admin_only': False,

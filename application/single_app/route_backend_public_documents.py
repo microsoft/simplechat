@@ -262,11 +262,13 @@ def register_route_backend_public_documents(app):
         ))
         legacy_count = legacy[0] if legacy else 0
 
+        file_downloads_enabled = is_public_workspace_file_download_enabled(get_settings(), ws_doc)
         return jsonify({
             'documents': docs,
             'page': page,
             'page_size': page_size,
             'total_count': total_count,
+            'file_downloads_enabled': file_downloads_enabled,
             'needs_legacy_update': legacy_count > 0
         }), 200
 
@@ -379,6 +381,115 @@ def register_route_backend_public_documents(app):
             'revision_family_id': versions[0].get('revision_family_id'),
             'versions': versions,
         }), 200
+
+    def _authorize_public_document_download(user_id, document_id):
+        try:
+            active_ws, ws_doc, _ = require_active_public_workspace(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        except ValueError:
+            return None, None, (jsonify({'error': 'No active public workspace selected'}), 400)
+        except LookupError:
+            return None, None, (jsonify({'error': 'Active public workspace not found'}), 404)
+        except PermissionError:
+            return None, None, (jsonify({'error': 'Access denied'}), 403)
+
+        if not is_public_workspace_file_download_enabled(get_settings(), ws_doc):
+            return None, None, (jsonify({'error': 'File downloads are disabled for this public workspace'}), 403)
+
+        document_record = get_document_record(
+            user_id=user_id,
+            document_id=document_id,
+            public_workspace_id=active_ws,
+        )
+        if not document_record:
+            return None, None, (jsonify({'error': 'Document not found or access denied'}), 404)
+        return active_ws, document_record, None
+
+    @app.route('/api/public_documents/<doc_id>/download', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_download_public_document(doc_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        active_ws, document_record, error_response = _authorize_public_document_download(user_id, doc_id)
+        if error_response:
+            return error_response
+
+        try:
+            return build_document_download_response(document_record, user_id=user_id, public_workspace_id=active_ws)
+        except FileNotFoundError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except Exception as exc:
+            log_event(
+                '[DocumentDownload] Failed public document download',
+                {'document_id': doc_id, 'public_workspace_id': active_ws, 'error': str(exc)},
+                debug_only=True,
+            )
+            return jsonify({'error': 'Unable to download document'}), 500
+
+    @app.route('/api/public_documents/download', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_download_public_documents():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True) or {}
+        document_ids = data.get('document_ids') or []
+        if not isinstance(document_ids, list):
+            return jsonify({'error': 'document_ids must be a list'}), 400
+
+        active_ws = None
+        documents = []
+        seen_ids = set()
+        for document_id_value in document_ids:
+            normalized_document_id = str(document_id_value or '').strip()
+            if not normalized_document_id or normalized_document_id in seen_ids:
+                continue
+            seen_ids.add(normalized_document_id)
+            authorized_ws, document_record, error_response = _authorize_public_document_download(
+                user_id,
+                normalized_document_id,
+            )
+            if error_response:
+                return error_response
+            if active_ws is None:
+                active_ws = authorized_ws
+            documents.append(document_record)
+
+        if not documents:
+            return jsonify({'error': 'No documents selected'}), 400
+        if len(documents) == 1:
+            try:
+                return build_document_download_response(documents[0], user_id=user_id, public_workspace_id=active_ws)
+            except FileNotFoundError as exc:
+                return jsonify({'error': str(exc)}), 404
+
+        try:
+            return build_documents_zip_download_response(
+                documents,
+                'public_workspace_documents.zip',
+                user_id=user_id,
+                public_workspace_id=active_ws,
+            )
+        except FileNotFoundError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except Exception as exc:
+            log_event(
+                '[DocumentDownload] Failed public document ZIP download',
+                {'public_workspace_id': active_ws, 'document_count': len(documents), 'error': str(exc)},
+                debug_only=True,
+            )
+            return jsonify({'error': 'Unable to download selected documents'}), 500
 
     @app.route('/api/public_documents/<doc_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())

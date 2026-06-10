@@ -2,8 +2,10 @@
 # test_cosmos_throughput_autoscale_logic.py
 """
 Functional test for Cosmos throughput autoscale decision logic.
-Version: 0.241.162
+Version: 0.241.184
 Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159; migrateToAutoscale ARM action fix added in 0.241.160; save validation added in 0.241.161; access validation added in 0.241.162
+Enhanced in: 0.241.183 with detailed access validation diagnostics for partial Azure permission failures.
+Enhanced in: 0.241.184 with neutral container-targeted throughput status language.
 
 This test ensures that Cosmos DB throughput automation scales the shared
 SimpleChat database up and down using separate thresholds, cooldowns, and
@@ -25,11 +27,13 @@ if APP_ROOT not in sys.path:
 import functions_cosmos_throughput as cosmos_throughput
 
 from functions_cosmos_throughput import (
+    CosmosThroughputError,
     _build_throughput_payload,
     build_cosmos_throughput_access_validation,
     calculate_manual_scale_target,
     calculate_scale_decision,
     get_container_policy,
+    get_cosmos_throughput_status,
     normalize_cosmos_throughput_settings,
     validate_cosmos_throughput_policy_settings,
 )
@@ -531,6 +535,134 @@ def test_access_validation_reports_configuration_and_permission_failures():
     )
 
 
+def test_access_validation_uses_neutral_container_targeted_language():
+    """Database throughput absence should read as a normal container-targeted mode, not an error."""
+    validation = build_cosmos_throughput_access_validation({
+        'configured': True,
+        'throughput': {
+            'is_scalable': False,
+            'mode': 'container_or_serverless',
+            'throughput_not_found': True,
+        },
+        'containers': [
+            {
+                'container_name': 'messages',
+                'is_scalable': True,
+            },
+        ],
+        'metric_error': '',
+        'container_error': '',
+    })
+
+    database_check = next(
+        check for check in validation['checks']
+        if check['name'] == 'database_throughput_read'
+    )
+    assert database_check['passed'] is True
+    assert database_check['message'] == 'No database-level throughput is configured; using dedicated container throughput checks.'
+    assert 'not found' not in database_check['message'].lower()
+
+
+def test_access_validation_reports_partial_azure_failures():
+    """Access validation should preserve separate ARM and metrics failures instead of returning a generic error."""
+    status = {
+        'configured': True,
+        'throughput': {
+            'is_scalable': False,
+            'mode': 'unknown',
+            'error': 'ARM request failed with 403: database throughput forbidden',
+        },
+        'throughput_error': 'ARM request failed with 403: database throughput forbidden',
+        'containers': [
+            {
+                'container_name': 'messages',
+                'is_scalable': True,
+            },
+        ],
+        'metric_error': 'ARM request failed with 403: metrics read forbidden',
+        'container_error': '',
+    }
+
+    validation = build_cosmos_throughput_access_validation(status)
+
+    assert validation['success'] is False
+    assert any(
+        check['name'] == 'database_throughput_read'
+        and not check['passed']
+        and 'database throughput forbidden' in check['message']
+        for check in validation['checks']
+    )
+    assert any(
+        check['name'] == 'throughput_read'
+        and check['passed']
+        and 'dedicated container throughput target' in check['message']
+        for check in validation['checks']
+    )
+    assert any(
+        check['name'] == 'container_discovery'
+        and check['passed']
+        and '1 container(s) found' in check['message']
+        for check in validation['checks']
+    )
+    assert any(
+        check['name'] == 'metrics_read'
+        and not check['passed']
+        and 'metrics read forbidden' in check['message']
+        for check in validation['checks']
+    )
+
+
+def test_status_returns_partial_failure_details_for_validate_access():
+    """Status loading should keep partial Azure failures in the response for Validate Access diagnostics."""
+    original_build_resource_ids = cosmos_throughput.build_cosmos_resource_ids
+    original_get_database_throughput = cosmos_throughput.get_database_throughput
+    original_get_container_throughputs = cosmos_throughput.get_container_throughputs
+    original_query_cosmos_metrics = cosmos_throughput.query_cosmos_metrics
+
+    def fake_build_resource_ids(settings=None):
+        return {
+            'subscription_id': 'sub',
+            'resource_group': 'rg',
+            'account_name': 'acct',
+            'database_name': 'SimpleChat',
+            'account_id': '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DocumentDB/databaseAccounts/acct',
+            'database_id': '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DocumentDB/databaseAccounts/acct/sqlDatabases/SimpleChat',
+            'throughput_id': '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DocumentDB/databaseAccounts/acct/sqlDatabases/SimpleChat/throughputSettings/default',
+        }
+
+    try:
+        cosmos_throughput.build_cosmos_resource_ids = fake_build_resource_ids
+        cosmos_throughput.get_database_throughput = lambda settings=None, refresh_id='': (_ for _ in ()).throw(
+            CosmosThroughputError('ARM request failed with 403: database throughput forbidden', status_code=403)
+        )
+        cosmos_throughput.get_container_throughputs = lambda settings=None, resource_ids=None, refresh_id='': [
+            {
+                'container_name': 'messages',
+                'mode': 'autoscale',
+                'current_ru': 4000,
+                'is_scalable': True,
+            },
+        ]
+        cosmos_throughput.query_cosmos_metrics = lambda settings=None, refresh_id='': (_ for _ in ()).throw(
+            CosmosThroughputError('ARM request failed with 403: metrics read forbidden', status_code=403)
+        )
+
+        status = get_cosmos_throughput_status(_base_settings(), include_metrics=True, refresh_id='test-validation')
+    finally:
+        cosmos_throughput.build_cosmos_resource_ids = original_build_resource_ids
+        cosmos_throughput.get_database_throughput = original_get_database_throughput
+        cosmos_throughput.get_container_throughputs = original_get_container_throughputs
+        cosmos_throughput.query_cosmos_metrics = original_query_cosmos_metrics
+
+    assert status['configured'] is True
+    assert status['capacity_scope'] == 'container'
+    assert 'database throughput forbidden' in status['throughput_error']
+    assert 'metrics read forbidden' in status['metric_error']
+    assert status['container_error'] == ''
+    assert status['containers'][0]['container_name'] == 'messages'
+    assert status['containers'][0]['is_scalable'] is True
+
+
 if __name__ == "__main__":
     tests = [
         test_scales_up_when_utilization_is_high,
@@ -550,6 +682,9 @@ if __name__ == "__main__":
         test_policy_validation_rejects_invalid_container_policy_values,
         test_access_validation_reports_successful_cosmos_checks,
         test_access_validation_reports_configuration_and_permission_failures,
+        test_access_validation_uses_neutral_container_targeted_language,
+        test_access_validation_reports_partial_azure_failures,
+        test_status_returns_partial_failure_details_for_validate_access,
     ]
     results = []
     for test in tests:

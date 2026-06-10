@@ -315,6 +315,22 @@ def register_route_frontend_admin_settings(app):
         settings['group_workflow_allowed_group_ids'] = normalize_group_workflow_allowed_group_ids(
             settings.get('group_workflow_allowed_group_ids', [])
         )
+        if 'allow_personal_workspace_file_downloads' not in settings:
+            settings['allow_personal_workspace_file_downloads'] = False
+        if 'allow_group_workspace_file_downloads' not in settings:
+            settings['allow_group_workspace_file_downloads'] = False
+        if 'require_group_assignment_for_file_downloads' not in settings:
+            settings['require_group_assignment_for_file_downloads'] = False
+        settings['file_download_allowed_group_ids'] = normalize_file_download_allowed_group_ids(
+            settings.get('file_download_allowed_group_ids', [])
+        )
+        if 'allow_public_workspace_file_downloads' not in settings:
+            settings['allow_public_workspace_file_downloads'] = False
+        if 'require_public_workspace_assignment_for_file_downloads' not in settings:
+            settings['require_public_workspace_assignment_for_file_downloads'] = False
+        settings['file_download_allowed_public_workspace_ids'] = normalize_file_download_allowed_public_workspace_ids(
+            settings.get('file_download_allowed_public_workspace_ids', [])
+        )
         if 'allow_group_agents' not in settings:
             settings['allow_group_agents'] = False
         if 'allow_group_custom_endpoints' not in settings:
@@ -570,6 +586,18 @@ def register_route_frontend_admin_settings(app):
             group_workflow_allowed_group_ids = normalize_group_workflow_allowed_group_ids(
                 form_data.get('group_workflow_allowed_group_ids', '')
             )
+            file_sync_allowed_group_ids = normalize_file_sync_allowed_group_ids(
+                form_data.get('file_sync_allowed_group_ids', '')
+            )
+            file_sync_allowed_public_workspace_ids = normalize_file_sync_allowed_public_workspace_ids(
+                form_data.get('file_sync_allowed_public_workspace_ids', '')
+            )
+            file_download_allowed_group_ids = normalize_file_download_allowed_group_ids(
+                form_data.get('file_download_allowed_group_ids', '')
+            )
+            file_download_allowed_public_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
+                form_data.get('file_download_allowed_public_workspace_ids', '')
+            )
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -754,8 +782,10 @@ def register_route_frontend_admin_settings(app):
                 'enable_file_sync_group': form_data.get('enable_file_sync_group') == 'on',
                 'enable_file_sync_public': form_data.get('enable_file_sync_public') == 'on',
                 'file_sync_personal_require_app_role': form_data.get('file_sync_personal_require_app_role') == 'on',
-                'file_sync_group_require_app_role': form_data.get('file_sync_group_require_app_role') == 'on',
-                'file_sync_public_require_app_role': form_data.get('file_sync_public_require_app_role') == 'on',
+                'require_group_assignment_for_file_sync': form_data.get('require_group_assignment_for_file_sync') == 'on',
+                'file_sync_allowed_group_ids': file_sync_allowed_group_ids,
+                'require_public_workspace_assignment_for_file_sync': form_data.get('require_public_workspace_assignment_for_file_sync') == 'on',
+                'file_sync_allowed_public_workspace_ids': file_sync_allowed_public_workspace_ids,
                 'file_sync_personal_admin_only': form_data.get('file_sync_personal_admin_only') == 'on',
                 'file_sync_group_admin_only': form_data.get('file_sync_group_admin_only') == 'on',
                 'file_sync_public_admin_only': form_data.get('file_sync_public_admin_only') == 'on',
@@ -1572,14 +1602,23 @@ def register_route_frontend_admin_settings(app):
                 'allow_group_workflows': form_data.get('allow_group_workflows') == 'on',
                 'require_group_assignment_for_group_workflows': form_data.get('require_group_assignment_for_group_workflows') == 'on',
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
+                'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
+                'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',
+                'require_group_assignment_for_file_downloads': form_data.get('require_group_assignment_for_file_downloads') == 'on',
+                'file_download_allowed_group_ids': file_download_allowed_group_ids,
+                'allow_public_workspace_file_downloads': form_data.get('allow_public_workspace_file_downloads') == 'on',
+                'require_public_workspace_assignment_for_file_downloads': form_data.get('require_public_workspace_assignment_for_file_downloads') == 'on',
+                'file_download_allowed_public_workspace_ids': file_download_allowed_public_workspace_ids,
                 'enforce_workspace_scope_lock': form_data.get('enforce_workspace_scope_lock') == 'on',
                 'enable_file_sync': requested_enable_file_sync,
                 'enable_file_sync_personal': file_sync_settings['enable_file_sync_personal'],
                 'enable_file_sync_group': file_sync_settings['enable_file_sync_group'],
                 'enable_file_sync_public': file_sync_settings['enable_file_sync_public'],
                 'file_sync_personal_require_app_role': file_sync_settings['file_sync_personal_require_app_role'],
-                'file_sync_group_require_app_role': file_sync_settings['file_sync_group_require_app_role'],
-                'file_sync_public_require_app_role': file_sync_settings['file_sync_public_require_app_role'],
+                'require_group_assignment_for_file_sync': file_sync_settings['require_group_assignment_for_file_sync'],
+                'file_sync_allowed_group_ids': file_sync_settings['file_sync_allowed_group_ids'],
+                'require_public_workspace_assignment_for_file_sync': file_sync_settings['require_public_workspace_assignment_for_file_sync'],
+                'file_sync_allowed_public_workspace_ids': file_sync_settings['file_sync_allowed_public_workspace_ids'],
                 'file_sync_personal_admin_only': file_sync_settings['file_sync_personal_admin_only'],
                 'file_sync_group_admin_only': file_sync_settings['file_sync_group_admin_only'],
                 'file_sync_public_admin_only': file_sync_settings['file_sync_public_admin_only'],

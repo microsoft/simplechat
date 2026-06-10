@@ -269,14 +269,12 @@
         <i class="bi bi-graph-up me-2"></i>Stats
       </button>
     </li>
-    {% if app_settings.enable_retention_policy_group %}
     <li class="nav-item d-none" role="presentation" id="settings-tab-item">
       <button class="nav-link" id="settings-tab" data-bs-toggle="tab" data-bs-target="#settings"
         type="button" role="tab" aria-controls="settings" aria-selected="false">
-        <i class="bi bi-hourglass-split me-2"></i>Settings
+        <i class="bi bi-sliders me-2"></i>Settings
       </button>
     </li>
-    {% endif %}
   </ul>
 
   <!-- Tab Content -->
@@ -573,9 +571,26 @@
       </div>
     </div>
 
-    {% if app_settings.enable_retention_policy_group %}
     <!-- Settings Tab -->
-    <div class="tab-pane fade" id="settings" role="tabpanel">
+    <div class="tab-pane fade d-none" id="settings" role="tabpanel">
+      <div class="section-card">
+        <h5 class="mb-3"><i class="bi bi-download me-2"></i>File Download Settings</h5>
+        <p class="text-muted">Disable original file downloads for this group workspace even when admins enable downloads globally or assign this group.</p>
+
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="group-disable-file-downloads">
+          <label class="form-check-label" for="group-disable-file-downloads">Disable file downloads for this group</label>
+        </div>
+
+        <div>
+          <button type="button" class="btn btn-primary" id="saveGroupDownloadSettingsBtn">
+            <i class="bi bi-save me-1"></i>Save Download Settings
+          </button>
+          <span id="group-download-settings-save-status" class="ms-3"></span>
+        </div>
+      </div>
+
+      {% if app_settings.enable_retention_policy_group %}
       <div class="section-card">
         <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
         <p class="text-muted">Configure how long to keep conversations and documents in this group workspace. Items older than the specified period will be automatically deleted.</p>
@@ -637,8 +652,8 @@
           <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
         </div>
       </div>
+      {% endif %}
     </div>
-    {% endif %}
   </div>
 </div>
 

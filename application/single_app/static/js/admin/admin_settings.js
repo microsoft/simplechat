@@ -76,6 +76,22 @@ const groupWorkflowAssignmentError = document.getElementById('group-workflow-ass
 const groupWorkflowAssignmentGroupsBody = document.getElementById('group-workflow-assignment-groups-body');
 const groupWorkflowAssignedGroupIds = new Set();
 const groupWorkflowDiscoveredGroups = new Map();
+const fileDownloadGroupAssignmentsInput = document.getElementById('file_download_allowed_group_ids');
+const fileDownloadGroupAssignmentSummary = document.getElementById('file-download-group-assignment-summary');
+const fileDownloadGroupAssignmentModal = document.getElementById('fileDownloadGroupAssignmentModal');
+const fileDownloadGroupSearchInput = document.getElementById('file-download-group-assignment-search');
+const fileDownloadGroupSearchBtn = document.getElementById('file-download-group-assignment-search-btn');
+const fileDownloadGroupAssignmentStatus = document.getElementById('file-download-group-assignment-status');
+const fileDownloadGroupAssignmentError = document.getElementById('file-download-group-assignment-error');
+const fileDownloadGroupAssignmentBody = document.getElementById('file-download-group-assignment-body');
+const fileDownloadPublicAssignmentsInput = document.getElementById('file_download_allowed_public_workspace_ids');
+const fileDownloadPublicAssignmentSummary = document.getElementById('file-download-public-workspace-assignment-summary');
+const fileDownloadPublicAssignmentModal = document.getElementById('fileDownloadPublicWorkspaceAssignmentModal');
+const fileDownloadPublicSearchInput = document.getElementById('file-download-public-workspace-assignment-search');
+const fileDownloadPublicSearchBtn = document.getElementById('file-download-public-workspace-assignment-search-btn');
+const fileDownloadPublicAssignmentStatus = document.getElementById('file-download-public-workspace-assignment-status');
+const fileDownloadPublicAssignmentError = document.getElementById('file-download-public-workspace-assignment-error');
+const fileDownloadPublicAssignmentBody = document.getElementById('file-download-public-workspace-assignment-body');
 
 function setupAdminFormAutofillMetadata() {
     if (!adminForm) {
@@ -238,6 +254,36 @@ function setCosmosThroughputMessage(message, variant = 'info') {
     messageElement.textContent = message || '';
     messageElement.className = `alert alert-${variant} mt-3`;
     messageElement.classList.toggle('d-none', !message);
+}
+
+function setCosmosThroughputValidationResult(data) {
+    const messageElement = document.getElementById('cosmos-throughput-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.replaceChildren();
+    messageElement.className = `alert alert-${data?.variant || (data?.success ? 'success' : 'danger')} mt-3`;
+
+    const summary = document.createElement('div');
+    summary.className = 'fw-semibold mb-2';
+    summary.textContent = data?.message || 'Cosmos throughput access validation completed.';
+    messageElement.appendChild(summary);
+
+    const checks = Array.isArray(data?.checks) ? data.checks : [];
+    if (checks.length > 0) {
+        const list = document.createElement('ul');
+        list.className = 'mb-0 ps-3 small';
+        checks.forEach(check => {
+            const item = document.createElement('li');
+            const statusText = check?.passed ? 'Passed' : 'Failed';
+            item.textContent = `${statusText} - ${check?.label || 'Check'}: ${check?.message || 'No detail returned.'}`;
+            list.appendChild(item);
+        });
+        messageElement.appendChild(list);
+    }
+
+    messageElement.classList.remove('d-none');
 }
 
 function setCosmosThroughputValidationMessage(errors) {
@@ -975,10 +1021,12 @@ async function loadCosmosThroughputStatus(event = null) {
         updateCosmosThroughputStatusPanel(data);
         if (!data.configured) {
             setCosmosThroughputMessage(data.error || 'Cosmos throughput management needs subscription, resource group, account, and database settings.', 'warning');
+        } else if (data.throughput_error) {
+            setCosmosThroughputMessage(`Cosmos database throughput could not be read. ${data.throughput_error}`, 'danger');
         } else if (data.capacity_scope === 'container' && data.metrics?.normalized_ru_percent !== null && data.metrics?.normalized_ru_percent !== undefined && !hasContainerLevelCosmosMetrics(data)) {
             setCosmosThroughputMessage('Azure Monitor returned aggregate RU utilization, but not per-container metric dimensions for this window. Container autoscale waits for per-container utilization before scaling individual containers; Refresh again after a few minutes.', 'warning');
         } else if (data.capacity_scope === 'container') {
-            setCosmosThroughputMessage('Database-level throughput was not found. Container-targeted throughput controls are available for containers with dedicated throughput.', 'warning');
+            setCosmosThroughputMessage('Container-targeted throughput is active. Dedicated-throughput containers can be monitored and scaled individually; containers sharing database throughput remain view-only.', 'info');
         } else if (data.metric_error) {
             setCosmosThroughputMessage('Throughput loaded, but Azure Monitor metrics are unavailable. Check the app identity permissions and Cosmos metrics availability.', 'warning');
         } else {
@@ -1019,21 +1067,6 @@ function buildCosmosThroughputAccessPayload() {
     };
 }
 
-function formatCosmosThroughputAccessValidationMessage(data) {
-    const baseMessage = data?.message || 'Cosmos throughput access validation completed.';
-    const failedChecks = Array.isArray(data?.checks)
-        ? data.checks.filter(check => !check?.passed)
-        : [];
-    if (failedChecks.length === 0) {
-        return baseMessage;
-    }
-
-    const details = failedChecks
-        .map(check => `${check.label || 'Check'}: ${check.message || 'Failed.'}`)
-        .join(' ');
-    return `${baseMessage} ${details}`;
-}
-
 async function validateCosmosThroughputAccess(triggerButton = null) {
     const button = triggerButton || document.getElementById('cosmos-throughput-validate-access-btn');
     if (button) {
@@ -1059,10 +1092,7 @@ async function validateCosmosThroughputAccess(triggerButton = null) {
         if (data.status?.configured) {
             updateCosmosThroughputStatusPanel(data.status);
         }
-        setCosmosThroughputMessage(
-            formatCosmosThroughputAccessValidationMessage(data),
-            data.variant || (data.success ? 'success' : 'danger')
-        );
+        setCosmosThroughputValidationResult(data);
     } catch (error) {
         setCosmosThroughputMessage(error.message || 'Failed to validate Cosmos throughput access.', 'danger');
     } finally {
@@ -2173,6 +2203,252 @@ function setupGroupWorkflowAssignments() {
     adminForm?.addEventListener('submit', syncGroupWorkflowAssignmentField);
 }
 
+function parseFileDownloadAssignmentIds(value) {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+        return [];
+    }
+
+    try {
+        const parsedValue = JSON.parse(rawValue);
+        if (Array.isArray(parsedValue)) {
+            return parsedValue.map(item => String(item || '').trim()).filter(Boolean);
+        }
+    } catch (error) {
+        // Fall back to comma/newline parsing for older saved form values.
+    }
+
+    return rawValue
+        .split(/[\n,;]+/)
+        .map(item => String(item || '').trim())
+        .filter(Boolean);
+}
+
+function createFileDownloadAssignmentManager(config) {
+    const assignedIds = new Set();
+
+    function syncField() {
+        if (config.input) {
+            config.input.value = JSON.stringify(Array.from(assignedIds));
+        }
+    }
+
+    function updateSummary() {
+        if (!config.summary) {
+            return;
+        }
+
+        const count = assignedIds.size;
+        config.summary.textContent = count === 1
+            ? `1 ${config.summarySingular} assigned.`
+            : `${count} ${config.summaryPlural} assigned.`;
+    }
+
+    function setError(message) {
+        if (!config.error) {
+            return;
+        }
+
+        config.error.textContent = message || '';
+        config.error.classList.toggle('d-none', !message);
+    }
+
+    function setStatus(message) {
+        if (config.status) {
+            config.status.textContent = message || '';
+        }
+    }
+
+    function createEmptyRow(message) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.className = 'text-center text-muted py-3';
+        cell.textContent = message;
+        row.appendChild(cell);
+        return row;
+    }
+
+    function renderRows(items) {
+        if (!config.body) {
+            return;
+        }
+
+        if (!Array.isArray(items) || items.length === 0) {
+            config.body.replaceChildren(createEmptyRow(config.emptyMessage));
+            return;
+        }
+
+        const rows = items.map(item => {
+            const itemId = String(item?.id || '').trim();
+            const row = document.createElement('tr');
+
+            const nameCell = document.createElement('td');
+            const name = document.createElement('div');
+            name.className = 'fw-semibold';
+            name.textContent = item?.[config.titleField] || config.unnamedLabel;
+            const meta = document.createElement('div');
+            meta.className = 'small text-muted';
+            meta.textContent = itemId;
+            nameCell.appendChild(name);
+            nameCell.appendChild(meta);
+
+            const descriptionCell = document.createElement('td');
+            descriptionCell.textContent = item?.description || '-';
+
+            const actionCell = document.createElement('td');
+            actionCell.className = 'text-end';
+            const actionButton = document.createElement('button');
+            actionButton.type = 'button';
+            actionButton.className = assignedIds.has(itemId)
+                ? 'btn btn-sm btn-outline-danger'
+                : 'btn btn-sm btn-outline-primary';
+            actionButton.textContent = assignedIds.has(itemId) ? 'Remove' : 'Assign';
+            actionButton.disabled = !itemId;
+            actionButton.addEventListener('click', () => {
+                if (!itemId) {
+                    return;
+                }
+                if (assignedIds.has(itemId)) {
+                    assignedIds.delete(itemId);
+                } else {
+                    assignedIds.add(itemId);
+                }
+                syncField();
+                updateSummary();
+                renderRows(items);
+                markFormAsModified();
+            });
+            actionCell.appendChild(actionButton);
+
+            row.appendChild(nameCell);
+            row.appendChild(descriptionCell);
+            row.appendChild(actionCell);
+            return row;
+        });
+
+        config.body.replaceChildren(...rows);
+    }
+
+    async function searchItems() {
+        if (!config.body) {
+            return;
+        }
+
+        const query = config.searchInput?.value?.trim() || '';
+        const originalButtonText = config.searchButton?.textContent || 'Search';
+        setError('');
+        setStatus(`Searching ${config.summaryPlural}...`);
+
+        if (config.searchButton) {
+            config.searchButton.disabled = true;
+            config.searchButton.textContent = 'Searching...';
+        }
+
+        try {
+            const url = new URL(config.endpoint, window.location.origin);
+            if (query) {
+                url.searchParams.set('search', query);
+                url.searchParams.set('q', query);
+            }
+            if (config.showAll) {
+                url.searchParams.set('showAll', 'true');
+            }
+
+            const response = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload?.error || `Unable to load ${config.summaryPlural}.`);
+            }
+
+            const items = Array.isArray(payload)
+                ? payload
+                : (Array.isArray(payload?.[config.resultsKey]) ? payload[config.resultsKey] : []);
+            renderRows(items);
+            setStatus(items.length === 1 ? `1 ${config.summarySingular} found.` : `${items.length} ${config.summaryPlural} found.`);
+        } catch (error) {
+            setError(error.message || `Unable to load ${config.summaryPlural}.`);
+            setStatus('Search failed.');
+        } finally {
+            if (config.searchButton) {
+                config.searchButton.disabled = false;
+                config.searchButton.textContent = originalButtonText;
+            }
+        }
+    }
+
+    function setup() {
+        if (!config.input) {
+            return;
+        }
+
+        parseFileDownloadAssignmentIds(config.input.value).forEach(itemId => assignedIds.add(itemId));
+        syncField();
+        updateSummary();
+
+        if (config.body && assignedIds.size > 0) {
+            config.body.replaceChildren(createEmptyRow(config.reviewMessage));
+        }
+
+        config.searchButton?.addEventListener('click', searchItems);
+        config.searchInput?.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                void searchItems();
+            }
+        });
+        config.modal?.addEventListener('shown.bs.modal', () => {
+            if (config.body && config.body.children.length <= 1) {
+                void searchItems();
+            }
+        });
+        adminForm?.addEventListener('submit', syncField);
+    }
+
+    return { setup };
+}
+
+function setupFileDownloadAssignments() {
+    createFileDownloadAssignmentManager({
+        input: fileDownloadGroupAssignmentsInput,
+        summary: fileDownloadGroupAssignmentSummary,
+        modal: fileDownloadGroupAssignmentModal,
+        searchInput: fileDownloadGroupSearchInput,
+        searchButton: fileDownloadGroupSearchBtn,
+        status: fileDownloadGroupAssignmentStatus,
+        error: fileDownloadGroupAssignmentError,
+        body: fileDownloadGroupAssignmentBody,
+        endpoint: '/api/groups/discover',
+        resultsKey: 'groups',
+        titleField: 'name',
+        summarySingular: 'group',
+        summaryPlural: 'groups',
+        unnamedLabel: 'Unnamed group',
+        emptyMessage: 'No groups found.',
+        reviewMessage: 'Search for groups to review current assignments.',
+        showAll: true,
+    }).setup();
+
+    createFileDownloadAssignmentManager({
+        input: fileDownloadPublicAssignmentsInput,
+        summary: fileDownloadPublicAssignmentSummary,
+        modal: fileDownloadPublicAssignmentModal,
+        searchInput: fileDownloadPublicSearchInput,
+        searchButton: fileDownloadPublicSearchBtn,
+        status: fileDownloadPublicAssignmentStatus,
+        error: fileDownloadPublicAssignmentError,
+        body: fileDownloadPublicAssignmentBody,
+        endpoint: '/api/admin/file-sync/public-workspaces/search',
+        resultsKey: 'workspaces',
+        titleField: 'name',
+        summarySingular: 'public workspace',
+        summaryPlural: 'public workspaces',
+        unnamedLabel: 'Unnamed public workspace',
+        emptyMessage: 'No public workspaces found.',
+        reviewMessage: 'Search for public workspaces to review current assignments.',
+    }).setup();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     setupAdminFormAutofillMetadata();
 
@@ -2187,6 +2463,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupToggles(); // This function will be extended below
     setupGroupWorkflowAssignments();
+    setupFileDownloadAssignments();
     setupLandingPageLogoScaleControl();
     setupDocumentActionCapabilityControls();
     setupDeepResearchPolicyEditors();

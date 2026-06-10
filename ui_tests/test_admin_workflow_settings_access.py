@@ -1,10 +1,10 @@
 # test_admin_workflow_settings_access.py
 """
 UI test for admin workflow access settings.
-Version: 0.241.182
+Version: 0.241.179
 Implemented in: 0.241.106
 Updated in: 0.241.110
-Updated in: 0.241.182
+Updated in: 0.241.179
 
 This test ensures admins can see the dedicated Workspace settings sections with
 consistent app-role labels for workflow, group workflow assignment, group creation,

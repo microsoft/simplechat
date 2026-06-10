@@ -4,12 +4,15 @@ current_release:
   badge: "Shared in the app"
   slugs:
     - document-intelligence
-    - cosmos-autoscale
+    - cloud-anthropic-models
     - file-sync
+    - group-workflows
     - source-review
+    - analyze-compare
     - agent-knowledge-actions
     - generated-artifacts
     - chat-productivity
+    - chat-upload-workspace-parity
     - workspace-experience
     - workflow-automation
     - visio-ingestion
@@ -64,7 +67,7 @@ lookup:
     icon: "bi-file-earmark-richtext"
     accent: "blue"
     url: "/latest-release/document-intelligence/"
-    release_label: "Current Release"
+    release_label: "Admin Reference"
     image: "/images/latest-release/document_intelligence_admin_controls.png"
     image_alt: "Annotated Document Intelligence Auto Mode admin settings screenshot"
     images:
@@ -97,10 +100,33 @@ lookup:
         caption: "Numbers highlight access validation, global scale-up and scale-down policy, and container-level guardrails for dedicated throughput."
         label: "Autoscale Controls"
 
+  cloud-anthropic-models:
+    title: "Cloud and Anthropic Model Support"
+    description: "How admins can expose Azure OpenAI, Foundry, New Foundry, and Claude-capable model endpoints"
+    summary: "Model endpoints now support Azure OpenAI, Foundry, New Foundry, cloud-aware authentication, and Claude deployments that route through the Anthropic messages protocol."
+    why: "Teams can adopt Anthropic models through approved Azure AI Foundry endpoints without building a separate chat experience or losing existing model-governance controls."
+    icon: "bi-cloud-check"
+    accent: "violet"
+    url: "/latest-release/cloud-anthropic-models/"
+    release_label: "Current Release"
+    image: "/images/latest-release/model_selection_multi_endpoint_admin.png"
+    image_alt: "Admin multi-endpoint model management screenshot showing provider choices and configured models"
+    images:
+      - path: "/images/latest-release/model_selection_multi_endpoint_admin.png"
+        alt: "Admin multi-endpoint model management screenshot showing provider choices and configured models"
+        title: "Configure Cloud and Anthropic Model Endpoints"
+        caption: "Numbers highlight model endpoint management, provider-aware Foundry configuration, and admin model choices that can include Claude deployments."
+        label: "Admin Model Endpoints"
+      - path: "/images/latest-release/model_selection_chat_selector.png"
+        alt: "User chat model selector screenshot showing multiple available model choices"
+        title: "Choose an Available Chat Model"
+        caption: "Numbers highlight the model picker users can use when admins make multiple Azure OpenAI, Foundry, or Claude-capable choices available."
+        label: "User Model Picker"
+
   file-sync:
     title: "File Sync Connectors"
-    description: "How SMB, Azure Files, and OneDrive sources keep workspace documents synchronized"
-    summary: "File Sync expanded from SMB into Azure Files and OneDrive, with improved source selection, reusable identities, sync badges, history, and change detection."
+    description: "How SMB and Azure Files sources keep workspace documents synchronized"
+    summary: "File Sync supports SMB shares and Azure Files, with improved source selection, reusable identities, sync badges, history, and change detection."
     why: "Workspace documents can stay closer to authoritative external stores instead of depending on manual re-upload habits."
     icon: "bi-arrow-repeat"
     accent: "teal"
@@ -112,7 +138,7 @@ lookup:
       - path: "/images/latest-release/file_sync_admin_scope_controls.png"
         alt: "Annotated File Sync connector settings screenshot"
         title: "Configure File Sync Connectors"
-        caption: "Numbers highlight connector source enablement, reusable identity configuration, and sync status or history review."
+        caption: "Numbers highlight SMB and Azure Files source enablement, reusable identity configuration, and sync status or history review."
         label: "Connector Controls"
       - path: "/images/latest-release/file_sync_user_sources.png"
         alt: "Annotated workspace Sync tab screenshot showing a sync source, counts, and run actions"
@@ -124,6 +150,29 @@ lookup:
         title: "Reuse Workspace Identities"
         caption: "Numbers highlight adding an identity, reviewing usage, and opening view or edit controls for credential maintenance."
         label: "User Identities"
+
+  group-workflows:
+    title: "Group Workflow Support"
+    description: "How group workspaces can create, schedule, run, and monitor shared workflows"
+    summary: "Group workspaces can create, schedule, run, and monitor workflows with group-scoped agents, model endpoints, File Sync sources, activity, and dynamic Analyze targets."
+    why: "Recurring document work often belongs to a team workspace, not one person's personal workspace."
+    icon: "bi-people-fill"
+    accent: "cyan"
+    url: "/latest-release/group-workflows/"
+    release_label: "Current Release"
+    image: "/images/latest-release/workflow_automation_admin_controls.png"
+    image_alt: "Annotated workflow automation admin settings screenshot with workflow access controls"
+    images:
+      - path: "/images/latest-release/workflow_automation_admin_controls.png"
+        alt: "Annotated workflow automation admin settings screenshot with workflow access controls"
+        title: "Configure Group Workflow Support"
+        caption: "Numbers highlight workflow access enablement, group workflow policy controls, and File Sync before-run automation shared with group workflows."
+        label: "Admin Workflow Controls"
+      - path: "/images/latest-release/workflow_automation_user_list.png"
+        alt: "Annotated workspace Workflows tab screenshot showing workflow list and create controls"
+        title: "Manage Shared Workflows"
+        caption: "Numbers highlight the workflow list pattern users can use for personal workflows and group workflows when enabled."
+        label: "User Workflow List"
 
   source-review:
     title: "Source Review and Deep Research"
@@ -152,6 +201,29 @@ lookup:
         title: "Use Source Review and Deep Research"
         caption: "Numbers highlight source tools, Source Review when available, and asking URL or web-evidence questions from Chat."
         label: "User Source Review"
+
+  analyze-compare:
+    title: "Analyze and Compare"
+    description: "How chat and workspace document actions support full-document review and side-by-side comparison"
+    summary: "Chat and workspace document actions can run full-document Analyze passes or compare one source document against one or more target documents with clearer progress and coverage."
+    why: "Some questions need exhaustive review or side-by-side comparison instead of top-search snippets."
+    icon: "bi-arrow-left-right"
+    accent: "emerald"
+    url: "/latest-release/analyze-compare/"
+    release_label: "Current Release"
+    image: "/images/latest-release/document_revision_delete_compare.png"
+    image_alt: "Document revision actions and comparison screenshot showing compare-related document actions"
+    images:
+      - path: "/images/latest-release/document_revision_delete_compare.png"
+        alt: "Document revision actions and comparison screenshot showing compare-related document actions"
+        title: "Use Analyze and Compare Document Actions"
+        caption: "Numbers highlight document action entry points for analysis and comparison workflows that go beyond regular search."
+        label: "Document Actions"
+      - path: "/images/latest-release/chat_productivity_user_chat.png"
+        alt: "Annotated chat composer screenshot showing attachment tools, model picker, and prompt input"
+        title: "Start Document Actions from Chat"
+        caption: "Numbers highlight the chat composer and workspace tools users use before choosing Analyze or Compare."
+        label: "Chat Document Actions"
 
   agent-knowledge-actions:
     title: "Agent Knowledge and Actions"
@@ -206,9 +278,9 @@ lookup:
 
   chat-productivity:
     title: "Chat Productivity"
-    description: "How everyday chat flows became faster with paste uploads, paging, masking, charts, and prompt actions"
-    summary: "Chat now includes clipboard paste uploads, paged conversation loading, layered masking, follow-up prompt actions, inline charts, and generated Markdown viewing."
-    why: "Frequent chat tasks should feel lighter, especially when users have many conversations, pasted images, long-running answers, or reusable generated outputs."
+    description: "How everyday chat flows became faster with paste uploads, document actions, paging, masking, charts, and prompt actions"
+    summary: "Chat now includes clipboard paste uploads, paged conversation loading, Analyze and Compare document modes, layered masking, follow-up prompt actions, inline charts, and generated Markdown viewing."
+    why: "Frequent chat tasks should feel lighter, especially when users have many conversations, pasted images, selected workspace documents, long-running answers, or reusable generated outputs."
     icon: "bi-chat-square-text"
     accent: "rose"
     url: "/latest-release/chat-productivity/"
@@ -226,6 +298,34 @@ lookup:
         title: "Use the Chat Composer"
         caption: "Numbers highlight attachment and workspace tools, model switching, and where users paste or type the next prompt."
         label: "User Chat Composer"
+
+  chat-upload-workspace-parity:
+    title: "Chat Upload Workspace Parity"
+    description: "How chat uploads become personal or group workspace documents depending on conversation scope"
+    summary: "Chat uploads now hand off to personal workspaces for personal conversations and group workspaces for group or group multi-user conversations when workspace processing is available."
+    why: "A file added in chat should become useful workspace knowledge without asking users to re-upload it somewhere else."
+    icon: "bi-paperclip"
+    accent: "amber"
+    url: "/latest-release/chat-upload-workspace-parity/"
+    release_label: "Current Release"
+    image: "/images/latest-release/chat_productivity_chat_toolbar.png"
+    image_alt: "Annotated chat productivity toolbar screenshot showing attachment and workspace controls"
+    images:
+      - path: "/images/latest-release/chat_productivity_chat_toolbar.png"
+        alt: "Annotated chat productivity toolbar screenshot showing attachment and workspace controls"
+        title: "Use Workspace-Backed Chat Uploads"
+        caption: "Numbers highlight chat attachment controls and workspace grounding paths that turn eligible uploads into personal or group workspace documents."
+        label: "Upload Controls"
+      - path: "/images/latest-release/chat_productivity_user_chat.png"
+        alt: "Annotated chat composer screenshot showing attachment tools, model picker, and prompt input"
+        title: "Upload Files from Chat"
+        caption: "Numbers highlight attachment tools, file upload or paste entry points, and continuing the conversation while workspace processing runs."
+        label: "User Chat Upload"
+      - path: "/images/latest-release/workspace_experience_document_cards.png"
+        alt: "Annotated workspace document cards screenshot showing document cards and actions"
+        title: "Use Uploaded Files as Workspace Documents"
+        caption: "Numbers highlight where workspace-backed uploads become durable documents for search, analysis, comparison, citation, tagging, and governance."
+        label: "Workspace Document"
 
   workspace-experience:
     title: "Workspace Experience"
@@ -267,8 +367,8 @@ lookup:
 
   workflow-automation:
     title: "Workflow Automation"
-    description: "How workflows can run after File Sync changes and resume failed analysis batches"
-    summary: "Personal workflows gained dedicated access governance, File Sync before-run triggers, monitor-for-changes mode, dynamic Analyze targeting, and resume-failed batch runs."
+    description: "How personal and group workflows can run after File Sync changes and resume failed analysis batches"
+    summary: "Personal and group workflows gained access governance, File Sync before-run triggers, monitor-for-changes mode, dynamic Analyze targeting, and resume-failed batch runs."
     why: "Repeatable document analysis can run when source files change rather than waiting for someone to manually refresh and restart every item."
     icon: "bi-play-circle"
     accent: "blue"
@@ -317,27 +417,32 @@ lookup:
         label: "User Visio Upload"
 
   stats-reporting:
-    title: "Stats and Control Center Reporting"
-    description: "How stats windows, CSV exports, pagination, and group token totals improve reporting"
-    summary: "Stats pages gained consistent time windows and CSV exports, while Control Center management tables gained better pagination, group token totals, and export visibility."
-    why: "Usage, token, and activity trends are easier to compare when the same date windows and exports are available across surfaces."
+    title: "Profile, Stats, and Preferences"
+    description: "How Profile brings together activity stats, exports, personal settings, groups, public workspaces, feedback, and violations"
+    summary: "Profile now brings together richer personal details, 7-day, 30-day, 90-day, and custom activity windows, exports, navigation and tutorial preferences, memory controls, speech and voice settings, groups, public workspaces, feedback, and safety violations."
+    why: "Users can understand their own activity and tune their everyday app experience without asking an admin to change global settings."
     icon: "bi-bar-chart-line"
     accent: "slate"
     url: "/latest-release/stats-reporting/"
     release_label: "Current Release"
-    image: "/images/latest-release/stats_reporting_profile_dashboard.png"
-    image_alt: "Annotated profile stats reporting dashboard screenshot"
+    image: "/images/latest-release/stats_reporting_user_profile.png"
+    image_alt: "Annotated profile stats screenshot showing time windows, export, and activity charts"
     images:
-      - path: "/images/latest-release/stats_reporting_profile_dashboard.png"
-        alt: "Annotated profile stats reporting dashboard screenshot"
-        title: "Review Stats and Reporting"
-        caption: "Numbers highlight reporting windows, cached usage totals, and export controls for offline reporting."
-        label: "Reporting Dashboard"
       - path: "/images/latest-release/stats_reporting_user_profile.png"
         alt: "Annotated profile stats screenshot showing time windows, export, and activity charts"
-        title: "Review Profile Stats"
-        caption: "Numbers highlight reporting windows, CSV export, and activity charts for personal usage review."
+        title: "Review Profile Stats and Exports"
+        caption: "Numbers highlight 7-day, 30-day, 90-day, and custom reporting windows, CSV export, and personal activity charts."
         label: "User Profile Stats"
+      - path: "/images/latest-release/facts_memory_view_profile.png"
+        alt: "Profile fact memory section screenshot showing saved instructions and facts controls"
+        title: "Manage Profile Memories"
+        caption: "Fact Memory lives in Profile settings alongside tutorial, retention, speech, and voice preferences."
+        label: "Profile Memories"
+      - path: "/images/latest-release/stats_reporting_profile_dashboard.png"
+        alt: "Annotated profile stats reporting dashboard screenshot"
+        title: "Review Profile Activity Dashboard"
+        caption: "Numbers highlight reporting windows, cached usage totals, and export controls for offline reporting."
+        label: "Profile Activity Dashboard"
   guided-tutorials:
     title: "Guided Tutorials"
     description: "How guided walkthroughs help users learn chat and workspace flows inside the app"

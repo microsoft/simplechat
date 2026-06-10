@@ -1,5 +1,5 @@
 # support_menu_config.py
-"""Shared support menu configuration for user-facing latest features."""
+"""Shared support menu configuration for user and admin latest features."""
 
 from copy import deepcopy
 
@@ -37,23 +37,29 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         ],
     },
     {
-        'id': 'cosmos_autoscale',
-        'title': 'Cosmos Throughput Autoscale',
-        'icon': 'bi-speedometer2',
-        'summary': 'Admins can monitor Cosmos DB RU pressure, scale database or dedicated container throughput, enforce global policies, and convert eligible manual throughput to native autoscale.',
-        'details': 'Cosmos Throughput Autoscale brings RU utilization, guarded manual scaling, background automation, per-container policy controls, setup validation, and native autoscale conversion into the Admin Settings Scale tab.',
-        'why': 'This matters because administrators can respond to capacity pressure without exposing Cosmos data-plane permissions to agents, actions, or end users.',
+        'id': 'cloud_anthropic_models',
+        'title': 'Cloud and Anthropic Model Support',
+        'icon': 'bi-cloud-check',
+        'summary': 'Model endpoints now support Azure OpenAI, Foundry, New Foundry, cloud-aware authentication, and Claude deployments that route through the Anthropic messages protocol.',
+        'details': 'Cloud and Anthropic Model Support lets admins expose Claude-capable Foundry and New Foundry deployments beside Azure OpenAI choices while preserving the model picker, agent bindings, workflow bindings, and summary generation paths users already know.',
+        'why': 'This matters because teams can adopt Anthropic models through approved Azure AI Foundry endpoints without building a separate chat experience or losing existing model-governance controls.',
         'guidance': [
-            'Open Admin Settings > Scale and review the Cosmos DB Throughput card.',
-            'Use Validate Access before enabling automation in a new deployment or after changing resource metadata.',
-            'Use container policies when dedicated-throughput containers need different RU guardrails from the global policy.',
+            'Admins configure model endpoints from Admin Settings > AI Models and choose the provider metadata that matches Azure OpenAI, Foundry, or New Foundry.',
+            'Use cloud and authority fields when the endpoint belongs to Azure Public, Azure Government, or a custom cloud environment.',
+            'Claude deployments are detected from the configured model name or Anthropic endpoint path and use the Anthropic messages protocol at runtime.',
         ],
         'actions': [
             {
-                'label': 'Open Scale Settings',
-                'description': 'Review Cosmos throughput status, policies, and guarded scaling actions.',
-                'href': '/admin/settings#scale',
-                'icon': 'bi-speedometer2',
+                'label': 'Open AI Models Settings',
+                'description': 'Configure model endpoints, provider metadata, cloud settings, and available model choices.',
+                'href': '/admin/settings#ai-models',
+                'icon': 'bi-cpu',
+            },
+            {
+                'label': 'Open Chat Model Picker',
+                'description': 'Open Chat and choose among the models your admins made available.',
+                'href': '/chats#model-select-container',
+                'icon': 'bi-chat-dots',
             },
         ],
     },
@@ -61,13 +67,13 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         'id': 'file_sync',
         'title': 'File Sync Connectors',
         'icon': 'bi-arrow-repeat',
-        'summary': 'File Sync expanded from SMB into Azure Files and OneDrive, with improved source selection, reusable identities, sync badges, history, and change detection.',
-        'details': 'File Sync now supports richer workspace document ingestion from network shares, Azure file shares, and OneDrive sources while keeping the existing processing, chunking, embedding, and search pipeline.',
+        'summary': 'File Sync supports SMB shares and Azure Files, with improved source selection, reusable identities, sync badges, history, and change detection.',
+        'details': 'File Sync now supports richer workspace document ingestion from SMB network shares and Azure file shares while keeping the existing processing, chunking, embedding, and search pipeline.',
         'why': 'This matters because workspace documents can stay closer to authoritative external stores instead of depending on manual re-upload habits.',
         'guidance': [
-            'Admins can choose which File Sync source types are available for the tenant.',
+            'Admins can choose whether SMB Share and Azure Files source types are available for the tenant.',
             'Workspace managers can add sources, browse supported provider folders, select specific files or folders, and review run history.',
-            'Use reusable identities for cloud-drive and Azure Files credentials so source configuration stays cleaner.',
+            'Use reusable identities for SMB and Azure Files credentials so source configuration stays cleaner.',
         ],
         'actions': [
             {
@@ -76,6 +82,33 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
                 'href': '/workspace?feature_action=file_sync',
                 'icon': 'bi-arrow-repeat',
                 'requires_settings': ['enable_user_workspace'],
+            },
+        ],
+    },
+    {
+        'id': 'group_workflows',
+        'title': 'Group Workflow Support',
+        'icon': 'bi-people-fill',
+        'summary': 'Group workspaces can create, schedule, run, and monitor workflows with group-scoped agents, model endpoints, File Sync sources, activity, and dynamic Analyze targets.',
+        'details': 'Group Workflow Support extends the personal workflow engine into shared workspaces so authorized group members can run repeatable analysis over group documents and group File Sync sources with group-scoped run history.',
+        'why': 'This matters because recurring document work often belongs to a team workspace, not one person\'s personal workspace.',
+        'guidance': [
+            'Admins enable group workflows from the workspace workflow settings and can optionally assign the feature to selected groups.',
+            'Group Owners and Admins can create workflows, with owner-only authoring available when stricter group governance is needed.',
+            'Group workflows can use group agents, group model endpoints, group File Sync sources, interval schedules, manual runs, and changed-file Analyze targeting.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Workflow Settings',
+                'description': 'Enable group workflows and review group assignment or owner-only authoring controls.',
+                'href': '/admin/settings#workspaces',
+                'icon': 'bi-gear',
+            },
+            {
+                'label': 'Open Group Workspaces',
+                'description': 'Open Group Workspaces and review group workflow availability for the active group.',
+                'href': '/group_workspaces',
+                'icon': 'bi-people',
             },
         ],
     },
@@ -103,6 +136,34 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
                 'description': 'Open Chat and use the Sources control with a URL or web-search request.',
                 'href': '/chats#chatbox',
                 'icon': 'bi-chat-dots',
+            },
+        ],
+    },
+    {
+        'id': 'analyze_compare',
+        'title': 'Analyze and Compare',
+        'icon': 'bi-arrow-left-right',
+        'summary': 'Chat and workspace document actions can run full-document Analyze passes or compare one source document against one or more target documents with clearer progress and coverage.',
+        'details': 'Analyze and Compare give users deliberate document-action modes beyond search: Analyze walks selected documents for complete review, while Compare treats one document as the baseline and checks selected targets against it.',
+        'why': 'This matters because some questions need exhaustive review or side-by-side comparison instead of top-search snippets.',
+        'guidance': [
+            'In Chat, open the Workspaces tool and choose Analyze when the prompt should review every page or chunk in selected documents.',
+            'Choose Compare when you need a source document compared against one or more target documents.',
+            'Use workflows when the same Analyze job should run repeatedly, especially for larger or changed-file batches.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Chat Document Actions',
+                'description': 'Open Chat and use the Workspaces tool to choose Search, Analyze, or Compare.',
+                'href': '/chats#chatbox',
+                'icon': 'bi-chat-dots',
+            },
+            {
+                'label': 'Open Workspace Documents',
+                'description': 'Open Personal Workspace and select documents that can be searched, analyzed, or compared.',
+                'href': '/workspace#documents-tab',
+                'icon': 'bi-folder2-open',
+                'requires_settings': ['enable_user_workspace'],
             },
         ],
     },
@@ -153,20 +214,48 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         'id': 'chat_productivity',
         'title': 'Chat Productivity',
         'icon': 'bi-chat-square-text',
-        'summary': 'Chat now includes clipboard paste uploads, paged conversation loading, layered masking, follow-up prompt actions, inline charts, and generated Markdown viewing.',
-        'details': 'Chat Productivity groups the visible improvements that make daily chat work faster: more ergonomic uploads, scalable conversation navigation, richer prompt continuation, safer masking, and inline visualization support.',
-        'why': 'This matters because frequent chat tasks should feel lighter, especially when users have many conversations, pasted images, long-running answers, or reusable generated outputs.',
+        'summary': 'Chat now includes clipboard paste uploads, paged conversation loading, Analyze and Compare document modes, layered masking, follow-up prompt actions, inline charts, and generated Markdown viewing.',
+        'details': 'Chat Productivity groups the visible improvements that make daily chat work faster: more ergonomic uploads, scalable conversation navigation, richer document actions, safer masking, and inline visualization support.',
+        'why': 'This matters because frequent chat tasks should feel lighter, especially when users have many conversations, pasted images, selected workspace documents, long-running answers, or reusable generated outputs.',
         'guidance': [
             'Paste copied screenshots or browser-exposed files directly into the chat input when uploads are enabled.',
+            'Use the Workspaces tool to switch between Search, Analyze, and Compare when selected documents need different treatment.',
             'Use Load More or search in larger conversation lists instead of waiting for every conversation to load at startup.',
             'Use suggested prompt buttons, message masks, and inline charts when the response offers those interactive affordances.',
         ],
         'actions': [
             {
                 'label': 'Open Chat',
-                'description': 'Try paste uploads, conversation search, follow-up prompts, masks, charts, and artifact previews from Chat.',
+                'description': 'Try paste uploads, document actions, conversation search, follow-up prompts, masks, charts, and artifact previews from Chat.',
                 'href': '/chats#chatbox',
                 'icon': 'bi-chat-dots',
+            },
+        ],
+    },
+    {
+        'id': 'chat_upload_workspace_parity',
+        'title': 'Chat Upload Workspace Parity',
+        'icon': 'bi-paperclip',
+        'summary': 'Chat uploads now hand off to personal workspaces for personal conversations and group workspaces for group or group multi-user conversations when workspace processing is available.',
+        'details': 'Chat Upload Workspace Parity keeps the chat upload experience familiar while making workspace documents the durable source of truth, so uploaded files can be searched, analyzed, compared, cited, tagged, and governed through the matching workspace.',
+        'why': 'This matters because a file added in chat should become useful workspace knowledge without asking users to re-upload it somewhere else.',
+        'guidance': [
+            'Personal chat uploads become personal workspace documents when personal workspace processing is enabled for the user.',
+            'Group and group multi-user chat uploads go to the selected writable group workspace and keep the visible chat file message linked to that workspace document.',
+            'After processing, use the Workspaces tool or workspace document list to Search, Analyze, Compare, cite, tag, or delete the uploaded document through normal workspace flows.',
+        ],
+        'actions': [
+            {
+                'label': 'Upload from Chat',
+                'description': 'Open Chat and attach a file to see the workspace-backed upload flow when enabled.',
+                'href': '/chats#chatbox',
+                'icon': 'bi-paperclip',
+            },
+            {
+                'label': 'Open Group Workspaces',
+                'description': 'Review group documents created from group chat uploads.',
+                'href': '/group_workspaces',
+                'icon': 'bi-people',
             },
         ],
     },
@@ -202,12 +291,12 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         'id': 'workflow_automation',
         'title': 'Workflow Automation',
         'icon': 'bi-play-circle',
-        'summary': 'Personal workflows gained dedicated access governance, File Sync before-run triggers, monitor-for-changes mode, dynamic Analyze targeting, and resume-failed batch runs.',
-        'details': 'Workflow Automation lets teams trigger sync sources before workflow execution and process changed documents as durable per-item batches while admins control who can use personal workflows.',
+        'summary': 'Personal and group workflows gained access governance, File Sync before-run triggers, monitor-for-changes mode, dynamic Analyze targeting, and resume-failed batch runs.',
+        'details': 'Workflow Automation lets users trigger sync sources before workflow execution and process changed documents as durable per-item batches while admins control who can use personal and group workflows.',
         'why': 'This matters because repeatable document analysis can run when source files change rather than waiting for someone to manually refresh and restart every item.',
         'guidance': [
-            'Admins can enable workflows and optionally require the WorkflowUser Enterprise App role.',
-            'Workflow owners can select File Sync sources to run before a workflow prompt executes.',
+            'Admins can enable personal workflows, group workflows, role requirements, and optional group assignment controls.',
+            'Workflow owners can select personal or group File Sync sources to run before a workflow prompt executes.',
             'Use Monitor File Sync Changes and Resume failed when batch analysis should track changed documents over time.',
         ],
         'actions': [
@@ -244,22 +333,237 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
     },
     {
         'id': 'stats_reporting',
-        'title': 'Stats and Control Center Reporting',
+        'title': 'Profile, Stats, and Preferences',
         'icon': 'bi-bar-chart-line',
-        'summary': 'Stats pages gained consistent time windows and CSV exports, while Control Center management tables gained better pagination, group token totals, and export visibility.',
-        'details': 'Stats and Control Center Reporting improves operational views for personal profiles, group stats, public workspace stats, and admin management tables.',
-        'why': 'This matters because usage, token, and activity trends are easier to compare when the same date windows and exports are available across surfaces.',
+        'summary': 'The profile page now brings together richer personal details, activity windows and exports, navigation and tutorial preferences, memory controls, speech and voice settings, groups, public workspaces, feedback, and safety violations.',
+        'details': 'Profile, Stats, and Preferences turns the user profile into a control center for personal usage, saved preferences, speech behavior, workspace membership, support feedback, and violation follow-up.',
+        'why': 'This matters because users can understand their own activity and tune their everyday app experience without asking an admin to change global settings.',
         'guidance': [
-            'Use 7-day, 30-day, 90-day, or custom windows on profile, group, and public workspace stats pages.',
-            'Export selected metric sections to CSV when you need offline reporting.',
-            'Admins can use Control Center page-size selectors and group token totals to scan larger environments more efficiently.',
+            'Open Profile > Stats to review activity across 7-day, 30-day, 90-day, or custom reporting windows and export the visible metrics.',
+            'Use Profile > Settings to control navigation behavior, tutorial visibility, retention, saved memories, speech preferences, and text-to-speech voice selection.',
+            'Use Profile tabs to review your groups, public workspaces, submitted feedback, and any safety violations that need review or notes.',
         ],
         'actions': [
             {
                 'label': 'Open Profile Stats',
                 'description': 'Review your personal stats windows and export options from Profile.',
-                'href': '/profile#stats',
+                'href': '/profile?tab=stats#profile-stats-pane',
                 'icon': 'bi-person-lines-fill',
+            },
+            {
+                'label': 'Open Profile Settings',
+                'description': 'Review navigation, tutorial, memory, speech, and voice preferences from Profile.',
+                'href': '/profile?tab=settings#profile-settings-pane',
+                'icon': 'bi-person-gear',
+            },
+        ],
+    },
+]
+
+
+_SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG = [
+    {
+        'id': 'admin_cloud_anthropic_models',
+        'title': 'Cloud and Anthropic Model Administration',
+        'icon': 'bi-cloud-check',
+        'summary': 'Admins can add Azure OpenAI, Foundry, New Foundry, cloud-aware endpoints, and Claude-capable Anthropic model deployments from AI Models.',
+        'details': 'The AI Models tab now covers provider metadata, project endpoint configuration, cloud and authority fields, available model choices, and Anthropic messages protocol routing for Claude deployments.',
+        'why': 'This matters because model expansion stays governed in one admin workflow while users keep a consistent model picker, agent binding, workflow binding, and summarization experience.',
+        'guidance': [
+            'Screenshot idea: capture the Model Endpoints table with Azure OpenAI, Foundry, and New Foundry rows visible.',
+            'Screenshot idea: capture the add or edit endpoint modal with provider, Project Endpoint, Cloud, Authority, and Claude model fields visible.',
+            'Call out that Claude-capable deployments are detected through model naming or Anthropic endpoint paths and use the Anthropic messages protocol at runtime.',
+        ],
+        'actions': [
+            {
+                'label': 'Open AI Models',
+                'description': 'Configure model endpoints, provider metadata, cloud settings, and available model choices.',
+                'href': '#ai-models',
+                'admin_tab': '#ai-models',
+                'icon': 'bi-cpu',
+            },
+        ],
+    },
+    {
+        'id': 'admin_document_action_capabilities',
+        'title': 'Document Action Capabilities',
+        'icon': 'bi-files',
+        'summary': 'Admins can explicitly enable Analyze and Document Comparison and set separate chat and workflow document limits.',
+        'details': 'Document Action Capabilities live in Agents and Actions and control the document actions users see in Chat and Workflow without mixing those actions into global agent configuration.',
+        'why': 'This matters because admins can govern exhaustive document review and baseline comparison separately from normal search behavior.',
+        'guidance': [
+            'Screenshot idea: capture the Document Action Capabilities card with Enable Analyze, Enable Document Comparison, and chat or workflow max document sliders visible.',
+            'Use Analyze when users need full-document review rather than top-search snippets.',
+            'Use Document Comparison when users need one source document compared against one or more targets.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Agents and Actions',
+                'description': 'Review Analyze and Document Comparison enablement and limits.',
+                'href': '#document-action-capabilities-card',
+                'admin_tab': '#agents',
+                'admin_section': 'document-action-capabilities-card',
+                'icon': 'bi-files',
+            },
+        ],
+    },
+    {
+        'id': 'admin_cosmos_throughput',
+        'title': 'Cosmos DB Throughput Controls',
+        'icon': 'bi-speedometer2',
+        'summary': 'Admins can monitor RU utilization, validate access, scale up or down, configure global or per-container policies, and convert eligible manual throughput to native Cosmos autoscale.',
+        'details': 'The Scale tab now gives operators a Cosmos DB Throughput card with global guardrails, container policy overrides, dedicated-container visibility, setup validation, and native autoscale conversion controls.',
+        'why': 'This matters because operators can respond to RU pressure and reduce manual throughput management without exposing Cosmos data-plane access to end users.',
+        'guidance': [
+            'Screenshot idea: capture the Cosmos DB Throughput card with Refresh, Validate Access, Container Policies, Convert to Autoscale, Scale Up, and Scale Down buttons visible.',
+            'Screenshot idea: capture the global policy area and the Enforce global policy toggle; when enabled, all dedicated containers follow one policy.',
+            'Screenshot idea: capture Container Throughput Policies showing per-container autoscale, scale up, scale down, and manual controls; leave global enforcement off when containers need different guardrails.',
+            'Call out that converting manual throughput to Cosmos autoscale preserves current capacity rounded to Cosmos autoscale increments and can reduce hands-on scaling work.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Scale Settings',
+                'description': 'Review Cosmos throughput status, policies, and guarded scaling actions.',
+                'href': '#cosmos-throughput-section',
+                'admin_tab': '#scale',
+                'admin_section': 'cosmos-throughput-section',
+                'icon': 'bi-speedometer2',
+            },
+        ],
+    },
+    {
+        'id': 'admin_workspace_workflows',
+        'title': 'Personal and Group Workflow Administration',
+        'icon': 'bi-diagram-3',
+        'summary': 'Admins can enable personal workflows, require the WorkflowUser app role, enable group workflows, and require group assignment for workflow access.',
+        'details': 'Workspace workflow settings now split personal workflow governance from group workflow governance, including Enterprise App role enforcement and selected-group assignment controls.',
+        'why': 'This matters because workflow automation can be rolled out broadly, role-gated, or limited to approved groups depending on the tenant governance model.',
+        'guidance': [
+            'Screenshot idea: capture the Workspaces workflow settings with Enable Personal Workflows, Require WorkflowUser App Role, Enable Group Workflows, and Require Group Assignment visible.',
+            'Use WorkflowUser when personal workflow authoring should be limited to an Enterprise App role.',
+            'Use group assignment when only selected groups should create, manage, or run group workflows.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Workspace Settings',
+                'description': 'Review personal and group workflow governance controls.',
+                'href': '#workflow-settings-section',
+                'admin_tab': '#workspaces',
+                'admin_section': 'workflow-settings-section',
+                'icon': 'bi-gear',
+            },
+        ],
+    },
+    {
+        'id': 'admin_chat_file_uploads',
+        'title': 'Chat File Upload Governance',
+        'icon': 'bi-paperclip',
+        'summary': 'Admins can decide whether chat uploads are available and optionally require the ChatFileUploadUser app role for new uploads.',
+        'details': 'Chat File Upload settings now let admins control uploads into personal, group, and multi-user chat conversations while keeping existing attachments visible.',
+        'why': 'This matters because upload-based knowledge workflows can be enabled broadly or restricted to approved users without removing past conversation context.',
+        'guidance': [
+            'Screenshot idea: capture the Chat File Uploads card with Enable Chat File Uploads and Require ChatFileUploadUser App Role visible.',
+            'Use the app role requirement when only selected users or groups should attach new files to chat.',
+            'Pair this with workspace-backed upload processing so chat attachments become durable personal or group workspace documents where available.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Chat Upload Settings',
+                'description': 'Review chat file upload enablement and app role controls.',
+                'href': '#chat-file-uploads-section',
+                'admin_tab': '#workspaces',
+                'admin_section': 'chat-file-uploads-section',
+                'icon': 'bi-paperclip',
+            },
+        ],
+    },
+    {
+        'id': 'admin_file_sync',
+        'title': 'File Sync Connector Administration',
+        'icon': 'bi-arrow-repeat',
+        'summary': 'Admins can enable File Sync, choose SMB Share and Azure Files source types, set limits, and scope sync to personal, group, or public workspaces with admin-only or app-role requirements.',
+        'details': 'File Sync settings now expose tenant limits, available source types, workspace scopes, role gates, and reusable identities. SMB Share and Azure Files are active; OneDrive, SharePoint, and Google Workspace are shown as coming soon.',
+        'why': 'This matters because admins can open synchronized ingestion only where the organization is ready to govern source ownership and credentials.',
+        'guidance': [
+            'Screenshot idea: capture the File Sync settings card with SMB Share and Azure Files enabled and OneDrive, SharePoint, and Google Workspace disabled as coming soon.',
+            'Screenshot idea: capture the personal, group, and public workspace scope controls with Admins manage sources only and app role requirements.',
+            'Call out that reusable identities can be managed separately from connector source definitions.',
+        ],
+        'actions': [
+            {
+                'label': 'Open File Sync Settings',
+                'description': 'Review connector types, limits, workspace scopes, and role gates.',
+                'href': '#file-sync',
+                'admin_tab': '#file-sync',
+                'icon': 'bi-arrow-repeat',
+            },
+        ],
+    },
+    {
+        'id': 'admin_global_identities',
+        'title': 'Global Identities for Shared Operations',
+        'icon': 'bi-person-badge',
+        'summary': 'Admins can manage reusable global identities for actions, File Sync, and broader shared operation scenarios from one settings surface.',
+        'details': 'Global Identities provide a tenant-level place to define reusable credential profiles and managed identity metadata so approved admin-managed operations do not duplicate secrets across every feature area.',
+        'why': 'This matters because shared credentials and managed identities should be governed centrally, audited deliberately, and reused only where admins intend them to be available.',
+        'guidance': [
+            'Screenshot idea: capture the Global Identities tab showing identity cards, capability labels, authentication type, and view or edit controls.',
+            'Use global identities when an approved action, sync source, or future shared operation needs a credential profile managed by admins instead of by individual users.',
+            'Call out that identity reuse reduces duplicate credential entry while keeping ownership in Admin Settings.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Global Identities',
+                'description': 'Review global reusable identities for actions and shared scenarios.',
+                'href': '#global-workspace-identities-root',
+                'admin_tab': '#workspace-identities',
+                'admin_section': 'global-workspace-identities-root',
+                'icon': 'bi-person-badge',
+            },
+        ],
+    },
+    {
+        'id': 'admin_url_access_deep_research',
+        'title': 'URL Access and Deep Research Controls',
+        'icon': 'bi-link-45deg',
+        'summary': 'Admins can enable URL Access, role-gate it, manage allowed and blocked domains, test URL policy, and configure Deep Research budgets and review behavior.',
+        'details': 'Search and Extract now separates direct URL Access for chat and workflows from Deep Research source review while sharing safe URL protections, domain policy, page limits, and audit controls.',
+        'why': 'This matters because web evidence access can be useful, but it needs deliberate limits, allow or block rules, runtime checks, and role-based rollout.',
+        'guidance': [
+            'Screenshot idea: capture URL Access with Enable URL Access, Require UrlAccessUser App Role, chat and workflow URL limits, allowed domains, blocked domains, and Test URL Policy visible.',
+            'Screenshot idea: capture Deep Research with Enable Deep Research, Require DeepResearchUser, page budgets, query planning, ledger artifacts, JavaScript rendering status, robots.txt, and audit logging.',
+            'Call out that URL Access blocks unsafe URL shapes, internal targets, unsupported content types, redirects, and oversized pages before fetch.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Search and Extract',
+                'description': 'Review URL Access, domain policy, and Deep Research controls.',
+                'href': '#search-extract',
+                'admin_tab': '#search-extract',
+                'icon': 'bi-search-heart',
+            },
+        ],
+    },
+    {
+        'id': 'admin_document_intelligence_modes',
+        'title': 'Document Intelligence Extraction Modes',
+        'icon': 'bi-file-earmark-richtext',
+        'summary': 'Admins can choose PDF and image extraction mode behavior with Standard, Enhanced, and Auto options for balancing speed and structure.',
+        'details': 'Document Intelligence settings now let admins choose extraction behavior for PDF and image ingestion, including Auto mode for mixed workloads where only some files need richer layout extraction.',
+        'why': 'This matters because richer extraction can improve tables, layout, and form understanding, while standard extraction can keep simple files faster and cheaper.',
+        'guidance': [
+            'Screenshot idea: capture the Document Intelligence settings with PDF extraction mode, image extraction mode, and Auto sample-page controls visible.',
+            'Use Standard for faster text-focused extraction, Enhanced for richer layout and image/PDF structure, and Auto when the app should sample before choosing the path.',
+            'Call out that users can see extraction badges and change extraction for stored PDFs when workspace processing supports it.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Search and Extract',
+                'description': 'Review PDF and image extraction mode controls.',
+                'href': '#document-intelligence-section',
+                'admin_tab': '#search-extract',
+                'admin_section': 'document-intelligence-section',
+                'icon': 'bi-file-earmark-richtext',
             },
         ],
     },
@@ -274,19 +578,26 @@ _SUPPORT_CURRENT_FEATURE_IMAGE_METADATA = {
         'focused_caption': 'Numbers highlight extraction mode selection, Auto sample-page tuning, and where users review extraction badges or change PDF extraction.',
         'focused_label': 'Admin Controls',
     },
-    'cosmos_autoscale': {
-        'focused_path': 'images/features/cosmos_autoscale_admin_controls.png',
-        'focused_alt': 'Annotated Cosmos throughput autoscale admin settings screenshot',
-        'focused_title': 'Configure Cosmos Throughput Autoscale',
-        'focused_caption': 'Numbers highlight access validation, global scale-up and scale-down policy, and container-level guardrails for dedicated throughput.',
-        'focused_label': 'Autoscale Controls',
+    'cloud_anthropic_models': {
+        'focused_path': 'images/features/model_selection_multi_endpoint_admin.png',
+        'focused_alt': 'Admin multi-endpoint model management screenshot showing provider choices and configured models',
+        'focused_title': 'Configure Cloud and Anthropic Model Endpoints',
+        'focused_caption': 'Numbers highlight model endpoint management, provider-aware Foundry configuration, and the admin model choices that can include Claude deployments.',
+        'focused_label': 'Model Endpoint Controls',
     },
     'file_sync': {
         'focused_path': 'images/features/file_sync_admin_scope_controls.png',
         'focused_alt': 'Annotated File Sync connector settings screenshot',
         'focused_title': 'Configure File Sync Connectors',
-        'focused_caption': 'Numbers highlight connector source enablement, reusable identity configuration, and sync status or history review.',
+        'focused_caption': 'Numbers highlight SMB and Azure Files source enablement, reusable identity configuration, and sync status or history review.',
         'focused_label': 'Connector Controls',
+    },
+    'group_workflows': {
+        'focused_path': 'images/features/workflow_automation_admin_controls.png',
+        'focused_alt': 'Annotated workflow automation admin settings screenshot with workflow access controls',
+        'focused_title': 'Configure Group Workflow Support',
+        'focused_caption': 'Numbers highlight workflow access enablement, group workflow policy controls, and File Sync before-run automation shared with group workflows.',
+        'focused_label': 'Group Workflow Controls',
     },
     'source_review': {
         'focused_path': 'images/features/source_review_admin_policy.png',
@@ -294,6 +605,13 @@ _SUPPORT_CURRENT_FEATURE_IMAGE_METADATA = {
         'focused_title': 'Configure Source Review Policies',
         'focused_caption': 'Numbers highlight Source Review enablement, Deep Research policy options, and bounded allow or block controls.',
         'focused_label': 'Policy Controls',
+    },
+    'analyze_compare': {
+        'focused_path': 'images/features/document_revision_delete_compare.png',
+        'focused_alt': 'Document revision actions and comparison screenshot showing compare-related document actions',
+        'focused_title': 'Use Analyze and Compare Document Actions',
+        'focused_caption': 'Numbers highlight document action entry points for analysis and comparison workflows that go beyond regular search.',
+        'focused_label': 'Document Actions',
     },
     'agent_knowledge_actions': {
         'focused_path': 'images/features/agent_knowledge_actions_assigned_knowledge.png',
@@ -313,8 +631,15 @@ _SUPPORT_CURRENT_FEATURE_IMAGE_METADATA = {
         'focused_path': 'images/features/chat_productivity_chat_toolbar.png',
         'focused_alt': 'Annotated chat productivity toolbar screenshot',
         'focused_title': 'Use Chat Productivity Controls',
-        'focused_caption': 'Numbers highlight prompt, model, and agent selection, attachment and paste upload controls, and Source Review before sending.',
+        'focused_caption': 'Numbers highlight prompt, model, and agent selection, attachment and paste upload controls, document actions, and Source Review before sending.',
         'focused_label': 'Chat Controls',
+    },
+    'chat_upload_workspace_parity': {
+        'focused_path': 'images/features/chat_productivity_chat_toolbar.png',
+        'focused_alt': 'Annotated chat productivity toolbar screenshot showing attachment and workspace controls',
+        'focused_title': 'Use Workspace-Backed Chat Uploads',
+        'focused_caption': 'Numbers highlight chat attachment controls and workspace grounding paths that turn eligible uploads into personal or group workspace documents.',
+        'focused_label': 'Upload Controls',
     },
     'workspace_experience': {
         'focused_path': 'images/features/workspace_experience_document_cards.png',
@@ -373,11 +698,35 @@ _SUPPORT_CURRENT_FEATURE_USER_METADATA = {
             },
         ],
     },
+    'cloud_anthropic_models': {
+        'guidance': [
+            'Open Chat and use the model selector to choose among the Azure OpenAI, Foundry, New Foundry, and Claude-capable models your admins enabled.',
+            'Use Claude-backed models for tasks where that deployment is the preferred reasoning or writing option in your environment.',
+            'Expect model-bound chat, agents, workflows, and summaries to keep using the selected endpoint metadata when a Claude deployment is selected.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Chat Model Picker',
+                'description': 'Open Chat and choose one of the model endpoints made available by your admins.',
+                'href': '/chats#model-select-container',
+                'icon': 'bi-cpu',
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/model_selection_chat_selector.png',
+                'alt': 'User chat model selector screenshot showing multiple available model choices',
+                'title': 'Choose an Available Chat Model',
+                'caption': '1 opens the model picker, 2 reviews available provider-backed model choices, and 3 selects the model for the next chat turn.',
+                'label': 'Model Picker',
+            },
+        ],
+    },
     'file_sync': {
         'guidance': [
             'Open Personal Workspace > Sync to add sources, run sync, and review provider status, counts, and history.',
             'Open Personal Workspace > Identities to reuse credentials across sync sources and actions without duplicating setup.',
-            'Use the synced document badge in the Documents tab to recognize files that came from external sources.',
+            'Use SMB or Azure Files sources for the current connector set, then watch synced document badges in the Documents tab.',
         ],
         'actions': [
             {
@@ -412,6 +761,30 @@ _SUPPORT_CURRENT_FEATURE_USER_METADATA = {
             },
         ],
     },
+    'group_workflows': {
+        'guidance': [
+            'Open Group Workspaces, choose an active group, and review the Group Workflows area when your admins enabled it.',
+            'Create group workflows with group-scoped agents, model endpoints, File Sync sources, manual runs, or interval schedules.',
+            'Use group workflow activity and run history to inspect shared workflow output without moving the work into a personal workspace.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Group Workspaces',
+                'description': 'Open Group Workspaces and review group workflow availability for the active group.',
+                'href': '/group_workspaces',
+                'icon': 'bi-people',
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/workflow_automation_user_list.png',
+                'alt': 'Annotated workspace Workflows tab screenshot showing workflow list and create controls',
+                'title': 'Manage Shared Workflows',
+                'caption': '1 creates a workflow, 2 reviews run status, and 3 uses the workflow list pattern now available for group workflows when enabled.',
+                'label': 'Workflow List',
+            },
+        ],
+    },
     'source_review': {
         'guidance': [
             'Open Chat and use the Workspaces tool when an answer should be grounded in selected documents or tags.',
@@ -440,6 +813,30 @@ _SUPPORT_CURRENT_FEATURE_USER_METADATA = {
                 'title': 'Use Source Review and Deep Research',
                 'caption': '1 opens source tools, 2 enables source review when available, and 3 asks a URL or web-evidence question.',
                 'label': 'Source Review',
+            },
+        ],
+    },
+    'analyze_compare': {
+        'guidance': [
+            'Open Chat, expand the Workspaces tool, and choose Analyze when a prompt should review selected documents end to end.',
+            'Choose Compare when you want one source document compared against one or more target documents.',
+            'Use progress and coverage details to understand which documents were reviewed or compared in the final answer.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Chat Document Actions',
+                'description': 'Open Chat and choose Analyze or Compare from the Workspaces tool.',
+                'href': '/chats#chatbox',
+                'icon': 'bi-chat-dots',
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/document_revision_delete_compare.png',
+                'alt': 'Document revision actions and comparison screenshot showing compare-related document actions',
+                'title': 'Review Document Action Choices',
+                'caption': '1 reviews available document actions, 2 chooses comparison-oriented work when needed, and 3 keeps document history available for follow-up analysis.',
+                'label': 'Document Actions',
             },
         ],
     },
@@ -502,7 +899,8 @@ _SUPPORT_CURRENT_FEATURE_USER_METADATA = {
         'guidance': [
             'Use the composer tools to attach images, files, URLs, prompts, source grounding, and agents without leaving Chat.',
             'Use the model selector when a task needs a different model capability or speed profile.',
-            'Paste or type the next prompt directly in the composer after reviewing generated charts, artifacts, or citations.',
+            'Use Analyze or Compare from the Workspaces tool when a selected document needs full review or side-by-side comparison.',
+            'Paste or type the next prompt directly in the composer after reviewing generated charts, artifacts, citations, or document-action output.',
         ],
         'images': [
             {
@@ -511,6 +909,43 @@ _SUPPORT_CURRENT_FEATURE_USER_METADATA = {
                 'title': 'Use Chat Productivity Controls',
                 'caption': '1 opens attachment and workspace tools, 2 switches models, and 3 pastes or types the next prompt.',
                 'label': 'Chat Composer',
+            },
+        ],
+    },
+    'chat_upload_workspace_parity': {
+        'guidance': [
+            'Upload or paste files in personal Chat to create linked personal workspace documents when personal workspace processing is enabled.',
+            'Upload files in group or group multi-user conversations to create linked documents in the writable group workspace.',
+            'After processing finishes, use the linked workspace document for Search, Analyze, Compare, citations, tagging, and normal document governance.',
+        ],
+        'actions': [
+            {
+                'label': 'Upload from Chat',
+                'description': 'Open Chat and attach a file to use the workspace-backed upload path when enabled.',
+                'href': '/chats#chatbox',
+                'icon': 'bi-paperclip',
+            },
+            {
+                'label': 'Open Group Workspaces',
+                'description': 'Review group workspace documents created from group chat uploads.',
+                'href': '/group_workspaces',
+                'icon': 'bi-people',
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/chat_productivity_user_chat.png',
+                'alt': 'Annotated chat composer screenshot showing attachment tools, model picker, and prompt input',
+                'title': 'Upload Files from Chat',
+                'caption': '1 opens attachment tools, 2 uploads or pastes a file, and 3 continues the conversation while workspace processing runs.',
+                'label': 'Chat Upload',
+            },
+            {
+                'path': 'images/features/workspace_experience_document_cards.png',
+                'alt': 'Annotated workspace document cards screenshot showing document cards and actions',
+                'title': 'Use Uploaded Files as Workspace Documents',
+                'caption': '1 finds the uploaded file in the workspace, 2 opens document actions, and 3 uses search, analysis, comparison, citations, or governance workflows.',
+                'label': 'Workspace Document',
             },
         ],
     },
@@ -553,8 +988,8 @@ _SUPPORT_CURRENT_FEATURE_USER_METADATA = {
     },
     'workflow_automation': {
         'guidance': [
-            'Open Personal Workspace > Workflows to create, monitor, and review repeatable document-analysis workflows.',
-            'In the workflow editor, enable File Sync Before Run when the workflow should refresh source files first.',
+            'Open Personal Workspace > Workflows for personal automation, or Group Workspaces for shared group workflow automation when enabled.',
+            'In the workflow editor, enable File Sync Before Run when the workflow should refresh personal or group source files first.',
             'Select sync sources, choose whether to wait for completion, and use changed files as Analyze targets when appropriate.',
         ],
         'actions': [
@@ -564,6 +999,12 @@ _SUPPORT_CURRENT_FEATURE_USER_METADATA = {
                 'href': '/workspace#workflows-tab',
                 'icon': 'bi-play-circle',
                 'requires_settings': ['enable_user_workspace'],
+            },
+            {
+                'label': 'Open Group Workspaces',
+                'description': 'Create or review group workflows from the active group workspace when enabled.',
+                'href': '/group_workspaces',
+                'icon': 'bi-people',
             },
         ],
         'images': [
@@ -601,17 +1042,50 @@ _SUPPORT_CURRENT_FEATURE_USER_METADATA = {
     },
     'stats_reporting': {
         'guidance': [
-            'Open Profile > Stats to review your activity with 7-day, 30-day, 90-day, or custom windows.',
-            'Use Export when the visible metrics need to be analyzed offline or shared in a report.',
-            'Review conversation, document, login, token, and storage charts to understand your own usage patterns.',
+            'Open Profile > Stats to review your activity with 7-day, 30-day, 90-day, or custom windows and export visible metrics.',
+            'Open Profile > Settings to control navigation preferences, tutorial visibility, retention, saved memories, speech preferences, and text-to-speech voice selection.',
+            'Use Profile tabs to review your groups, public workspaces, submitted feedback, and safety violations from one place.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Profile Stats',
+                'description': 'Review your personal activity windows and export options from Profile.',
+                'href': '/profile?tab=stats#profile-stats-pane',
+                'icon': 'bi-person-lines-fill',
+            },
+            {
+                'label': 'Open Profile Settings',
+                'description': 'Review navigation, tutorial, memory, speech, and voice preferences from Profile.',
+                'href': '/profile?tab=settings#profile-settings-pane',
+                'icon': 'bi-person-gear',
+            },
+            {
+                'label': 'Open Groups',
+                'description': 'Review the groups connected to your account from Profile.',
+                'href': '/profile?tab=groups#profile-groups-pane',
+                'icon': 'bi-people',
+            },
+            {
+                'label': 'Open Public Workspaces',
+                'description': 'Review public workspaces connected to your account from Profile.',
+                'href': '/profile?tab=public-workspaces#profile-public-workspaces-pane',
+                'icon': 'bi-globe',
+            },
         ],
         'images': [
             {
                 'path': 'images/features/stats_reporting_user_profile.png',
                 'alt': 'Annotated profile stats screenshot showing time windows, export, and activity charts',
-                'title': 'Review Profile Stats',
-                'caption': '1 chooses a reporting window, 2 exports stats to CSV, and 3 reviews activity charts.',
+                'title': 'Review Profile Stats and Preferences',
+                'caption': '1 chooses a reporting window, 2 exports stats to CSV, and 3 reviews profile activity, settings, groups, workspaces, feedback, and violations from the profile tabs.',
                 'label': 'Profile Stats',
+            },
+            {
+                'path': 'images/features/facts_memory_view_profile.png',
+                'alt': 'Profile fact memory section screenshot showing saved instructions and facts controls',
+                'title': 'Manage Profile Memories',
+                'caption': 'Fact Memory lives in Profile settings alongside tutorial, retention, speech, and voice preferences.',
+                'label': 'Profile Memories',
             },
         ],
     },
@@ -1536,6 +2010,23 @@ _SUPPORT_EARLIER_RELEASE_FEATURE_CATALOG = [
     },
 ]
 
+_ADMIN_PREVIOUS_RELEASE_FEATURE_CATALOG = [
+    {
+        'id': 'release_notifications_status_badge',
+        'title': 'Registered / Unregistered Badge',
+        'icon': 'bi-megaphone',
+        'summary': 'The badge next to the Admin Settings version number shows whether this admin instance is registered for latest release and community call notifications.',
+        'details': 'The Admin Settings header can show Registered or Unregistered status and opens the release notification registration modal for saved name, email, and organization details.',
+        'why': 'This matters because admins can confirm release-notification status without hunting through setup screens.',
+        'guidance': [
+            'Unregistered means this environment has not saved release notification registration details yet.',
+            'Registered means saved contact details exist for release and community call notifications.',
+            'Clicking the badge opens the registration modal and can prepare a prefilled email draft to simplechat@microsoft.com.',
+        ],
+        'actions': [],
+    },
+] + _SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG
+
 _SUPPORT_LATEST_FEATURE_RELEASE_GROUPS = [
     {
         'id': 'current_release',
@@ -1563,6 +2054,27 @@ _SUPPORT_LATEST_FEATURE_RELEASE_GROUPS = [
         'default_expanded': False,
         'collapse_id': 'supportLatestFeaturesEarlierRelease',
         'features': _SUPPORT_EARLIER_RELEASE_FEATURE_CATALOG,
+    },
+]
+
+_ADMIN_LATEST_FEATURE_RELEASE_GROUPS = [
+    {
+        'id': 'current_release',
+        'label': 'Admin-Managed Latest Features',
+        'description': 'The newest capabilities admins can manage from Admin Settings. These cards focus on tenant controls, governance, and screenshot ideas for the admin guide.',
+        'release_version': None,
+        'default_expanded': True,
+        'collapse_id': 'adminLatestFeaturesCurrentRelease',
+        'features': _SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG,
+    },
+    {
+        'id': 'previous_release',
+        'label': 'Previous Release Features',
+        'description': 'Admin-facing release items from the prior release set, kept here for reference after the current release list moved to the newest admin-managed capabilities.',
+        'release_version': '0.241.001 - 0.241.183',
+        'default_expanded': False,
+        'collapse_id': 'adminLatestFeaturesPreviousRelease',
+        'features': _ADMIN_PREVIOUS_RELEASE_FEATURE_CATALOG,
     },
 ]
 
@@ -1635,7 +2147,6 @@ def get_default_support_latest_features_visibility():
         item['id']: True
         for item in _flatten_support_feature_groups(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
     }
-    defaults['cosmos_autoscale'] = False
     defaults['deployment'] = False
     defaults['redis_key_vault'] = False
     return defaults
@@ -1714,6 +2225,25 @@ def get_visible_support_latest_feature_groups(settings):
 def get_support_latest_feature_release_groups_for_settings(settings):
     """Return grouped latest-feature metadata with actions filtered for the current settings."""
     filtered_groups = deepcopy(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+    app_title = _resolve_support_application_title(settings)
+
+    for feature_group in filtered_groups:
+        for feature in feature_group.get('features', []):
+            feature['actions'] = [
+                action for action in feature.get('actions', [])
+                if _action_enabled(action, settings)
+            ]
+            feature.update(_apply_support_application_title(feature, app_title))
+            _normalize_feature_media(feature)
+
+        feature_group.update(_apply_support_application_title(feature_group, app_title))
+
+    return filtered_groups
+
+
+def get_admin_latest_feature_release_groups_for_settings(settings):
+    """Return grouped admin latest-feature metadata with safe media defaults."""
+    filtered_groups = deepcopy(_ADMIN_LATEST_FEATURE_RELEASE_GROUPS)
     app_title = _resolve_support_application_title(settings)
 
     for feature_group in filtered_groups:

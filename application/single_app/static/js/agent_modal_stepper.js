@@ -68,6 +68,16 @@ const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
     description: 'Allow the agent to create and upload Markdown documents into the current user\'s personal or allowed group workspaces.'
   },
   {
+    key: 'upload_word_document',
+    label: 'Upload Word documents',
+    description: 'Allow the agent to create and upload Word documents into the current user\'s personal or allowed group workspaces.'
+  },
+  {
+    key: 'upload_powerpoint_document',
+    label: 'Upload PowerPoint documents',
+    description: 'Allow the agent to create and upload PowerPoint presentations into the current user\'s personal or allowed group workspaces.'
+  },
+  {
     key: 'create_personal_collaboration_conversation',
     label: 'Create personal collaborative conversations',
     description: 'Allow the agent to create personal collaborative conversations and invite participants.'
@@ -3257,6 +3267,14 @@ export class AgentModalStepper {
           defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
         }
       });
+      if (Object.prototype.hasOwnProperty.call(rawCapabilities, 'upload_markdown_document')) {
+        const uploadEnabled = Boolean(rawCapabilities.upload_markdown_document);
+        ['upload_word_document', 'upload_powerpoint_document'].forEach(capabilityKey => {
+          if (!Object.prototype.hasOwnProperty.call(rawCapabilities, capabilityKey)) {
+            defaults[capabilityKey] = uploadEnabled;
+          }
+        });
+      }
     }
 
     return defaults;
@@ -3301,6 +3319,14 @@ export class AgentModalStepper {
         defaults[definition.key] = Boolean(storedCapabilities[definition.key]);
       }
     });
+    if (Object.prototype.hasOwnProperty.call(storedCapabilities, 'upload_markdown_document')) {
+      const uploadEnabled = Boolean(storedCapabilities.upload_markdown_document);
+      ['upload_word_document', 'upload_powerpoint_document'].forEach(capabilityKey => {
+        if (!Object.prototype.hasOwnProperty.call(storedCapabilities, capabilityKey)) {
+          defaults[capabilityKey] = uploadEnabled;
+        }
+      });
+    }
 
     return defaults;
   }

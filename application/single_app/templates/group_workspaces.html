@@ -849,6 +849,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
                       onclick="chatWithGroupSelected()">
                 <i class="bi bi-chat-dots-fill me-1"></i>Chat with Selected
               </button>
+              <button type="button" class="btn btn-sm btn-outline-primary me-2 d-none" id="group-download-selected-btn">
+                <i class="bi bi-download me-1"></i>Download Selected
+              </button>
               <div class="btn-group me-2" id="group-reprocess-selected-dropdown">
                 <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                   <i class="bi bi-arrow-repeat me-1"></i>Change Extraction
@@ -2064,6 +2067,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <div id="workflow-analysis-target-fields" class="mb-3 d-none">
               <label for="workflow-analysis-document-ids" class="form-label mb-2">Document IDs</label>
               <textarea class="form-control" id="workflow-analysis-document-ids" rows="3" placeholder="Enter one or more document ids separated by commas."></textarea>
+              <div class="form-check form-switch mt-3">
+                <input class="form-check-input" type="checkbox" id="workflow-analysis-per-document" />
+                <label class="form-check-label ms-2" for="workflow-analysis-per-document">Run each document separately</label>
+              </div>
             </div>
 
             <div id="workflow-comparison-target-fields" class="d-none">
@@ -2578,6 +2585,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let groupWorkspaceTags = [];
   let groupDocsSortBy = '_ts';
   let groupDocsSortOrder = 'desc';
+  let groupFileDownloadsEnabled = false;
+  let groupFileDownloadEnabledGroupIds = [];
   let groupDocsTagsFilter = '';
   let groupBulkSelectedTags = new Set();
   let groupDocSelectedTags = new Set();
@@ -2700,6 +2709,117 @@ app_settings.app_title }} {% endblock %} {% block head %}
     alertElement.appendChild(closeButton);
     container.appendChild(alertElement);
   }
+
+  function getGroupDownloadFileNameFromResponse(response, fallbackFileName) {
+    const disposition = response.headers.get("Content-Disposition") || response.headers.get("content-disposition") || "";
+    const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (encodedMatch && encodedMatch[1]) {
+      try {
+        return decodeURIComponent(encodedMatch[1].replace(/"/g, ""));
+      } catch (error) {
+        console.warn("Unable to decode group download filename", error);
+      }
+    }
+
+    const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+    if (plainMatch && plainMatch[1]) {
+      return plainMatch[1];
+    }
+
+    return fallbackFileName;
+  }
+
+  async function downloadGroupFile(endpoint, options = {}, fallbackFileName = "document") {
+    const response = await fetch(endpoint, options);
+    if (!response.ok) {
+      let message = "Unable to download document";
+      try {
+        const errorData = await response.json();
+        message = errorData.error || message;
+      } catch (error) {
+        message = response.statusText || message;
+      }
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const fileName = getGroupDownloadFileNameFromResponse(response, fallbackFileName);
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName;
+    link.classList.add("d-none");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+  }
+
+  function canDownloadGroupDocuments() {
+    if (!groupFileDownloadsEnabled || !activeGroupId) {
+      return false;
+    }
+    if (!Array.isArray(groupFileDownloadEnabledGroupIds) || groupFileDownloadEnabledGroupIds.length === 0) {
+      return true;
+    }
+    return groupFileDownloadEnabledGroupIds.includes(activeGroupId);
+  }
+
+  async function downloadGroupDocumentFile(documentId, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (!canDownloadGroupDocuments()) {
+      showGroupDocumentDeleteFeedback("File downloads are disabled for this group workspace.", "warning");
+      return;
+    }
+
+    try {
+      await downloadGroupFile(`/api/group_documents/${encodeURIComponent(documentId)}/download`);
+    } catch (error) {
+      console.error("Error downloading group document:", error);
+      showGroupDocumentDeleteFeedback(error.message || "Unable to download document", "danger");
+    }
+  }
+  window.downloadGroupDocumentFile = downloadGroupDocumentFile;
+
+  async function downloadGroupSelectedDocuments() {
+    if (groupSelectedDocuments.size === 0) {
+      return;
+    }
+    if (!canDownloadGroupDocuments()) {
+      showGroupDocumentDeleteFeedback("File downloads are disabled for this group workspace.", "warning");
+      return;
+    }
+
+    const downloadBtn = document.getElementById("group-download-selected-btn");
+    if (downloadBtn) {
+      downloadBtn.disabled = true;
+      downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Downloading...';
+    }
+
+    try {
+      await downloadGroupFile(
+        "/api/group_documents/download",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document_ids: Array.from(groupSelectedDocuments) })
+        },
+        groupSelectedDocuments.size === 1 ? "document" : "group_documents.zip"
+      );
+    } catch (error) {
+      console.error("Error downloading selected group documents:", error);
+      showGroupDocumentDeleteFeedback(error.message || "Unable to download selected documents", "danger");
+    } finally {
+      if (downloadBtn) {
+        downloadBtn.disabled = false;
+        downloadBtn.innerHTML = '<i class="bi bi-download me-1"></i>Download Selected';
+      }
+    }
+  }
+  window.downloadGroupSelectedDocuments = downloadGroupSelectedDocuments;
 
   function isGroupDocumentDeleteModalReady() {
     return Boolean(
@@ -3623,6 +3743,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </a></li>`;
       }
 
+      if (canDownloadGroupDocuments()) {
+        dropdownItems += `
+          <li><a class="dropdown-item" href="#" onclick="downloadGroupDocumentFile('${docId}', event); return false;">
+            <i class="bi bi-download me-2"></i>Download file
+          </a></li>`;
+      }
+
       if (canManage && canModify) {
         dropdownItems += `
           <li><a class="dropdown-item" href="#" onclick="onEditGroupDocument('${docId}'); return false;">
@@ -3966,6 +4093,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const selectedCountSpan = document.getElementById("groupSelectedCount");
     const deleteBtn = document.getElementById("group-delete-selected-btn");
     const removeBtn = document.getElementById("group-remove-selected-btn");
+    const downloadBtn = document.getElementById("group-download-selected-btn");
     const reprocessDropdown = document.getElementById("group-reprocess-selected-dropdown");
     
     if (groupSelectedDocuments.size > 0) {
@@ -3975,6 +4103,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       }
       if (selectedCountSpan) {
         selectedCountSpan.textContent = groupSelectedDocuments.size;
+      }
+      if (downloadBtn) {
+        downloadBtn.classList.toggle("d-none", !canDownloadGroupDocuments());
       }
       
       // Check if user can manage documents (delete permission)
@@ -3997,6 +4128,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       // Hide bulk actions bar
       if (bulkActionsBar) {
         bulkActionsBar.style.display = "none";
+      }
+      if (downloadBtn) {
+        downloadBtn.classList.add("d-none");
       }
     }
   }
@@ -4176,11 +4310,15 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     // Add event listeners for bulk action buttons
     const groupDeleteSelectedBtn = document.getElementById("group-delete-selected-btn");
+    const groupDownloadSelectedBtn = document.getElementById("group-download-selected-btn");
     const groupRemoveSelectedBtn = document.getElementById("group-remove-selected-btn");
     const groupClearSelectionBtn = document.getElementById("group-clear-selection-btn");
     
     if (groupDeleteSelectedBtn) {
       groupDeleteSelectedBtn.addEventListener("click", deleteGroupSelectedDocuments);
+    }
+    if (groupDownloadSelectedBtn) {
+      groupDownloadSelectedBtn.addEventListener("click", downloadGroupSelectedDocuments);
     }
     if (groupRemoveSelectedBtn) {
       groupRemoveSelectedBtn.addEventListener("click", removeGroupSelectedDocuments);
@@ -4967,6 +5105,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
         groupLastFetchedDocs = data.documents || [];
         groupLastFetchedDocsError = null;
         groupHasFetchedDocuments = true;
+        groupFileDownloadsEnabled = Boolean(data.file_downloads_enabled);
+        groupFileDownloadEnabledGroupIds = Array.isArray(data.file_download_enabled_group_ids)
+          ? data.file_download_enabled_group_ids
+          : [];
         renderCurrentGroupDocuments();
         renderGroupDocsPaginationControls(
           data.page,
@@ -5595,6 +5737,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     <i class="bi bi-chat-dots-fill me-2"></i>Chat
                 </a></li>
             `;
+        }
+        if (canDownloadGroupDocuments()) {
+          actionsDropdown += `
+            <li><a class="dropdown-item" href="#" onclick="downloadGroupDocumentFile('${docId}', event); return false;">
+              <i class="bi bi-download me-2"></i>Download file
+            </a></li>
+          `;
         }
         
         // Add sharing and delete/remove actions based on user role AND group status

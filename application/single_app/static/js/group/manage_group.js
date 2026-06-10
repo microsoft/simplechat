@@ -299,7 +299,11 @@ $(document).ready(function () {
   $("#saveRetentionBtn").on("click", function () {
     saveGroupRetentionSettings();
   });
+  $("#saveGroupDownloadSettingsBtn").on("click", function () {
+    saveGroupDownloadSettings();
+  });
   $('#settings-tab').on('shown.bs.tab', function () {
+    loadGroupDownloadSettings();
     loadGroupRetentionSettings();
   });
 
@@ -526,6 +530,7 @@ function loadGroupInfo(doneCallback) {
       loadPendingRequests();
       loadGroupStats();
       loadActivityTimeline(50);
+      loadGroupDownloadSettings(group);
       loadGroupRetentionSettings();
     }
 
@@ -1915,7 +1920,72 @@ async function bulkRemoveMembers() {
   loadMembers();
 }
 
-/* ===================== GROUP RETENTION POLICY ===================== */
+/* ===================== GROUP SETTINGS ===================== */
+
+function setGroupDownloadStatus(messageHtml, clearAfterMs = 0) {
+  const statusSpan = document.getElementById('group-download-settings-save-status');
+  if (!statusSpan) {
+    return;
+  }
+
+  statusSpan.innerHTML = messageHtml;
+  if (clearAfterMs) {
+    setTimeout(() => { statusSpan.innerHTML = ''; }, clearAfterMs);
+  }
+}
+
+async function loadGroupDownloadSettings(groupData = null) {
+  const disableDownloadsInput = document.getElementById('group-disable-file-downloads');
+  if (!disableDownloadsInput) {
+    return;
+  }
+
+  try {
+    let group = groupData;
+    if (!group) {
+      const response = await fetch(`/api/groups/${groupId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch group: ${response.status}`);
+      }
+      group = await response.json();
+    }
+
+    disableDownloadsInput.checked = Boolean(group.disable_file_downloads);
+  } catch (error) {
+    console.error('Error loading group download settings:', error);
+    setGroupDownloadStatus(`<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> ${error.message}</span>`);
+  }
+}
+
+async function saveGroupDownloadSettings() {
+  const disableDownloadsInput = document.getElementById('group-disable-file-downloads');
+  if (!disableDownloadsInput) {
+    return;
+  }
+
+  setGroupDownloadStatus('<span class="text-info"><i class="bi bi-hourglass-split"></i> Saving...</span>');
+
+  try {
+    const response = await fetch(`/api/groups/${groupId}/download-settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disable_file_downloads: disableDownloadsInput.checked })
+    });
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      disableDownloadsInput.checked = Boolean(data.disable_file_downloads);
+      setGroupDownloadStatus('<span class="text-success"><i class="bi bi-check-circle-fill"></i> Saved successfully!</span>', 3000);
+      return;
+    }
+
+    throw new Error(data.error || 'Failed to save download settings');
+  } catch (error) {
+    console.error('Error saving group download settings:', error);
+    setGroupDownloadStatus(`<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`);
+    showToast(`Error saving download settings: ${error.message}`, 'danger');
+  }
+}
 
 async function loadGroupRetentionSettings() {
     const convSelect = document.getElementById('group-conversation-retention-days');

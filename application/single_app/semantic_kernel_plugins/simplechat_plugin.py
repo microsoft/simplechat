@@ -22,6 +22,8 @@ from functions_simplechat_operations import (
     make_group_inactive_for_current_user,
     normalize_simplechat_capabilities,
     upload_markdown_document_for_current_user,
+    upload_powerpoint_document_for_current_user,
+    upload_word_document_for_current_user,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
@@ -56,7 +58,7 @@ class SimpleChatPlugin(BasePlugin):
             "description": (
                 "Simple Chat workspace actions for creating groups, conversations, "
                 "personal workflows, group membership changes, group status updates, "
-                "and Markdown document uploads using the "
+                "and generated document uploads using the "
                 "invoking user's own permissions."
             ),
             "methods": [
@@ -131,6 +133,12 @@ class SimpleChatPlugin(BasePlugin):
             )
 
         return normalized_initial_message
+
+    def _resolve_upload_workspace_scope(self, workspace_scope: str = "current") -> str:
+        normalized_scope = str(workspace_scope or "current").strip().lower()
+        if normalized_scope in {"current", "active", "default"}:
+            return "group" if self._default_group_id else "personal"
+        return normalized_scope
 
     def _seed_initial_message_if_requested(self, conversation_id: str, initial_message: str = "") -> Dict[str, Any]:
         normalized_initial_message = self._normalize_initial_message(initial_message)
@@ -315,12 +323,12 @@ class SimpleChatPlugin(BasePlugin):
         )
 
     @plugin_function_logger("SimpleChatPlugin")
-    @kernel_function(description="Create and upload a Markdown document into the current user's personal workspace or an allowed group workspace. Use workspace_scope='group' to target a group workspace and optionally provide group_id.")
+    @kernel_function(description="Create and upload a Markdown document into the current personal workspace or current group workspace. Use workspace_scope='current' to save to the workflow's group when available, workspace_scope='personal' for personal documents, or workspace_scope='group' with an optional group_id.")
     def upload_markdown_document(
         self,
         file_name: str,
         markdown_content: str,
-        workspace_scope: str = "personal",
+        workspace_scope: str = "current",
         group_id: str = "",
     ) -> dict:
         return self._execute_operation(
@@ -328,7 +336,51 @@ class SimpleChatPlugin(BasePlugin):
             lambda: upload_markdown_document_for_current_user(
                 file_name=file_name,
                 markdown_content=markdown_content,
-                workspace_scope=workspace_scope,
+                workspace_scope=self._resolve_upload_workspace_scope(workspace_scope),
+                group_id=group_id,
+                default_group_id=self._default_group_id,
+            ),
+        )
+
+    @plugin_function_logger("SimpleChatPlugin")
+    @kernel_function(description="Create and upload a Word .docx document into the current personal workspace or current group workspace from markdown-like content. Use workspace_scope='current' to save to the workflow's group when available, workspace_scope='personal' for personal documents, or workspace_scope='group' with an optional group_id.")
+    def upload_word_document(
+        self,
+        file_name: str,
+        markdown_content: str,
+        title: str = "",
+        workspace_scope: str = "current",
+        group_id: str = "",
+    ) -> dict:
+        return self._execute_operation(
+            "upload_word_document",
+            lambda: upload_word_document_for_current_user(
+                file_name=file_name,
+                title=title,
+                markdown_content=markdown_content,
+                workspace_scope=self._resolve_upload_workspace_scope(workspace_scope),
+                group_id=group_id,
+                default_group_id=self._default_group_id,
+            ),
+        )
+
+    @plugin_function_logger("SimpleChatPlugin")
+    @kernel_function(description="Create and upload a PowerPoint .pptx presentation into the current personal workspace or current group workspace from markdown-like content. Use workspace_scope='current' to save to the workflow's group when available, workspace_scope='personal' for personal documents, or workspace_scope='group' with an optional group_id.")
+    def upload_powerpoint_document(
+        self,
+        file_name: str,
+        markdown_content: str,
+        title: str = "",
+        workspace_scope: str = "current",
+        group_id: str = "",
+    ) -> dict:
+        return self._execute_operation(
+            "upload_powerpoint_document",
+            lambda: upload_powerpoint_document_for_current_user(
+                file_name=file_name,
+                title=title,
+                markdown_content=markdown_content,
+                workspace_scope=self._resolve_upload_workspace_scope(workspace_scope),
                 group_id=group_id,
                 default_group_id=self._default_group_id,
             ),

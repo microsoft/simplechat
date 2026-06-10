@@ -103,6 +103,8 @@ const workflowAlertPrioritySelect = document.getElementById("workflow-alert-prio
 const DOCUMENT_ACTION_NONE = "none";
 const DOCUMENT_ACTION_ANALYZE = "analyze";
 const DOCUMENT_ACTION_COMPARISON = "comparison";
+const DOCUMENT_ANALYSIS_MODE_COMBINED = "combined";
+const DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT = "per_document";
 const DOCUMENT_ACTION_DESCRIPTIONS = {
     [DOCUMENT_ACTION_NONE]: "Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.",
     [DOCUMENT_ACTION_ANALYZE]: "Perform an in-depth analysis across all selected documents based on your request.",
@@ -127,6 +129,7 @@ const workflowAnalysisTargetFields = document.getElementById("workflow-analysis-
 const workflowComparisonTargetFields = document.getElementById("workflow-comparison-target-fields");
 const workflowAnalysisDocScopeSelect = document.getElementById("workflow-analysis-doc-scope");
 const workflowAnalysisDocumentIdsInput = document.getElementById("workflow-analysis-document-ids");
+const workflowAnalysisPerDocumentToggle = document.getElementById("workflow-analysis-per-document");
 const workflowComparisonLeftDocumentIdInput = document.getElementById("workflow-comparison-left-document-id");
 const workflowComparisonRightDocumentIdsInput = document.getElementById("workflow-comparison-target-document-ids");
 const workflowAnalysisGroupIdsInput = document.getElementById("workflow-analysis-group-ids");
@@ -311,6 +314,13 @@ function buildWorkflowActivityUrl(conversationId, runId = "", workflowId = "") {
     return url.toString();
 }
 
+function normalizeWorkflowAnalysisMode(value) {
+    const normalizedValue = normalizeText(value).toLowerCase().replace(/[\s-]+/g, "_");
+    return normalizedValue === DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT
+        ? DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT
+        : DOCUMENT_ANALYSIS_MODE_COMBINED;
+}
+
 function updateWorkflowConversationLink(element, conversationId) {
     if (!element) {
         return;
@@ -319,6 +329,8 @@ function updateWorkflowConversationLink(element, conversationId) {
     const conversationUrl = buildWorkflowConversationUrl(conversationId);
     element.classList.toggle("d-none", !conversationUrl);
     element.href = conversationUrl || "#";
+    element.target = conversationUrl ? "_blank" : "";
+    element.rel = conversationUrl ? "noopener" : "";
 }
 
 function buildStatusBadge(status) {
@@ -706,6 +718,7 @@ function getDocumentActionConfig(workflow) {
                 : [],
         left_document_id: normalizeText(actionConfig.left_document_id),
         right_document_ids: Array.isArray(actionConfig.right_document_ids) ? actionConfig.right_document_ids : [],
+        analysis_mode: normalizeWorkflowAnalysisMode(actionConfig.analysis_mode || legacyAnalyzeConfig.analysis_mode),
         doc_scope: normalizeText(actionConfig.doc_scope || legacyAnalyzeConfig.doc_scope) || getWorkflowDocumentScope(),
         active_group_ids: Array.isArray(actionConfig.active_group_ids)
             ? actionConfig.active_group_ids
@@ -729,10 +742,11 @@ function getWorkflowDocumentActionSummary(workflow) {
     if (config.type === DOCUMENT_ACTION_ANALYZE) {
         const documentCount = config.document_ids.length;
         const unit = normalizeText(config.window_unit) || "pages";
+        const modeSuffix = config.analysis_mode === DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT ? " separately" : "";
         if (!documentCount) {
-            return `Analyze by ${unit}`;
+            return `Analyze${modeSuffix} by ${unit}`;
         }
-        return `Analyze ${documentCount} ${documentCount === 1 ? "document" : "documents"} by ${unit}`;
+        return `Analyze ${documentCount} ${documentCount === 1 ? "document" : "documents"}${modeSuffix} by ${unit}`;
     }
 
     if (config.type === DOCUMENT_ACTION_COMPARISON) {
@@ -1519,6 +1533,9 @@ function resetWorkflowForm() {
     if (workflowAnalysisDocumentIdsInput) {
         workflowAnalysisDocumentIdsInput.value = "";
     }
+    if (workflowAnalysisPerDocumentToggle) {
+        workflowAnalysisPerDocumentToggle.checked = false;
+    }
     if (workflowComparisonLeftDocumentIdInput) {
         workflowComparisonLeftDocumentIdInput.innerHTML = "";
         workflowComparisonLeftDocumentIdInput.disabled = true;
@@ -1629,6 +1646,9 @@ async function openWorkflowModal(workflow = null) {
         if (workflowAnalysisDocumentIdsInput) {
             workflowAnalysisDocumentIdsInput.value = joinCsvList(documentAction.document_ids);
         }
+        if (workflowAnalysisPerDocumentToggle) {
+            workflowAnalysisPerDocumentToggle.checked = documentAction.analysis_mode === DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT;
+        }
         if (workflowAnalysisGroupIdsInput) {
             workflowAnalysisGroupIdsInput.value = joinCsvList(documentAction.active_group_ids);
         }
@@ -1698,6 +1718,9 @@ function buildWorkflowPayload() {
     const rawWindowSize = normalizeText(workflowAnalysisWindowSizeInput?.value);
     const rawWindowPercent = normalizeText(workflowAnalysisWindowPercentInput?.value);
     const rawRetries = normalizeText(workflowAnalysisRetriesInput?.value) || "1";
+    const analysisMode = workflowAnalysisPerDocumentToggle?.checked
+        ? DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT
+        : DOCUMENT_ANALYSIS_MODE_COMBINED;
     const fileSyncEnabled = Boolean(workflowFileSyncEnabledToggle?.checked) || triggerType === "file_sync";
     const payload = {
         id: normalizeText(workflowIdInput?.value),
@@ -1727,6 +1750,7 @@ function buildWorkflowPayload() {
                 : comparisonTargetDocumentIds,
             left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : "",
             right_document_ids: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonRightDocumentIds : [],
+            analysis_mode: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisMode : DOCUMENT_ANALYSIS_MODE_COMBINED,
             doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || getWorkflowDocumentScope(),
             active_group_ids: documentActionType !== DOCUMENT_ACTION_NONE
                 ? workflowWorkspaceConfig.scope === "group" && getWorkflowActiveGroupId()
@@ -1749,6 +1773,7 @@ function buildWorkflowPayload() {
                     : analysisGroupIds
                 : [],
             active_public_workspace_id: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisPublicWorkspaceIds : [],
+            analysis_mode: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisMode : DOCUMENT_ANALYSIS_MODE_COMBINED,
             window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
             window_size: rawWindowSize ? Number(rawWindowSize) : null,
             window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
@@ -1949,7 +1974,7 @@ function renderRunHistory(runs) {
         const conversationLink = conversationUrl
             ? `
                 <div class="d-flex flex-wrap gap-2">
-                    <a class="btn btn-sm btn-outline-primary" href="${escapeHtml(conversationUrl)}"><i class="bi bi-chat-dots-fill me-1"></i>Open workflow conversation</a>
+                    <a class="btn btn-sm btn-outline-primary" href="${escapeHtml(conversationUrl)}" target="_blank" rel="noopener"><i class="bi bi-chat-dots-fill me-1"></i>Open workflow conversation</a>
                     <a class="btn btn-sm btn-outline-info" href="${escapeHtml(activityUrl)}" target="_blank" rel="noopener"><i class="bi bi-activity me-1"></i>Open activity view</a>
                     ${resumeFailedButton}
                 </div>

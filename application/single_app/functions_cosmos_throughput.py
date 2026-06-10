@@ -353,12 +353,24 @@ def build_cosmos_throughput_access_validation(status):
     has_database_throughput = bool(throughput.get('is_scalable'))
     scalable_container_count = sum(1 for container in containers if container.get('is_scalable'))
     has_scalable_target = has_database_throughput or scalable_container_count > 0
+    throughput_error = status.get('throughput_error') or throughput.get('error') or ''
     container_error = status.get('container_error') or ''
     metric_error = status.get('metric_error') or ''
 
     add_check(
+        'database_throughput_read',
+        'Database throughput read access',
+        not bool(throughput_error),
+        'Database throughput settings were read from Azure Resource Manager.'
+        if not throughput_error and not throughput.get('throughput_not_found') else (
+            'No database-level throughput is configured; using dedicated container throughput checks.'
+            if not throughput_error else throughput_error
+        ),
+    )
+
+    add_check(
         'throughput_read',
-        'Throughput read access',
+        'Scalable throughput target',
         has_scalable_target,
         'Database throughput is readable and manageable.'
         if has_database_throughput else (
@@ -370,7 +382,7 @@ def build_cosmos_throughput_access_validation(status):
         'container_discovery',
         'Container discovery access',
         not bool(container_error),
-        'Container discovery completed.' if not container_error else container_error,
+        f'Container discovery completed; {len(containers)} container(s) found.' if not container_error else container_error,
     )
     add_check(
         'metrics_read',
@@ -582,6 +594,7 @@ def build_cached_cosmos_throughput_status(status=None, scale_result=None):
             ('window_minutes', 'normalized_ru_percent', 'total_request_units'),
         ),
         'containers': containers,
+        'throughput_error': status.get('throughput_error', ''),
         'metric_error': status.get('metric_error', ''),
         'container_error': status.get('container_error', ''),
         'last_checked_at': status.get('last_checked_at'),
@@ -1541,7 +1554,26 @@ def get_cosmos_throughput_status(settings=None, include_metrics=True, refresh_id
             'include_metrics': include_metrics,
         },
     )
-    throughput = get_database_throughput(settings, refresh_id=refresh_id)
+    throughput_error = ''
+    try:
+        throughput = get_database_throughput(settings, refresh_id=refresh_id)
+    except Exception as exc:
+        throughput_error = str(exc)
+        log_event(
+            '[CosmosThroughput] Failed to query Cosmos database throughput settings.',
+            extra={'error': throughput_error, 'database_id': resource_ids.get('database_id'), 'refresh_id': refresh_id},
+            level=logging.WARNING,
+        )
+        throughput = {
+            'scope': 'database',
+            'mode': 'unknown',
+            'current_ru': None,
+            'resource': {},
+            'resource_ids': resource_ids,
+            'is_scalable': False,
+            'error': throughput_error,
+        }
+
     container_throughputs = []
     container_error = ''
     try:
@@ -1592,6 +1624,7 @@ def get_cosmos_throughput_status(settings=None, include_metrics=True, refresh_id
         'capacity_scope': capacity_scope,
         'metrics': metrics,
         'containers': containers,
+        'throughput_error': throughput_error,
         'metric_error': metric_error,
         'container_error': container_error,
         'last_checked_at': datetime.now(timezone.utc).isoformat(),
@@ -1604,6 +1637,7 @@ def get_cosmos_throughput_status(settings=None, include_metrics=True, refresh_id
             'database_mode': throughput.get('mode'),
             'container_count': len(containers),
             'scalable_container_count': sum(1 for container in containers if container.get('is_scalable')),
+            'throughput_error': bool(throughput_error),
             'metric_error': bool(metric_error),
             'container_error': bool(container_error),
             'elapsed_ms': int((time.perf_counter() - status_start) * 1000),
@@ -1939,7 +1973,7 @@ def build_runtime_update(status=None, decision=None, scale_result=None, error=''
         'cosmos_throughput_last_observed_percent': metrics.get('normalized_ru_percent'),
         'cosmos_throughput_last_observed_ru': throughput.get('current_ru'),
         'cosmos_throughput_last_mode': throughput.get('mode'),
-        'cosmos_throughput_last_error': error or status.get('metric_error') or '',
+        'cosmos_throughput_last_error': error or status.get('throughput_error') or status.get('metric_error') or status.get('container_error') or '',
     }
     if status:
         update['cosmos_throughput_cached_status'] = build_cached_cosmos_throughput_status(status, scale_result)

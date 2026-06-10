@@ -23,6 +23,11 @@ from model_endpoint_clients import (
     build_openai_style_chat_client,
     infer_model_endpoint_protocol,
 )
+from functions_model_endpoint_runtime import (
+    MODEL_ENDPOINT_PROVIDER_ALLOWLIST,
+    build_model_endpoint_context,
+    build_semantic_kernel_chat_service_for_model,
+)
 import builtins
 import asyncio, types
 import ast
@@ -3862,8 +3867,8 @@ async def _generate_tabular_structured_output_entries(
     thought_callback=None,
     user_id=None,
     conversation_id=None,
+    model_context=None,
 ):
-    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 
     rows = [
@@ -3876,34 +3881,12 @@ async def _generate_tabular_structured_output_entries(
     if not rows:
         return None
 
-    enable_gpt_apim = settings.get('enable_gpt_apim', False)
-    if enable_gpt_apim:
-        chat_service = AzureChatCompletion(
-            service_id='tabular-generated-output',
-            deployment_name=gpt_model,
-            endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key'),
-            api_version=settings.get('azure_apim_gpt_api_version'),
-        )
-    else:
-        auth_type = settings.get('azure_openai_gpt_authentication_type')
-        if auth_type == 'managed_identity':
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-            chat_service = AzureChatCompletion(
-                service_id='tabular-generated-output',
-                deployment_name=gpt_model,
-                endpoint=settings.get('azure_openai_gpt_endpoint'),
-                api_version=settings.get('azure_openai_gpt_api_version'),
-                ad_token_provider=token_provider,
-            )
-        else:
-            chat_service = AzureChatCompletion(
-                service_id='tabular-generated-output',
-                deployment_name=gpt_model,
-                endpoint=settings.get('azure_openai_gpt_endpoint'),
-                api_key=settings.get('azure_openai_gpt_key'),
-                api_version=settings.get('azure_openai_gpt_api_version'),
-            )
+    chat_service, _ = build_semantic_kernel_chat_service_for_model(
+        gpt_model,
+        settings,
+        service_id='tabular-generated-output',
+        model_context=model_context,
+    )
 
     normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
     output_format_label = normalized_output_format.upper()
@@ -3949,6 +3932,7 @@ async def _generate_tabular_structured_output_entries(
                 row_batches=row_batches,
                 gpt_model=gpt_model,
                 settings=settings,
+                model_context=model_context,
             )
             background_metadata = build_background_tabular_generated_output_metadata(background_run)
             await emit_tabular_post_processing_thought(
@@ -4118,6 +4102,7 @@ async def maybe_create_tabular_generated_output(
     conversation_id,
     thought_callback=None,
     user_id=None,
+    model_context=None,
 ):
     """Build, upload, and describe a generated tabular JSON/CSV export when requested."""
     if not question_requests_tabular_generated_output(user_question):
@@ -4183,6 +4168,7 @@ async def maybe_create_tabular_generated_output(
             thought_callback=thought_callback,
             user_id=user_id,
             conversation_id=conversation_id,
+            model_context=model_context,
         )
         if output_entries is None:
             return None
@@ -5739,6 +5725,67 @@ def build_tabular_analysis_fallback_from_invocations(invocations):
         )
 
     return "\n\n".join(rendered_sections)
+
+
+def build_tabular_schema_summary_fallback_from_invocations(user_question, invocations):
+    """Build a compact schema-summary handoff from describe_tabular_file results."""
+    del user_question
+    schema_results = []
+    for invocation in invocations or []:
+        if getattr(invocation, 'function_name', '') != 'describe_tabular_file':
+            continue
+        if get_tabular_invocation_error_message(invocation):
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation)
+        if not isinstance(result_payload, dict):
+            continue
+
+        compact_payload = {
+            'filename': result_payload.get('filename'),
+            'is_workbook': result_payload.get('is_workbook'),
+            'sheet_names': result_payload.get('sheet_names', []),
+            'sheet_count': result_payload.get('sheet_count', 0),
+            'sheet_role_hints': result_payload.get('sheet_role_hints', {}),
+            'relationship_hints': (result_payload.get('relationship_hints') or [])[:8],
+        }
+        per_sheet_schemas = result_payload.get('per_sheet_schemas') or {}
+        sheet_directory = []
+        for sheet_name, sheet_info in per_sheet_schemas.items():
+            if not isinstance(sheet_info, dict):
+                continue
+            sheet_directory.append({
+                'sheet_name': sheet_name,
+                'row_count': sheet_info.get('row_count', 0),
+                'columns': sheet_info.get('columns', []),
+            })
+        if sheet_directory:
+            compact_payload['sheet_directory'] = sheet_directory
+        else:
+            compact_payload['columns'] = result_payload.get('columns', [])
+            compact_payload['row_count'] = result_payload.get('row_count', 0)
+            compact_payload['sample_rows'] = (result_payload.get('sample_rows') or [])[:3]
+
+        schema_results.append(compact_payload)
+
+    if not schema_results:
+        return None
+
+    rendered_schema = json.dumps(schema_results, indent=2, default=str)
+    if len(rendered_schema) > 22000:
+        for schema_result in schema_results:
+            if isinstance(schema_result.get('sheet_directory'), list):
+                schema_result['sheet_directory'] = schema_result['sheet_directory'][:20]
+                schema_result['sheet_directory_limited'] = True
+            if isinstance(schema_result.get('relationship_hints'), list):
+                schema_result['relationship_hints'] = schema_result['relationship_hints'][:5]
+        rendered_schema = json.dumps(schema_results, indent=2, default=str)
+
+    return (
+        'The following workbook schema summary comes directly from describe_tabular_file tool executions. '
+        'Use it to answer workbook-structure questions about worksheets, columns, and likely relationships.\n\n'
+        f'WORKBOOK_SCHEMA_RESULTS:\n{rendered_schema}'
+    )
 
 
 def get_tabular_invocation_selected_sheets(invocations):
@@ -8230,7 +8277,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    public_workspace_id=None,
                                    execution_mode='analysis',
                                    tabular_file_contexts=None,
-                                   thought_callback=None):
+                                   thought_callback=None,
+                                   model_context=None):
     """Run lightweight SK with tabular analysis and attachment follow-up support.
 
     Creates a temporary Kernel with TabularProcessingPlugin plus document-search
@@ -8239,7 +8287,6 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     Returns None on failure for graceful degradation.
     """
     from semantic_kernel import Kernel as SKKernel
-    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
     from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
     from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
@@ -8277,35 +8324,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         if fact_memory_enabled:
             kernel.add_plugin(FactMemoryPlugin(), plugin_name="fact_memory")
 
-        # 2. Create chat service using same config as main chat
-        enable_gpt_apim = settings.get('enable_gpt_apim', False)
-        if enable_gpt_apim:
-            chat_service = AzureChatCompletion(
-                service_id="tabular-analysis",
-                deployment_name=gpt_model,
-                endpoint=settings.get('azure_apim_gpt_endpoint'),
-                api_key=settings.get('azure_apim_gpt_subscription_key'),
-                api_version=settings.get('azure_apim_gpt_api_version'),
-            )
-        else:
-            auth_type = settings.get('azure_openai_gpt_authentication_type')
-            if auth_type == 'managed_identity':
-                token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-                chat_service = AzureChatCompletion(
-                    service_id="tabular-analysis",
-                    deployment_name=gpt_model,
-                    endpoint=settings.get('azure_openai_gpt_endpoint'),
-                    api_version=settings.get('azure_openai_gpt_api_version'),
-                    ad_token_provider=token_provider,
-                )
-            else:
-                chat_service = AzureChatCompletion(
-                    service_id="tabular-analysis",
-                    deployment_name=gpt_model,
-                    endpoint=settings.get('azure_openai_gpt_endpoint'),
-                    api_key=settings.get('azure_openai_gpt_key'),
-                    api_version=settings.get('azure_openai_gpt_api_version'),
-                )
+        # 2. Create chat service using same config as main chat.
+        chat_service, tabular_model_protocol = build_semantic_kernel_chat_service_for_model(
+            gpt_model,
+            settings,
+            service_id="tabular-analysis",
+            model_context=model_context,
+        )
         kernel.add_service(chat_service)
 
         # 3. Pre-dispatch: load file schemas to eliminate discovery LLM rounds
@@ -8809,6 +8834,68 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         previous_execution_gap_messages = []
         previous_discovery_feedback_messages = []
         analysis_requires_immediate_tool_choice = has_multi_sheet_workbook and not schema_summary_mode
+
+        if tabular_model_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+            if schema_summary_mode:
+                for file_context in analysis_file_contexts:
+                    describe_arguments = {
+                        'user_id': user_id,
+                        'conversation_id': conversation_id,
+                        'filename': file_context['file_name'],
+                        'source': file_context.get('source_hint', source_hint),
+                    }
+                    if file_context.get('group_id'):
+                        describe_arguments['group_id'] = file_context.get('group_id')
+                    if file_context.get('public_workspace_id'):
+                        describe_arguments['public_workspace_id'] = file_context.get('public_workspace_id')
+                    await tabular_plugin.describe_tabular_file(**describe_arguments)
+
+                invocations_after = plugin_logger.get_invocations_for_conversation(
+                    user_id,
+                    conversation_id,
+                    limit=1000,
+                )
+                schema_invocations = filter_tabular_citation_invocations(
+                    get_new_plugin_invocations(invocations_after, baseline_invocation_count)
+                )
+                if schema_invocations:
+                    return build_tabular_schema_summary_fallback_from_invocations(
+                        user_question,
+                        schema_invocations,
+                    )
+                return None
+
+            reviewer_recovery = await maybe_recover_tabular_analysis_with_llm_reviewer(
+                chat_service=chat_service,
+                kernel=kernel,
+                tabular_plugin=tabular_plugin,
+                plugin_logger=plugin_logger,
+                user_question=user_question,
+                schema_context=schema_context,
+                source_context=source_context,
+                analysis_file_contexts=analysis_file_contexts,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                execution_mode=execution_mode,
+                allowed_function_names=allowed_function_names,
+                workbook_sheet_hints=workbook_sheet_hints,
+                workbook_related_sheet_hints=workbook_related_sheet_hints,
+                workbook_cross_sheet_bridge_hints=workbook_cross_sheet_bridge_hints,
+                tool_error_messages=previous_tool_error_messages,
+                execution_gap_messages=previous_execution_gap_messages,
+                discovery_feedback_messages=previous_discovery_feedback_messages,
+                fallback_source_hint=source_hint,
+                fallback_group_id=group_id,
+                fallback_public_workspace_id=public_workspace_id,
+            )
+            if reviewer_recovery and reviewer_recovery.get('fallback'):
+                return reviewer_recovery['fallback']
+
+            log_event(
+                '[Tabular SK Analysis] Anthropic tabular planner did not produce computed tool results',
+                level=logging.WARNING,
+            )
+            return None
 
         for attempt_number in range(1, 4):
             force_tool_use = attempt_number > 1 or (attempt_number == 1 and analysis_requires_immediate_tool_choice)
@@ -9748,7 +9835,8 @@ async def run_tabular_analysis_with_multi_file_support(user_question, tabular_fi
                                                        public_workspace_id=None,
                                                        execution_mode='analysis',
                                                        tabular_file_contexts=None,
-                                                       thought_callback=None):
+                                                       thought_callback=None,
+                                                       model_context=None):
     """Run deterministic multi-file helpers first, then fall back to the SK planner."""
     analysis_file_contexts = normalize_tabular_file_contexts_for_analysis(
         tabular_filenames=tabular_filenames,
@@ -9794,6 +9882,7 @@ async def run_tabular_analysis_with_multi_file_support(user_question, tabular_fi
         public_workspace_id=public_workspace_id,
         execution_mode=execution_mode,
         thought_callback=thought_callback,
+        model_context=model_context,
     )
 
 
@@ -9804,7 +9893,8 @@ async def run_tabular_analysis_with_thought_tracking(user_question, tabular_file
                                                      execution_mode='analysis',
                                                      tabular_file_contexts=None,
                                                      thought_tracker=None,
-                                                     live_thought_callback=None):
+                                                     live_thought_callback=None,
+                                                     model_context=None):
     """Run tabular analysis while streaming/persisting live tool thoughts when available."""
     plugin_logger = get_plugin_logger()
     callback_key = None
@@ -9862,6 +9952,7 @@ async def run_tabular_analysis_with_thought_tracking(user_question, tabular_file
             public_workspace_id=public_workspace_id,
             execution_mode=execution_mode,
             thought_callback=tabular_progress_callback,
+            model_context=model_context,
         )
 
         if callable(tabular_progress_callback):
@@ -10144,7 +10235,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         return None
 
     provider = str(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
-    if provider not in ('aoai', 'aifoundry', 'new_foundry'):
+    if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
         if selection_source == 'request':
             raise ValueError('Selected model provider is not supported for streaming.')
         debug_print(
@@ -10189,7 +10280,16 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
         f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol}"
     )
-    return gpt_client, deployment, provider, endpoint, auth_settings, api_version
+    return (
+        gpt_client,
+        deployment,
+        provider,
+        endpoint,
+        auth_settings,
+        api_version,
+        requested_endpoint_id,
+        str(model_cfg.get('id') or '').strip(),
+    )
 
 
 def classify_agent_stream_retry_mode(stream_error):
@@ -11949,6 +12049,9 @@ def register_route_backend_chats(app):
             gpt_endpoint = None
             gpt_auth = None
             gpt_api_version = None
+            gpt_endpoint_id = None
+            gpt_model_id = None
+            tabular_model_context = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
             should_use_default_model = (
@@ -11970,7 +12073,16 @@ def register_route_backend_chats(app):
                     if multi_endpoint_config and should_use_default_model and not data.get('model_endpoint_id'):
                         debug_print("[GPTClient] Using default multi-endpoint model for agent request.")
                 if multi_endpoint_config:
-                    gpt_client, gpt_model, gpt_provider, gpt_endpoint, gpt_auth, gpt_api_version = multi_endpoint_config
+                    (
+                        gpt_client,
+                        gpt_model,
+                        gpt_provider,
+                        gpt_endpoint,
+                        gpt_auth,
+                        gpt_api_version,
+                        gpt_endpoint_id,
+                        gpt_model_id,
+                    ) = multi_endpoint_config
                 elif enable_gpt_apim:
                     # read raw comma-delimited deployments
                     raw = settings.get('azure_apim_gpt_deployment', '')
@@ -12052,6 +12164,18 @@ def register_route_backend_chats(app):
 
                 if not gpt_client or not gpt_model:
                     raise ValueError("GPT Client or Model could not be initialized.")
+
+                tabular_model_context = build_model_endpoint_context(
+                    provider=gpt_provider,
+                    endpoint=gpt_endpoint,
+                    auth=gpt_auth,
+                    api_version=gpt_api_version,
+                    endpoint_id=gpt_endpoint_id or data.get('model_endpoint_id'),
+                    model_id=gpt_model_id or data.get('model_id'),
+                    model_deployment=gpt_model,
+                    user_id=user_id,
+                    active_group_ids=active_group_ids,
+                )
 
             except Exception as e:
                 debug_print(f"Error initializing GPT client/model: {e}")
@@ -12720,7 +12844,10 @@ def register_route_backend_chats(app):
                                     # Use the already initialized gpt_client and gpt_model
                                     summary_response_search = gpt_client.chat.completions.create(
                                         model=gpt_model,
-                                        messages=[{"role": "system", "content": summary_prompt_search}],
+                                        messages=[
+                                            {"role": "system", "content": "Summarize recent conversation context for search query rewriting."},
+                                            {"role": "user", "content": summary_prompt_search},
+                                        ],
                                         max_tokens=100 # Keep summary short
                                     )
                                     summary_for_search = summary_response_search.choices[0].message.content.strip()
@@ -13432,6 +13559,7 @@ def register_route_backend_chats(app):
                     public_workspace_id=effective_active_public_workspace_id if tabular_source_hint == 'public' else None,
                     execution_mode=tabular_execution_mode,
                     thought_tracker=thought_tracker,
+                    model_context=tabular_model_context,
                 ))
                 tabular_invocations = get_new_plugin_invocations(
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -13467,6 +13595,7 @@ def register_route_backend_chats(app):
                     conversation_id=conversation_id,
                     thought_callback=record_tabular_post_processing_thought,
                     user_id=user_id,
+                    model_context=tabular_model_context,
                 ))
                 if tabular_generated_output:
                     generated_tabular_outputs_list.append(tabular_generated_output)
@@ -13765,6 +13894,7 @@ def register_route_backend_chats(app):
                         source_hint="chat",
                         execution_mode=chat_tabular_execution_mode,
                         thought_tracker=thought_tracker,
+                        model_context=tabular_model_context,
                     ))
                     chat_tabular_invocations = get_new_plugin_invocations(
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -13800,6 +13930,7 @@ def register_route_backend_chats(app):
                         conversation_id=conversation_id,
                         thought_callback=record_tabular_post_processing_thought,
                         user_id=user_id,
+                        model_context=tabular_model_context,
                     ))
                     if chat_tabular_generated_output:
                         generated_tabular_outputs_list.append(chat_tabular_generated_output)
@@ -15479,6 +15610,9 @@ def register_route_backend_chats(app):
                 gpt_endpoint = None
                 gpt_auth = None
                 gpt_api_version = None
+                gpt_endpoint_id = None
+                gpt_model_id = None
+                tabular_model_context = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
                 should_use_default_model = (
                     _has_chat_agent_selection(request_agent_info)
@@ -15501,7 +15635,16 @@ def register_route_backend_chats(app):
                             debug_print("[GPTClient] Using default multi-endpoint model for agent streaming request.")
 
                     if streaming_multi_endpoint_config:
-                        gpt_client, gpt_model, gpt_provider, gpt_endpoint, gpt_auth, gpt_api_version = streaming_multi_endpoint_config
+                        (
+                            gpt_client,
+                            gpt_model,
+                            gpt_provider,
+                            gpt_endpoint,
+                            gpt_auth,
+                            gpt_api_version,
+                            gpt_endpoint_id,
+                            gpt_model_id,
+                        ) = streaming_multi_endpoint_config
                     elif enable_gpt_apim:
                         raw = settings.get('azure_apim_gpt_deployment', '')
                         if not raw:
@@ -15566,6 +15709,18 @@ def register_route_backend_chats(app):
                     if not gpt_client or not gpt_model:
                         yield f"data: {json.dumps({'error': 'Failed to initialize AI model'})}\n\n"
                         return
+
+                    tabular_model_context = build_model_endpoint_context(
+                        provider=gpt_provider,
+                        endpoint=gpt_endpoint,
+                        auth=gpt_auth,
+                        api_version=gpt_api_version,
+                        endpoint_id=gpt_endpoint_id or frontend_model_endpoint_id,
+                        model_id=gpt_model_id or frontend_model_id,
+                        model_deployment=gpt_model,
+                        user_id=user_id,
+                        active_group_ids=active_group_ids,
+                    )
 
                     debug_print(
                         "[Streaming] Initialized model client | "
@@ -16512,6 +16667,7 @@ def register_route_backend_chats(app):
                         execution_mode=tabular_execution_mode,
                         thought_tracker=thought_tracker,
                         live_thought_callback=publish_live_plugin_thought,
+                        model_context=tabular_model_context,
                     ))
                     tabular_invocations = get_new_plugin_invocations(
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -16551,6 +16707,7 @@ def register_route_backend_chats(app):
                         conversation_id=conversation_id,
                         thought_callback=record_and_publish_streaming_thought,
                         user_id=user_id,
+                        model_context=tabular_model_context,
                     ))
                     if tabular_generated_output:
                         generated_tabular_outputs_list.append(tabular_generated_output)
@@ -16858,6 +17015,7 @@ def register_route_backend_chats(app):
                             execution_mode=chat_tabular_execution_mode,
                             thought_tracker=thought_tracker,
                             live_thought_callback=publish_live_plugin_thought,
+                            model_context=tabular_model_context,
                         ))
                         chat_tabular_invocations = get_new_plugin_invocations(
                             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -16897,6 +17055,7 @@ def register_route_backend_chats(app):
                             conversation_id=conversation_id,
                             thought_callback=record_and_publish_streaming_thought,
                             user_id=user_id,
+                            model_context=tabular_model_context,
                         ))
                         if chat_tabular_generated_output:
                             generated_tabular_outputs_list.append(chat_tabular_generated_output)
@@ -18662,8 +18821,12 @@ def assess_history_only_answerability(gpt_client, gpt_model, conversation_histor
         "Keep reason short."
     )
 
-    assessment_messages = [{'role': 'system', 'content': assessment_prompt}]
+    assessment_messages = [{
+        'role': 'system',
+        'content': 'Evaluate whether existing conversation context can answer the latest question.',
+    }]
     assessment_messages.extend(conversation_history_for_api or [])
+    assessment_messages.append({'role': 'user', 'content': assessment_prompt})
 
     assessment_response = gpt_client.chat.completions.create(
         model=gpt_model,
@@ -18912,7 +19075,10 @@ def build_conversation_history_segments(
             try:
                 summary_response_older = gpt_client.chat.completions.create(
                     model=gpt_model,
-                    messages=[{"role": "system", "content": summary_prompt_older}],
+                    messages=[
+                        {"role": "system", "content": "Summarize older conversation context for future chat turns."},
+                        {"role": "user", "content": summary_prompt_older},
+                    ],
                     max_tokens=150,
                     temperature=0.3,
                 )

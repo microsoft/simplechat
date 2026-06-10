@@ -15,19 +15,17 @@ from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from flask import current_app, has_app_context
-from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
 from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 
 from config import (
     CLIENTS,
-    cognitive_services_scope,
     cosmos_tabular_export_runs_container,
     storage_account_personal_chat_container_name,
 )
 from functions_appinsights import log_event
+from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
 from functions_settings import get_settings
 from functions_simplechat_operations import upload_generated_analysis_artifact_for_user
 
@@ -362,35 +360,14 @@ def _build_batch_prompt(user_question, batch_rows, batch_index, total_batches, s
     )
 
 
-def _build_chat_service(gpt_model, settings):
-    enable_gpt_apim = settings.get('enable_gpt_apim', False)
-    if enable_gpt_apim:
-        return AzureChatCompletion(
-            service_id='tabular-generated-output-background',
-            deployment_name=gpt_model,
-            endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key'),
-            api_version=settings.get('azure_apim_gpt_api_version'),
-        )
-
-    auth_type = settings.get('azure_openai_gpt_authentication_type')
-    if auth_type == 'managed_identity':
-        token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-        return AzureChatCompletion(
-            service_id='tabular-generated-output-background',
-            deployment_name=gpt_model,
-            endpoint=settings.get('azure_openai_gpt_endpoint'),
-            api_version=settings.get('azure_openai_gpt_api_version'),
-            ad_token_provider=token_provider,
-        )
-
-    return AzureChatCompletion(
+def _build_chat_service(gpt_model, settings, model_context=None):
+    chat_service, _ = build_semantic_kernel_chat_service_for_model(
+        gpt_model,
+        settings,
         service_id='tabular-generated-output-background',
-        deployment_name=gpt_model,
-        endpoint=settings.get('azure_openai_gpt_endpoint'),
-        api_key=settings.get('azure_openai_gpt_key'),
-        api_version=settings.get('azure_openai_gpt_api_version'),
+        model_context=model_context,
     )
+    return chat_service
 
 
 async def _generate_batch_entries(
@@ -1504,7 +1481,11 @@ def process_tabular_generated_output_run(run_id, user_id):
             minimum=1,
             maximum=TABULAR_EXPORT_MAX_BATCH_CONCURRENCY,
         )
-        chat_service = _build_chat_service(run.get('gpt_model'), settings)
+        chat_service = _build_chat_service(
+            run.get('gpt_model'),
+            settings,
+            model_context=run.get('model_context'),
+        )
         completed_batches = _safe_int(run.get('completed_batches'))
         processed_rows = _safe_int(run.get('processed_rows'))
         batch_count = _safe_int(run.get('batch_count'))
@@ -1627,6 +1608,7 @@ def queue_tabular_generated_output_run(
     row_batches,
     gpt_model,
     settings=None,
+    model_context=None,
 ):
     """Stage batch input blobs, create a run record, and submit background processing."""
     normalized_user_id = str(user_id or '').strip()
@@ -1681,6 +1663,7 @@ def queue_tabular_generated_output_run(
         'selected_sheet': selected_sheet,
         'output_format': normalized_output_format,
         'gpt_model': str(gpt_model or '').strip(),
+        'model_context': model_context if isinstance(model_context, dict) else {},
         'generated_file_name': generated_file_name,
         'row_count': staged_row_count,
         'batch_count': len(row_batches),

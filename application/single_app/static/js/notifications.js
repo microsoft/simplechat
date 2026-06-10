@@ -1045,6 +1045,11 @@
                 return;
             }
 
+            const targetWindow = window.open('about:blank', '_blank');
+            if (targetWindow) {
+                targetWindow.opener = null;
+            }
+
             await markNotificationRead(activeWorkflowAlert.id);
 
             const groupId = target.link_context?.group_id || '';
@@ -1062,7 +1067,11 @@
                 }
             }
 
-            window.location.href = target.link_url;
+            if (targetWindow) {
+                targetWindow.location.href = target.link_url;
+            } else {
+                window.open(target.link_url, '_blank', 'noopener');
+            }
         });
 
         workflowAlertMarkReadBtn?.addEventListener('click', async function() {

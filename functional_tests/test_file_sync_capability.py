@@ -2,8 +2,9 @@
 # test_file_sync_capability.py
 """
 Functional test for File Sync capability wiring.
-Version: 0.241.178
+Version: 0.241.180
 Implemented in: 0.241.042
+Updated in: 0.241.180
 
 This test ensures File Sync storage, settings, routes, scheduler hooks, and
 credential redaction are wired without requiring live Cosmos DB or SMB access.
@@ -26,7 +27,7 @@ def read_text(relative_path):
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.178"' in config_text
+    assert 'VERSION = "0.241.180"' in config_text
 
     expected_containers = [
         "personal_file_sync_sources",
@@ -61,8 +62,10 @@ def test_file_sync_settings_and_routes():
         "enable_file_sync_group",
         "enable_file_sync_public",
         "file_sync_personal_require_app_role",
-        "file_sync_group_require_app_role",
-        "file_sync_public_require_app_role",
+        "require_group_assignment_for_file_sync",
+        "file_sync_allowed_group_ids",
+        "require_public_workspace_assignment_for_file_sync",
+        "file_sync_allowed_public_workspace_ids",
         "file_sync_personal_admin_only",
         "file_sync_group_admin_only",
         "file_sync_public_admin_only",
@@ -108,6 +111,7 @@ def test_file_sync_service_security_shapes():
         "queue_file_sync_source_run",
         "test_file_sync_source_connection",
         "check_due_file_sync_sources_once",
+        "_is_scheduled_source_allowed",
         "build_synced_document_delete_guard",
         "apply_synced_document_delete_action",
         "is_file_sync_source_type_visible",
@@ -136,8 +140,13 @@ def test_file_sync_service_security_shapes():
     assert "_user_info_has_admin_role" in file_sync_text
     assert "_user_info_has_app_role" in file_sync_text
     assert "PersonalFileSyncUser" in file_sync_text
-    assert "GroupFileSyncUser" in file_sync_text
-    assert "PublicWorkspaceFileSyncUser" in file_sync_text
+    assert "GroupFileSyncUser" not in file_sync_text
+    assert "PublicWorkspaceFileSyncUser" not in file_sync_text
+    assert "require_group_assignment_for_file_sync" in file_sync_text
+    assert "file_sync_allowed_group_ids" in file_sync_text
+    assert "require_public_workspace_assignment_for_file_sync" in file_sync_text
+    assert "file_sync_allowed_public_workspace_ids" in file_sync_text
+    assert "_is_scheduled_source_allowed" in file_sync_text
     assert "FILE_SYNC_KNOWN_SOURCE_TYPES" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_AZURE_FILES" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
@@ -222,8 +231,10 @@ def test_file_sync_admin_and_sidebar_discovery():
         "enable_file_sync_group",
         "enable_file_sync_public",
         "file_sync_personal_require_app_role",
-        "file_sync_group_require_app_role",
-        "file_sync_public_require_app_role",
+        "require_group_assignment_for_file_sync",
+        "file_sync_allowed_group_ids",
+        "require_public_workspace_assignment_for_file_sync",
+        "file_sync_allowed_public_workspace_ids",
         "file_sync_personal_admin_only",
         "file_sync_group_admin_only",
         "file_sync_public_admin_only",
@@ -248,8 +259,12 @@ def test_file_sync_admin_and_sidebar_discovery():
     assert "file_sync_blocked_public_workspaces" not in admin_template
     assert "data-file-sync-access-list" not in admin_template
     assert "PersonalFileSyncUser" in admin_template
-    assert "GroupFileSyncUser" in admin_template
-    assert "PublicWorkspaceFileSyncUser" in admin_template
+    assert "GroupFileSyncUser" not in admin_template
+    assert "PublicWorkspaceFileSyncUser" not in admin_template
+    assert "fileSyncGroupAssignmentModal" in admin_template
+    assert "fileSyncPublicWorkspaceAssignmentModal" in admin_template
+    assert "Manage Groups" in admin_template
+    assert "Manage Public Workspaces" in admin_template
     assert "file-sync-app-role-setup-modal" in admin_template
     assert "Visible Source Types" in admin_template
     assert "file_sync_visible_source_type_smb" in admin_template
@@ -300,6 +315,8 @@ def test_file_sync_admin_and_sidebar_discovery():
     assert "file_sync_blocked_public_workspaces" not in admin_route
     assert "fileSyncSettings.classList.toggle('d-none'" in admin_js
     assert "setupFileSyncAccessLists" not in admin_js
+    assert "setupFileSyncAssignments" in admin_js
+    assert "fileSyncAssignmentManagers" in admin_js
     assert "setupFileSyncAdminTargets" in admin_js
     assert "openFileSyncAdminManager" in admin_js
     assert "getSelectedFileSyncVisibleSourceTypes" in admin_js

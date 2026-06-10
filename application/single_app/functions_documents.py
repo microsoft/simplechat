@@ -3,6 +3,9 @@
 import re
 import shutil
 import traceback
+import zipfile
+from io import BytesIO
+from flask import make_response
 from config import *
 from functions_appinsights import log_event
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
@@ -173,6 +176,100 @@ def get_document_blob_storage_info(document_item, user_id=None, group_id=None, p
         group_id=group_id or document_item.get("group_id"),
         public_workspace_id=public_workspace_id or document_item.get("public_workspace_id"),
     )
+
+
+def _sanitize_download_file_name(file_name, fallback='document'):
+    normalized_name = str(file_name or '').replace('\\', '/').split('/')[-1].strip()
+    safe_name = secure_filename(normalized_name)
+    if safe_name:
+        return safe_name
+    return secure_filename(str(fallback or 'document').strip()) or 'document'
+
+
+def _get_download_content_type(file_name):
+    return mimetypes.guess_type(str(file_name or ''))[0] or 'application/octet-stream'
+
+
+def _get_document_download_entry(document_item, user_id=None, group_id=None, public_workspace_id=None):
+    if not document_item:
+        raise FileNotFoundError('Document not found.')
+
+    container_name, blob_path = get_document_blob_storage_info(
+        document_item,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not container_name or not blob_path:
+        raise FileNotFoundError('Document source file is unavailable.')
+
+    blob_service_client = _get_blob_service_client()
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+    try:
+        file_bytes = blob_client.download_blob().readall()
+    except Exception as exc:
+        raise FileNotFoundError('Document source file was not found in Blob Storage.') from exc
+
+    file_name = _sanitize_download_file_name(
+        document_item.get('file_name') or document_item.get('title') or document_item.get('id'),
+        fallback=document_item.get('id') or 'document',
+    )
+    return {
+        'file_name': file_name,
+        'content_type': _get_download_content_type(file_name),
+        'content': file_bytes,
+    }
+
+
+def build_document_download_response(document_item, user_id=None, group_id=None, public_workspace_id=None):
+    """Build an attachment response for a single authorized document source file."""
+    entry = _get_document_download_entry(
+        document_item,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    response = make_response(entry['content'])
+    response.headers['Content-Type'] = entry['content_type']
+    response.headers['Content-Disposition'] = f'attachment; filename="{entry["file_name"]}"'
+    return response
+
+
+def build_documents_zip_download_response(documents, archive_name, user_id=None, group_id=None, public_workspace_id=None):
+    """Build a ZIP attachment for multiple authorized document source files."""
+    buffer = BytesIO()
+    used_names = set()
+    document_count = 0
+
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for document_item in documents or []:
+            entry = _get_document_download_entry(
+                document_item,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            base_name, extension = os.path.splitext(entry['file_name'])
+            candidate_name = entry['file_name']
+            suffix = 2
+            while candidate_name.lower() in used_names:
+                candidate_name = f'{base_name or "document"}_{suffix}{extension}'
+                suffix += 1
+            used_names.add(candidate_name.lower())
+            archive.writestr(candidate_name, entry['content'])
+            document_count += 1
+
+    if document_count == 0:
+        raise FileNotFoundError('No documents were available for download.')
+
+    buffer.seek(0)
+    safe_archive_name = _sanitize_download_file_name(archive_name, fallback='documents.zip')
+    if not safe_archive_name.lower().endswith('.zip'):
+        safe_archive_name = f'{safe_archive_name}.zip'
+    response = make_response(buffer.read())
+    response.headers['Content-Type'] = 'application/zip'
+    response.headers['Content-Disposition'] = f'attachment; filename="{safe_archive_name}"'
+    return response
 
 
 def _has_persisted_blob_reference(document_item):

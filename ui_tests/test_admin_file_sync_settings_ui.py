@@ -2,14 +2,15 @@
 """
 UI test for Admin Settings File Sync management.
 
-Version: 0.241.178
+Version: 0.241.180
 Implemented in: 0.241.073
 Updated in: 0.241.178
+Updated in: 0.241.180
 
 This test ensures the Admin Settings File Sync tab renders as its own section,
-uses app-role gate controls, stacks scope cards as separate rows, shows delayed
-cloud connectors as coming soon, and opens the admin-managed source workflow
-modal for a target user.
+uses personal app-role and workspace assignment gate controls, stacks scope cards
+as separate rows, shows delayed cloud connectors as coming soon, and opens the
+admin-managed source workflow modal for a target user.
 """
 
 import json
@@ -94,9 +95,31 @@ def test_admin_file_sync_tab_and_target_manager():
     def handle_global_identities(route):
         route.fulfill(status=200, content_type="application/json", body=json.dumps({"identities": []}))
 
+    def handle_group_assignment_search(route):
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps([
+                {"id": "group-1", "name": "Operations", "description": "Ops workspace"}
+            ]),
+        )
+
+    def handle_public_workspace_assignment_search(route):
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "workspaces": [
+                    {"id": "public-1", "name": "Knowledge Hub", "description": "Public docs"}
+                ]
+            }),
+        )
+
     page.route("**/api/admin/file-sync/users/search**", handle_user_search)
     page.route("**/api/admin/file-sync/personal/user-1/**", handle_admin_file_sync)
     page.route("**/api/admin/workspace-identities/global/identities**", handle_global_identities)
+    page.route("**/api/groups/discover**", handle_group_assignment_search)
+    page.route("**/api/admin/file-sync/public-workspaces/search**", handle_public_workspace_assignment_search)
     page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
 
     try:
@@ -112,11 +135,11 @@ def test_admin_file_sync_tab_and_target_manager():
         expect(file_sync_section).to_be_visible()
         expect(page.get_by_label("Enable File Sync")).to_be_visible()
         expect(page.get_by_label("Require PersonalFileSyncUser App Role")).to_be_visible()
-        expect(page.get_by_label("Require GroupFileSyncUser App Role")).to_be_visible()
-        expect(page.get_by_label("Require PublicWorkspaceFileSyncUser App Role")).to_be_visible()
+        expect(page.get_by_label("Require Group Assignment to Use File Sync")).to_be_visible()
+        expect(page.get_by_label("Require Public Workspace Assignment to Use File Sync")).to_be_visible()
         expect(file_sync_section.get_by_text("PersonalFileSyncUser").first).to_be_visible()
-        expect(file_sync_section.get_by_text("GroupFileSyncUser").first).to_be_visible()
-        expect(file_sync_section.get_by_text("PublicWorkspaceFileSyncUser").first).to_be_visible()
+        expect(file_sync_section.get_by_text("GroupFileSyncUser")).to_have_count(0)
+        expect(file_sync_section.get_by_text("PublicWorkspaceFileSyncUser")).to_have_count(0)
         expect(file_sync_section.get_by_text("Visible Source Types")).to_be_visible()
         expect(page.get_by_label("SMB Share")).to_be_visible()
         expect(page.get_by_label("Azure Files")).to_be_visible()
@@ -134,13 +157,36 @@ def test_admin_file_sync_tab_and_target_manager():
         expect(file_sync_section.get_by_text("Allowed Users")).to_have_count(0)
         _assert_scope_cards_are_stacked(page)
 
-        page.get_by_role("button", name="App Role Setup").click()
+        page.get_by_role("button", name="Manage Groups").click()
+        group_modal = page.locator("#fileSyncGroupAssignmentModal")
+        expect(group_modal).to_be_visible()
+        expect(group_modal.get_by_role("heading", name="File Sync Group Assignments")).to_be_visible()
+        expect(group_modal.get_by_text("Operations")).to_be_visible()
+        group_modal.get_by_role("button", name="Assign").click()
+        expect(page.locator("#file_sync_allowed_group_ids")).to_have_value('["group-1"]')
+        group_modal.get_by_role("button", name="Done").click()
+        expect(group_modal).to_be_hidden()
+        expect(page.locator("#file-sync-group-assignment-summary")).to_contain_text("1 group assigned.")
+
+        page.get_by_role("button", name="Manage Public Workspaces").click()
+        public_modal = page.locator("#fileSyncPublicWorkspaceAssignmentModal")
+        expect(public_modal).to_be_visible()
+        public_modal.locator("#file-sync-public-workspace-assignment-search").fill("hub")
+        public_modal.locator("#file-sync-public-workspace-assignment-search-btn").click()
+        expect(public_modal.get_by_text("Knowledge Hub")).to_be_visible()
+        public_modal.get_by_role("button", name="Assign").click()
+        expect(page.locator("#file_sync_allowed_public_workspace_ids")).to_have_value('["public-1"]')
+        public_modal.get_by_role("button", name="Done").click()
+        expect(public_modal).to_be_hidden()
+        expect(page.locator("#file-sync-public-workspace-assignment-summary")).to_contain_text("1 public workspace assigned.")
+
+        page.get_by_role("button", name="Personal App Role Setup").click()
         setup_modal = page.locator("#file-sync-app-role-setup-modal")
         expect(setup_modal).to_be_visible()
-        expect(setup_modal.get_by_role("heading", name="File Sync App Role Setup")).to_be_visible()
+        expect(setup_modal.get_by_role("heading", name="Personal File Sync App Role Setup")).to_be_visible()
         expect(setup_modal.get_by_text("PersonalFileSyncUser").first).to_be_visible()
-        expect(setup_modal.get_by_text("GroupFileSyncUser").first).to_be_visible()
-        expect(setup_modal.get_by_text("PublicWorkspaceFileSyncUser").first).to_be_visible()
+        expect(setup_modal.get_by_text("GroupFileSyncUser")).to_have_count(0)
+        expect(setup_modal.get_by_text("PublicWorkspaceFileSyncUser")).to_have_count(0)
         setup_modal.get_by_label("Close").click()
         expect(setup_modal).to_be_hidden()
 

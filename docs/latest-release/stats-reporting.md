@@ -1,33 +1,39 @@
 ---
 layout: latest-release-feature
-title: "Stats and Control Center Reporting"
-description: "How stats windows, CSV exports, pagination, and group token totals improve reporting"
+title: "Profile, Stats, and Preferences"
+description: "How Profile brings together activity stats, exports, settings, groups, public workspaces, feedback, and violations"
 section: "Latest Release"
 ---
 
-Stats and Control Center Reporting improves personal, group, public workspace, and admin usage views with consistent windows and exports.
+Profile, Stats, and Preferences turns the profile page into the user's control center for personal usage, saved preferences, workspace membership, support feedback, and violation follow-up.
 
 ## User Side
 
-Users can open Profile stats, choose standard or custom reporting windows, review conversation and document activity, and export visible metrics for offline analysis.
+Users can open Profile to review richer account details, choose 7-day, 30-day, 90-day, or custom activity windows, and export visible metrics for offline analysis. The same page also gives users control over navigation preferences, tutorial visibility, retention settings, saved instructions and facts, speech preferences, and text-to-speech voice selection.
 
-## Admin Side
+Profile also gives users a single place to see groups, public workspaces, submitted feedback, and safety violations without jumping through separate admin or support pages.
 
-Admins use Control Center reporting, pagination, group token totals, and workspace statistics to compare usage across larger tenants without losing the same date-window context users see in profile reporting.
+## Screenshot Placeholders
+
+- Profile Stats: capture the reporting window controls, custom range, export button, and activity charts.
+- Profile Settings: capture navigation preferences, tutorial preferences, Fact Memory, retention settings, speech controls, and text-to-speech voice selection.
+- Profile Workspace Tabs: capture Groups and Public Workspaces tabs showing membership and owned workspace details.
+- Profile Support Tabs: capture Feedback and Violations tabs with filters, summaries, export controls, and detail modals.
 
 ## Why It Matters
 
-Usage, token, and activity trends are easier to compare when the same date windows and exports are available across surfaces.
+Users can understand their own activity and tune their everyday app experience without asking an admin to change global settings.
 
 ## How to Try It
 
-1. Open profile, group, or public workspace stats and choose a 7-day, 30-day, 90-day, or custom window.
-2. Export selected metric sections to CSV for offline reporting.
-3. Use Control Center page-size selectors and server-driven pagination when scanning larger tenant lists.
-4. Review group token totals alongside group membership and document metrics.
+1. Open Profile > Stats and choose a 7-day, 30-day, 90-day, or custom reporting window.
+2. Export the visible activity metrics when you need offline reporting.
+3. Open Profile > Settings and review navigation, tutorial, memory, retention, speech, and text-to-speech voice preferences.
+4. Open Profile > Groups and Profile > Public Workspaces to review workspace membership and ownership.
+5. Open Profile > Feedback and Profile > Violations to review submitted feedback, safety violation history, filters, exports, and detail views.
 
 ## Notes
 
-- Date windows are normalized across personal, group, and public stats surfaces.
-- CSV exports match the selected reporting window.
-- Control Center pagination keeps larger management tables more predictable for admins.
+- Date windows and CSV exports remain available from Profile stats.
+- Text-to-speech voice selection appears in Profile settings when voice responses are enabled for the environment.
+- Groups, public workspaces, feedback, and violations stay scoped to what the signed-in user is allowed to see.

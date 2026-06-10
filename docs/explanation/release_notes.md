@@ -1,6 +1,6 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.182, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.179, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
@@ -8,25 +8,44 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
-*   **Current Release Admin and User Feature Summaries**
-    *   Added refreshed current-release summaries for Document Intelligence Auto Mode, Cosmos Throughput Autoscale, File Sync Connectors, Source Review and Deep Research, Agent Knowledge and Actions, Generated Artifacts, Chat Productivity, Workspace Experience, Workflow Automation, Visio Ingestion, and Stats and Control Center Reporting.
-    *   Admin-facing summaries focus on rollout, governance, and operator controls such as Admin Settings Scale, Search & Extract, File Sync source visibility, Source Review policy, workflow role controls, and Control Center reporting.
-    *   User-facing summaries focus on the workflows end users can try from Support > Latest Features, including chat productivity, generated artifacts, workspace views and branding, File Sync source setup, Visio uploads, profile stats, and agent/action setup where enabled.
-    *   (Ref: `support_menu_config.py`, `route_frontend_support.py`, `latest_features.html`, `docs/latest-release/`, `docs/_data/latest_release_features.yml`)
+*   **Workflow Per-Document Analysis and Generated Office Exports**
+    *   Added a workflow Analyze mode that runs the same prompt against each selected document separately, then combines the per-document replies, coverage, citations, generated artifacts, and alert targets into the workflow result.
+    *   Added SimpleChat action tools for generated Word documents and PowerPoint presentations, with group workflow uploads defaulting to the current group workspace while preserving existing group access checks.
+    *   (Ref: `functions_document_actions.py`, `functions_workflow_runner.py`, `functions_simplechat_operations.py`, `simplechat_plugin.py`, `WORKFLOW_PER_DOCUMENT_ANALYSIS_AND_EXPORTS.md`)
 
 #### User Interface Enhancements
 
-*   **Latest Features Screenshot and Action Guide Refresh**
-    *   Updated the in-app Latest Features experience so current-release cards use practical annotated screenshots, release-group organization, and clearer action links for both admin-managed and user-facing capabilities.
-    *   Admin Settings now gives administrators a clearer view of what will be shared with users, while the Support > Latest Features page presents the same capability set as approachable cards with why-it-matters guidance, screenshots, and direct app destinations.
-    *   (Ref: `admin_settings.html`, `support_menu_config.py`, `latest_features.html`, `test_admin_latest_features_tab.py`, `test_support_latest_features_image_modal.py`)
+*   **Workflow Analyze Mode and Conversation Navigation**
+    *   Added a `Run each document separately` switch to personal and group workflow Analyze configuration.
+    *   Workflow history and alert conversation actions now open linked conversations in a new browser tab so users keep their workflow context open.
+    *   Added Word and PowerPoint upload capability toggles to SimpleChat action and agent builders.
+    *   (Ref: `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, `notifications.js`, `plugin_modal_stepper.js`, `agent_modal_stepper.js`)
+
+### **(v0.241.179)**
+
+#### New Features
+
+*   **Group Workflows**
+    *   Added group-scoped workflows with dedicated Cosmos containers for workflow definitions, run history, and per-document run items.
+    *   Group workflow APIs now support create, edit, delete, run, history, resume-failed, agent selection, File Sync sources, and activity streaming while revalidating group membership and assignment gating.
+    *   Added Admin Settings controls for enabling group workflows, requiring group assignment, managing assigned groups, and applying the existing owner-only management policy to group workflows.
+    *   Added a Group Workflows tab to group workspaces and updated the shared workflow UI/activity page to support personal and group workflow scopes.
+    *   (Ref: `functions_group_workflows.py`, `route_backend_workflows.py`, `functions_workflow_runner.py`, `group_workspaces.html`, `workspace_workflows.js`, `GROUP_WORKFLOWS.md`)
+
+#### User Interface Enhancements
+
+*   **Personal Workflow Labeling**
+    *   Renamed the existing workspace workflow surface to `Personal Workflows` so users can distinguish personal workflows from the new group workflow experience.
+    *   Updated personal workflow navigation, modal headings, primary actions, and documentation to use the new wording without changing existing personal workflow IDs or API contracts.
+    *   (Ref: `workspace.html`, `workspace_workflows.js`, `PERSONAL_WORKFLOWS.md`)
 
 #### Bug Fixes
 
-*   **Claude Conversation Summary Generation**
-    *   Fixed export intro summaries and Chat Details summary generation so Claude deployments selected from Foundry or New Foundry model endpoints use the Anthropic messages protocol instead of the legacy Azure OpenAI client path.
-    *   Summary requests now preserve endpoint id, model id, and provider metadata from the chat model selector, while still supporting deployment-only fallback matching for existing clients.
-    *   (Ref: `route_backend_conversation_export.py`, `route_backend_conversations.py`, `chat-export.js`, `chat-conversation-details.js`, `CONVERSATION_SUMMARY_CLAUDE_ENDPOINT_FIX.md`)
+*   **Group Workflow Activity View Gate**
+    *   Fixed group workflow activity links so the shared `/workflow-activity` page no longer depends on the personal workflow feature flag when opened with `scope=group`.
+    *   Group activity views now use group-specific authorization, including group workspaces enabled, group workflows enabled, group assignment gating, and current group membership validation.
+    *   Personal workflow activity links still use the existing personal workflow and WorkflowUser app-role policy.
+    *   (Ref: `route_frontend_chats.py`, `workflow-activity.js`, `GROUP_WORKFLOW_ACTIVITY_VIEW_GATE_FIX.md`)
 
 ### **(v0.241.177)**
 

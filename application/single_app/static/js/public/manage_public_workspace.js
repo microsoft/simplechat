@@ -250,7 +250,11 @@ $(document).ready(function () {
   $("#savePublicRetentionBtn").on("click", function () {
     savePublicRetentionSettings();
   });
+  $("#savePublicDownloadSettingsBtn").on("click", function () {
+    savePublicDownloadSettings();
+  });
   $('#settings-tab').on('shown.bs.tab', function () {
+    loadPublicDownloadSettings();
     loadPublicRetentionSettings();
   });
 
@@ -537,6 +541,7 @@ function loadWorkspaceInfo(callback) {
         $("#settings-tab-item").removeClass("d-none");
         $('#settings').removeClass('d-none');
         loadPendingRequests();
+        loadPublicDownloadSettings(ws);
         loadPublicRetentionSettings();
       } else {
         $("#settings-tab-item").addClass("d-none");
@@ -1754,7 +1759,71 @@ async function bulkRemoveMembers() {
   loadMembers();
 }
 
-/* ===================== PUBLIC RETENTION POLICY ===================== */
+/* ===================== PUBLIC WORKSPACE SETTINGS ===================== */
+
+function setPublicDownloadStatus(messageHtml, clearAfterMs = 0) {
+  const statusSpan = document.getElementById('public-download-settings-save-status');
+  if (!statusSpan) {
+    return;
+  }
+
+  statusSpan.innerHTML = messageHtml;
+  if (clearAfterMs) {
+    setTimeout(() => { statusSpan.innerHTML = ''; }, clearAfterMs);
+  }
+}
+
+async function loadPublicDownloadSettings(workspaceData = null) {
+  const disableDownloadsInput = document.getElementById('public-disable-file-downloads');
+  if (!disableDownloadsInput) {
+    return;
+  }
+
+  try {
+    let workspace = workspaceData;
+    if (!workspace) {
+      const response = await fetch(`/api/public_workspaces/${workspaceId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch workspace: ${response.status}`);
+      }
+      workspace = await response.json();
+    }
+
+    disableDownloadsInput.checked = Boolean(workspace.disable_file_downloads);
+  } catch (error) {
+    console.error('Error loading public workspace download settings:', error);
+    setPublicDownloadStatus(`<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> ${error.message}</span>`);
+  }
+}
+
+async function savePublicDownloadSettings() {
+  const disableDownloadsInput = document.getElementById('public-disable-file-downloads');
+  if (!disableDownloadsInput) {
+    return;
+  }
+
+  setPublicDownloadStatus('<span class="text-info"><i class="bi bi-hourglass-split"></i> Saving...</span>');
+
+  try {
+    const response = await fetch(`/api/public_workspaces/${workspaceId}/download-settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disable_file_downloads: disableDownloadsInput.checked })
+    });
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      disableDownloadsInput.checked = Boolean(data.disable_file_downloads);
+      setPublicDownloadStatus('<span class="text-success"><i class="bi bi-check-circle-fill"></i> Saved successfully!</span>', 3000);
+      return;
+    }
+
+    throw new Error(data.error || 'Failed to save download settings');
+  } catch (error) {
+    console.error('Error saving public workspace download settings:', error);
+    setPublicDownloadStatus(`<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`);
+  }
+}
 
 async function loadPublicRetentionSettings() {
     const convSelect = document.getElementById('public-conversation-retention-days');

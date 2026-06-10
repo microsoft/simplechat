@@ -418,7 +418,14 @@ def register_route_backend_group_documents(app):
                 validated_group_ids.append(gid)
 
             if not validated_group_ids:
-                return jsonify({'documents': [], 'page': 1, 'page_size': 10, 'total_count': 0}), 200
+                return jsonify({
+                    'documents': [],
+                    'page': 1,
+                    'page_size': 10,
+                    'total_count': 0,
+                    'file_downloads_enabled': False,
+                    'file_download_enabled_group_ids': [],
+                }), 200
         else:
             # Fallback: single active group from user settings
             user_settings = get_user_settings(user_id)
@@ -627,11 +634,22 @@ def register_route_backend_group_documents(app):
             print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
+        app_settings = get_settings()
+        group_docs_for_policy = {
+            group_id: find_group_by_id(group_id)
+            for group_id in validated_group_ids
+        }
+        file_download_enabled_group_ids = [
+            group_id for group_id, group_doc in group_docs_for_policy.items()
+            if group_doc and is_group_workspace_file_download_enabled(app_settings, group_doc)
+        ]
         return jsonify({
             "documents": docs,
             "page": page,
             "page_size": page_size,
             "total_count": total_count,
+            "file_downloads_enabled": len(file_download_enabled_group_ids) > 0,
+            "file_download_enabled_group_ids": file_download_enabled_group_ids,
             "needs_legacy_update_check": legacy_count > 0
         }), 200
 
@@ -702,6 +720,114 @@ def register_route_backend_group_documents(app):
             'revision_family_id': versions[0].get('revision_family_id'),
             'versions': versions,
         }), 200
+
+    def _authorize_group_document_download(user_id, document_id):
+        try:
+            active_group_id = require_active_group(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        except ValueError:
+            return None, None, (jsonify({'error': 'No active group selected'}), 400)
+        except LookupError:
+            return None, None, (jsonify({'error': 'Active group not found'}), 404)
+        except PermissionError:
+            return None, None, (jsonify({'error': 'You are not a member of the active group'}), 403)
+
+        group_doc = find_group_by_id(active_group_id)
+        if not group_doc:
+            return None, None, (jsonify({'error': 'Active group not found'}), 404)
+        if not is_group_workspace_file_download_enabled(get_settings(), group_doc):
+            return None, None, (jsonify({'error': 'File downloads are disabled for this group workspace'}), 403)
+
+        document_record = get_document_record(user_id=user_id, document_id=document_id, group_id=active_group_id)
+        if not document_record:
+            return None, None, (jsonify({'error': 'Document not found or access denied'}), 404)
+        return active_group_id, document_record, None
+
+    @app.route('/api/group_documents/<document_id>/download', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_download_group_document(document_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        active_group_id, document_record, error_response = _authorize_group_document_download(user_id, document_id)
+        if error_response:
+            return error_response
+
+        try:
+            return build_document_download_response(document_record, user_id=user_id, group_id=active_group_id)
+        except FileNotFoundError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except Exception as exc:
+            log_event(
+                '[DocumentDownload] Failed group document download',
+                {'document_id': document_id, 'group_id': active_group_id, 'error': str(exc)},
+                debug_only=True,
+            )
+            return jsonify({'error': 'Unable to download document'}), 500
+
+    @app.route('/api/group_documents/download', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_download_group_documents():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True) or {}
+        document_ids = data.get('document_ids') or []
+        if not isinstance(document_ids, list):
+            return jsonify({'error': 'document_ids must be a list'}), 400
+
+        active_group_id = None
+        documents = []
+        seen_ids = set()
+        for document_id_value in document_ids:
+            normalized_document_id = str(document_id_value or '').strip()
+            if not normalized_document_id or normalized_document_id in seen_ids:
+                continue
+            seen_ids.add(normalized_document_id)
+            authorized_group_id, document_record, error_response = _authorize_group_document_download(
+                user_id,
+                normalized_document_id,
+            )
+            if error_response:
+                return error_response
+            if active_group_id is None:
+                active_group_id = authorized_group_id
+            documents.append(document_record)
+
+        if not documents:
+            return jsonify({'error': 'No documents selected'}), 400
+        if len(documents) == 1:
+            try:
+                return build_document_download_response(documents[0], user_id=user_id, group_id=active_group_id)
+            except FileNotFoundError as exc:
+                return jsonify({'error': str(exc)}), 404
+
+        try:
+            return build_documents_zip_download_response(
+                documents,
+                'group_documents.zip',
+                user_id=user_id,
+                group_id=active_group_id,
+            )
+        except FileNotFoundError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except Exception as exc:
+            log_event(
+                '[DocumentDownload] Failed group document ZIP download',
+                {'group_id': active_group_id, 'document_count': len(documents), 'error': str(exc)},
+                debug_only=True,
+            )
+            return jsonify({'error': 'Unable to download selected documents'}), 500
 
     @app.route('/api/group_documents/<document_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())

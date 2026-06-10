@@ -822,11 +822,13 @@ def register_route_backend_documents(app):
             debug_print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
+        file_downloads_enabled = is_personal_workspace_file_download_enabled(get_settings())
         return jsonify({
             "documents": docs,
             "page": page,
             "page_size": page_size,
             "total_count": total_count,
+            "file_downloads_enabled": file_downloads_enabled,
             "needs_legacy_update_check": legacy_count > 0
         }), 200
 
@@ -862,18 +864,102 @@ def register_route_backend_documents(app):
             'versions': versions,
         }), 200
 
+    @app.route('/api/documents/<document_id>/download', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_download_user_document(document_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        if not is_personal_workspace_file_download_enabled(get_settings()):
+            return jsonify({'error': 'File downloads are disabled for personal workspaces'}), 403
+
+        document_record = get_document_record(user_id=user_id, document_id=document_id)
+        if not document_record:
+            return jsonify({'error': 'Document not found or access denied'}), 404
+
+        try:
+            return build_document_download_response(document_record, user_id=user_id)
+        except FileNotFoundError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except Exception as exc:
+            log_event(
+                '[DocumentDownload] Failed personal document download',
+                {'document_id': document_id, 'error': str(exc)},
+                debug_only=True,
+            )
+            return jsonify({'error': 'Unable to download document'}), 500
+
+    @app.route('/api/documents/download', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_download_user_documents():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        if not is_personal_workspace_file_download_enabled(get_settings()):
+            return jsonify({'error': 'File downloads are disabled for personal workspaces'}), 403
+
+        data = request.get_json(silent=True) or {}
+        document_ids = data.get('document_ids') or []
+        if not isinstance(document_ids, list):
+            return jsonify({'error': 'document_ids must be a list'}), 400
+
+        documents = []
+        seen_ids = set()
+        for document_id_value in document_ids:
+            normalized_document_id = str(document_id_value or '').strip()
+            if not normalized_document_id or normalized_document_id in seen_ids:
+                continue
+            seen_ids.add(normalized_document_id)
+            document_record = get_document_record(user_id=user_id, document_id=normalized_document_id)
+            if not document_record:
+                return jsonify({'error': f'Document not found or access denied: {normalized_document_id}'}), 404
+            documents.append(document_record)
+
+        if not documents:
+            return jsonify({'error': 'No documents selected'}), 400
+        if len(documents) == 1:
+            try:
+                return build_document_download_response(documents[0], user_id=user_id)
+            except FileNotFoundError as exc:
+                return jsonify({'error': str(exc)}), 404
+
+        try:
+            return build_documents_zip_download_response(
+                documents,
+                'personal_documents.zip',
+                user_id=user_id,
+            )
+        except FileNotFoundError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except Exception as exc:
+            log_event(
+                '[DocumentDownload] Failed personal document ZIP download',
+                {'document_count': len(documents), 'error': str(exc)},
+                debug_only=True,
+            )
+            return jsonify({'error': 'Unable to download selected documents'}), 500
+
     @app.route('/api/documents/<document_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
     def api_patch_user_document(document_id):
+        """
+        Update metadata fields (title, abstract, keywords, etc.) for a user document.
+        """
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json()  # new metadata values from the client
-        
+
         # Track which fields were updated
         updated_fields = {}
 
@@ -944,7 +1030,7 @@ def register_route_backend_documents(app):
                     authors=authors_list
                 )
                 updated_fields['authors'] = authors_list
-        
+
         # Handle tags with validation and chunk propagation
         if 'tags' in data:
             from functions_documents import validate_tags, propagate_tags_to_chunks, get_or_create_tag_definition
@@ -1075,7 +1161,7 @@ def register_route_backend_documents(app):
             }), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
-    
+
     @app.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required

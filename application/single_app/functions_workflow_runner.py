@@ -46,6 +46,7 @@ from functions_collaboration import (
     mirror_source_message_to_collaboration,
 )
 from functions_document_actions import (
+    DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT,
     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     DOCUMENT_ACTION_TYPE_ANALYZE,
@@ -55,6 +56,7 @@ from functions_document_actions import (
     get_document_action_max_documents,
     get_document_action_max_documents_by_type,
     get_enabled_document_action_types,
+    normalize_document_action_analysis_mode,
 )
 from functions_document_comparison import run_document_comparison
 from functions_debug import debug_print
@@ -2601,6 +2603,8 @@ def _get_workflow_alert_enrichment_priority(citation):
         'create_calendar_invite': 95,
         'create_map_visualization': 90,
         'upload_markdown_document': 85,
+        'upload_word_document': 85,
+        'upload_powerpoint_document': 85,
         'create_group': 80,
         'invite_group_conversation_members': 75,
         'send_mail': 72,
@@ -2699,7 +2703,7 @@ def _build_workflow_alert_action_plan(agent_citations):
         elif function_name == 'create_map_visualization':
             summary_label = 'travel map'
             ready_line = 'Travel map generated'
-        elif function_name == 'upload_markdown_document':
+        elif function_name in {'upload_markdown_document', 'upload_word_document', 'upload_powerpoint_document'}:
             support_line = 'Briefing document saved'
         elif function_name == 'invite_group_conversation_members':
             support_line = 'Participants invited'
@@ -4084,6 +4088,143 @@ def _resolve_document_action_reply(result):
     return str(result.get('reply') or '').strip()
 
 
+def _is_per_document_analysis_mode(action_config):
+    return normalize_document_action_analysis_mode(
+        (action_config or {}).get('analysis_mode')
+    ) == DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT
+
+
+def _build_per_document_prompt(task_prompt, document_index, document_count):
+    normalized_prompt = str(task_prompt or '').strip()
+    return (
+        f'{normalized_prompt}\n\n'
+        '[Workflow processing mode]\n'
+        f'This is document {document_index} of {document_count}. '
+        'Apply the workflow instructions only to this document. '
+        'Do not summarize or compare the other selected documents in this response. '
+        'If you create files or workspace artifacts, create them for this document only.'
+    ).strip()
+
+
+def _build_per_document_workflow(workflow, action_config, document_id, document_index, document_count):
+    document_action = dict(action_config or {})
+    document_action['document_ids'] = [document_id]
+    document_action['analysis_mode'] = DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT
+
+    prepared_workflow = dict(workflow or {})
+    prepared_workflow['document_action'] = document_action
+    prepared_workflow['analyze'] = build_analyze_config(document_action)
+    prepared_workflow['task_prompt'] = _build_per_document_prompt(
+        prepared_workflow.get('task_prompt', ''),
+        document_index,
+        document_count,
+    )
+    return prepared_workflow
+
+
+def _merge_token_usage_summaries(results):
+    aggregate = _create_token_usage_aggregate()
+    for result in results or []:
+        token_usage = result.get('token_usage') if isinstance(result, dict) else None
+        if not isinstance(token_usage, dict):
+            continue
+        for key in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'request_count'):
+            value = token_usage.get(key)
+            if isinstance(value, (int, float)):
+                aggregate[key] = aggregate.get(key, 0) + int(value)
+    return _finalize_token_usage(aggregate)
+
+
+def _combine_per_document_analysis_results(document_results):
+    combined_documents = []
+    combined_reply_lines = [
+        '# Per-document workflow results',
+        '',
+    ]
+    combined_coverage = {
+        'document_count': 0,
+        'processed_windows': 0,
+        'failed_windows': 0,
+        'documents': [],
+    }
+    agent_citations = []
+    generated_analysis_artifacts = []
+    generated_tabular_outputs = []
+    alert_targets = []
+    model_deployment_name = ''
+    provider = ''
+    agent_name = ''
+    agent_display_name = ''
+
+    for index, item in enumerate(document_results or [], start=1):
+        result = item.get('result') if isinstance(item.get('result'), dict) else {}
+        document_id = str(item.get('document_id') or '').strip()
+        reply = str(result.get('reply') or '').strip()
+        coverage = result.get('analysis_coverage') if isinstance(result.get('analysis_coverage'), dict) else {}
+        coverage_documents = list(coverage.get('documents') or [])
+        document_label = document_id
+        if coverage_documents:
+            document_label = str(
+                coverage_documents[0].get('document_name')
+                or coverage_documents[0].get('file_name')
+                or coverage_documents[0].get('document_id')
+                or document_id
+            ).strip()
+
+        combined_documents.extend(coverage_documents)
+        combined_coverage['processed_windows'] += int(coverage.get('processed_windows') or 0)
+        combined_coverage['failed_windows'] += int(coverage.get('failed_windows') or 0)
+
+        combined_reply_lines.extend([
+            f'## {index}. {document_label or document_id}',
+            '',
+            reply or 'No response was generated for this document.',
+            '',
+        ])
+
+        agent_citations.extend(list(result.get('agent_citations') or []))
+        generated_analysis_artifacts.extend(list(result.get('generated_analysis_artifacts') or []))
+        generated_tabular_outputs.extend(list(result.get('generated_tabular_outputs') or []))
+        alert_targets.extend(list(result.get('alert_targets') or []))
+        model_deployment_name = model_deployment_name or result.get('model_deployment_name') or ''
+        provider = provider or result.get('provider') or ''
+        agent_name = agent_name or result.get('agent_name') or ''
+        agent_display_name = agent_display_name or result.get('agent_display_name') or ''
+
+    combined_coverage['documents'] = combined_documents
+    combined_coverage['document_count'] = len(combined_documents) or len(document_results or [])
+    combined_reply = '\n'.join(combined_reply_lines).strip()
+    combined_result = {
+        'reply': combined_reply,
+        'analysis_reply': combined_reply,
+        'coverage': combined_coverage,
+        'documents': combined_documents,
+        'per_document': True,
+        'document_results': [
+            {
+                'document_id': item.get('document_id'),
+                'reply': (item.get('result') or {}).get('reply'),
+                'coverage': (item.get('result') or {}).get('analysis_coverage') or {},
+            }
+            for item in document_results or []
+        ],
+    }
+    return {
+        'reply': combined_reply,
+        'analysis_result': combined_result,
+        'analysis_coverage': combined_coverage,
+        'generated_analysis_artifacts': generated_analysis_artifacts,
+        'model_deployment_name': model_deployment_name,
+        'token_usage': _merge_token_usage_summaries([item.get('result') or {} for item in document_results or []]),
+        'provider': provider,
+        'agent_name': agent_name,
+        'agent_display_name': agent_display_name,
+        'agent_citations': agent_citations,
+        'generated_tabular_outputs': generated_tabular_outputs,
+        'alert_targets': _select_preferred_workflow_alert_targets(alert_targets),
+    }
+
+
 def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None, url_access_context=None):
     if thought_tracker and run_id:
         _add_workflow_activity_thought(
@@ -4168,6 +4309,64 @@ def _execute_document_analysis_workflow(
         f"documents={len(analysis_config.get('document_ids') or [])} | "
         f'max_documents={workflow_analysis_max_documents}'
     )
+
+    analysis_document_ids = [str(document_id or '').strip() for document_id in analysis_config.get('document_ids') or []]
+    analysis_document_ids = [document_id for document_id in analysis_document_ids if document_id]
+    if _is_per_document_analysis_mode(analysis_config) and len(analysis_document_ids) > 1:
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content='Running the workflow separately for each selected document',
+                detail=f'documents={len(analysis_document_ids)}',
+                activity_key=f'analysis:{run_id}:per-document',
+                kind='document_analysis',
+                title='Per-document analysis',
+                status='running',
+            )
+
+        per_document_results = []
+        for index, document_id in enumerate(analysis_document_ids, start=1):
+            per_document_workflow = _build_per_document_workflow(
+                workflow,
+                analysis_config,
+                document_id,
+                index,
+                len(analysis_document_ids),
+            )
+            per_document_action = per_document_workflow.get('document_action') or {}
+            per_document_results.append({
+                'document_id': document_id,
+                'result': _execute_document_analysis_workflow(
+                    per_document_workflow,
+                    settings,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    thought_tracker=thought_tracker,
+                    external_activity_callback=external_activity_callback,
+                    action_config=per_document_action,
+                    url_access_context=url_access_context,
+                ),
+            })
+
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content='Finished running the workflow separately for each selected document',
+                detail=f'documents={len(analysis_document_ids)}',
+                activity_key=f'analysis:{run_id}:per-document',
+                kind='document_analysis',
+                title='Per-document analysis',
+                status='completed',
+            )
+
+        return _combine_per_document_analysis_results(per_document_results)
+
     token_usage_aggregate = _create_token_usage_aggregate()
 
     if workflow.get('runner_type') == 'agent':

@@ -38,6 +38,7 @@ def create_public_workspace(name: str, description: str) -> dict:
         "admins": [],
         "documentManagers": [],
         "pendingDocumentManagers": [],
+        "disable_file_downloads": False,
         "createdDate": now_iso,
         "modifiedDate": now_iso
     }
@@ -204,6 +205,7 @@ def build_public_workspace_member_payload(ws_doc: dict, user_id: str) -> dict:
         **logo_metadata,
         "userRole": role,
         "isMember": bool(role),
+        "disable_file_downloads": bool(ws_doc.get("disable_file_downloads", False)),
     }
 
     if role in ("Owner", "Admin") and "retention_policy" in ws_doc:

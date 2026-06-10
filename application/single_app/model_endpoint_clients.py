@@ -74,6 +74,9 @@ def infer_model_endpoint_protocol(provider: Any, endpoint: Any, deployment_name:
     normalized_provider = str(provider or "aoai").strip().lower()
     endpoint_path = get_endpoint_path(endpoint)
 
+    if normalized_provider in ("anthropic", "claude"):
+        return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
+
     if "/anthropic/" in endpoint_path or is_anthropic_model(deployment_name):
         return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
 

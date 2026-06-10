@@ -1,7 +1,7 @@
 # Personal Workflows
 
 Implemented in version: **0.241.024**
-Enhanced in versions: **0.241.029**, **0.241.033**, **0.241.034**, **0.241.035**, **0.241.036**, **0.241.106**, **0.241.182**
+Enhanced in versions: **0.241.029**, **0.241.033**, **0.241.034**, **0.241.035**, **0.241.036**, **0.241.106**, **0.241.179**
 
 Implemented in version: **0.241.106** for workflow access governance.
 

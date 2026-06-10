@@ -1,9 +1,9 @@
 # Group Workflows
 
-Implemented in version: **0.241.182**
+Implemented in version: **0.241.179**
 
 Related version update:
-- `application/single_app/config.py` reports version `0.241.182`.
+- `application/single_app/config.py` reports version `0.241.179`.
 
 ## Overview
 

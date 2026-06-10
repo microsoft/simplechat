@@ -429,7 +429,7 @@ def register_route_backend_models(app):
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version:
                 return jsonify({"error": "Endpoint, API version, and deployment name are required."}), 400
 
-            if provider not in ("aoai", "aifoundry", "new_foundry"):
+            if provider not in ("aoai", "aifoundry", "new_foundry", "anthropic", "claude"):
                 return jsonify({"error": "Model provider not found."}), 400
 
             gpt_client = build_inference_client(

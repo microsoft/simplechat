@@ -16,6 +16,7 @@ let docsTagsFilter = ''; // Added for Tags filter
 let docsSortBy = '_ts';    // Current sort field
 let docsSortOrder = 'desc'; // Current sort order
 const activePolls = new Set();
+let personalWorkspaceFileDownloadsEnabled = false;
 
 // ------------- DOM Elements (Documents Tab) -------------
 const documentsTableBody = document.querySelector("#documents-table tbody");
@@ -29,6 +30,7 @@ const docMetadataModalEl = document.getElementById("docMetadataModal") ? new boo
 const docMetadataForm = document.getElementById("doc-metadata-form");
 const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
+const downloadSelectedBtn = document.getElementById("download-selected-btn");
 const clearSelectionBtn = document.getElementById("clear-selection-btn");
 const documentDeleteModalElement = document.getElementById("documentDeleteModal");
 const documentDeleteModal = documentDeleteModalElement ? new bootstrap.Modal(documentDeleteModalElement) : null;
@@ -605,6 +607,12 @@ function createDocumentCard(doc) {
                 <li><a class="dropdown-item" href="#" onclick="window.onEditDocument('${docId}'); return false;">
                     <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
                 </a></li>`;
+            if (personalWorkspaceFileDownloadsEnabled) {
+                dropdownItems += `
+                <li><a class="dropdown-item" href="#" onclick="window.downloadDocumentFile('${docId}', event); return false;">
+                    <i class="bi bi-download me-2"></i>Download file
+                </a></li>`;
+            }
         }
 
         if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
@@ -843,6 +851,104 @@ function showDocumentDeleteFeedback(message, variant = "danger") {
     alertElement.appendChild(closeButton);
     container.appendChild(alertElement);
 }
+
+function getDownloadFileNameFromResponse(response, fallbackFileName) {
+    const disposition = response.headers.get("Content-Disposition") || response.headers.get("content-disposition") || "";
+    const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (encodedMatch && encodedMatch[1]) {
+        try {
+            return decodeURIComponent(encodedMatch[1].replace(/"/g, ""));
+        } catch (error) {
+            console.warn("Unable to decode download filename", error);
+        }
+    }
+
+    const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+    if (plainMatch && plainMatch[1]) {
+        return plainMatch[1];
+    }
+
+    return fallbackFileName;
+}
+
+async function downloadWorkspaceFile(endpoint, options = {}, fallbackFileName = "document") {
+    const response = await fetch(endpoint, options);
+    if (!response.ok) {
+        let message = "Unable to download document";
+        try {
+            const errorData = await response.json();
+            message = errorData.error || message;
+        } catch (error) {
+            message = response.statusText || message;
+        }
+        throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const fileName = getDownloadFileNameFromResponse(response, fallbackFileName);
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName;
+    link.classList.add("d-none");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+}
+
+window.downloadDocumentFile = async function(documentId, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    if (!personalWorkspaceFileDownloadsEnabled) {
+        showDocumentDeleteFeedback("File downloads are disabled for personal workspaces.", "warning");
+        return;
+    }
+
+    try {
+        await downloadWorkspaceFile(`/api/documents/${encodeURIComponent(documentId)}/download`);
+    } catch (error) {
+        console.error("Error downloading document:", error);
+        showDocumentDeleteFeedback(error.message || "Unable to download document", "danger");
+    }
+};
+
+window.downloadSelectedDocuments = async function() {
+    if (selectedDocuments.size === 0) {
+        return;
+    }
+    if (!personalWorkspaceFileDownloadsEnabled) {
+        showDocumentDeleteFeedback("File downloads are disabled for personal workspaces.", "warning");
+        return;
+    }
+
+    if (downloadSelectedBtn) {
+        downloadSelectedBtn.disabled = true;
+        downloadSelectedBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Downloading...';
+    }
+
+    try {
+        await downloadWorkspaceFile(
+            "/api/documents/download",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ document_ids: Array.from(selectedDocuments) })
+            },
+            selectedDocuments.size === 1 ? "document" : "personal_documents.zip"
+        );
+    } catch (error) {
+        console.error("Error downloading selected documents:", error);
+        showDocumentDeleteFeedback(error.message || "Unable to download selected documents", "danger");
+    } finally {
+        if (downloadSelectedBtn) {
+            downloadSelectedBtn.disabled = false;
+            downloadSelectedBtn.innerHTML = '<i class="bi bi-download me-1"></i>Download Selected';
+        }
+    }
+};
 
 function isDocumentDeleteModalReady() {
     return Boolean(
@@ -1577,6 +1683,7 @@ function fetchUserDocuments() {
             window.lastFetchedDocs = docs;
             window.lastFetchedDocsError = null;
             window.hasFetchedUserDocuments = true;
+            personalWorkspaceFileDownloadsEnabled = Boolean(data.file_downloads_enabled);
             renderWorkspaceDocumentView();
             renderDocsPaginationControls(data.page, data.page_size, data.total_count);
         })
@@ -1695,6 +1802,13 @@ function renderDocumentRow(doc) {
                 <i class="bi bi-chat-dots-fill me-2"></i>Chat
             </a></li>
         `;
+        if (personalWorkspaceFileDownloadsEnabled) {
+            actionsDropdown += `
+                <li><a class="dropdown-item" href="#" onclick="window.downloadDocumentFile('${docId}', event); return false;">
+                    <i class="bi bi-download me-2"></i>Download file
+                </a></li>
+            `;
+        }
         
         if (isOwner) {
             // Owner actions
@@ -2494,6 +2608,7 @@ window.updateSelectedDocuments = function(documentId, isSelected) {
 function updateBulkActionButtons() {
     const bulkActionsBar = document.getElementById('bulkActionsBar');
     const selectedCountSpan = document.getElementById('selectedCount');
+    const downloadBtn = document.getElementById('download-selected-btn');
     
     if (selectedDocuments.size > 0) {
         // Show bulk actions bar with count
@@ -2504,12 +2619,18 @@ function updateBulkActionButtons() {
         if (selectedCountSpan) {
             selectedCountSpan.textContent = selectedDocuments.size;
         }
+        if (downloadBtn) {
+            downloadBtn.classList.toggle('d-none', !personalWorkspaceFileDownloadsEnabled);
+        }
         
     } else {
         // Hide bulk actions bar
         if (bulkActionsBar) {
             bulkActionsBar.classList.remove('d-block');
             bulkActionsBar.classList.add('d-none');
+        }
+        if (downloadBtn) {
+            downloadBtn.classList.add('d-none');
         }
     }
 }
@@ -2668,6 +2789,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Delete selected button
     if (deleteSelectedBtn) {
         deleteSelectedBtn.addEventListener('click', window.deleteSelectedDocuments);
+    }
+    if (downloadSelectedBtn) {
+        downloadSelectedBtn.addEventListener('click', window.downloadSelectedDocuments);
     }
     
     // Clear selection button

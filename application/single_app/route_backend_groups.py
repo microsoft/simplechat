@@ -211,9 +211,40 @@ def register_route_backend_groups(app):
             DEFAULT_WORKSPACE_HERO_COLOR,
         )
         response_doc.update(get_workspace_logo_metadata(group_doc))
+        response_doc["disable_file_downloads"] = bool(group_doc.get("disable_file_downloads", False))
         response_doc.pop("logoBase64", None)
 
         return jsonify(response_doc), 200
+
+    @app.route("/api/groups/<group_id>/download-settings", methods=["PATCH"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_update_group_download_settings(group_id):
+        user_info = get_current_user_info()
+        user_id = user_info["userId"]
+
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            return jsonify({"error": "Group not found"}), 404
+
+        role = get_user_role_in_group(group_doc, user_id)
+        if role not in ["Owner", "Admin"]:
+            return jsonify({"error": "Only group owners and admins can update download settings"}), 403
+
+        data = request.get_json(silent=True) or {}
+        group_doc["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))
+        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        try:
+            cosmos_groups_container.upsert_item(group_doc)
+        except exceptions.CosmosHttpResponseError as ex:
+            return jsonify({"error": str(ex)}), 400
+
+        return jsonify({
+            "message": "Download settings updated",
+            "disable_file_downloads": group_doc["disable_file_downloads"],
+        }), 200
 
     @app.route("/api/groups/<group_id>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())
