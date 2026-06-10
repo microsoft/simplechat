@@ -4,6 +4,7 @@ from flask import has_request_context
 
 from config import *
 from functions_appinsights import log_event
+from functions_dlp_rules import get_default_dlp_regex_rules
 import app_settings_cache
 import inspect
 import copy
@@ -54,17 +55,6 @@ def _should_sync_session_profile(target_user_id, actor_user_id, allow_cross_user
     normalized_target_user_id = str(target_user_id or '').strip()
     normalized_actor_user_id = str(actor_user_id or '').strip()
     return bool(normalized_target_user_id and normalized_actor_user_id and normalized_target_user_id == normalized_actor_user_id)
-import copy
-from support_menu_config import (
-    get_default_support_latest_features_visibility,
-    has_visible_support_latest_features,
-    normalize_support_latest_features_visibility,
-)
-
-
-def is_tabular_processing_enabled(settings):
-    """Tabular processing is available whenever enhanced citations is enabled."""
-    return bool((settings or {}).get('enable_enhanced_citations', False))
 
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
@@ -295,6 +285,22 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_content_safety_apim': False,
         'azure_apim_content_safety_endpoint': '',
         'azure_apim_content_safety_subscription_key': '',
+
+        # Data Loss Prevention (DLP) Settings
+        'enable_dlp_control_plane': False,
+        'dlp_default_engine': 'regex',
+        'dlp_regex_rules': get_default_dlp_regex_rules(),
+        'dlp_max_scan_chars': 200000,
+        'dlp_fail_closed_on_scanner_error': True,
+        'dlp_audit_level': 'counts_only',
+        'dlp_enable_structured_telemetry': True,
+        'dlp_telemetry_sample_allow_events': False,
+        'dlp_review_destination': 'none',
+        'enable_web_search_dlp': False,
+        'web_search_dlp_mode': 'monitor',
+        'enable_upload_dlp': False,
+        'upload_dlp_mode': 'monitor',
+        'upload_dlp_fail_upload_on_match': False,
 
         # User Feedback / Conversation Archiving
         'enable_user_feedback': True,

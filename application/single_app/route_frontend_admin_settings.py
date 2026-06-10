@@ -1,5 +1,8 @@
 # route_frontend_admin_settings.py
 
+import json
+import secrets
+
 from config import *
 from functions_documents import *
 from functions_authentication import *
@@ -8,6 +11,7 @@ from functions_settings import *
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
+from functions_dlp_rules import get_default_dlp_regex_rules, validate_dlp_regex_rules
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
@@ -20,6 +24,31 @@ from support_menu_config import (
 )
 
 ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
+ADMIN_SETTINGS_CSRF_SESSION_KEY = "admin_settings_csrf_token"
+
+
+def _new_admin_settings_csrf_token():
+    token = secrets.token_urlsafe(32)
+    session[ADMIN_SETTINGS_CSRF_SESSION_KEY] = token
+    return token
+
+
+def _get_admin_settings_csrf_token():
+    token = session.get(ADMIN_SETTINGS_CSRF_SESSION_KEY)
+    if not token:
+        token = _new_admin_settings_csrf_token()
+    return token
+
+
+def _validate_admin_settings_csrf_token(form_data):
+    submitted_token = str(form_data.get("admin_settings_csrf_token") or "")
+    expected_token = str(session.get(ADMIN_SETTINGS_CSRF_SESSION_KEY) or "")
+    return bool(
+        submitted_token
+        and expected_token
+        and secrets.compare_digest(submitted_token, expected_token)
+    )
+
 
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
@@ -366,6 +395,8 @@ def register_route_frontend_admin_settings(app):
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
+            dlp_regex_rules_for_template, _ = validate_dlp_regex_rules(settings.get('dlp_regex_rules'))
+            dlp_regex_rules_json = json.dumps(dlp_regex_rules_for_template, indent=2)
 
             return render_template(
                 'admin_settings.html',
@@ -384,6 +415,8 @@ def register_route_frontend_admin_settings(app):
                 chunk_size_defaults=get_chunk_size_defaults(),
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
+                admin_settings_csrf_token=_get_admin_settings_csrf_token(),
+                dlp_regex_rules_json=dlp_regex_rules_json,
                 chunk_size_effective=get_chunk_size_config(settings)
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
@@ -394,6 +427,11 @@ def register_route_frontend_admin_settings(app):
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
+
+            if not _validate_admin_settings_csrf_token(form_data):
+                _new_admin_settings_csrf_token()
+                flash("Admin settings request could not be verified. Please reload the page and try again.", "danger")
+                return redirect(url_for('admin_settings'))
 
             def parse_admin_int(raw_value, fallback_value, field_name="unknown", hard_default=0):
                 """
@@ -494,6 +532,36 @@ def register_route_frontend_admin_settings(app):
                     consent_text=web_search_consent_message,
                     source='admin_settings'
                 )
+
+            dlp_max_scan_chars, _ = safe_int_with_source(
+                form_data.get('dlp_max_scan_chars'),
+                settings.get('dlp_max_scan_chars', 200000),
+                200000
+            )
+            dlp_max_scan_chars = max(1000, dlp_max_scan_chars)
+            dlp_review_destination = form_data.get('dlp_review_destination', 'none')
+            if dlp_review_destination not in ('none',):
+                dlp_review_destination = 'none'
+            web_search_dlp_mode = form_data.get('web_search_dlp_mode', 'monitor')
+            if web_search_dlp_mode not in ('monitor', 'redact', 'block'):
+                web_search_dlp_mode = 'monitor'
+            upload_dlp_mode = form_data.get('upload_dlp_mode', 'monitor')
+            if upload_dlp_mode not in ('monitor', 'redact', 'block'):
+                upload_dlp_mode = 'monitor'
+
+            raw_dlp_regex_rules = form_data.get('dlp_regex_rules_json', '').strip()
+            try:
+                submitted_dlp_regex_rules = json.loads(raw_dlp_regex_rules) if raw_dlp_regex_rules else get_default_dlp_regex_rules()
+            except json.JSONDecodeError:
+                _new_admin_settings_csrf_token()
+                flash("DLP regex rules must be valid JSON.", "danger")
+                return redirect(url_for('admin_settings'))
+
+            normalized_dlp_regex_rules, dlp_regex_rule_errors = validate_dlp_regex_rules(submitted_dlp_regex_rules)
+            if dlp_regex_rule_errors:
+                _new_admin_settings_csrf_token()
+                flash(f"DLP regex rules are invalid: {dlp_regex_rule_errors[0]}", "danger")
+                return redirect(url_for('admin_settings'))
 
             # --- Handle Document Classification Toggle ---
             enable_document_classification = form_data.get('enable_document_classification') == 'on'
@@ -1267,6 +1335,20 @@ def register_route_frontend_admin_settings(app):
                 'web_search_consent_accepted': web_search_consent_accepted,
                 'enable_web_search_user_notice': form_data.get('enable_web_search_user_notice') == 'on',
                 'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.').strip(),
+                'enable_dlp_control_plane': form_data.get('enable_dlp_control_plane') == 'on',
+                'dlp_default_engine': 'regex',
+                'dlp_regex_rules': normalized_dlp_regex_rules,
+                'dlp_max_scan_chars': dlp_max_scan_chars,
+                'dlp_fail_closed_on_scanner_error': form_data.get('dlp_fail_closed_on_scanner_error') == 'on',
+                'dlp_audit_level': 'counts_only',
+                'dlp_enable_structured_telemetry': form_data.get('dlp_enable_structured_telemetry') == 'on',
+                'dlp_telemetry_sample_allow_events': form_data.get('dlp_telemetry_sample_allow_events') == 'on',
+                'dlp_review_destination': dlp_review_destination,
+                'enable_web_search_dlp': form_data.get('enable_web_search_dlp') == 'on',
+                'web_search_dlp_mode': web_search_dlp_mode,
+                'enable_upload_dlp': form_data.get('enable_upload_dlp') == 'on',
+                'upload_dlp_mode': upload_dlp_mode,
+                'upload_dlp_fail_upload_on_match': form_data.get('upload_dlp_fail_upload_on_match') == 'on',
                 'web_search_agent': {
                     'agent_type': 'aifoundry',
                     'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
@@ -1669,6 +1751,8 @@ def register_route_frontend_admin_settings(app):
             else:
                 flash("Failed to update admin settings.", "danger")
 
+
+            _new_admin_settings_csrf_token()
 
             # Redirect back to settings page
             return redirect(url_for('admin_settings'))

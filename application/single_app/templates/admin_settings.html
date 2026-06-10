@@ -495,6 +495,7 @@
 <div class="container">
     <h2>Admin Settings</h2>
     <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;" novalidate autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+        <input type="hidden" id="admin_settings_csrf_token" name="admin_settings_csrf_token" value="{{ admin_settings_csrf_token }}">
         <input type="hidden" id="release_notifications_registered" name="release_notifications_registered" value="{{ 'true' if settings.release_notifications_registered else 'false' }}">
         <input type="hidden" id="release_notifications_name" name="release_notifications_name" value="{{ settings.release_notifications_name or '' }}">
         <input type="hidden" id="release_notifications_email" name="release_notifications_email" value="{{ settings.release_notifications_email or '' }}">
@@ -4983,6 +4984,129 @@
                             Test Safety Connection
                         </button>
                         <div id="test_safety_result" class="mt-2"></div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="dlp-section">
+                    <h5>
+                        <i class="bi bi-shield-lock me-2"></i>Data Loss Prevention
+                    </h5>
+                    <p class="text-muted">Control sensitive-data handling before content leaves SimpleChat for configured external surfaces.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_dlp_control_plane"
+                            name="enable_dlp_control_plane"
+                            {% if settings.enable_dlp_control_plane %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_dlp_control_plane">
+                            Enable DLP Control Plane
+                        </label>
+                    </div>
+
+                    <div id="dlp_control_plane_settings" class="{% if not settings.enable_dlp_control_plane %}d-none{% endif %}">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="dlp_default_engine" class="form-label">Default Engine</label>
+                                <select class="form-select" id="dlp_default_engine" name="dlp_default_engine">
+                                    <option value="regex" selected>Regex structured identifier scan</option>
+                                </select>
+                                <div class="form-text">Regex scanning is the only implemented engine in this release.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="dlp_max_scan_chars" class="form-label">Maximum Scan Characters</label>
+                                <input type="number" min="1000" class="form-control" id="dlp_max_scan_chars" name="dlp_max_scan_chars" value="{{ settings.dlp_max_scan_chars or 200000 }}">
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-6">
+                                <label for="dlp_review_destination" class="form-label">Review Destination</label>
+                                <select class="form-select" id="dlp_review_destination" name="dlp_review_destination">
+                                    <option value="none" {% if settings.dlp_review_destination == 'none' %}selected{% endif %}>Do not write review records</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="dlp_audit_level" class="form-label">Audit Level</label>
+                                <select class="form-select" id="dlp_audit_level" name="dlp_audit_level">
+                                    <option value="counts_only" selected>Counts only</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group form-check form-switch mt-3">
+                            <input type="checkbox" class="form-check-input" id="dlp_enable_structured_telemetry" name="dlp_enable_structured_telemetry" {% if settings.dlp_enable_structured_telemetry %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="dlp_enable_structured_telemetry">Emit Structured DLP Telemetry</label>
+                        </div>
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox" class="form-check-input" id="dlp_telemetry_sample_allow_events" name="dlp_telemetry_sample_allow_events" {% if settings.dlp_telemetry_sample_allow_events %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="dlp_telemetry_sample_allow_events">Sample Allow Events</label>
+                        </div>
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox" class="form-check-input" id="dlp_fail_closed_on_scanner_error" name="dlp_fail_closed_on_scanner_error" {% if settings.dlp_fail_closed_on_scanner_error %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="dlp_fail_closed_on_scanner_error">Fail Closed On Scanner Error</label>
+                        </div>
+                        <div class="border-top pt-3 mt-3" id="dlp_regex_rules_settings">
+                            <h6 class="mb-2">Custom Regex Rules</h6>
+                            <label for="dlp_regex_rules_json" class="form-label">Regex rule JSON</label>
+                            <textarea
+                                class="form-control font-monospace"
+                                id="dlp_regex_rules_json"
+                                name="dlp_regex_rules_json"
+                                rows="16"
+                                spellcheck="false"
+                            >{{ dlp_regex_rules_json }}</textarea>
+                            <div class="form-text">
+                                Rules support surfaces, Luhn validation, and keyword proximity confidence. Defaults include U.S. SSN and Luhn-valid credit card detection.
+                            </div>
+                        </div>
+                        <div class="border-top pt-3" id="web_search_dlp_settings">
+                            <h6 class="mb-3">Web Search DLP</h6>
+                            <div class="form-group form-check form-switch mb-3">
+                                <input type="checkbox" class="form-check-input" id="enable_web_search_dlp" name="enable_web_search_dlp" {% if settings.enable_web_search_dlp %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_web_search_dlp">Enable Web Search DLP</label>
+                            </div>
+                            <div id="web_search_dlp_mode_settings" class="{% if not settings.enable_web_search_dlp %}d-none{% endif %}">
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label for="web_search_dlp_mode" class="form-label">Mode</label>
+                                        <select class="form-select" id="web_search_dlp_mode" name="web_search_dlp_mode">
+                                            <option value="monitor" {% if settings.web_search_dlp_mode == 'monitor' %}selected{% endif %}>Monitor</option>
+                                            <option value="redact" {% if settings.web_search_dlp_mode == 'redact' %}selected{% endif %}>Redact</option>
+                                            <option value="block" {% if settings.web_search_dlp_mode == 'block' %}selected{% endif %}>Block</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="form-text mt-2">Structured identifiers are always scanned in redact and block modes.</div>
+                            </div>
+                        </div>
+
+                        <div class="border-top pt-3 mt-3" id="upload_dlp_settings">
+                            <h6 class="mb-3">Upload DLP</h6>
+                            <div class="form-group form-check form-switch mb-3">
+                                <input type="checkbox" class="form-check-input" id="enable_upload_dlp" name="enable_upload_dlp" {% if settings.enable_upload_dlp %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_upload_dlp">Enable Upload DLP</label>
+                            </div>
+                            <div id="upload_dlp_mode_settings" class="{% if not settings.enable_upload_dlp %}d-none{% endif %}">
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label for="upload_dlp_mode" class="form-label">Mode</label>
+                                        <select class="form-select" id="upload_dlp_mode" name="upload_dlp_mode">
+                                            <option value="monitor" {% if settings.upload_dlp_mode == 'monitor' %}selected{% endif %}>Monitor</option>
+                                            <option value="redact" {% if settings.upload_dlp_mode == 'redact' %}selected{% endif %}>Redact</option>
+                                            <option value="block" {% if settings.upload_dlp_mode == 'block' %}selected{% endif %}>Block</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8 d-flex align-items-end">
+                                        <div class="form-check form-switch">
+                                            <input type="checkbox" class="form-check-input" id="upload_dlp_fail_upload_on_match" name="upload_dlp_fail_upload_on_match" {% if settings.upload_dlp_fail_upload_on_match %}checked{% endif %}>
+                                            <label class="form-check-label" for="upload_dlp_fail_upload_on_match">Fail upload on match</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

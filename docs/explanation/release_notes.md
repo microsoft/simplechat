@@ -4,6 +4,86 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.018)**
+
+## New Features
+
+*   **Configurable DLP Control Plane**
+    *   Replaced hardcoded DLP detectors with admin-configurable regex rules backed by bounded regex execution, optional Luhn validation, and keyword proximity confidence shaping.
+    *   Kept the default rule set intentionally narrow with U.S. SSN and Luhn-valid credit card detection only; removed the generic internal phrase blocker from defaults.
+    *   Added admin JSON validation, rule persistence, source-review notes for external pattern repositories, and focused functional coverage for custom rules and confidence behavior.
+    *   Added web-search DLP enforcement before content is sent to external web search surfaces.
+    *   (Ref: `functions_dlp_rules.py`, `functions_dlp.py`, `route_frontend_admin_settings.py`, `admin_settings.html`, `test_dlp_regex_rules.py`, `DLP_WEB_SEARCH_EGRESS_CONTROL.md`)
+
+*   **Upload DLP Configurable Regex Rules**
+    *   Merged the shared configurable DLP regex rule engine into upload ingestion so administrators can target upload, web-search, or both DLP surfaces.
+    *   Added upload coverage for custom regex redaction with keyword proximity confidence shaping while preserving the narrow SSN and Luhn-valid credit card defaults.
+    *   Updated upload DLP documentation and admin smoke coverage for the shared Custom Regex Rules editor.
+    *   (Ref: `functions_dlp_rules.py`, `functions_dlp.py`, `functions_documents.py`, `test_upload_dlp_redaction.py`, `test_dlp_regex_rules.py`, `DLP_UPLOAD_STAGING.md`)
+
+## Bug Fixes
+
+*   **Upload DLP Enforcement Edge Cases**
+    *   Treated fail-on-match and fail-closed scanner errors as upload DLP enforcement when deciding whether raw enhanced-citation blobs can be retained.
+    *   Blocked truncated upload scans when fail-on-match is enabled so sensitive content beyond the scan limit cannot be embedded or indexed.
+    *   (Ref: `functions_dlp.py`, `functions_documents.py`, `test_upload_dlp_redaction.py`, `test_upload_dlp_ingestion_integration.py`)
+
+### **(v0.241.011)**
+
+## Bug Fixes
+
+*   **DLP Upload No-Go Remediation**
+    *   Disabled raw enhanced-citation blob retention for enforced upload DLP modes and extended the guard to audio and video upload paths.
+    *   Sanitized selected upload metadata before prompts, Search payloads, Cosmos updates, and logs; document DLP metadata now preserves the worst observed status with cumulative counts.
+    *   Removed the dead Upload DLP review-events admin toggle while keeping counts-only review summary helpers available for future integration.
+    *   (Ref: `functions_documents.py`, `functions_settings.py`, `route_frontend_admin_settings.py`, `admin_settings.html`, `test_upload_dlp_ingestion_integration.py`, `test_dlp_admin_ui_smoke.py`, `DLP_UPLOAD_STAGING.md`)
+
+### **(v0.241.010)**
+
+## New Features
+
+*   **DLP Upload Staging**
+    *   Reused the shared DLP core to redact or block upload chunk text before embeddings and Azure AI Search indexing.
+    *   Added upload DLP controls for monitor/redact/block mode, enhanced-citation handling, and fail-on-match behavior.
+    *   Added counts-only upload DLP metadata, safe file-processing log summaries, and upload-safe telemetry properties.
+    *   Added functional coverage for single chunk, batch chunk, video chunk, workspace-scope, review-summary, telemetry, ingestion integration, and admin UI smoke behavior.
+    *   (Ref: `functions_documents.py`, `functions_dlp.py`, `functions_settings.py`, `admin_settings.html`, `test_upload_dlp_redaction.py`, `test_upload_dlp_ingestion_integration.py`, `test_dlp_admin_ui_smoke.py`, `DLP_UPLOAD_STAGING.md`)
+
+## Bug Fixes
+
+*   **DLP Upload Review Hardening**
+    *   Added upload ingestion integration coverage for block-before-indexing, sanitized embedding/index payloads, video transcript handling, and counts-only upload metadata.
+    *   Added an admin UI smoke test that renders the real DLP settings template and verifies shared, web-search, and upload controls without storing sensitive sample values.
+    *   Updated DLP upload documentation with the expanded validation matrix and local preview workflow.
+    *   (Ref: `test_upload_dlp_ingestion_integration.py`, `test_dlp_admin_ui_smoke.py`, `render_dlp_admin_preview.py`, `DLP_UPLOAD_STAGING.md`)
+
+*   **DLP Admin Control Remediation**
+    *   Removed unsupported Presidio engine, endpoint, threshold, timeout, and structured-redaction controls from the DLP admin UI for the regex-only PR1 release.
+    *   Stopped persisting retired DLP form fields from Admin Settings and documented scan-limit, fail-closed scanner, and raw web-search fallback behavior.
+    *   Updated DLP functional test headers and admin coverage to assert only implemented controls are exposed.
+    *   (Ref: `admin_settings.html`, `admin_settings.js`, `route_frontend_admin_settings.py`, `test_dlp_admin_settings_ui.py`, `test_dlp_admin_settings_roundtrip.py`, `DLP_WEB_SEARCH_EGRESS_CONTROL.md`)
+
+### **(v0.241.009)**
+
+## Bug Fixes
+
+*   **DLP Web Search Review Hardening**
+    *   Added focused coverage for admin settings POST normalization, DLP setting persistence, web-search route ordering, blocked-call suppression, redacted-query propagation, and counts-only telemetry.
+    *   Added a local Cosmos emulator smoke runbook and deterministic admin DLP preview renderer so reviewers can inspect the UI without a full cloud stack.
+    *   Updated DLP web-search documentation with the expanded validation matrix and review-readiness workflow.
+    *   (Ref: `test_dlp_admin_settings_roundtrip.py`, `test_web_search_dlp_route_integration.py`, `run_dlp_local_stack.md`, `render_dlp_admin_preview.py`, `DLP_WEB_SEARCH_EGRESS_CONTROL.md`)
+
+### **(v0.241.008)**
+
+## New Features
+
+*   **DLP Web Search Egress Control**
+    *   Added a reusable DLP core with regex SSN and Luhn-validated credit-card redaction plus optional Presidio adapter normalization.
+    *   Added admin controls for shared DLP policy, safe structured telemetry, review routing defaults, and web-search monitor/redact/block modes.
+    *   Gated web-search egress before Azure AI Foundry execution so blocked content skips web search and redacted content is sanitized before leaving SimpleChat.
+    *   Added counts-only review and telemetry helpers, user-safe blocked/redacted web-search status messages, documentation, and focused functional tests.
+    *   (Ref: `functions_dlp.py`, `route_backend_chats.py`, `functions_settings.py`, `admin_settings.html`, `admin_settings.js`, `DLP_WEB_SEARCH_EGRESS_CONTROL.md`)
+
 ### **(v0.241.007)**
 
 ## New Feature

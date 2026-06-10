@@ -67,7 +67,10 @@ def test_perform_web_search_uses_explicit_outbound_query_and_empty_metadata():
     perform_source = extract_function_source(source, 'perform_web_search')
 
     assert 'web_search_query_text,' in perform_source
-    assert 'query_text = (web_search_query_text or user_message or "").strip()' in perform_source
+    assert 'web_search_query_text or user_message' not in perform_source
+    assert 'query_text = (web_search_query_text or "").strip()' in perform_source
+    assert 'debug_print("[WebSearch] Empty approved web-search query; skipping Foundry call")' in perform_source
+    assert 'return True  # Not an error, just empty approved query' in perform_source
     assert 'foundry_metadata = {}' in perform_source
 
     metadata_block = perform_source.split('foundry_metadata = {}', 1)[1].split(
