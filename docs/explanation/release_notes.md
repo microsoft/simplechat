@@ -1,8 +1,17 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.177, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.182, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.182)**
+
+#### Bug Fixes
+
+*   **Claude Conversation Summary Generation**
+    *   Fixed export intro summaries and Chat Details summary generation so Claude deployments selected from Foundry or New Foundry model endpoints use the Anthropic messages protocol instead of the legacy Azure OpenAI client path.
+    *   Summary requests now preserve endpoint id, model id, and provider metadata from the chat model selector, while still supporting deployment-only fallback matching for existing clients.
+    *   (Ref: `route_backend_conversation_export.py`, `route_backend_conversations.py`, `chat-export.js`, `chat-conversation-details.js`, `CONVERSATION_SUMMARY_CLAUDE_ENDPOINT_FIX.md`)
 
 ### **(v0.241.177)**
 
