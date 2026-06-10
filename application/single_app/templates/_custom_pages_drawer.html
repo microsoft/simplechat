@@ -1,4 +1,4 @@
-{% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) and app_settings.enable_custom_pages %}
+{% if session.get('user') and app_settings.enable_custom_pages and custom_pages_nav %}
 <div class="offcanvas offcanvas-end custom-pages-drawer" tabindex="-1" id="customPagesDrawer" aria-labelledby="customPagesDrawerLabel">
     <div class="offcanvas-header border-bottom">
         <div>
@@ -8,21 +8,14 @@
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
     </div>
     <div class="offcanvas-body">
-        {% if custom_pages_nav %}
-            <div class="list-group custom-pages-drawer-list">
-                {% for page in custom_pages_nav %}
-                    <a class="list-group-item list-group-item-action custom-pages-drawer-item" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
-                        <i class="bi {{ page.icon }} me-2"></i>
-                        <span>{{ page.label }}</span>
-                    </a>
-                {% endfor %}
-            </div>
-        {% else %}
-            <div class="text-muted d-flex align-items-center gap-2">
-                <i class="bi bi-info-circle"></i>
-                <span>No custom pages registered</span>
-            </div>
-        {% endif %}
+        <div class="list-group custom-pages-drawer-list">
+            {% for page in custom_pages_nav %}
+                <a class="list-group-item list-group-item-action custom-pages-drawer-item" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                    <i class="bi {{ page.icon }} me-2"></i>
+                    <span>{{ page.label }}</span>
+                </a>
+            {% endfor %}
+        </div>
     </div>
 </div>
 <script>

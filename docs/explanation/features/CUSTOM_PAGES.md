@@ -1,6 +1,6 @@
 # Custom Pages
 
-Current version: **0.242.037**
+Current version: **0.242.040**
 
 Implemented in version: **0.242.023**
 
@@ -31,6 +31,8 @@ Admin-as-User role hierarchy implemented in version: **0.242.035**
 Request Access example and access levels implemented in version: **0.242.036**
 
 Request Access guidance modal and duplicate slug checks implemented in version: **0.242.037**
+
+Authenticated custom page navigation fix implemented in version: **0.242.040**
 
 ## Overview
 
@@ -92,6 +94,8 @@ Version `0.242.035` treats `Admin` as satisfying the base `User` role while stil
 Version `0.242.036` added access levels, a repo-shipped Request Access static page, a one-click Admin Settings action to create its metadata, and an access-denied home-page button for signed-in users without app roles. The earlier learning examples were moved out of live custom pages into `application/single_app/docs/how-to/custom_pages_examples/`.
 
 Version `0.242.037` added post-create guidance for editing the Request Access email address, disables the one-click Request Access helper once `request-access` exists, and prevents duplicate slugs in both the Admin Settings modal and create API.
+
+Version `0.242.040` changed navigation rendering so Custom Pages appears for any signed-in user only when `custom_pages_nav` contains at least one enabled, visible, authorized page. This allows `access_level=authenticated` pages such as Request Access to render for signed-in users without `User` or `Admin`, while hiding the pane when no custom page is available.
 
 ## Usage Instructions
 

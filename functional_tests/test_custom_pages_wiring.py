@@ -1,7 +1,7 @@
 # test_custom_pages_wiring.py
 """
 Functional test for Custom Pages wiring.
-Version: 0.242.037
+Version: 0.242.040
 Implemented in: 0.242.023
 
 This test ensures that the Custom Pages feature is wired through settings,
@@ -39,7 +39,7 @@ def test_custom_pages_configuration():
     config = read_text("application/single_app/config.py")
     settings = read_text("application/single_app/functions_settings.py")
 
-    assert_contains(config, 'VERSION = "0.242.037"', "version bump")
+    assert_contains(config, 'VERSION = "0.242.040"', "version bump")
     assert_contains(config, 'cosmos_custom_pages_container_name = "custom_pages"', "custom pages container name")
     assert_contains(config, 'cosmos_custom_pages_container = cosmos_database.create_container_if_not_exists', "custom pages container creation")
     assert_contains(settings, "'enable_custom_pages': False", "custom pages disabled default")
@@ -124,17 +124,19 @@ def test_custom_pages_admin_and_navigation_wiring():
     index_template = read_text("application/single_app/templates/index.html")
     assert_contains(index_template, "access_request_button_enabled", "access denied request access button")
     assert_contains(top_nav, "custom_pages_nav", "top navigation custom pages")
+    assert_contains(top_nav, "session.get('user') and app_settings.enable_custom_pages and custom_pages_nav", "top navigation custom pages visibility gate")
     assert_contains(top_nav, "custom-pages-dropdown-menu", "bounded custom pages top navigation menu")
     assert_contains(top_nav, "custom_pages_drawer_threshold = 5", "custom pages drawer threshold")
     assert_contains(top_nav, "custom-pages-top-drawer-trigger", "top navigation drawer trigger")
     assert_contains(top_nav, "data-custom-pages-open-drawer", "top navigation drawer trigger attribute")
-    assert_contains(top_nav, "No custom pages registered", "top navigation empty custom pages state")
+    assert_not_contains(top_nav, "No custom pages registered", "top navigation empty custom pages state")
     assert_contains(sidebar_nav, "custom-pages-links-section", "sidebar custom pages section")
+    assert_contains(sidebar_nav, "session.get('user') and app_settings.enable_custom_pages and custom_pages_nav", "sidebar custom pages visibility gate")
     assert_contains(sidebar_nav, "custom-pages-count-badge", "sidebar custom pages count badge")
     assert_contains(sidebar_nav, "custom-pages-menu-list", "sidebar custom pages scrollable menu")
     assert_contains(sidebar_nav, "custom_pages_drawer_threshold = 5", "sidebar custom pages drawer threshold")
     assert_contains(sidebar_nav, "data-custom-pages-open-drawer", "sidebar drawer trigger")
-    assert_contains(sidebar_nav, "No custom pages registered", "sidebar empty custom pages state")
+    assert_not_contains(sidebar_nav, "No custom pages registered", "sidebar empty custom pages state")
     assert_contains(admin_js, "fetch(\"/api/admin/custom-pages\")", "admin API list call")
     assert_contains(admin_js, "createRequestAccessPage", "request access one-click helper")
     assert_contains(admin_js, "/api/admin/custom-pages/request-access-example", "request access helper API call")
@@ -154,6 +156,8 @@ def test_custom_pages_admin_and_navigation_wiring():
     assert_contains(drawer_template, "customPagesDrawer", "custom pages drawer id")
     assert_contains(drawer_template, "custom-pages-drawer-list", "custom pages drawer scroll list")
     assert_contains(drawer_template, "data-custom-pages-open-drawer", "custom pages drawer trigger handler")
+    assert_contains(drawer_template, "session.get('user') and app_settings.enable_custom_pages and custom_pages_nav", "drawer custom pages visibility gate")
+    assert_not_contains(drawer_template, "No custom pages registered", "drawer empty custom pages state")
 
 
 def test_custom_pages_trusted_rendering_boundary():

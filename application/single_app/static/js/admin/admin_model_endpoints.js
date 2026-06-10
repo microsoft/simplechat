@@ -150,7 +150,11 @@ function updateMetadataExtractionModelInput() {
 }
 
 function isMultiEndpointModeEnabled() {
-    return !!enableMultiEndpointToggle?.checked;
+    if (enableMultiEndpointToggle) {
+        return !!enableMultiEndpointToggle.checked;
+    }
+
+    return window.enableMultiModelEndpoints === true || window.enableMultiModelEndpoints === "true";
 }
 
 function isAdminSettingsFormModified() {

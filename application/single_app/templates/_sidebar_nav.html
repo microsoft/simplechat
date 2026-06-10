@@ -190,8 +190,8 @@
     </div>
     {% endif %}
 
-    <!-- Custom Pages Section - Show header when enabled, even before pages are registered -->
-    {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) and app_settings.enable_custom_pages %}
+    <!-- Custom Pages Section - Show only when the signed-in user has visible custom pages -->
+    {% if session.get('user') and app_settings.enable_custom_pages and custom_pages_nav %}
     <div class="overflow-auto custom-pages-menu-wrapper">
       {% set custom_page_count = custom_pages_nav|length %}
       {% set custom_pages_drawer_threshold = 5 %}
@@ -203,7 +203,7 @@
           <span class="badge rounded-pill text-bg-secondary custom-pages-count-badge">{{ custom_page_count }}</span>
           <i class="bi bi-layout-sidebar-inset-reverse ms-2 custom-pages-caret"></i>
         </button>
-      {% elif custom_pages_should_force_menu or custom_page_count == 0 %}
+      {% elif custom_pages_should_force_menu %}
         <div id="custom-pages-toggle" class="custom-pages-menu-toggle mt-2 mb-1 text-muted small d-flex align-items-center">
           <span class="nav-text flex-grow-1">{{ app_settings.custom_pages_menu_name or 'Custom Pages' }}</span>
           <span class="badge rounded-pill text-bg-secondary custom-pages-count-badge">{{ custom_page_count }}</span>
@@ -211,14 +211,6 @@
         </div>
         <div id="custom-pages-links-section" class="custom-pages-menu-list">
           <ul class="nav flex-column mb-2">
-            {% if custom_page_count == 0 %}
-            <li class="nav-item">
-              <span class="nav-link d-flex align-items-center text-muted">
-                <i class="bi bi-info-circle me-2" style="font-size: 0.8em;"></i>
-                <span class="nav-text">No custom pages registered</span>
-              </span>
-            </li>
-            {% endif %}
             {% for page in custom_pages_nav %}
             <li class="nav-item">
               <a class="nav-link d-flex align-items-center" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
