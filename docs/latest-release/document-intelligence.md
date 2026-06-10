@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Document Intelligence Auto Mode lets admins choose how PDF and image uploads are extracted while giving workspace users clearer visibility into the extraction path used for each document.
 
+## User Side
+
+Workspace users can expand document rows to review Standard, Enhanced, Auto, and enhanced-citation badges, then use metadata or Change Extraction actions when a stored PDF needs a different processing path.
+
+## Admin Side
+
+Admins configure extraction behavior from **Admin Settings > Search & Extract**. The screenshot gallery shows the admin extraction-mode controls alongside the user document-details view so teams can connect the setting to the visible workspace experience.
+
 ## Why It Matters
 
 Teams can keep fast extraction for simple files while still capturing tables, forms, and selection marks when a document needs richer layout understanding.

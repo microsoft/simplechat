@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Workspace Experience updates make personal, group, and public workspaces easier to scan, brand, and govern.
 
+## User Side
+
+Workspace users can switch between list, cards, folders, and folders-plus-cards views, scan badges and document actions, chat with individual documents, and use branding cues to confirm the active workspace.
+
+## Admin Side
+
+Admins control which workspace types and document features are enabled, while group and public workspace owners configure shared branding such as hero colors and logos. The screenshots show both user browsing views and owner-managed branding controls.
+
 ## Custom Workspace Hero Colors
 
 Group and public workspace owners can now choose from preset hero colors or use the custom color swatch on the manage page. The selected color updates the hero preview before saving, making it easier to confirm shared workspace branding.

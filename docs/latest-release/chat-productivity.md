@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Chat Productivity groups the everyday improvements that make repeated chat work faster and more comfortable.
 
+## User Side
+
+Users work from the chat composer: attach files or URLs, switch models, choose prompts and agents, ground messages in workspace sources, paste screenshots, and continue from generated charts or artifacts.
+
+## Admin Side
+
+Admins enable the underlying chat, upload, model endpoint, Source Review, and workspace capabilities that determine which composer tools are visible in a given deployment.
+
 ## Why It Matters
 
 Frequent chat tasks should feel lighter, especially when users have many conversations, pasted images, long-running answers, or reusable generated outputs.

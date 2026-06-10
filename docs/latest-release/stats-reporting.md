@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Stats and Control Center Reporting improves personal, group, public workspace, and admin usage views with consistent windows and exports.
 
+## User Side
+
+Users can open Profile stats, choose standard or custom reporting windows, review conversation and document activity, and export visible metrics for offline analysis.
+
+## Admin Side
+
+Admins use Control Center reporting, pagination, group token totals, and workspace statistics to compare usage across larger tenants without losing the same date-window context users see in profile reporting.
+
 ## Why It Matters
 
 Usage, token, and activity trends are easier to compare when the same date windows and exports are available across surfaces.

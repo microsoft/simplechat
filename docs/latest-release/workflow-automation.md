@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Workflow Automation connects personal workflows to File Sync sources, access governance, dynamic document targeting, and batch resume behavior.
 
+## User Side
+
+Workflow users can create and monitor personal workflows, review runs, trigger File Sync before a workflow starts, and target changed synced files for Analyze steps.
+
+## Admin Side
+
+Admins enable personal workflows, optionally require the `WorkflowUser` Enterprise App role, and control File Sync before-run automation. The screenshot gallery pairs those admin settings with the user workflow list and editor controls.
+
 ## Why It Matters
 
 Repeatable document analysis can run when source files change rather than waiting for someone to manually refresh and restart every item.

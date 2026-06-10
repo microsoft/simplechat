@@ -6,6 +6,21 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.241.182)**
 
+#### New Features
+
+*   **Current Release Admin and User Feature Summaries**
+    *   Added refreshed current-release summaries for Document Intelligence Auto Mode, Cosmos Throughput Autoscale, File Sync Connectors, Source Review and Deep Research, Agent Knowledge and Actions, Generated Artifacts, Chat Productivity, Workspace Experience, Workflow Automation, Visio Ingestion, and Stats and Control Center Reporting.
+    *   Admin-facing summaries focus on rollout, governance, and operator controls such as Admin Settings Scale, Search & Extract, File Sync source visibility, Source Review policy, workflow role controls, and Control Center reporting.
+    *   User-facing summaries focus on the workflows end users can try from Support > Latest Features, including chat productivity, generated artifacts, workspace views and branding, File Sync source setup, Visio uploads, profile stats, and agent/action setup where enabled.
+    *   (Ref: `support_menu_config.py`, `route_frontend_support.py`, `latest_features.html`, `docs/latest-release/`, `docs/_data/latest_release_features.yml`)
+
+#### User Interface Enhancements
+
+*   **Latest Features Screenshot and Action Guide Refresh**
+    *   Updated the in-app Latest Features experience so current-release cards use practical annotated screenshots, release-group organization, and clearer action links for both admin-managed and user-facing capabilities.
+    *   Admin Settings now gives administrators a clearer view of what will be shared with users, while the Support > Latest Features page presents the same capability set as approachable cards with why-it-matters guidance, screenshots, and direct app destinations.
+    *   (Ref: `admin_settings.html`, `support_menu_config.py`, `latest_features.html`, `test_admin_latest_features_tab.py`, `test_support_latest_features_image_modal.py`)
+
 #### Bug Fixes
 
 *   **Claude Conversation Summary Generation**

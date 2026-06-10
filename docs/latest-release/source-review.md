@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Source Review adds a governed evidence-review layer for URLs and web-search citations before the assistant prepares a final answer.
 
+## User Side
+
+Users can open source tools in Chat, ground a prompt in workspace sources, and use Source Review or Deep Research when URLs or web evidence should be inspected before the final answer.
+
+## Admin Side
+
+Admins configure Source Review, Deep Research, rendering, page budgets, and allow/block controls from **Admin Settings > Search & Extract**. The screenshots show both the policy controls and the user chat surfaces they govern.
+
 ## Why It Matters
 
 Users can ground answers in reviewed source-page evidence instead of depending only on snippets or unsupported browsing assumptions.

@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Generated Artifacts make large Markdown, tabular, and analysis outputs easier to inspect, download, and promote into durable workspace knowledge.
 
+## User Side
+
+Users can review generated Markdown, charts, and structured outputs in Chat, open artifact controls, download reusable outputs, and promote artifacts into workspaces when the content should become durable knowledge.
+
+## Admin Side
+
+Admins govern the workspace features, enhanced citation pipeline, and group or public approval flows that determine where generated artifacts can be promoted and when shared artifacts become searchable.
+
 ## Why It Matters
 
 Large or reusable generated outputs can move from conversation context into durable workspace documents without making chat answers unwieldy.

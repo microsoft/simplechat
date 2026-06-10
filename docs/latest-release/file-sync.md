@@ -7,6 +7,14 @@ section: "Latest Release"
 
 File Sync now supports richer workspace ingestion from SMB shares, Azure Files, and OneDrive sources while keeping the existing document processing, chunking, embedding, and search pipeline.
 
+## User Side
+
+Workspace users and managers can add sync sources, browse supported provider folders, select files or folders, run sync, review history, and reuse workspace identities when credentials are needed.
+
+## Admin Side
+
+Admins choose which connector types are available, configure reusable identity options, and control cloud-drive setup from Admin Settings. The screenshot gallery pairs those admin controls with the user Sync and Identities tabs.
+
 ## Why It Matters
 
 Workspace documents can stay closer to authoritative external stores instead of depending on manual re-upload habits.

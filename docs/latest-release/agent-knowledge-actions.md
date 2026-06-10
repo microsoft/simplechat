@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Agent Knowledge and Actions combines governed agent retrieval with expanded enterprise action types and reusable identity workflows.
 
+## User Side
+
+Workspace users can review Agents and Actions from Personal Workspace, chat with configured agents, inspect enabled tools, and use reusable identities where actions need credentials.
+
+## Admin Side
+
+Admins and workspace owners govern which agents, actions, identities, and Microsoft Graph mail behaviors are available before assigning them to users. The visual tour includes Assigned Knowledge setup plus user-facing Agents and Actions views.
+
 ## Microsoft Graph Mail Actions
 
 Microsoft Graph actions now include a **Send mail** capability. Action owners can configure whether the action creates a manual draft, prepares a delayed-delivery draft, or sends mail automatically from the signed-in user's mailbox.

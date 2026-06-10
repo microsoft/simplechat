@@ -7,6 +7,14 @@ section: "Latest Release"
 
 Visio Ingestion parses `.vsdx` files into searchable diagram page content and provides lightweight citation previews from the built-in structural renderer.
 
+## User Side
+
+Workspace users can upload `.vsdx` diagrams, find them in the document list, ask chat questions about pages, labels, shapes, and connectors, and open citation previews or the original file when needed.
+
+## Admin Side
+
+Admins enable the document-processing and enhanced-citation capabilities that make Visio files searchable and previewable in supported workspaces.
+
 ## Why It Matters
 
 Architecture and process diagrams become searchable knowledge instead of opaque attachments.
