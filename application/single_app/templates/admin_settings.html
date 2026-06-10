@@ -6904,8 +6904,8 @@
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpoints = {{ settings.model_endpoints|default([], true)|tojson|safe }};
     window.defaultModelSelection = {{ settings.default_model_selection|default({}, true)|tojson|safe }};
-    window.metadataExtractionModelSelection = {{ settings.metadata_extraction_model_selection|default({}, true)|tojson|safe }};
-    window.legacyMetadataExtractionModel = {{ settings.metadata_extraction_model|default('', true)|tojson|safe }};
+    window.metadataExtractionModelSelection = {{ settings.metadata_extraction_model_selection|default({}, true)|tojson }};
+    window.legacyMetadataExtractionModel = {{ settings.metadata_extraction_model|default('', true)|tojson }};
 
     if (!Array.isArray(window.gptSelected)) {
         window.gptSelected = [];
