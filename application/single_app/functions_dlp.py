@@ -3,6 +3,7 @@
 import hashlib
 import logging
 
+from functions_dlp_presidio import analyze_with_presidio_endpoint
 from functions_dlp_rules import get_effective_dlp_regex_rules, scan_text_with_dlp_regex_rules
 
 try:
@@ -38,10 +39,10 @@ def _safe_float(value, default):
 
 
 def _normalize_engine(settings):
-    """Return the implemented DLP engine for this release."""
-    requested = str((settings or {}).get("dlp_default_engine", "regex") or "regex").lower()
-    if requested != "regex":
-        return "regex"
+    """Return the configured DLP engine."""
+    requested = str((settings or {}).get("dlp_default_engine", "regex") or "regex").strip().lower()
+    if requested in {"regex", "presidio_endpoint"}:
+        return requested
     return "regex"
 
 
@@ -86,6 +87,22 @@ def _apply_regex_engine(text, settings=None, surface="generic"):
     }
 
 
+def _apply_presidio_endpoint_engine(text, settings=None, surface="generic"):
+    recognizer_results = analyze_with_presidio_endpoint(text, settings or {})
+    normalized = normalize_presidio_results(
+        text,
+        recognizer_results,
+        mode=_normalize_mode(settings or {}, surface),
+        engine="presidio_endpoint",
+    )
+    return (
+        normalized["redacted_text"],
+        normalized["match_counts"],
+        normalized["matches"],
+        {"adapter": "presidio_endpoint"},
+    )
+
+
 def _decision_from_counts(match_counts, mode):
     if not match_counts:
         return "allow"
@@ -128,7 +145,14 @@ def evaluate_dlp_text(text, settings=None, context=None, surface="generic"):
         }
 
     try:
-        redacted_text, match_counts, matches, scanner_metadata = _apply_regex_engine(scan_text, settings, surface)
+        if engine == "presidio_endpoint":
+            redacted_text, match_counts, matches, scanner_metadata = _apply_presidio_endpoint_engine(
+                scan_text,
+                settings,
+                surface,
+            )
+        else:
+            redacted_text, match_counts, matches, scanner_metadata = _apply_regex_engine(scan_text, settings, surface)
     except Exception as exc:
         log_event(
             "[DLP] Scanner error",
