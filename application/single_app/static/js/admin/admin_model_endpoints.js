@@ -12,6 +12,8 @@ const defaultModelInput = document.getElementById("default_model_selection_json"
 const defaultModelWrapper = document.getElementById("default-model-selection-wrapper");
 const metadataExtractionModelSelect = document.getElementById("metadata_extraction_model");
 const metadataExtractionModelInput = document.getElementById("metadata_extraction_model_selection_json");
+const legacyGptApimToggle = document.getElementById("enable_gpt_apim");
+const legacyApimGptDeploymentInput = document.getElementById("azure_apim_gpt_deployment");
 const migrationPanel = document.getElementById("agent-default-model-migration-panel");
 const migrationStatus = document.getElementById("agent-default-model-migration-status");
 const migrationCallout = document.getElementById("agent-default-model-migration-callout");
@@ -145,6 +147,10 @@ function updateMetadataExtractionModelInput() {
         return;
     }
     metadataExtractionModelInput.value = JSON.stringify(metadataExtractionModelSelection || {});
+}
+
+function isMultiEndpointModeEnabled() {
+    return !!enableMultiEndpointToggle?.checked;
 }
 
 function isAdminSettingsFormModified() {
@@ -425,6 +431,11 @@ function buildMetadataExtractionModelOptions() {
     emptyOption.textContent = "No metadata extraction model selected";
     metadataExtractionModelSelect.appendChild(emptyOption);
 
+    if (!isMultiEndpointModeEnabled()) {
+        buildLegacyMetadataExtractionModelOptions();
+        return;
+    }
+
     modelEndpoints.forEach((endpoint) => {
         const models = Array.isArray(endpoint.models) ? endpoint.models : [];
         models.forEach((model) => {
@@ -433,6 +444,40 @@ function buildMetadataExtractionModelOptions() {
     });
 
     applyMetadataExtractionModelSelection(metadataExtractionModelSelection);
+}
+
+function buildLegacyMetadataExtractionModelOptions() {
+    metadataExtractionModelSelection = {
+        endpoint_id: "",
+        model_id: "",
+        provider: ""
+    };
+    updateMetadataExtractionModelInput();
+
+    if (legacyGptApimToggle?.checked) {
+        const deployments = String(legacyApimGptDeploymentInput?.value || "")
+            .split(",")
+            .map((deployment) => deployment.trim())
+            .filter(Boolean);
+
+        deployments.forEach((deployment) => {
+            metadataExtractionModelSelect.add(new Option(deployment, deployment));
+        });
+    } else {
+        const legacyModels = Array.isArray(window.gptSelected) ? window.gptSelected : [];
+        legacyModels.forEach((model) => {
+            const deploymentName = model?.deploymentName || "";
+            if (!deploymentName) {
+                return;
+            }
+            const modelName = model?.modelName || deploymentName;
+            metadataExtractionModelSelect.add(new Option(`${deploymentName} (${modelName})`, deploymentName));
+        });
+    }
+
+    if (legacyMetadataExtractionModel) {
+        metadataExtractionModelSelect.value = legacyMetadataExtractionModel;
+    }
 }
 
 function applyMetadataExtractionModelSelection(selection) {
@@ -538,6 +583,17 @@ function handleDefaultModelChange() {
 
 function handleMetadataExtractionModelChange() {
     if (!metadataExtractionModelSelect) {
+        return;
+    }
+
+    if (!isMultiEndpointModeEnabled()) {
+        metadataExtractionModelSelection = {
+            endpoint_id: "",
+            model_id: "",
+            provider: ""
+        };
+        updateMetadataExtractionModelInput();
+        markModified();
         return;
     }
 
@@ -1183,6 +1239,7 @@ function handleToggleChange() {
     if (!enabled) {
         setElementVisibility(migrationResults, false);
     }
+    buildMetadataExtractionModelOptions();
     markModified();
     handleMigrationConfigurationChange();
 }
@@ -1610,6 +1667,14 @@ function init() {
 
     if (metadataExtractionModelSelect) {
         metadataExtractionModelSelect.addEventListener("change", handleMetadataExtractionModelChange);
+    }
+
+    if (legacyGptApimToggle) {
+        legacyGptApimToggle.addEventListener("change", buildMetadataExtractionModelOptions);
+    }
+
+    if (legacyApimGptDeploymentInput) {
+        legacyApimGptDeploymentInput.addEventListener("input", buildMetadataExtractionModelOptions);
     }
 
     if (previewMigrationBtn) {

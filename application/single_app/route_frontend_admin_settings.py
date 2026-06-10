@@ -881,7 +881,7 @@ def register_route_frontend_admin_settings(app):
                 'model_id': str(parsed_metadata_model_selection.get('model_id') or '').strip(),
                 'provider': str(parsed_metadata_model_selection.get('provider') or '').strip().lower()
             }
-            metadata_extraction_model_deployment = ''
+            metadata_extraction_model_deployment = form_data.get('metadata_extraction_model', '').strip()
 
             if not enable_multi_model_endpoints:
                 normalized_metadata_model_selection = {
