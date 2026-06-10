@@ -36,6 +36,7 @@ from collaboration_models import (
 )
 from functions_activity_logging import log_chat_activity
 from functions_appinsights import log_event
+from functions_documents import sync_chat_upload_workspace_document_sharing_for_collaboration
 from functions_group import (
     assert_group_role,
     check_group_status_allows_operation,
@@ -51,6 +52,26 @@ PERSONAL_COLLABORATION_MANAGER_ROLES = {
     MEMBERSHIP_ROLE_OWNER,
     MEMBERSHIP_ROLE_ADMIN,
 }
+
+COLLABORATION_EVENT_PUBLISHERS = []
+
+
+def register_collaboration_event_publisher(event_publisher):
+    if callable(event_publisher) and event_publisher not in COLLABORATION_EVENT_PUBLISHERS:
+        COLLABORATION_EVENT_PUBLISHERS.append(event_publisher)
+
+
+def publish_collaboration_event(conversation_id, event_payload):
+    for event_publisher in list(COLLABORATION_EVENT_PUBLISHERS):
+        try:
+            event_publisher(conversation_id, event_payload)
+        except Exception as publish_error:
+            log_event(
+                f"[CollaborationEvents] Failed to publish event for {conversation_id}: {publish_error}",
+                extra={'conversation_id': conversation_id},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
 
 
 def is_collaboration_conversation(conversation_doc):
@@ -317,7 +338,7 @@ def build_collaboration_image_url(conversation_id, message_id):
 def serialize_collaboration_message(message_doc):
     metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
     display_role = _get_collaboration_display_role(message_doc)
-    serialized_role = 'image' if display_role == 'image' else message_doc.get('role')
+    serialized_role = display_role if display_role in ('file', 'image') else message_doc.get('role')
     serialized_content = message_doc.get('content', '')
     if display_role == 'image':
         serialized_content = build_collaboration_image_url(
@@ -344,6 +365,8 @@ def serialize_collaboration_message(message_doc):
         'agent_display_name': message_doc.get('agent_display_name'),
         'agent_name': message_doc.get('agent_name'),
         'filename': message_doc.get('filename'),
+        'file_content_source': message_doc.get('file_content_source'),
+        'workspace_document_id': message_doc.get('workspace_document_id'),
         'prompt': message_doc.get('prompt'),
         'extracted_text': message_doc.get('extracted_text'),
         'vision_analysis': message_doc.get('vision_analysis'),
@@ -1512,6 +1535,8 @@ def record_personal_invite_response(conversation_id, user_id, action):
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
     cosmos_collaboration_user_state_container.upsert_item(user_state)
+    if membership_status == MEMBERSHIP_STATUS_ACCEPTED and is_personal_collaboration_conversation(conversation_doc):
+        sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
     return conversation_doc, user_state, participant_record
 
 
@@ -1625,6 +1650,9 @@ def remove_personal_collaboration_member(conversation_id, owner_user_id, member_
         user_state['updated_at'] = removed_participant.get('removed_at')
         user_state['removed_at'] = removed_participant.get('removed_at')
         cosmos_collaboration_user_state_container.upsert_item(user_state)
+
+    if is_personal_collaboration_conversation(conversation_doc):
+        sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
 
     return conversation_doc, removed_participant
 
@@ -2172,6 +2200,9 @@ def leave_personal_collaboration_conversation(conversation_id, current_user_id, 
         user_state['updated_at'] = timestamp
         cosmos_collaboration_user_state_container.upsert_item(user_state)
 
+    if is_personal_collaboration_conversation(conversation_doc):
+        sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
+
     return conversation_doc, participant, promoted_participant
 
 
@@ -2267,6 +2298,11 @@ def delete_personal_collaboration_conversation(conversation_id, current_user_id)
         )
     if current_user_id not in set(conversation_doc.get('owner_user_ids', []) or []):
         raise PermissionError('Only conversation owners can delete this shared conversation')
+
+    if is_personal_collaboration_conversation(conversation_doc):
+        revocation_conversation_doc = deepcopy(conversation_doc)
+        revocation_conversation_doc['accepted_participant_ids'] = []
+        sync_chat_upload_workspace_document_sharing_for_collaboration(revocation_conversation_doc)
 
     message_query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id'
     messages = list(cosmos_collaboration_messages_container.query_items(

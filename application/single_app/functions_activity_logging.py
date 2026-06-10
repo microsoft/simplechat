@@ -2348,9 +2348,17 @@ def log_workflow_creation(
     workflow_name: str,
     runner_type: Optional[str] = None,
     trigger_type: Optional[str] = None,
+    workspace_type: str = 'personal',
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
 ) -> None:
-    """Log a personal workflow creation activity."""
+    """Log a workflow creation activity."""
     try:
+        workspace_context = {}
+        if group_id:
+            workspace_context['group_id'] = group_id
+        if public_workspace_id:
+            workspace_context['public_workspace_id'] = public_workspace_id
         activity_record = {
             'id': str(uuid.uuid4()),
             'user_id': user_id,
@@ -2365,8 +2373,8 @@ def log_workflow_creation(
                 'runner_type': runner_type,
                 'trigger_type': trigger_type,
             },
-            'workspace_type': 'personal',
-            'workspace_context': {},
+            'workspace_type': workspace_type or 'personal',
+            'workspace_context': workspace_context,
         }
         cosmos_activity_logs_container.create_item(body=activity_record)
         log_event(
@@ -2388,9 +2396,17 @@ def log_workflow_update(
     workflow_name: str,
     runner_type: Optional[str] = None,
     trigger_type: Optional[str] = None,
+    workspace_type: str = 'personal',
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
 ) -> None:
-    """Log a personal workflow update activity."""
+    """Log a workflow update activity."""
     try:
+        workspace_context = {}
+        if group_id:
+            workspace_context['group_id'] = group_id
+        if public_workspace_id:
+            workspace_context['public_workspace_id'] = public_workspace_id
         activity_record = {
             'id': str(uuid.uuid4()),
             'user_id': user_id,
@@ -2405,8 +2421,8 @@ def log_workflow_update(
                 'runner_type': runner_type,
                 'trigger_type': trigger_type,
             },
-            'workspace_type': 'personal',
-            'workspace_context': {},
+            'workspace_type': workspace_type or 'personal',
+            'workspace_context': workspace_context,
         }
         cosmos_activity_logs_container.create_item(body=activity_record)
         log_event(
@@ -2426,9 +2442,17 @@ def log_workflow_deletion(
     user_id: str,
     workflow_id: str,
     workflow_name: str,
+    workspace_type: str = 'personal',
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
 ) -> None:
-    """Log a personal workflow deletion activity."""
+    """Log a workflow deletion activity."""
     try:
+        workspace_context = {}
+        if group_id:
+            workspace_context['group_id'] = group_id
+        if public_workspace_id:
+            workspace_context['public_workspace_id'] = public_workspace_id
         activity_record = {
             'id': str(uuid.uuid4()),
             'user_id': user_id,
@@ -2441,8 +2465,8 @@ def log_workflow_deletion(
                 'id': workflow_id,
                 'name': workflow_name,
             },
-            'workspace_type': 'personal',
-            'workspace_context': {},
+            'workspace_type': workspace_type or 'personal',
+            'workspace_context': workspace_context,
         }
         cosmos_activity_logs_container.create_item(body=activity_record)
         log_event(
@@ -2468,9 +2492,17 @@ def log_workflow_run(
     conversation_id: Optional[str] = None,
     runner_type: Optional[str] = None,
     error: Optional[str] = None,
+    workspace_type: str = 'personal',
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
 ) -> None:
-    """Log a personal workflow run activity."""
+    """Log a workflow run activity."""
     try:
+        workspace_context = {}
+        if group_id:
+            workspace_context['group_id'] = group_id
+        if public_workspace_id:
+            workspace_context['public_workspace_id'] = public_workspace_id
         activity_record = {
             'id': str(uuid.uuid4()),
             'user_id': user_id,
@@ -2484,8 +2516,8 @@ def log_workflow_run(
                 'name': workflow_name,
                 'runner_type': runner_type,
             },
-            'workspace_type': 'personal',
-            'workspace_context': {},
+            'workspace_type': workspace_type or 'personal',
+            'workspace_context': workspace_context,
             'run': {
                 'id': run_id,
                 'status': status,

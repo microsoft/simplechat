@@ -1658,6 +1658,9 @@ def register_route_backend_conversations(app):
 
         body = request.get_json(silent=True) or {}
         model_deployment = body.get('model_deployment', '')
+        model_endpoint_id = body.get('model_endpoint_id', '')
+        model_id = body.get('model_id', '')
+        model_provider = body.get('model_provider', '')
 
         # Query messages for this conversation
         try:
@@ -1706,7 +1709,11 @@ def register_route_backend_conversations(app):
                 model_deployment=model_deployment,
                 message_time_start=message_time_start,
                 message_time_end=message_time_end,
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
+                user_id=user_id,
+                model_endpoint_id=model_endpoint_id,
+                model_id=model_id,
+                model_provider=model_provider,
             )
             return jsonify({'success': True, 'summary': summary_data}), 200
 

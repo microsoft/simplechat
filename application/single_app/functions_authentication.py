@@ -288,7 +288,7 @@ def get_valid_access_token_for_plugins(scopes=None):
             required_scopes,
             error="interactive_auth_required",
             message=(
-                "Interactive sign-in is required to access this Microsoft Graph resource. "
+                "Interactive sign-in is required to access Microsoft 365. "
                 "If the permission is already granted, the auth flow should complete without prompting for consent."
             ),
             error_description="No token result; interactive authentication required.",
@@ -305,7 +305,7 @@ def get_valid_access_token_for_plugins(scopes=None):
             user_info,
             required_scopes,
             error="consent_required",
-            message="User consent is required to access this Microsoft Graph resource.",
+            message="User consent is required to access Microsoft 365 resources like Outlook email, Calendar, OneDrive, or SharePoint.",
             error_code=error_code,
             error_description=error_desc,
             prompt="consent",
@@ -318,7 +318,7 @@ def get_valid_access_token_for_plugins(scopes=None):
             required_scopes,
             error="interactive_auth_required",
             message=(
-                "Interactive sign-in is required to refresh this Microsoft Graph session. "
+                "Interactive sign-in is required to refresh this Microsoft 365 session. "
                 "If permissions are already granted, the auth flow should complete without another consent prompt."
             ),
             error_code=error_code,

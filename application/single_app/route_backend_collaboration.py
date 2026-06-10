@@ -32,6 +32,7 @@ from functions_collaboration import (
     list_personal_collaboration_conversations_for_user,
     mirror_source_message_to_collaboration,
     persist_collaboration_message,
+    register_collaboration_event_publisher,
     record_personal_invite_response,
     remove_personal_collaboration_member,
     resolve_collaboration_mentions,
@@ -220,6 +221,13 @@ COLLABORATION_EVENT_REGISTRY = CollaborationEventRegistry(
     heartbeat_interval_seconds=COLLABORATION_EVENT_HEARTBEAT_SECONDS,
     session_ttl_seconds=COLLABORATION_EVENT_TTL_SECONDS,
 )
+
+
+def _publish_collaboration_event(conversation_id, event_payload):
+    COLLABORATION_EVENT_REGISTRY.publish(conversation_id, event_payload)
+
+
+register_collaboration_event_publisher(_publish_collaboration_event)
 
 
 def get_user_state_or_none(user_id, conversation_id):

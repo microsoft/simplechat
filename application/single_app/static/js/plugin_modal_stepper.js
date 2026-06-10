@@ -22,6 +22,8 @@ const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL = 'draft_manual';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED = 'draft_delayed';
 const MSGRAPH_MAIL_SEND_MODE_AUTO_SEND = 'auto_send';
+const MSGRAPH_DEFAULT_MAIL_SEND_MODE = MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL;
+const MSGRAPH_DEFAULT_CALENDAR_SEND_MODE = MSGRAPH_MAIL_SEND_MODE_AUTO_SEND;
 const MSGRAPH_DEFAULT_MAIL_DELAY_SECONDS = 60;
 const MSGRAPH_MIN_MAIL_DELAY_SECONDS = 5;
 const MSGRAPH_MAX_MAIL_DELAY_SECONDS = 600;
@@ -1112,17 +1114,35 @@ export class PluginModalStepper {
       label.setAttribute('for', checkbox.id);
       label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
 
+      let deliveryOptions = null;
+      if (definition.key === 'send_mail') {
+        deliveryOptions = this.createMsGraphDeliveryConfiguration('mail');
+        deliveryOptions.classList.toggle('d-none', !checkbox.checked);
+      } else if (definition.key === 'create_calendar_invite') {
+        deliveryOptions = this.createMsGraphDeliveryConfiguration('calendar');
+        deliveryOptions.classList.toggle('d-none', !checkbox.checked);
+      }
+
       checkbox.addEventListener('change', () => {
         this.msGraphCapabilityState = {
           ...this.msGraphCapabilityState,
           [definition.key]: checkbox.checked
         };
+        if (deliveryOptions) {
+          deliveryOptions.classList.toggle('d-none', !checkbox.checked);
+        }
       });
 
       wrapper.appendChild(checkbox);
       wrapper.appendChild(label);
+      if (deliveryOptions) {
+        wrapper.appendChild(deliveryOptions);
+      }
       list.appendChild(wrapper);
     });
+
+    this.updateMsGraphMailDelayVisibility();
+    this.updateMsGraphCalendarDelayVisibility();
   }
 
   setMsGraphCapabilities(rawCapabilities = null) {
@@ -1132,6 +1152,92 @@ export class PluginModalStepper {
 
   getSelectedMsGraphCapabilities() {
     return this.normalizeMsGraphCapabilities(this.msGraphCapabilityState);
+  }
+
+  createMsGraphDeliveryConfiguration(kind) {
+    const isMail = kind === 'mail';
+    const modeId = isMail ? 'msgraph-mail-send-mode' : 'msgraph-calendar-send-mode';
+    const delayGroupId = isMail ? 'msgraph-mail-delay-group' : 'msgraph-calendar-delay-group';
+    const delayInputId = isMail ? 'msgraph-mail-delay-seconds' : 'msgraph-calendar-delay-seconds';
+    const delayValueId = isMail ? 'msgraph-mail-delay-seconds-value' : 'msgraph-calendar-delay-seconds-value';
+    const defaultMode = isMail ? MSGRAPH_DEFAULT_MAIL_SEND_MODE : MSGRAPH_DEFAULT_CALENDAR_SEND_MODE;
+    const defaultDelay = isMail ? MSGRAPH_DEFAULT_MAIL_DELAY_SECONDS : MSGRAPH_DEFAULT_CALENDAR_DELAY_SECONDS;
+    const updateVisibility = isMail
+      ? () => this.updateMsGraphMailDelayVisibility()
+      : () => this.updateMsGraphCalendarDelayVisibility();
+
+    const optionsWrapper = document.createElement('div');
+    optionsWrapper.className = 'msgraph-capability-options border-start ps-3 ms-4 mt-2';
+    optionsWrapper.id = isMail ? 'msgraph-delivery-send_mail-options' : 'msgraph-delivery-create_calendar_invite-options';
+
+    const row = document.createElement('div');
+    row.className = 'row g-3 align-items-end';
+
+    const modeColumn = document.createElement('div');
+    modeColumn.className = 'col-md-7';
+
+    const modeLabel = document.createElement('label');
+    modeLabel.className = 'form-label small mb-1';
+    modeLabel.setAttribute('for', modeId);
+    modeLabel.textContent = isMail ? 'Email delivery' : 'Calendar invite delivery';
+
+    const modeSelect = document.createElement('select');
+    modeSelect.className = 'form-select form-select-sm';
+    modeSelect.id = modeId;
+    [
+      [MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL, 'Draft with manual send'],
+      [MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED, 'Draft with delayed send'],
+      [MSGRAPH_MAIL_SEND_MODE_AUTO_SEND, 'Auto send']
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      modeSelect.appendChild(option);
+    });
+    modeSelect.value = defaultMode;
+    modeSelect.addEventListener('change', updateVisibility);
+
+    modeColumn.appendChild(modeLabel);
+    modeColumn.appendChild(modeSelect);
+    row.appendChild(modeColumn);
+
+    const delayColumn = document.createElement('div');
+    delayColumn.className = 'col-md-5';
+    delayColumn.id = delayGroupId;
+
+    const delayHeader = document.createElement('div');
+    delayHeader.className = 'd-flex align-items-center justify-content-between gap-2';
+
+    const delayLabel = document.createElement('label');
+    delayLabel.className = 'form-label small mb-1';
+    delayLabel.setAttribute('for', delayInputId);
+    delayLabel.textContent = 'Delay';
+
+    const delayValue = document.createElement('span');
+    delayValue.className = 'badge text-bg-light';
+    delayValue.id = delayValueId;
+    delayValue.textContent = `${defaultDelay} seconds`;
+
+    delayHeader.appendChild(delayLabel);
+    delayHeader.appendChild(delayValue);
+
+    const delayInput = document.createElement('input');
+    delayInput.type = 'range';
+    delayInput.className = 'form-range';
+    delayInput.id = delayInputId;
+    delayInput.min = String(isMail ? MSGRAPH_MIN_MAIL_DELAY_SECONDS : MSGRAPH_MIN_CALENDAR_DELAY_SECONDS);
+    delayInput.max = String(isMail ? MSGRAPH_MAX_MAIL_DELAY_SECONDS : MSGRAPH_MAX_CALENDAR_DELAY_SECONDS);
+    delayInput.step = '5';
+    delayInput.value = String(defaultDelay);
+    delayInput.addEventListener('input', updateVisibility);
+    delayInput.addEventListener('change', updateVisibility);
+
+    delayColumn.appendChild(delayHeader);
+    delayColumn.appendChild(delayInput);
+    row.appendChild(delayColumn);
+    optionsWrapper.appendChild(row);
+
+    return optionsWrapper;
   }
 
   normalizeMsGraphMailSendMode(rawMode = '') {
@@ -1234,26 +1340,40 @@ export class PluginModalStepper {
 
   updateMsGraphMailDelayVisibility() {
     const delayGroup = document.getElementById('msgraph-mail-delay-group');
-    if (!delayGroup) {
-      return;
-    }
     const mode = this.normalizeMsGraphMailSendMode(document.getElementById('msgraph-mail-send-mode')?.value);
-    delayGroup.classList.toggle('d-none', mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+    const delayInput = document.getElementById('msgraph-mail-delay-seconds');
+    const delayValue = document.getElementById('msgraph-mail-delay-seconds-value');
+    if (delayInput) {
+      delayInput.value = String(this.normalizeMsGraphMailDelaySeconds(delayInput.value));
+    }
+    if (delayValue) {
+      delayValue.textContent = `${this.normalizeMsGraphMailDelaySeconds(delayInput?.value)} seconds`;
+    }
+    if (delayGroup) {
+      delayGroup.classList.toggle('d-none', mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+    }
   }
 
   updateMsGraphCalendarDelayVisibility() {
     const delayGroup = document.getElementById('msgraph-calendar-delay-group');
-    if (!delayGroup) {
-      return;
-    }
     const mode = this.normalizeMsGraphCalendarSendMode(document.getElementById('msgraph-calendar-send-mode')?.value);
-    delayGroup.classList.toggle('d-none', mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+    const delayInput = document.getElementById('msgraph-calendar-delay-seconds');
+    const delayValue = document.getElementById('msgraph-calendar-delay-seconds-value');
+    if (delayInput) {
+      delayInput.value = String(this.normalizeMsGraphCalendarDelaySeconds(delayInput.value));
+    }
+    if (delayValue) {
+      delayValue.textContent = `${this.normalizeMsGraphCalendarDelaySeconds(delayInput?.value)} seconds`;
+    }
+    if (delayGroup) {
+      delayGroup.classList.toggle('d-none', mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+    }
   }
 
   formatMsGraphMailSendMode(mode) {
     const labels = {
       [MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL]: 'Draft with manual send',
-      [MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED]: 'Draft with delayed delivery',
+      [MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED]: 'Draft with delayed send',
       [MSGRAPH_MAIL_SEND_MODE_AUTO_SEND]: 'Auto send'
     };
     return labels[this.normalizeMsGraphMailSendMode(mode)] || labels[MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL];
@@ -1262,7 +1382,7 @@ export class PluginModalStepper {
   formatMsGraphCalendarSendMode(mode) {
     const labels = {
       [MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL]: 'Draft with manual send',
-      [MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED]: 'Draft with delayed delivery',
+      [MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED]: 'Draft with delayed send',
       [MSGRAPH_MAIL_SEND_MODE_AUTO_SEND]: 'Auto send'
     };
     return labels[this.normalizeMsGraphCalendarSendMode(mode)] || labels[MSGRAPH_MAIL_SEND_MODE_AUTO_SEND];
@@ -2697,14 +2817,15 @@ export class PluginModalStepper {
             return false;
           }
         } else if (isMsGraphVisible) {
-          const capabilityValues = Object.values(this.getSelectedMsGraphCapabilities());
+          const selectedMsGraphCapabilities = this.getSelectedMsGraphCapabilities();
+          const capabilityValues = Object.values(selectedMsGraphCapabilities);
           if (!capabilityValues.some(Boolean)) {
             this.showError('Enable at least one Microsoft Graph capability before continuing.');
             return false;
           }
           const mailConfig = this.getMsGraphMailSendConfiguration();
           const rawDelaySeconds = parseInt(document.getElementById('msgraph-mail-delay-seconds')?.value, 10);
-          if (mailConfig.msgraph_mail_send_mode === MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED) {
+          if (selectedMsGraphCapabilities.send_mail && mailConfig.msgraph_mail_send_mode === MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED) {
             if (Number.isNaN(rawDelaySeconds) || rawDelaySeconds < MSGRAPH_MIN_MAIL_DELAY_SECONDS || rawDelaySeconds > MSGRAPH_MAX_MAIL_DELAY_SECONDS) {
               this.showError('Microsoft Graph delayed mail delivery must be between 5 and 600 seconds.');
               return false;
@@ -2712,7 +2833,7 @@ export class PluginModalStepper {
           }
           const calendarConfig = this.getMsGraphCalendarSendConfiguration();
           const rawCalendarDelaySeconds = parseInt(document.getElementById('msgraph-calendar-delay-seconds')?.value, 10);
-          if (calendarConfig.msgraph_calendar_send_mode === MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED) {
+          if (selectedMsGraphCapabilities.create_calendar_invite && calendarConfig.msgraph_calendar_send_mode === MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED) {
             if (Number.isNaN(rawCalendarDelaySeconds) || rawCalendarDelaySeconds < MSGRAPH_MIN_CALENDAR_DELAY_SECONDS || rawCalendarDelaySeconds > MSGRAPH_MAX_CALENDAR_DELAY_SECONDS) {
               this.showError('Microsoft Graph delayed calendar invite delivery must be between 5 and 600 seconds.');
               return false;
@@ -4675,9 +4796,14 @@ export class PluginModalStepper {
     disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
 
     const mailConfig = this.getMsGraphMailSendConfiguration();
+    const mailModeRow = document.getElementById('summary-msgraph-mail-mode-row');
     const modeElement = document.getElementById('summary-msgraph-mail-send-mode');
     const delayElement = document.getElementById('summary-msgraph-mail-delay-seconds');
     const delayRow = document.getElementById('summary-msgraph-mail-delay-row');
+    const mailEnabled = Boolean(capabilities.send_mail);
+    if (mailModeRow) {
+      mailModeRow.classList.toggle('d-none', !mailEnabled);
+    }
     if (modeElement) {
       modeElement.textContent = this.formatMsGraphMailSendMode(mailConfig.msgraph_mail_send_mode);
     }
@@ -4685,13 +4811,18 @@ export class PluginModalStepper {
       delayElement.textContent = `${mailConfig.msgraph_mail_delay_seconds} seconds`;
     }
     if (delayRow) {
-      delayRow.classList.toggle('d-none', mailConfig.msgraph_mail_send_mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+      delayRow.classList.toggle('d-none', !mailEnabled || mailConfig.msgraph_mail_send_mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
     }
 
     const calendarConfig = this.getMsGraphCalendarSendConfiguration();
+    const calendarModeRow = document.getElementById('summary-msgraph-calendar-mode-row');
     const calendarModeElement = document.getElementById('summary-msgraph-calendar-send-mode');
     const calendarDelayElement = document.getElementById('summary-msgraph-calendar-delay-seconds');
     const calendarDelayRow = document.getElementById('summary-msgraph-calendar-delay-row');
+    const calendarEnabled = Boolean(capabilities.create_calendar_invite);
+    if (calendarModeRow) {
+      calendarModeRow.classList.toggle('d-none', !calendarEnabled);
+    }
     if (calendarModeElement) {
       calendarModeElement.textContent = this.formatMsGraphCalendarSendMode(calendarConfig.msgraph_calendar_send_mode);
     }
@@ -4699,7 +4830,7 @@ export class PluginModalStepper {
       calendarDelayElement.textContent = `${calendarConfig.msgraph_calendar_delay_seconds} seconds`;
     }
     if (calendarDelayRow) {
-      calendarDelayRow.classList.toggle('d-none', calendarConfig.msgraph_calendar_send_mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
+      calendarDelayRow.classList.toggle('d-none', !calendarEnabled || calendarConfig.msgraph_calendar_send_mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
     }
     msGraphSection.style.display = '';
   }

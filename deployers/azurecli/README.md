@@ -204,7 +204,7 @@ Default model behavior:
 - Embedding deployment defaults to `text-embedding-3-small` in Azure Commercial and `text-embedding-ada-002` in `usgovvirginia`
 - Deployment capacities default to `100` for GPT and `80` for embeddings
 
-After the infrastructure deployment completes, review the resulting Azure OpenAI deployments in the Simple Chat UI under `Admin Settings` > `AI Models` > `GPT Configuration` and `Embeddings Configuration`. For the full manual path, see `docs/setup_instructions_manual.md` and `docs/admin_configuration.md`.
+After the infrastructure deployment completes, review the resulting Azure OpenAI deployments in the Simple Chat UI under `Admin Settings` > `AI Models` > `Chat Model` and `Embeddings Configuration`. For the full manual path, see `docs/setup_instructions_manual.md` and `docs/admin_configuration.md`.
 
 ## Container build behavior
 

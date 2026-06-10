@@ -238,7 +238,7 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
                             function_name: 'send_mail',
                             function_result: {
                                 error: 'consent_required',
-                                message: 'User consent is required to access this Microsoft Graph resource.',
+                                message: 'User consent is required to access Microsoft 365 resources like Outlook email, Calendar, OneDrive, or SharePoint.',
                                 operation: 'send_mail',
                                 consent_url: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=test&scope=Mail.Send',
                                 scopes: ['Mail.Send'],
@@ -433,7 +433,7 @@ def test_assistant_inline_export_actions_follow_latest_user_request(playwright):
         expect(graph_consent_message.locator('.inline-open-email-btn')).to_have_count(0)
         expect(graph_consent_message.locator('.dropdown-open-email-btn')).to_have_count(0)
         expect(graph_consent_message.locator('.msgraph-consent-action-card')).to_be_visible()
-        expect(graph_consent_message.locator('.msgraph-consent-btn')).to_have_text('Grant Microsoft Graph access')
+        expect(graph_consent_message.locator('.msgraph-consent-btn')).to_have_text('Grant access')
         expect(graph_consent_message.locator('.msgraph-test-access-btn')).to_have_text('Test access')
 
         powerpoint_button.click()

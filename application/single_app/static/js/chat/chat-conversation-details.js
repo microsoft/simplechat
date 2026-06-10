@@ -990,9 +990,26 @@ function getAvailableModelOptions() {
   }
   let options = '';
   for (const opt of globalSelect.options) {
-    options += `<option value="${escapeHtml(opt.value)}"${opt.selected ? ' selected' : ''}>${escapeHtml(opt.text)}</option>`;
+    options += `
+      <option value="${escapeHtml(opt.value)}"
+              data-selection-key="${escapeHtml(opt.dataset.selectionKey || '')}"
+              data-model-id="${escapeHtml(opt.dataset.modelId || '')}"
+              data-deployment-name="${escapeHtml(opt.dataset.deploymentName || '')}"
+              data-endpoint-id="${escapeHtml(opt.dataset.endpointId || '')}"
+              data-provider="${escapeHtml(opt.dataset.provider || '')}"
+              ${opt.selected ? 'selected' : ''}>${escapeHtml(opt.text)}</option>`;
   }
   return options || '<option value="">Default</option>';
+}
+
+function getSummaryModelSelection(selectElement) {
+  const selectedOption = selectElement?.options?.[selectElement.selectedIndex];
+  return {
+    modelDeployment: selectedOption?.dataset?.deploymentName || selectElement?.value || '',
+    modelEndpointId: selectedOption?.dataset?.endpointId || '',
+    modelId: selectedOption?.dataset?.modelId || '',
+    modelProvider: selectedOption?.dataset?.provider || '',
+  };
 }
 
 /**
@@ -1000,7 +1017,7 @@ function getAvailableModelOptions() {
  * @param {string} conversationId - The conversation ID
  * @param {string} modelDeployment - Selected model deployment
  */
-async function handleGenerateSummary(conversationId, modelDeployment) {
+async function handleGenerateSummary(conversationId, modelDeployment, modelEndpointId = '', modelId = '', modelProvider = '') {
   const cardBody = document.getElementById('summary-card-body');
   if (!cardBody) {
     return;
@@ -1019,7 +1036,12 @@ async function handleGenerateSummary(conversationId, modelDeployment) {
     const response = await fetch(`/api/conversations/${conversationId}/summary`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model_deployment: modelDeployment })
+      body: JSON.stringify({
+        model_deployment: modelDeployment,
+        model_endpoint_id: modelEndpointId,
+        model_id: modelId,
+        model_provider: modelProvider,
+      })
     });
 
     if (!response.ok) {
@@ -1080,9 +1102,14 @@ document.addEventListener('click', function(e) {
     const btn = e.target.closest('#generate-summary-btn');
     const cid = btn.getAttribute('data-conversation-id');
     const modelSelect = document.getElementById('summary-model-select');
-    const selectedOption = modelSelect ? modelSelect.options[modelSelect.selectedIndex] : null;
-    const model = selectedOption?.dataset?.deploymentName || (modelSelect ? modelSelect.value : '');
-    handleGenerateSummary(cid, model);
+    const selection = getSummaryModelSelection(modelSelect);
+    handleGenerateSummary(
+      cid,
+      selection.modelDeployment,
+      selection.modelEndpointId,
+      selection.modelId,
+      selection.modelProvider
+    );
     return;
   }
 
@@ -1093,9 +1120,14 @@ document.addEventListener('click', function(e) {
     const cid = btn.getAttribute('data-conversation-id');
     // Use the currently selected global model for regeneration
     const globalSelect = document.getElementById('model-select');
-    const selectedOption = globalSelect ? globalSelect.options[globalSelect.selectedIndex] : null;
-    const model = selectedOption?.dataset?.deploymentName || (globalSelect ? globalSelect.value : '');
-    handleGenerateSummary(cid, model);
+    const selection = getSummaryModelSelection(globalSelect);
+    handleGenerateSummary(
+      cid,
+      selection.modelDeployment,
+      selection.modelEndpointId,
+      selection.modelId,
+      selection.modelProvider
+    );
     return;
   }
 

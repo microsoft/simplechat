@@ -60,6 +60,8 @@ from functions_document_comparison import run_document_comparison
 from functions_debug import debug_print
 from functions_document_analysis import run_document_analysis
 from functions_file_sync import get_authorized_sync_source, queue_file_sync_source_run
+from functions_group import get_group_model_endpoints
+from functions_group_workflows import save_group_workflow_run, save_group_workflow_run_item
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_tool_label,
@@ -90,6 +92,26 @@ DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH = 220
 TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
+
+
+def _get_workflow_scope(workflow):
+    return 'group' if str((workflow or {}).get('group_id') or '').strip() else 'personal'
+
+
+def _get_workflow_group_id(workflow):
+    return str((workflow or {}).get('group_id') or '').strip()
+
+
+def _save_workflow_run_record(workflow, run_record):
+    if _get_workflow_scope(workflow) == 'group':
+        return save_group_workflow_run(_get_workflow_group_id(workflow), run_record)
+    return save_personal_workflow_run(str((workflow or {}).get('user_id') or '').strip(), run_record)
+
+
+def _save_workflow_run_item_record(workflow, item_record):
+    if _get_workflow_scope(workflow) == 'group':
+        return save_group_workflow_run_item(_get_workflow_group_id(workflow), item_record)
+    return save_personal_workflow_run_item(str((workflow or {}).get('user_id') or '').strip(), item_record)
 
 
 def _utc_now():
@@ -3115,13 +3137,21 @@ def _ensure_execution_context(user_id):
 def _ensure_workflow_conversation(workflow):
     conversation_id = str(workflow.get('conversation_id') or '').strip()
     user_id = str(workflow.get('user_id') or '').strip()
+    group_id = _get_workflow_group_id(workflow)
+    workspace_type = _get_workflow_scope(workflow)
     title = f"Workflow: {workflow.get('name') or 'Untitled Workflow'}"
 
     if conversation_id:
         try:
             conversation = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
             cleaned = {key: value for key, value in conversation.items() if not str(key).startswith('_')}
-            if cleaned.get('title') != title:
+            needs_update = cleaned.get('title') != title
+            if workspace_type == 'group' and cleaned.get('group_id') != group_id:
+                cleaned['group_id'] = group_id
+                cleaned['workspace_type'] = 'group'
+                cleaned['is_hidden'] = True
+                needs_update = True
+            if needs_update:
                 cleaned['title'] = title
                 cleaned['last_updated'] = _utc_now_iso()
                 cosmos_conversations_container.upsert_item(cleaned)
@@ -3139,8 +3169,10 @@ def _ensure_workflow_conversation(workflow):
         'tags': ['workflow'],
         'strict': False,
         'is_pinned': False,
-        'is_hidden': False,
+        'is_hidden': workspace_type == 'group',
         'chat_type': 'workflow',
+        'workspace_type': workspace_type,
+        'group_id': group_id or None,
         'workflow_id': workflow.get('id'),
         'has_unread_assistant_response': False,
         'last_unread_assistant_message_id': None,
@@ -3151,7 +3183,8 @@ def _ensure_workflow_conversation(workflow):
         user_id=user_id,
         conversation_id=conversation_id,
         title=title,
-        workspace_type='personal',
+        workspace_type=workspace_type,
+        group_id=group_id or None,
     )
     conversation['added_to_activity_log'] = True
     cosmos_conversations_container.upsert_item(conversation)
@@ -3181,6 +3214,8 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
     document_action = _get_document_action_config(workflow)
     metadata = {
         'source': 'workflow',
+        'workspace_type': _get_workflow_scope(workflow),
+        'group_id': _get_workflow_group_id(workflow) or None,
         'workflow': {
             'workflow_id': workflow.get('id'),
             'workflow_name': workflow.get('name'),
@@ -3206,6 +3241,8 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
         'content': workflow.get('task_prompt', ''),
         'timestamp': _utc_now_iso(),
         'model_deployment_name': None,
+        'workspace_type': _get_workflow_scope(workflow),
+        'group_id': _get_workflow_group_id(workflow) or None,
         'metadata': metadata,
     }
     cosmos_messages_container.upsert_item(message_doc)
@@ -3279,6 +3316,8 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     timestamp = _utc_now_iso()
     user_thread_info = (user_message_doc.get('metadata') or {}).get('thread_info') or {}
     document_action = _get_document_action_config(workflow)
+    workspace_type = _get_workflow_scope(workflow)
+    group_id = _get_workflow_group_id(workflow)
     raw_agent_citations = list(result.get('agent_citations') or [])
     web_search_citations = list(result.get('web_search_citations') or [])
     source_review_metadata = result.get('source_review') if isinstance(result.get('source_review'), dict) else {}
@@ -3303,8 +3342,12 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         'web_search_citations': web_search_citations,
         'agent_display_name': result.get('agent_display_name'),
         'agent_name': result.get('agent_name'),
+        'workspace_type': workspace_type,
+        'group_id': group_id or None,
         'metadata': {
             'source': 'workflow',
+            'workspace_type': workspace_type,
+            'group_id': group_id or None,
             'token_usage': result.get('token_usage'),
             'source_review': source_review_metadata,
             'workflow': {
@@ -3338,11 +3381,12 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 token_type='chat',
                 total_tokens=token_usage.get('total_tokens'),
                 model=result.get('model_deployment_name'),
-                workspace_type='personal',
+                workspace_type=workspace_type,
                 prompt_tokens=token_usage.get('prompt_tokens'),
                 completion_tokens=token_usage.get('completion_tokens'),
                 conversation_id=conversation.get('id'),
                 message_id=assistant_message_id,
+                group_id=group_id or None,
                 additional_context={
                     'workflow_id': workflow.get('id'),
                     'run_id': run_id,
@@ -3356,6 +3400,10 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     conversation['last_updated'] = timestamp
     conversation['workflow_id'] = workflow.get('id')
     conversation['chat_type'] = 'workflow'
+    conversation['workspace_type'] = workspace_type
+    conversation['group_id'] = group_id or None
+    if workspace_type == 'group':
+        conversation['is_hidden'] = True
     conversation['has_unread_assistant_response'] = True
     conversation['last_unread_assistant_message_id'] = assistant_message_id
     conversation['last_unread_assistant_at'] = timestamp
@@ -3364,10 +3412,17 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     return assistant_doc
 
 
-def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings):
+def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group_id=None):
     candidates = []
-    user_settings = get_user_settings(user_id)
-    if settings.get('allow_user_custom_endpoints', False):
+    group_id = str(group_id or '').strip()
+    if group_id and settings.get('allow_group_custom_endpoints', False):
+        group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_id) or [])
+        for endpoint in group_endpoints:
+            item = dict(endpoint)
+            item['scope'] = 'group'
+            candidates.append(item)
+    elif settings.get('allow_user_custom_endpoints', False):
+        user_settings = get_user_settings(user_id)
         personal_endpoints, _ = normalize_model_endpoints(
             user_settings.get('settings', {}).get('personal_model_endpoints', []) or []
         )
@@ -3486,13 +3541,14 @@ def _build_legacy_default_client(settings):
 
 def _resolve_model_workflow_client(workflow, settings):
     user_id = str(workflow.get('user_id') or '').strip()
+    group_id = _get_workflow_group_id(workflow)
     binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
     endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
     model_id = str(workflow.get('model_id') or binding_summary.get('model_id') or '').strip()
     legacy_model_deployment = str(workflow.get('legacy_model_deployment') or '').strip()
 
     if endpoint_id and model_id:
-        return _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings)
+        return _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group_id=group_id)
 
     if legacy_model_deployment:
         client, _, provider = _build_legacy_default_client(settings)
@@ -3757,7 +3813,9 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
         'type': 'workflow_run_item',
         'item_type': 'document',
         'run_id': run_id,
+        'user_id': user_id,
         'workflow_id': workflow.get('id'),
+        'group_id': _get_workflow_group_id(workflow) or None,
         'workflow_name': workflow.get('name'),
         'document_id': document_id,
         'label': _document_label_from_file_sync(file_sync_result or {}, document_id),
@@ -3780,7 +3838,7 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
         item['started_at'] = now_iso
     if status in {'succeeded', 'failed', 'skipped'}:
         item['completed_at'] = now_iso
-    return save_personal_workflow_run_item(user_id, item)
+    return _save_workflow_run_item_record(workflow, item)
 
 
 def _initialize_document_run_items(workflow, run_id, action_config, file_sync_result=None):
@@ -4121,6 +4179,8 @@ def _execute_document_analysis_workflow(
             previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
             previous_workflow_id = getattr(g, 'workflow_id', None) if hasattr(g, 'workflow_id') else None
             previous_workflow_run_id = getattr(g, 'workflow_run_id', None) if hasattr(g, 'workflow_run_id') else None
+            previous_conversation_group_id = getattr(g, 'conversation_group_id', None) if hasattr(g, 'conversation_group_id') else None
+            previous_authorized_chat_context = getattr(g, 'authorized_chat_context', None) if hasattr(g, 'authorized_chat_context') else None
 
             g.force_enable_agents = True
             g.request_agent_info = dict(selected_agent)
@@ -4131,6 +4191,19 @@ def _execute_document_analysis_workflow(
                 g.conversation_id = conversation_id
             g.workflow_id = workflow.get('id') or ''
             g.workflow_run_id = run_id or ''
+            workflow_group_id = _get_workflow_group_id(workflow)
+            if workflow_group_id:
+                g.conversation_group_id = workflow_group_id
+                g.authorized_chat_context = {
+                    'user_id': user_id,
+                    'conversation_id': conversation_id,
+                    'active_group_ids': [workflow_group_id],
+                    'active_group_id': workflow_group_id,
+                    'active_public_workspace_ids': [],
+                    'active_public_workspace_id': None,
+                    'fact_memory_scope_id': workflow_group_id,
+                    'fact_memory_scope_type': 'group',
+                }
 
             try:
                 kernel = Kernel()
@@ -4252,6 +4325,16 @@ def _execute_document_analysis_workflow(
                 else:
                     g.workflow_run_id = previous_workflow_run_id
 
+                if previous_conversation_group_id is None and hasattr(g, 'conversation_group_id'):
+                    delattr(g, 'conversation_group_id')
+                else:
+                    g.conversation_group_id = previous_conversation_group_id
+
+                if previous_authorized_chat_context is None and hasattr(g, 'authorized_chat_context'):
+                    delattr(g, 'authorized_chat_context')
+                else:
+                    g.authorized_chat_context = previous_authorized_chat_context
+
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
     def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
@@ -4368,6 +4451,8 @@ def _execute_document_comparison_workflow(
             previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
             previous_workflow_id = getattr(g, 'workflow_id', None) if hasattr(g, 'workflow_id') else None
             previous_workflow_run_id = getattr(g, 'workflow_run_id', None) if hasattr(g, 'workflow_run_id') else None
+            previous_conversation_group_id = getattr(g, 'conversation_group_id', None) if hasattr(g, 'conversation_group_id') else None
+            previous_authorized_chat_context = getattr(g, 'authorized_chat_context', None) if hasattr(g, 'authorized_chat_context') else None
 
             g.force_enable_agents = True
             g.request_agent_info = dict(selected_agent)
@@ -4378,6 +4463,19 @@ def _execute_document_comparison_workflow(
                 g.conversation_id = conversation_id
             g.workflow_id = workflow.get('id') or ''
             g.workflow_run_id = run_id or ''
+            workflow_group_id = _get_workflow_group_id(workflow)
+            if workflow_group_id:
+                g.conversation_group_id = workflow_group_id
+                g.authorized_chat_context = {
+                    'user_id': user_id,
+                    'conversation_id': conversation_id,
+                    'active_group_ids': [workflow_group_id],
+                    'active_group_id': workflow_group_id,
+                    'active_public_workspace_ids': [],
+                    'active_public_workspace_id': None,
+                    'fact_memory_scope_id': workflow_group_id,
+                    'fact_memory_scope_type': 'group',
+                }
 
             try:
                 kernel = Kernel()
@@ -4490,6 +4588,16 @@ def _execute_document_comparison_workflow(
                     delattr(g, 'workflow_run_id')
                 else:
                     g.workflow_run_id = previous_workflow_run_id
+
+                if previous_conversation_group_id is None and hasattr(g, 'conversation_group_id'):
+                    delattr(g, 'conversation_group_id')
+                else:
+                    g.conversation_group_id = previous_conversation_group_id
+
+                if previous_authorized_chat_context is None and hasattr(g, 'authorized_chat_context'):
+                    delattr(g, 'authorized_chat_context')
+                else:
+                    g.authorized_chat_context = previous_authorized_chat_context
 
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
@@ -4642,6 +4750,8 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
         previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
         previous_workflow_id = getattr(g, 'workflow_id', None) if hasattr(g, 'workflow_id') else None
         previous_workflow_run_id = getattr(g, 'workflow_run_id', None) if hasattr(g, 'workflow_run_id') else None
+        previous_conversation_group_id = getattr(g, 'conversation_group_id', None) if hasattr(g, 'conversation_group_id') else None
+        previous_authorized_chat_context = getattr(g, 'authorized_chat_context', None) if hasattr(g, 'authorized_chat_context') else None
 
         g.force_enable_agents = True
         g.request_agent_info = dict(selected_agent)
@@ -4652,6 +4762,19 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
             g.conversation_id = conversation_id
         g.workflow_id = workflow.get('id') or ''
         g.workflow_run_id = run_id or ''
+        workflow_group_id = _get_workflow_group_id(workflow)
+        if workflow_group_id:
+            g.conversation_group_id = workflow_group_id
+            g.authorized_chat_context = {
+                'user_id': user_id,
+                'conversation_id': conversation_id,
+                'active_group_ids': [workflow_group_id],
+                'active_group_id': workflow_group_id,
+                'active_public_workspace_ids': [],
+                'active_public_workspace_id': None,
+                'fact_memory_scope_id': workflow_group_id,
+                'fact_memory_scope_type': 'group',
+            }
 
         if thought_tracker and run_id:
             agent_label = selected_agent.get('display_name') or selected_agent.get('name') or 'Agent'
@@ -4755,11 +4878,23 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
             else:
                 g.workflow_run_id = previous_workflow_run_id
 
+            if previous_conversation_group_id is None and hasattr(g, 'conversation_group_id'):
+                delattr(g, 'conversation_group_id')
+            else:
+                g.conversation_group_id = previous_conversation_group_id
 
-def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
-    """Execute a personal workflow and persist a run record."""
+            if previous_authorized_chat_context is None and hasattr(g, 'authorized_chat_context'):
+                delattr(g, 'authorized_chat_context')
+            else:
+                g.authorized_chat_context = previous_authorized_chat_context
+
+
+def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None):
+    """Execute a workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
     user_id = str(workflow.get('user_id') or '').strip()
+    group_id = _get_workflow_group_id(workflow)
+    workspace_type = _get_workflow_scope(workflow)
     workflow_id = str(workflow.get('id') or '').strip()
     run_id = str(uuid.uuid4())
     started_at = _utc_now_iso()
@@ -4772,6 +4907,10 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
         'runner_type': workflow.get('runner_type'),
         'trigger_type': workflow.get('trigger_type'),
         'trigger_source': trigger_source,
+        'workspace_type': workspace_type,
+        'group_id': group_id or None,
+        'user_id': user_id,
+        'triggered_by': str(actor_user_id or user_id or '').strip(),
         'status': 'running',
         'success': False,
         'started_at': started_at,
@@ -4780,7 +4919,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
         'response_preview': '',
         'error': '',
     }
-    save_personal_workflow_run(user_id, run_record)
+    _save_workflow_run_record(workflow, run_record)
 
     conversation = None
     thought_tracker = None
@@ -4790,7 +4929,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
         file_sync_result = _execute_workflow_file_sync(workflow, run_id, trigger_source)
         if file_sync_result and file_sync_result.get('enabled'):
             run_record['file_sync'] = file_sync_result
-            save_personal_workflow_run(user_id, run_record)
+            _save_workflow_run_record(workflow, run_record)
 
             if not file_sync_result.get('should_continue', True):
                 completed_at = _utc_now_iso()
@@ -4802,7 +4941,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
                     'response_preview': response_preview,
                     'error': '',
                 })
-                save_personal_workflow_run(user_id, run_record)
+                _save_workflow_run_record(workflow, run_record)
                 log_workflow_run(
                     user_id=user_id,
                     workflow_id=workflow_id,
@@ -4812,6 +4951,8 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
                     run_id=run_id,
                     conversation_id=run_record.get('conversation_id'),
                     runner_type=workflow.get('runner_type'),
+                    workspace_type=workspace_type,
+                    group_id=group_id or None,
                 )
                 return {
                     'success': True,
@@ -4841,7 +4982,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
         )
         run_record['user_message_id'] = user_message_doc.get('id')
         run_record['assistant_message_id'] = assistant_message_id
-        save_personal_workflow_run(user_id, run_record)
+        _save_workflow_run_record(workflow, run_record)
 
         _add_workflow_activity_thought(
             thought_tracker,
@@ -4951,7 +5092,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             'response_preview': _build_response_preview(execution_result.get('reply')),
             'error': '',
         })
-        save_personal_workflow_run(user_id, run_record)
+        _save_workflow_run_record(workflow, run_record)
         log_workflow_run(
             user_id=user_id,
             workflow_id=workflow_id,
@@ -4961,6 +5102,8 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             run_id=run_id,
             conversation_id=conversation.get('id'),
             runner_type=workflow.get('runner_type'),
+            workspace_type=workspace_type,
+            group_id=group_id or None,
         )
         alert_notification = _create_workflow_priority_alert(
             execution_workflow,
@@ -5007,7 +5150,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             'file_sync': file_sync_result or {},
             'response_preview': '',
         })
-        save_personal_workflow_run(user_id, run_record)
+        _save_workflow_run_record(workflow, run_record)
         log_workflow_run(
             user_id=user_id,
             workflow_id=workflow_id,
@@ -5018,6 +5161,8 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
             conversation_id=run_record.get('conversation_id'),
             runner_type=workflow.get('runner_type'),
             error=str(exc),
+            workspace_type=workspace_type,
+            group_id=group_id or None,
         )
         log_event(
             f'[WorkflowRunner] Workflow execution failed: {exc}',
@@ -5050,3 +5195,16 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None):
                 'conversation_id': run_record.get('conversation_id'),
             },
         }
+
+
+def run_group_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None):
+    """Execute a group workflow and persist group-scoped run records."""
+    workflow = workflow if isinstance(workflow, dict) else {}
+    if not _get_workflow_group_id(workflow):
+        raise ValueError('Group workflow execution requires a group id.')
+    return run_personal_workflow(
+        workflow,
+        trigger_source=trigger_source,
+        user_roles=user_roles,
+        actor_user_id=actor_user_id,
+    )

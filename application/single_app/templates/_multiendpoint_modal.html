@@ -26,22 +26,39 @@
                         </div>
                     </div>
                     <div class="col-md-6">
-                        <label for="model-endpoint-endpoint" class="form-label">Endpoint Fully Qualified Domain Name (FQDN)</label>
+                        <label for="model-endpoint-endpoint" class="form-label" id="model-endpoint-endpoint-label">Endpoint Fully Qualified Domain Name (FQDN)</label>
                         <input type="text" class="form-control" id="model-endpoint-endpoint" />
+                        <div class="form-text" id="model-endpoint-endpoint-help">For Azure OpenAI, paste the resource endpoint.</div>
                     </div>
                     <div class="col-md-3" id="model-endpoint-project-api-version-group">
                         <label for="model-endpoint-project-api-version" class="form-label">Project API Version</label>
-                        <input type="text" class="form-control" id="model-endpoint-project-api-version" />
-                        <div class="form-text">Project API versions use the v1 format (for example, v1).</div>
+                        <select class="form-select" id="model-endpoint-project-api-version">
+                            <option value="v1">v1</option>
+                            <option value="v2">v2</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                        <input type="text" class="form-control mt-2 d-none" id="model-endpoint-project-api-version-custom" placeholder="Enter project API version" />
+                        <div class="form-text">Project API versions use the v1 format. Choose Custom only when your Foundry project requires a different supported value.</div>
                     </div>
                     <div class="col-md-3" id="model-endpoint-openai-api-version-group">
                         <label for="model-endpoint-openai-api-version" class="form-label">OpenAI API Version</label>
-                        <input type="text" class="form-control" id="model-endpoint-openai-api-version" />
-                        <div class="form-text">OpenAI API versions use a dated format. For New Foundry, this value is used for Responses API calls and is inherited by the agent modal. No default is applied for New Foundry, so enter the supported version for your Foundry project explicitly.</div>
+                        <select class="form-select" id="model-endpoint-openai-api-version">
+                            <option value="v1">Endpoint default (v1)</option>
+                            <option value="preview">preview</option>
+                            <option value="latest">latest</option>
+                            <option value="2025-11-15-preview">2025-11-15-preview</option>
+                            <option value="2024-10-01-preview">2024-10-01-preview</option>
+                            <option value="2024-05-01-preview">2024-05-01-preview</option>
+                            <option value="2024-02-01">2024-02-01</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                        <input type="text" class="form-control mt-2 d-none" id="model-endpoint-openai-api-version-custom" placeholder="Enter OpenAI API version" />
+                        <div class="form-text">For New Foundry model inference, Endpoint default (v1) is used for OpenAI-compatible models. Claude deployments are detected from the model name and use the Anthropic messages protocol.</div>
                     </div>
                     <div class="col-md-6" id="model-endpoint-project-group">
                         <label for="model-endpoint-project-name" class="form-label">Foundry Project Name</label>
                         <input type="text" class="form-control" id="model-endpoint-project-name" />
+                        <div class="form-text">If the project endpoint includes /api/projects/&lt;project&gt;, the project name is detected automatically.</div>
                     </div>
                     <div class="col-md-6" id="model-endpoint-subscription-group">
                         <label for="model-endpoint-subscription-id" class="form-label">Subscription ID</label>

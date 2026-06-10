@@ -10,6 +10,8 @@ const pageState = {
 };
 
 const BOTTOM_SCROLL_THRESHOLD = 24;
+const MICROSOFT_365_CONSENT_MESSAGE = "User consent is required to access Microsoft 365 resources like Outlook email, Calendar, OneDrive, or SharePoint.";
+const MICROSOFT_365_ACCESS_PENDING_MESSAGE = "Microsoft 365 access is not available yet. Grant access in the popup, then test access again.";
 
 const mainContentEl = document.getElementById("main-content");
 const pageEl = document.querySelector(".workflow-activity-page");
@@ -177,7 +179,7 @@ async function testWorkflowMsGraphAccess(scopes = []) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload.access_granted !== true) {
-        const error = new Error(payload.message || payload.error || "Microsoft Graph access is not available yet.");
+        const error = new Error(payload.message || payload.error || MICROSOFT_365_ACCESS_PENDING_MESSAGE);
         error.payload = payload;
         throw error;
     }
@@ -193,20 +195,20 @@ async function testWorkflowMsGraphConsentAccess(container, prompt, scopes, messa
         button.disabled = true;
     });
     if (messageEl) {
-        messageEl.textContent = "Checking Microsoft Graph access...";
+        messageEl.textContent = "Checking Microsoft 365 access...";
     }
 
     try {
         await testWorkflowMsGraphAccess(scopes);
         prompt.remove();
-        setPendingActionInlineMessage(container, "Microsoft Graph access verified. You can send or cancel now.", "success");
+        setPendingActionInlineMessage(container, "Microsoft 365 access verified. You can send or cancel now.", "success");
         container.querySelectorAll("button").forEach(button => {
             button.disabled = false;
         });
     } catch (error) {
         const payload = error.payload || {};
         if (messageEl) {
-            messageEl.textContent = payload.message || error.message || "Microsoft Graph access is not available yet.";
+            messageEl.textContent = payload.message || error.message || MICROSOFT_365_ACCESS_PENDING_MESSAGE;
         }
         buttons.forEach(button => {
             button.disabled = false;
@@ -230,7 +232,7 @@ function renderWorkflowMsGraphConsentPrompt(container, payload) {
 
     const message = document.createElement("div");
     message.className = "small text-muted";
-    message.textContent = normalizeText(payload?.message) || "Microsoft Graph needs permission before this action can continue.";
+    message.textContent = MICROSOFT_365_CONSENT_MESSAGE;
     prompt.appendChild(message);
 
     const grantButton = createPendingActionButton("Grant access", "bi bi-shield-lock me-1", "btn btn-sm btn-outline-primary");
@@ -248,7 +250,7 @@ function renderWorkflowMsGraphConsentPrompt(container, payload) {
 
     const hint = document.createElement("div");
     hint.className = "small text-muted";
-    hint.textContent = "After access is granted in the popup, test access here.";
+    hint.textContent = "After granting access, select Test access. When it succeeds, select Send again.";
     prompt.appendChild(hint);
 
     container.appendChild(prompt);
@@ -258,14 +260,14 @@ function renderWorkflowMsGraphConsentPrompt(container, payload) {
 async function submitWorkflowPendingAction(actionId, routeAction, container) {
     const normalizedActionId = normalizeText(actionId);
     if (!normalizedActionId) {
-        setPendingActionInlineMessage(container, "Missing Microsoft Graph action metadata.", "danger");
+        setPendingActionInlineMessage(container, "Missing Microsoft 365 action metadata.", "danger");
         return;
     }
 
     container.querySelectorAll("button").forEach(button => {
         button.disabled = true;
     });
-    setPendingActionInlineMessage(container, "Updating Microsoft Graph action...", "muted");
+    setPendingActionInlineMessage(container, "Updating Microsoft 365 action...", "muted");
 
     try {
         const response = await fetch(`/api/msgraph/pending-actions/${encodeURIComponent(normalizedActionId)}/${routeAction}`, {
@@ -279,11 +281,11 @@ async function submitWorkflowPendingAction(actionId, routeAction, container) {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
             renderWorkflowMsGraphConsentPrompt(container, payload);
-            throw new Error(payload.message || payload.error || "Unable to update the Microsoft Graph action.");
+            throw new Error(payload.message || payload.error || "Unable to update the Microsoft 365 action.");
         }
         await loadSnapshot();
     } catch (error) {
-        setPendingActionInlineMessage(container, error.message || "Unable to update the Microsoft Graph action.", "danger");
+        setPendingActionInlineMessage(container, error.message || "Unable to update the Microsoft 365 action.", "danger");
         container.querySelectorAll("button").forEach(button => {
             button.disabled = false;
         });
@@ -310,7 +312,7 @@ function renderPendingActionControls(activity) {
 
     const heading = document.createElement("div");
     heading.className = "workflow-pending-action-heading";
-    heading.textContent = isDelayed ? "Delayed Microsoft Graph action" : "Microsoft Graph action awaiting review";
+    heading.textContent = isDelayed ? "Delayed Microsoft 365 action" : "Microsoft 365 action awaiting review";
     pendingActionControlsEl.appendChild(heading);
 
     const detail = document.createElement("div");
@@ -370,11 +372,21 @@ function getQueryParam(name) {
     return normalizeText(params.get(name));
 }
 
+function getActivityScope() {
+    return normalizeText(getQueryParam("scope")).toLowerCase() === "group" ? "group" : "personal";
+}
+
+function buildActivityApiPath(suffix = "") {
+    const basePath = getActivityScope() === "group" ? "/api/group/workflows/activity" : "/api/user/workflows/activity";
+    return `${basePath}${suffix}`;
+}
+
 function buildApiUrl(path) {
     const url = new URL(path, window.location.origin);
     const conversationId = getQueryParam("conversationId");
     const workflowId = getQueryParam("workflowId");
     const runId = getQueryParam("runId");
+    const groupId = getQueryParam("groupId");
 
     if (conversationId) {
         url.searchParams.set("conversation_id", conversationId);
@@ -384,6 +396,9 @@ function buildApiUrl(path) {
     }
     if (runId) {
         url.searchParams.set("run_id", runId);
+    }
+    if (getActivityScope() === "group" && groupId) {
+        url.searchParams.set("group_id", groupId);
     }
 
     return url.toString();
@@ -794,7 +809,7 @@ function selectActivity(activityId) {
 }
 
 async function loadSnapshot() {
-    const response = await fetch(buildApiUrl("/api/user/workflows/activity"), {
+    const response = await fetch(buildApiUrl(buildActivityApiPath()), {
         credentials: "same-origin",
     });
     const payload = await response.json().catch(() => ({}));
@@ -831,7 +846,7 @@ function startEventStream() {
         return;
     }
 
-    const eventSource = new EventSource(buildApiUrl("/api/user/workflows/activity/stream"));
+    const eventSource = new EventSource(buildApiUrl(buildActivityApiPath("/stream")));
     eventSource.onmessage = event => {
         if (!event?.data) {
             return;

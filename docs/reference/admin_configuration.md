@@ -70,7 +70,7 @@ Controls basic application appearance and branding.
 - Can include links, images, and styling
 - Useful for announcements or instructions
 
-### 2. GPT Configuration
+### 2. Chat Model
 
 Configure Azure OpenAI endpoints for chat models.
 

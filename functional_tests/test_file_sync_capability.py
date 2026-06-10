@@ -2,7 +2,7 @@
 # test_file_sync_capability.py
 """
 Functional test for File Sync capability wiring.
-Version: 0.241.177
+Version: 0.241.178
 Implemented in: 0.241.042
 
 This test ensures File Sync storage, settings, routes, scheduler hooks, and
@@ -26,7 +26,7 @@ def read_text(relative_path):
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.177"' in config_text
+    assert 'VERSION = "0.241.178"' in config_text
 
     expected_containers = [
         "personal_file_sync_sources",
@@ -262,6 +262,7 @@ def test_file_sync_admin_and_sidebar_discovery():
     assert 'id="file_sync_visible_source_type_google_workspace" value="google_workspace" disabled' in admin_template
     assert 'name="file_sync_visible_source_types" value="onedrive"' not in admin_template
     assert "OneDrive, SharePoint, and Google Workspace connectors are coming soon" in admin_template
+    assert admin_template.count("Coming Soon.") >= 3
     assert "data-file-sync-admin-target" in admin_template
     assert "file-sync-admin-manager-modal" in admin_template
     assert "/api/admin/file-sync/users/search" in backend_route

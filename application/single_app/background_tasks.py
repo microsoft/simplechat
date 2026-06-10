@@ -34,8 +34,13 @@ from functions_personal_workflows import (
     get_personal_workflow,
     update_personal_workflow_runtime_fields,
 )
-from functions_settings import get_settings, update_settings
-from functions_workflow_runner import run_personal_workflow
+from functions_group_workflows import (
+    get_due_group_workflows,
+    get_group_workflow,
+    update_group_workflow_runtime_fields,
+)
+from functions_settings import get_settings, is_group_workflows_enabled_for_group, update_settings
+from functions_workflow_runner import run_group_workflow, run_personal_workflow
 
 
 def _get_lock_holder_id():
@@ -467,87 +472,159 @@ def run_cosmos_throughput_autoscale_loop():
 
 
 def check_due_workflows_once():
-    """Execute scheduled personal workflows that are due."""
+    """Execute scheduled personal and group workflows that are due."""
     settings = get_settings()
-    if not settings.get('allow_user_workflows', False):
-        return []
-
-    due_workflows = get_due_personal_workflows(limit=20)
-    if not due_workflows:
-        return []
-
     results = []
-    for workflow in due_workflows:
-        workflow_id = str(workflow.get('id') or '').strip()
-        user_id = str(workflow.get('user_id') or '').strip()
-        if not workflow_id or not user_id:
-            continue
 
-        lock_document = acquire_distributed_task_lock(f'workflow_run_{workflow_id}', lease_seconds=900)
-        if not lock_document:
-            continue
-
-        refreshed_workflow = None
-        try:
-            refreshed_workflow = get_personal_workflow(user_id, workflow_id)
-            if not refreshed_workflow:
+    if settings.get('allow_user_workflows', False):
+        due_workflows = get_due_personal_workflows(limit=20)
+        for workflow in due_workflows:
+            workflow_id = str(workflow.get('id') or '').strip()
+            user_id = str(workflow.get('user_id') or '').strip()
+            if not workflow_id or not user_id:
                 continue
-            trigger_type = str(refreshed_workflow.get('trigger_type') or '').strip().lower()
-            if trigger_type not in {'interval', 'file_sync'} or not refreshed_workflow.get('is_enabled', False):
+
+            lock_document = acquire_distributed_task_lock(f'workflow_run_{workflow_id}', lease_seconds=900)
+            if not lock_document:
                 continue
-            trigger_source = 'file_sync_monitor' if trigger_type == 'file_sync' else 'scheduled'
 
-            next_run_at = refreshed_workflow.get('next_run_at')
-            if next_run_at:
-                try:
-                    if datetime.fromisoformat(next_run_at) > datetime.now(timezone.utc):
-                        continue
-                except Exception:
-                    pass
+            refreshed_workflow = None
+            try:
+                refreshed_workflow = get_personal_workflow(user_id, workflow_id)
+                if not refreshed_workflow:
+                    continue
+                trigger_type = str(refreshed_workflow.get('trigger_type') or '').strip().lower()
+                if trigger_type not in {'interval', 'file_sync'} or not refreshed_workflow.get('is_enabled', False):
+                    continue
+                trigger_source = 'file_sync_monitor' if trigger_type == 'file_sync' else 'scheduled'
 
-            started_at = datetime.now(timezone.utc).isoformat()
-            update_personal_workflow_runtime_fields(
-                user_id,
-                workflow_id,
-                {
-                    'status': 'running',
-                    'last_run_started_at': started_at,
-                    'last_run_trigger_source': trigger_source,
-                    'last_run_error': '',
-                },
-            )
+                next_run_at = refreshed_workflow.get('next_run_at')
+                if next_run_at:
+                    try:
+                        if datetime.fromisoformat(next_run_at) > datetime.now(timezone.utc):
+                            continue
+                    except Exception:
+                        pass
 
-            result = run_personal_workflow(refreshed_workflow, trigger_source=trigger_source)
-            update_fields = dict(result.get('workflow_updates') or {})
-            update_fields['status'] = 'idle'
-            update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
-            update_personal_workflow_runtime_fields(user_id, workflow_id, update_fields)
-            results.append({'workflow_id': workflow_id, 'success': bool(result.get('success'))})
-        except Exception as exc:
-            log_event(
-                f"[WorkflowScheduler] Error executing workflow {workflow_id}: {exc}",
-                extra={
-                    'workflow_id': workflow_id,
-                    'user_id': user_id,
-                },
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            if refreshed_workflow:
+                started_at = datetime.now(timezone.utc).isoformat()
                 update_personal_workflow_runtime_fields(
                     user_id,
                     workflow_id,
                     {
-                        'status': 'idle',
-                        'last_run_status': 'failed',
-                        'last_run_error': str(exc),
-                        'last_run_at': datetime.now(timezone.utc).isoformat(),
-                        'last_run_trigger_source': 'file_sync_monitor' if refreshed_workflow.get('trigger_type') == 'file_sync' else 'scheduled',
-                        'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
+                        'status': 'running',
+                        'last_run_started_at': started_at,
+                        'last_run_trigger_source': trigger_source,
+                        'last_run_error': '',
                     },
                 )
-        finally:
-            release_distributed_task_lock(lock_document)
+
+                result = run_personal_workflow(refreshed_workflow, trigger_source=trigger_source)
+                update_fields = dict(result.get('workflow_updates') or {})
+                update_fields['status'] = 'idle'
+                update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
+                update_personal_workflow_runtime_fields(user_id, workflow_id, update_fields)
+                results.append({'scope': 'personal', 'workflow_id': workflow_id, 'success': bool(result.get('success'))})
+            except Exception as exc:
+                log_event(
+                    f"[WorkflowScheduler] Error executing workflow {workflow_id}: {exc}",
+                    extra={
+                        'workflow_id': workflow_id,
+                        'user_id': user_id,
+                    },
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                if refreshed_workflow:
+                    update_personal_workflow_runtime_fields(
+                        user_id,
+                        workflow_id,
+                        {
+                            'status': 'idle',
+                            'last_run_status': 'failed',
+                            'last_run_error': str(exc),
+                            'last_run_at': datetime.now(timezone.utc).isoformat(),
+                            'last_run_trigger_source': 'file_sync_monitor' if refreshed_workflow.get('trigger_type') == 'file_sync' else 'scheduled',
+                            'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
+                        },
+                    )
+            finally:
+                release_distributed_task_lock(lock_document)
+
+    if settings.get('allow_group_workflows', False):
+        due_group_workflows = get_due_group_workflows(limit=20)
+        for workflow in due_group_workflows:
+            workflow_id = str(workflow.get('id') or '').strip()
+            group_id = str(workflow.get('group_id') or '').strip()
+            if not workflow_id or not group_id:
+                continue
+            if not is_group_workflows_enabled_for_group(settings, group_id):
+                continue
+
+            lock_document = acquire_distributed_task_lock(f'group_workflow_run_{group_id}_{workflow_id}', lease_seconds=900)
+            if not lock_document:
+                continue
+
+            refreshed_workflow = None
+            try:
+                refreshed_workflow = get_group_workflow(group_id, workflow_id)
+                if not refreshed_workflow:
+                    continue
+                trigger_type = str(refreshed_workflow.get('trigger_type') or '').strip().lower()
+                if trigger_type not in {'interval', 'file_sync'} or not refreshed_workflow.get('is_enabled', False):
+                    continue
+                trigger_source = 'file_sync_monitor' if trigger_type == 'file_sync' else 'scheduled'
+
+                next_run_at = refreshed_workflow.get('next_run_at')
+                if next_run_at:
+                    try:
+                        if datetime.fromisoformat(next_run_at) > datetime.now(timezone.utc):
+                            continue
+                    except Exception:
+                        pass
+
+                started_at = datetime.now(timezone.utc).isoformat()
+                update_group_workflow_runtime_fields(
+                    group_id,
+                    workflow_id,
+                    {
+                        'status': 'running',
+                        'last_run_started_at': started_at,
+                        'last_run_trigger_source': trigger_source,
+                        'last_run_error': '',
+                    },
+                )
+
+                result = run_group_workflow(refreshed_workflow, trigger_source=trigger_source)
+                update_fields = dict(result.get('workflow_updates') or {})
+                update_fields['status'] = 'idle'
+                update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
+                update_group_workflow_runtime_fields(group_id, workflow_id, update_fields)
+                results.append({'scope': 'group', 'group_id': group_id, 'workflow_id': workflow_id, 'success': bool(result.get('success'))})
+            except Exception as exc:
+                log_event(
+                    f"[WorkflowScheduler] Error executing group workflow {workflow_id}: {exc}",
+                    extra={
+                        'workflow_id': workflow_id,
+                        'group_id': group_id,
+                    },
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                if refreshed_workflow:
+                    update_group_workflow_runtime_fields(
+                        group_id,
+                        workflow_id,
+                        {
+                            'status': 'idle',
+                            'last_run_status': 'failed',
+                            'last_run_error': str(exc),
+                            'last_run_at': datetime.now(timezone.utc).isoformat(),
+                            'last_run_trigger_source': 'file_sync_monitor' if refreshed_workflow.get('trigger_type') == 'file_sync' else 'scheduled',
+                            'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
+                        },
+                    )
+            finally:
+                release_distributed_task_lock(lock_document)
 
     return results
 

@@ -1,7 +1,7 @@
 # test_chat_upload_personal_workspace_handoff.py
 """
 Functional test for chat upload personal workspace handoff.
-Version: 0.241.174
+Version: 0.241.176
 Implemented in: 0.241.174
 
 This test ensures chat uploads are wired to queue personal workspace documents,
@@ -74,7 +74,7 @@ def test_backend_handoff_contract():
     assert_contains(route_frontend_chats, "copy_source_file=True", "separate temp copy for background processing")
     assert_contains(route_frontend_chats, "ensure_unique_file_name=True", "chat upload requests unique workspace filenames")
     assert_contains(route_frontend_chats, "unique_file_name_suffix=file_message_id", "chat upload identity suffix for duplicate filenames")
-    assert_contains(route_frontend_chats, "File could not be queued in the personal workspace", "workspace queue failure does not silently use legacy chat storage")
+    assert_contains(route_frontend_chats, "File could not be queued in the {workspace_upload_scope} workspace", "workspace queue failure does not silently use legacy chat storage")
     assert_contains(route_frontend_chats, "'file_content_source': 'workspace'", "workspace-backed chat upload message")
     assert_contains(route_frontend_chats, "'workspace_document_id': workspace_document_info.get('document_id')", "chat message workspace document id")
     assert_contains(route_frontend_chats, "['metadata']['workspace_attachment'] = workspace_attachment", "chat message workspace attachment metadata")
@@ -155,7 +155,7 @@ def test_conversation_delete_selectable_workspace_document_contract():
     assert_contains(functions_documents, "def serialize_chat_upload_workspace_documents_for_conversation", "conversation delete document list serializer")
     assert_contains(functions_documents, "c.created_from_chat_upload = true", "chat-upload workspace document query")
     assert_contains(functions_documents, "if not selected_document_id_set:", "empty selection retains linked documents")
-    assert_contains(functions_documents, "delete_document_revision(user_id, document_id, delete_mode='all_versions')", "workspace document cleanup deletion")
+    assert_contains(functions_documents, "delete_document_revision(\n                user_id,\n                document_id,\n                delete_mode='all_versions'", "workspace document cleanup deletion")
     assert_contains(route_backend_conversations, "\"linked_workspace_documents\": linked_workspace_documents", "metadata linked document list")
     assert_contains(route_backend_conversations, "delete_workspace_document_ids = _get_requested_workspace_document_delete_ids_for_conversation", "selected document payload parsing")
     assert_contains(route_backend_conversations, "if delete_workspace_document_ids:", "selected document deletion guard")

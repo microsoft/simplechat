@@ -2,13 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for New Foundry endpoint API version handling.
-Version: 0.239.180
-Implemented in: 0.239.180
+Version: 0.241.179
+Implemented in: 0.241.179
 
-This test ensures that New Foundry endpoints do not silently inherit the
-generic Azure OpenAI API-version default and that existing agents preserve
-their stored Responses API version instead of being overwritten by endpoint
-fallback values.
+This test ensures that New Foundry endpoints default to the OpenAI-compatible
+v1 inference API, expose custom version fields, detect project names from
+Project endpoints, and preserve existing agent Responses API version handling.
 """
 
 from pathlib import Path
@@ -27,23 +26,35 @@ def test_new_foundry_endpoint_api_version_handling() -> None:
     print("Testing New Foundry endpoint API version handling...")
 
     endpoint_js = ROOT / "application" / "single_app" / "static" / "js" / "admin" / "admin_model_endpoints.js"
+    workspace_endpoint_js = ROOT / "application" / "single_app" / "static" / "js" / "workspace" / "workspace_model_endpoints.js"
     agent_modal_js = ROOT / "application" / "single_app" / "static" / "js" / "agent_modal_stepper.js"
     loader_py = ROOT / "application" / "single_app" / "semantic_kernel_loader.py"
     endpoint_modal = ROOT / "application" / "single_app" / "templates" / "_multiendpoint_modal.html"
     config_file = ROOT / "application" / "single_app" / "config.py"
 
     assert_contains(endpoint_js, 'const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";')
-    assert_contains(endpoint_js, 'return provider === "new_foundry" ? "" : DEFAULT_AOAI_OPENAI_API_VERSION;')
-    assert_contains(endpoint_js, 'if (provider === "new_foundry") {')
-    assert_contains(endpoint_js, 'endpointOpenAiApiVersionInput.value = "";')
+    assert_contains(endpoint_js, 'const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";')
+    assert_contains(endpoint_js, 'const DEFAULT_FOUNDRY_PROJECT_API_VERSION = "v1";')
+    assert_contains(endpoint_js, 'return provider === "new_foundry" ? DEFAULT_FOUNDRY_OPENAI_API_VERSION : DEFAULT_AOAI_OPENAI_API_VERSION;')
+    assert_contains(endpoint_js, 'function getProjectNameFromEndpoint(endpoint) {')
+    assert_contains(endpoint_js, 'syncProjectNameFromEndpoint();')
+    assert_contains(endpoint_js, 'Claude deployments are detected from the model name')
+    assert_contains(workspace_endpoint_js, 'const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";')
+    assert_contains(workspace_endpoint_js, 'const DEFAULT_FOUNDRY_PROJECT_API_VERSION = "v1";')
+    assert_contains(workspace_endpoint_js, 'return provider === "new_foundry" ? DEFAULT_FOUNDRY_OPENAI_API_VERSION : DEFAULT_AOAI_OPENAI_API_VERSION;')
+    assert_contains(workspace_endpoint_js, 'function getProjectNameFromEndpoint(endpoint) {')
     assert_contains(agent_modal_js, "const fetchedResponsesApiVersion = payload.responses_api_version || '';")
     assert_contains(agent_modal_js, 'const preserveCurrentSelection = this.shouldPreserveCurrentFoundrySelection(endpointId);')
     assert_contains(agent_modal_js, "const storedResponsesApiVersion = currentFoundrySettings.responses_api_version || '';")
     assert_contains(loader_py, 'stored_responses_api_version = (')
     assert_contains(loader_py, 'or agent.get("azure_openai_gpt_api_version")')
     assert_contains(agent_modal_js, "if (responsesApiVersionInput && selected.responses_api_version) {")
-    assert_contains(endpoint_modal, 'No default is applied for New Foundry')
-    assert_contains(config_file, 'VERSION = "0.239.180"')
+    assert_contains(endpoint_modal, 'id="model-endpoint-project-api-version-custom"')
+    assert_contains(endpoint_modal, 'id="model-endpoint-openai-api-version-custom"')
+    assert_contains(endpoint_modal, 'For New Foundry model inference, Endpoint default (v1) is used')
+    assert_contains(endpoint_modal, 'Claude deployments are detected from the model name')
+    assert_contains(endpoint_modal, 'If the project endpoint includes /api/projects/&lt;project&gt;')
+    assert_contains(config_file, 'VERSION = "0.241.179"')
 
     print("✅ New Foundry endpoint API version handling verified.")
 

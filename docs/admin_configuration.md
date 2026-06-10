@@ -114,7 +114,7 @@ Key configuration sections include:
 For practical operator steps, see [Configure Branding, Home Page, and Support Settings]({{ '/how-to/admin_ui_settings/' | relative_url }}).
 
 ### 2. AI Models
-- **GPT Configuration**: 
+- **Chat Model**: 
   - Configure Azure OpenAI endpoint(s) for chat models
   - Supports Direct endpoint or APIM (API Management)
   - Allows Key or Managed Identity authentication

@@ -6,9 +6,28 @@ from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_assigned_knowledge import get_agent_assigned_knowledge
+from functions_collaboration import (
+    assert_user_can_participate_in_collaboration_conversation,
+    create_collaboration_message_notifications,
+    ensure_collaboration_source_conversation,
+    get_collaboration_conversation,
+    is_personal_collaboration_conversation,
+    is_group_collaboration_conversation,
+    mirror_source_message_to_collaboration,
+    publish_collaboration_event,
+    serialize_collaboration_conversation,
+    serialize_collaboration_message,
+)
 from functions_source_review import get_deep_research_config, is_source_review_enabled_for_user, is_url_access_enabled_for_user
 from functions_documents import *
-from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
+from functions_group import (
+    assert_group_role,
+    check_group_status_allows_operation,
+    find_group_by_id,
+    get_group_model_endpoints,
+    get_user_groups,
+    get_user_role_in_group,
+)
 from functions_group_agents import get_group_agents
 from functions_global_agents import get_global_agents
 from functions_image_messages import build_image_message_documents
@@ -19,7 +38,7 @@ from functions_simplechat_operations import upload_chat_image_bytes_for_user
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
-from utils_cache import invalidate_personal_search_cache
+from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +50,299 @@ CHAT_WORKSPACE_UPLOAD_EXTENSIONS = (
     | {'doc', 'docm', 'html', 'txt', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
 )
 
+GROUP_CHAT_UPLOAD_ROLES = ('Owner', 'Admin', 'DocumentManager')
+
 
 def _is_setting_enabled(value):
     return value is True or str(value).strip().lower() == 'true'
+
+
+def _build_new_chat_conversation(user_id):
+    conversation_id = str(uuid.uuid4())
+    conversation_item = {
+        'id': conversation_id,
+        'user_id': user_id,
+        'last_updated': datetime.utcnow().isoformat(),
+        'title': 'New Conversation',
+        'context': [],
+        'tags': [],
+        'strict': False,
+    }
+    cosmos_conversations_container.upsert_item(conversation_item)
+    return conversation_item
+
+
+def _append_unique(values, value):
+    normalized_value = str(value or '').strip()
+    if normalized_value and normalized_value not in values:
+        values.append(normalized_value)
+
+
+def _normalize_upload_group_ids(raw_values):
+    normalized_ids = []
+    if not raw_values:
+        return normalized_ids
+
+    values = raw_values if isinstance(raw_values, (list, tuple, set)) else [raw_values]
+    for raw_value in values:
+        if raw_value is None:
+            continue
+        for group_id in str(raw_value).split(','):
+            _append_unique(normalized_ids, group_id)
+    return normalized_ids
+
+
+def _extract_group_context_ids_from_doc(doc):
+    group_ids = []
+    if not isinstance(doc, dict):
+        return group_ids
+
+    _append_unique(group_ids, doc.get('group_id'))
+
+    scope = doc.get('scope') if isinstance(doc.get('scope'), dict) else {}
+    if str(scope.get('type') or '').strip().lower() == 'group':
+        _append_unique(group_ids, scope.get('group_id') or scope.get('id'))
+
+    for context_item in list(doc.get('context', []) or []):
+        if not isinstance(context_item, dict):
+            continue
+        if str(context_item.get('scope') or '').strip().lower() == 'group':
+            _append_unique(group_ids, context_item.get('id') or context_item.get('group_id'))
+
+    for locked_context in list(doc.get('locked_contexts', []) or []):
+        if not isinstance(locked_context, dict):
+            continue
+        if str(locked_context.get('scope') or '').strip().lower() == 'group':
+            _append_unique(group_ids, locked_context.get('id') or locked_context.get('group_id'))
+
+    return group_ids
+
+
+def _get_trusted_group_upload_scope_ids(conversation_item, collaboration_conversation=None):
+    group_ids = []
+    for group_id in _extract_group_context_ids_from_doc(conversation_item):
+        _append_unique(group_ids, group_id)
+    for group_id in _extract_group_context_ids_from_doc(collaboration_conversation):
+        _append_unique(group_ids, group_id)
+    return group_ids
+
+
+def _is_group_chat_upload_context(conversation_item, collaboration_conversation=None, requested_group_ids=None):
+    if collaboration_conversation is not None:
+        return is_group_collaboration_conversation(collaboration_conversation)
+
+    chat_type = str((conversation_item or {}).get('chat_type') or '').strip().lower()
+    if chat_type in ('group', 'group-single-user', 'group_single_user', 'group_multi_user'):
+        return True
+
+    if _get_trusted_group_upload_scope_ids(conversation_item):
+        return True
+
+    return bool(requested_group_ids)
+
+
+def _build_group_upload_target_option(group_id, user_id):
+    normalized_group_id = str(group_id or '').strip()
+    if not normalized_group_id:
+        return None
+
+    group_doc = find_group_by_id(normalized_group_id)
+    if not group_doc:
+        return {
+            'id': normalized_group_id,
+            'name': 'Unknown group',
+            'role': None,
+            'can_upload': False,
+            'reason': 'Group not found',
+        }
+
+    role = get_user_role_in_group(group_doc, user_id)
+    status_allowed, status_reason = check_group_status_allows_operation(group_doc, 'upload')
+    role_allowed = role in GROUP_CHAT_UPLOAD_ROLES
+    reason = None
+    if not role:
+        reason = 'You are not a member of this group'
+    elif not role_allowed:
+        reason = 'Your group role can chat but cannot upload documents'
+    elif not status_allowed:
+        reason = status_reason or 'Uploads are disabled for this group'
+
+    return {
+        'id': normalized_group_id,
+        'name': group_doc.get('name') or 'Group Workspace',
+        'role': role,
+        'can_upload': bool(role_allowed and status_allowed),
+        'reason': reason,
+    }
+
+
+def _resolve_group_upload_targets(conversation_item, collaboration_conversation, requested_group_ids, user_id):
+    trusted_group_ids = _get_trusted_group_upload_scope_ids(conversation_item, collaboration_conversation)
+    candidate_group_ids = list(trusted_group_ids)
+
+    if not candidate_group_ids:
+        candidate_group_ids = list(requested_group_ids or [])
+    elif requested_group_ids:
+        candidate_group_ids = [group_id for group_id in trusted_group_ids if group_id in set(requested_group_ids)]
+
+    targets = []
+    for group_id in candidate_group_ids:
+        target = _build_group_upload_target_option(group_id, user_id)
+        if target:
+            targets.append(target)
+    return targets, trusted_group_ids
+
+
+def _resolve_group_workspace_upload_target(
+    *,
+    conversation_item,
+    collaboration_conversation,
+    requested_group_ids,
+    selected_group_id,
+    user_id,
+):
+    targets, trusted_group_ids = _resolve_group_upload_targets(
+        conversation_item,
+        collaboration_conversation,
+        requested_group_ids,
+        user_id,
+    )
+    eligible_targets = [target for target in targets if target.get('can_upload')]
+    normalized_selected_group_id = str(selected_group_id or '').strip()
+
+    if trusted_group_ids and normalized_selected_group_id and normalized_selected_group_id not in trusted_group_ids:
+        raise PermissionError('Selected group does not match the conversation scope')
+
+    if normalized_selected_group_id:
+        selected_target = next(
+            (target for target in targets if target.get('id') == normalized_selected_group_id),
+            None,
+        )
+        if not selected_target:
+            raise PermissionError('Selected group is not available for this upload')
+        if not selected_target.get('can_upload'):
+            raise PermissionError(selected_target.get('reason') or 'You cannot upload documents to this group')
+        assert_group_role(user_id, normalized_selected_group_id, allowed_roles=GROUP_CHAT_UPLOAD_ROLES)
+        group_doc = find_group_by_id(normalized_selected_group_id)
+        status_allowed, status_reason = check_group_status_allows_operation(group_doc, 'upload')
+        if not status_allowed:
+            raise PermissionError(status_reason or 'Uploads are disabled for this group')
+        return selected_target
+
+    if len(eligible_targets) == 1:
+        selected_target = eligible_targets[0]
+        assert_group_role(user_id, selected_target.get('id'), allowed_roles=GROUP_CHAT_UPLOAD_ROLES)
+        group_doc = find_group_by_id(selected_target.get('id'))
+        status_allowed, status_reason = check_group_status_allows_operation(group_doc, 'upload')
+        if not status_allowed:
+            raise PermissionError(status_reason or 'Uploads are disabled for this group')
+        return selected_target
+
+    if not eligible_targets:
+        raise PermissionError('You do not have permission to upload documents to the selected group scope')
+
+    raise ValueError('Multiple group upload targets are available. Select one group workspace for this file.')
+
+
+def _apply_group_context_to_new_upload_conversation(conversation_item, group_target):
+    if not conversation_item or not group_target:
+        return
+    if conversation_item.get('context'):
+        return
+
+    group_id = group_target.get('id')
+    group_name = group_target.get('name') or 'Group Workspace'
+    conversation_item['chat_type'] = 'group-single-user'
+    conversation_item['context'] = [
+        {
+            'type': 'primary',
+            'scope': 'group',
+            'id': group_id,
+            'name': group_name,
+        }
+    ]
+    conversation_item['scope_locked'] = True
+    conversation_item['locked_contexts'] = [{'scope': 'group', 'id': group_id}]
+
+
+def _resolve_collaboration_upload_context(conversation_id, user_id, current_user_info):
+    collaboration_conversation = get_collaboration_conversation(conversation_id)
+    assert_user_can_participate_in_collaboration_conversation(user_id, collaboration_conversation)
+    if not (
+        is_personal_collaboration_conversation(collaboration_conversation)
+        or is_group_collaboration_conversation(collaboration_conversation)
+    ):
+        raise PermissionError('Chat file uploads are not supported for this collaborative conversation')
+
+    source_conversation_item, collaboration_conversation = ensure_collaboration_source_conversation(
+        collaboration_conversation,
+        current_user_info,
+    )
+    return {
+        'conversation_item': source_conversation_item,
+        'conversation_id': source_conversation_item.get('id'),
+        'response_conversation_id': collaboration_conversation.get('id'),
+        'collaboration_conversation': collaboration_conversation,
+    }
+
+
+def _resolve_chat_upload_context(conversation_id, user_id, current_user_info):
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_conversation_id:
+        conversation_item = _build_new_chat_conversation(user_id)
+        return {
+            'conversation_item': conversation_item,
+            'conversation_id': conversation_item.get('id'),
+            'response_conversation_id': conversation_item.get('id'),
+            'collaboration_conversation': None,
+        }
+
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=normalized_conversation_id,
+            partition_key=normalized_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        try:
+            return _resolve_collaboration_upload_context(
+                normalized_conversation_id,
+                user_id,
+                current_user_info,
+            )
+        except CosmosResourceNotFoundError:
+            conversation_item = _build_new_chat_conversation(user_id)
+            return {
+                'conversation_item': conversation_item,
+                'conversation_id': conversation_item.get('id'),
+                'response_conversation_id': conversation_item.get('id'),
+                'collaboration_conversation': None,
+            }
+
+    collaboration_conversation_id = str(conversation_item.get('collaboration_conversation_id') or '').strip()
+    if collaboration_conversation_id:
+        collaboration_conversation = get_collaboration_conversation(collaboration_conversation_id)
+        assert_user_can_participate_in_collaboration_conversation(user_id, collaboration_conversation)
+        if not (
+            is_personal_collaboration_conversation(collaboration_conversation)
+            or is_group_collaboration_conversation(collaboration_conversation)
+        ):
+            raise PermissionError('Chat file uploads are not supported for this collaborative conversation')
+        return {
+            'conversation_item': conversation_item,
+            'conversation_id': conversation_item.get('id'),
+            'response_conversation_id': collaboration_conversation.get('id'),
+            'collaboration_conversation': collaboration_conversation,
+        }
+
+    if str(conversation_item.get('user_id') or '').strip() != str(user_id or '').strip():
+        raise PermissionError('You do not have access to this conversation')
+
+    return {
+        'conversation_item': conversation_item,
+        'conversation_id': conversation_item.get('id'),
+        'response_conversation_id': conversation_item.get('id'),
+        'collaboration_conversation': None,
+    }
 
 
 def _serialize_chat_agent_option(agent, *, is_global=False, is_group=False, group_id=None, group_name=None):
@@ -507,43 +816,66 @@ def register_route_frontend_chats(app):
             return jsonify({'error': 'No file uploaded'}), 400
 
         file = request.files['file']
-        conversation_id = request.form.get('conversation_id')
+        requested_conversation_id = request.form.get('conversation_id')
+        requested_group_ids = _normalize_upload_group_ids(request.form.getlist('upload_scope_group_ids'))
+        selected_group_upload_target_id = str(request.form.get('group_upload_target_id') or '').strip()
 
         if not file.filename:
             return jsonify({'error': 'No selected file'}), 400
 
-        if not conversation_id:
-            conversation_id = str(uuid.uuid4())
-            conversation_item = {
-                'id': conversation_id,
-                'user_id': user_id,
-                'last_updated': datetime.utcnow().isoformat(),
-                'title': 'New Conversation',
-                'context': [],
-                'tags': [],
-                'strict': False
-            }
-            cosmos_conversations_container.upsert_item(conversation_item)
-        else:
+        current_user_info = get_current_user_info() or {'userId': user_id}
+        try:
+            upload_context = _resolve_chat_upload_context(
+                requested_conversation_id,
+                user_id,
+                current_user_info,
+            )
+        except PermissionError as access_error:
+            return jsonify({'error': str(access_error)}), 403
+        except Exception as read_error:
+            return jsonify({'error': f'Error reading conversation: {str(read_error)}'}), 500
+
+        conversation_item = upload_context['conversation_item']
+        conversation_id = upload_context['conversation_id']
+        response_conversation_id = upload_context['response_conversation_id']
+        collaboration_conversation = upload_context.get('collaboration_conversation')
+        is_collaboration_upload = collaboration_conversation is not None
+        is_personal_collaboration_upload = bool(
+            collaboration_conversation and is_personal_collaboration_conversation(collaboration_conversation)
+        )
+        is_group_collaboration_upload = bool(
+            collaboration_conversation and is_group_collaboration_conversation(collaboration_conversation)
+        )
+        is_group_workspace_upload_context = _is_group_chat_upload_context(
+            conversation_item,
+            collaboration_conversation,
+            requested_group_ids=requested_group_ids,
+        )
+        group_upload_target = None
+        if is_group_workspace_upload_context:
+            targets = []
             try:
-                conversation_item = cosmos_conversations_container.read_item(
-                    item=conversation_id,
-                    partition_key=conversation_id
+                group_upload_target = _resolve_group_workspace_upload_target(
+                    conversation_item=conversation_item,
+                    collaboration_conversation=collaboration_conversation,
+                    requested_group_ids=requested_group_ids,
+                    selected_group_id=selected_group_upload_target_id,
+                    user_id=user_id,
                 )
-            except CosmosResourceNotFoundError:
-                conversation_id = str(uuid.uuid4())
-                conversation_item = {
-                    'id': conversation_id,
-                    'user_id': user_id,
-                    'last_updated': datetime.utcnow().isoformat(),
-                    'title': 'New Conversation',
-                    'context': [],
-                    'tags': [],
-                    'strict': False
-                }
-                cosmos_conversations_container.upsert_item(conversation_item)
-            except Exception as e:
-                return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
+            except ValueError as selection_error:
+                targets, _ = _resolve_group_upload_targets(
+                    conversation_item,
+                    collaboration_conversation,
+                    requested_group_ids,
+                    user_id,
+                )
+                return jsonify({
+                    'error': str(selection_error),
+                    'requires_group_upload_target': True,
+                    'group_upload_targets': targets,
+                }), 400
+            except PermissionError as target_error:
+                return jsonify({'error': str(target_error)}), 403
         
         file.seek(0, os.SEEK_END)
         file_length = file.tell()
@@ -563,41 +895,105 @@ def register_route_frontend_chats(app):
             temp_file_path = tmp_file.name
 
         workspace_document_info = None
-        if (
-            _is_setting_enabled(settings.get('enable_user_workspace', False))
-            and file_ext_nodot in CHAT_WORKSPACE_UPLOAD_EXTENSIONS
-            and allowed_file(original_filename)
-        ):
+        workspace_upload_scope = 'group' if group_upload_target else 'personal'
+        workspace_upload_enabled = _is_setting_enabled(settings.get('enable_group_workspaces', False)) if group_upload_target else _is_setting_enabled(settings.get('enable_user_workspace', False))
+        workspace_upload_supported = file_ext_nodot in CHAT_WORKSPACE_UPLOAD_EXTENSIONS and allowed_file(original_filename)
+
+        if group_upload_target and not workspace_upload_enabled:
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            return jsonify({'error': 'Group workspace uploads are disabled.'}), 403
+
+        if group_upload_target and not workspace_upload_supported:
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            return jsonify({'error': 'This file type is not supported for group workspace chat uploads.'}), 400
+
+        if workspace_upload_enabled and workspace_upload_supported:
             try:
-                workspace_document_info = queue_personal_workspace_upload_from_temp_file(
-                    user_id=user_id,
-                    temp_file_path=temp_file_path,
-                    original_filename=original_filename,
-                    tags=build_chat_upload_workspace_tags(conversation_id),
-                    source_metadata={
+                if group_upload_target:
+                    _apply_group_context_to_new_upload_conversation(conversation_item, group_upload_target)
+                    source_metadata = {
                         'source_type': 'chat_upload',
-                        'source_subtype': 'personal_conversation_attachment',
+                        'source_subtype': 'group_collaboration_conversation_attachment' if is_group_collaboration_upload else 'group_conversation_attachment',
                         'created_from_chat_upload': True,
                         'chat_upload_delete_with_conversation': True,
                         'chat_upload_link_state': 'linked',
                         'chat_upload_linked_at': datetime.utcnow().isoformat(),
                         'conversation_id': conversation_id,
-                        'conversation_title_at_upload': conversation_item.get('title', 'New Conversation'),
-                        'conversation_url': f"/chats?conversation_id={conversation_id}",
+                        'conversation_title_at_upload': collaboration_conversation.get('title') if is_collaboration_upload else conversation_item.get('title', 'New Conversation'),
+                        'conversation_url': f"/chats?conversation_id={response_conversation_id}",
                         'chat_message_id': file_message_id,
                         'chat_upload_original_filename': original_filename,
                         'chat_upload_sanitized_filename': filename,
-                    },
-                    copy_source_file=True,
-                    ensure_unique_file_name=True,
-                    unique_file_name_suffix=file_message_id.rsplit('_file_', 1)[-1],
-                )
-                invalidate_personal_search_cache(user_id)
+                        'chat_upload_group_id': group_upload_target.get('id'),
+                        'chat_upload_group_name': group_upload_target.get('name'),
+                    }
+                    if is_group_collaboration_upload:
+                        source_metadata.update({
+                            'chat_upload_collaboration_conversation_id': collaboration_conversation.get('id'),
+                            'chat_upload_collaboration_source_conversation_id': conversation_id,
+                            'collaboration_conversation_id': collaboration_conversation.get('id'),
+                        })
+
+                    workspace_document_info = queue_group_workspace_upload_from_temp_file(
+                        user_id=user_id,
+                        group_id=group_upload_target.get('id'),
+                        temp_file_path=temp_file_path,
+                        original_filename=original_filename,
+                        tags=build_chat_upload_workspace_tags(conversation_id),
+                        source_metadata=source_metadata,
+                        copy_source_file=True,
+                        ensure_unique_file_name=True,
+                        unique_file_name_suffix=file_message_id.rsplit('_file_', 1)[-1],
+                    )
+                    workspace_document_info['scope'] = 'group'
+                    workspace_document_info['group_name'] = group_upload_target.get('name')
+                    invalidate_group_search_cache(group_upload_target.get('id'))
+                else:
+                    source_metadata = {
+                        'source_type': 'chat_upload',
+                        'source_subtype': 'personal_collaboration_conversation_attachment' if is_personal_collaboration_upload else 'personal_conversation_attachment',
+                        'created_from_chat_upload': True,
+                        'chat_upload_delete_with_conversation': True,
+                        'chat_upload_link_state': 'linked',
+                        'chat_upload_linked_at': datetime.utcnow().isoformat(),
+                        'conversation_id': conversation_id,
+                        'conversation_title_at_upload': collaboration_conversation.get('title') if is_collaboration_upload else conversation_item.get('title', 'New Conversation'),
+                        'conversation_url': f"/chats?conversation_id={response_conversation_id}",
+                        'chat_message_id': file_message_id,
+                        'chat_upload_original_filename': original_filename,
+                        'chat_upload_sanitized_filename': filename,
+                    }
+                    if is_personal_collaboration_upload:
+                        source_metadata.update({
+                            'chat_upload_collaboration_conversation_id': collaboration_conversation.get('id'),
+                            'chat_upload_collaboration_source_conversation_id': conversation_id,
+                            'collaboration_conversation_id': collaboration_conversation.get('id'),
+                        })
+
+                    workspace_document_info = queue_personal_workspace_upload_from_temp_file(
+                        user_id=user_id,
+                        temp_file_path=temp_file_path,
+                        original_filename=original_filename,
+                        tags=build_chat_upload_workspace_tags(conversation_id),
+                        source_metadata=source_metadata,
+                        copy_source_file=True,
+                        ensure_unique_file_name=True,
+                        unique_file_name_suffix=file_message_id.rsplit('_file_', 1)[-1],
+                    )
+                    workspace_document_info['scope'] = 'personal'
+                    invalidate_personal_search_cache(user_id)
+                    if is_personal_collaboration_upload:
+                        sharing_result = sync_chat_upload_workspace_document_sharing_for_collaboration(collaboration_conversation)
+                        for affected_user_id in sharing_result.get('affected_user_ids', []):
+                            invalidate_personal_search_cache(affected_user_id)
             except Exception as workspace_error:
                 log_event(
                     f"[ChatUpload] Failed to queue workspace document for {filename}: {workspace_error}",
                     {
-                        'conversation_id': conversation_id,
+                        'conversation_id': response_conversation_id,
+                        'source_conversation_id': conversation_id,
                         'filename': filename,
                     },
                     level=logging.WARNING,
@@ -609,21 +1005,31 @@ def register_route_frontend_chats(app):
                     except Exception as cleanup_error:
                         debug_print(f"Unable to clean up chat upload temp file after workspace queue failure: {cleanup_error}")
                 return jsonify({
-                    'error': 'File could not be queued in the personal workspace. Please try again.'
+                    'error': f"File could not be queued in the {workspace_upload_scope} workspace. Please try again."
                 }), 500
 
         if workspace_document_info:
             try:
                 workspace_file_name = workspace_document_info.get('file_name') or filename
+                workspace_scope = workspace_document_info.get('scope') or workspace_upload_scope
+                workspace_label = 'group workspace' if workspace_scope == 'group' else 'personal workspace'
+                workspace_url = f"/workspace?document_id={workspace_document_info.get('document_id')}"
+                if workspace_scope == 'group':
+                    workspace_url = (
+                        f"/group_workspaces?document_id={workspace_document_info.get('document_id')}"
+                        f"&group_id={workspace_document_info.get('group_id') or ''}"
+                    )
                 workspace_attachment = {
                     'document_id': workspace_document_info.get('document_id'),
                     'file_name': workspace_file_name,
                     'status': workspace_document_info.get('status', 'Queued for processing'),
                     'percentage_complete': workspace_document_info.get('percentage_complete', 0),
                     'tags': workspace_document_info.get('tags', []),
-                    'workspace_url': f"/workspace?document_id={workspace_document_info.get('document_id')}",
-                    'conversation_url': f"/chats?conversation_id={conversation_id}",
-                    'scope': 'personal',
+                    'workspace_url': workspace_url,
+                    'conversation_url': f"/chats?conversation_id={response_conversation_id}",
+                    'scope': workspace_scope,
+                    'group_id': workspace_document_info.get('group_id'),
+                    'group_name': workspace_document_info.get('group_name'),
                     'link_state': 'linked',
                 }
 
@@ -643,7 +1049,7 @@ def register_route_frontend_chats(app):
                     'conversation_id': conversation_id,
                     'role': 'file',
                     'filename': workspace_file_name,
-                    'content': f"Uploaded {workspace_file_name} to the personal workspace.",
+                    'content': f"Uploaded {workspace_file_name} to the {workspace_label}.",
                     'file_content_source': 'workspace',
                     'workspace_document_id': workspace_document_info.get('document_id'),
                     'is_table': file_ext_nodot in TABULAR_EXTENSIONS,
@@ -652,7 +1058,8 @@ def register_route_frontend_chats(app):
                     'model_deployment_name': None,
                     'metadata': {
                         'is_user_upload': True,
-                        'upload_source': 'personal_workspace',
+                        'upload_source': f'{workspace_scope}_workspace',
+                        'user_info': current_user_info,
                         'workspace_attachment': workspace_attachment,
                         'thread_info': {
                             'thread_id': current_thread_id,
@@ -663,6 +1070,48 @@ def register_route_frontend_chats(app):
                     }
                 }
                 cosmos_messages_container.upsert_item(file_message)
+
+                if is_collaboration_upload:
+                    try:
+                        mirrored_message, collaboration_conversation, _ = mirror_source_message_to_collaboration(
+                            collaboration_conversation,
+                            file_message,
+                            current_user_info,
+                            extra_metadata={
+                                'source_conversation_id': conversation_id,
+                                'source_thought_user_id': user_id,
+                            },
+                        )
+                        if mirrored_message:
+                            create_collaboration_message_notifications(collaboration_conversation, mirrored_message)
+                            serialized_message = serialize_collaboration_message(mirrored_message)
+                            serialized_conversation = serialize_collaboration_conversation(
+                                collaboration_conversation,
+                                current_user_id=user_id,
+                            )
+                            publish_collaboration_event(
+                                response_conversation_id,
+                                {
+                                    'conversation_id': response_conversation_id,
+                                    'event_type': 'collaboration.message.created',
+                                    'occurred_at': datetime.utcnow().isoformat(),
+                                    'payload': {
+                                        'conversation': serialized_conversation,
+                                        'message': serialized_message,
+                                    },
+                                },
+                            )
+                    except Exception as mirror_error:
+                        log_event(
+                            f"[ChatUpload] Failed to mirror workspace upload into collaboration {response_conversation_id}: {mirror_error}",
+                            {
+                                'conversation_id': response_conversation_id,
+                                'source_conversation_id': conversation_id,
+                                'file_message_id': file_message_id,
+                            },
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
 
                 conversation_item['last_updated'] = timestamp
                 try:
@@ -688,9 +1137,14 @@ def register_route_frontend_chats(app):
                     os.remove(temp_file_path)
 
             return jsonify({
-                'message': 'File uploaded to the personal workspace and added to the conversation successfully',
-                'conversation_id': conversation_id,
-                'title': conversation_item.get('title', 'New Conversation'),
+                'message': f"File uploaded to the {workspace_label} and added to the conversation successfully",
+                'conversation_id': response_conversation_id,
+                'source_conversation_id': conversation_id if is_collaboration_upload else None,
+                'collaboration_conversation_id': collaboration_conversation.get('id') if is_collaboration_upload else None,
+                'is_collaboration_upload': is_collaboration_upload,
+                'workspace_scope': workspace_scope,
+                'group_upload_target': group_upload_target,
+                'title': collaboration_conversation.get('title') if is_collaboration_upload else conversation_item.get('title', 'New Conversation'),
                 'workspace_document': workspace_document_info,
                 'workspace_document_id': workspace_document_info.get('document_id')
             }), 200

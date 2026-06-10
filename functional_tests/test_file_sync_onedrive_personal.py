@@ -2,7 +2,7 @@
 # test_file_sync_onedrive_personal.py
 """
 Functional test for personal OneDrive File Sync support.
-Version: 0.241.177
+Version: 0.241.178
 Implemented in: 0.241.128
 
 This test ensures OneDrive sync source code remains wired as personal-only File
@@ -39,7 +39,7 @@ def test_version_and_source_defaults():
     settings_text = read_text("application/single_app/functions_settings.py")
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
 
-    assert 'VERSION = "0.241.177"' in config_text
+    assert 'VERSION = "0.241.178"' in config_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE = \"onedrive\"" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {\"client_secret\"}" in file_sync_text
@@ -133,6 +133,7 @@ def test_frontend_source_selection_supports_onedrive():
     assert 'id="file_sync_visible_source_type_onedrive" value="onedrive" disabled' in admin_template
     assert 'name="file_sync_visible_source_types" value="onedrive"' not in admin_template
     assert "OneDrive, SharePoint, and Google Workspace connectors are coming soon" in admin_template
+    assert "Coming Soon." in admin_template
     for template_text in [workspace_template, group_template, public_template]:
         assert "default(['smb', 'azure_files'])" in template_text
 

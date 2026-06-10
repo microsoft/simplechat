@@ -2,12 +2,14 @@
 # test_model_endpoints_key_vault_secret_storage.py
 """
 Functional test for MultiGPT endpoint Key Vault secret storage.
-Version: 0.239.155
-Implemented in: 0.239.155
+Version: 0.241.179
+Implemented in: 0.241.179
 
 This test ensures MultiGPT endpoint secrets are stored in Key Vault,
 returned to the UI as placeholders, resolved for backend use, and cleaned up
-when endpoint auth settings change.
+when endpoint auth settings change. It also verifies saved endpoint edits can
+reuse stored API keys and client secrets without requiring the user to retype
+the secret.
 """
 
 import importlib
@@ -203,6 +205,14 @@ def test_model_endpoint_frontend_contract_files():
     assert 'const endpointId = endpointIdInput?.value.trim() || "";' in workspace_js
     assert 'clientSecretInput.placeholder = "Stored"' in admin_js
     assert 'apiKeyInput.placeholder = "Stored"' in admin_js
+    assert 'const hasStoredApiKey = authType === "api_key" && Boolean(existingEndpoint?.has_api_key);' in admin_js
+    assert 'const hasStoredApiKey = authType === "api_key" && Boolean(existingEndpoint?.has_api_key);' in workspace_js
+    assert 'const hasStoredClientSecret = authType === "service_principal" && Boolean(existingEndpoint?.has_client_secret);' in admin_js
+    assert 'const hasStoredClientSecret = authType === "service_principal" && Boolean(existingEndpoint?.has_client_secret);' in workspace_js
+    assert 'if (authType === "api_key" && !auth.api_key && !hasStoredApiKey)' in admin_js
+    assert 'if (authType === "api_key" && !auth.api_key && !hasStoredApiKey)' in workspace_js
+    assert '(!auth.client_secret && !hasStoredClientSecret)' in admin_js
+    assert '(!auth.client_secret && !hasStoredClientSecret)' in workspace_js
     assert 'resolve_request_endpoint_payload' in backend_content
     assert 'keyvault_model_endpoint_get_helper' in backend_content
 

@@ -1,8 +1,8 @@
 # Microsoft Graph Send Mail Action
 
-Fixed/Implemented in version: **0.241.176**
+Fixed/Implemented in version: **0.241.179**
 
-Related config.py version update: `application/single_app/config.py` is **0.241.176** for this implementation.
+Related config.py version update: `application/single_app/config.py` is **0.241.179** for this implementation.
 
 ## Overview
 
@@ -20,9 +20,9 @@ Open **Personal Workspace** or another action management surface, go to **Action
 
 ### Configure Send Mail
 
-In the Microsoft Graph configuration step, leave **Send mail** enabled when agents should be able to create drafts or send email. Use **Mail Delivery** to choose the default send behavior for this action.
+In the Microsoft Graph configuration step, leave **Send mail** enabled when agents should be able to create drafts or send email. Use the delivery controls nested under **Send mail** to choose the default send behavior for this action.
 
-<img src="{{ '/images/feature-msgraph-mail-delivery.png' | relative_url }}" alt="Annotated Microsoft Graph configuration showing the Send mail capability and Mail Delivery settings." style="width: 70%;" />
+<img src="{{ '/images/feature-msgraph-mail-delivery.png' | relative_url }}" alt="Annotated Microsoft Graph configuration showing the Send mail capability and nested delivery settings." style="width: 70%;" />
 
 ## Dependencies
 
@@ -46,12 +46,12 @@ In the Microsoft Graph configuration step, leave **Send mail** enabled when agen
 
 ## Usage Instructions
 
-Configure a Microsoft Graph action from the action plugin modal and enable the `Send mail` capability. Choose the mail delivery mode in the Microsoft Graph configuration section. For delayed delivery, set a delay from 5 seconds to 600 seconds.
+Configure a Microsoft Graph action from the action plugin modal and enable the `Send mail` capability. Choose the mail delivery mode directly under the capability. For delayed delivery, set a delay from 5 seconds to 600 seconds with the slider.
 
 Supported delivery choices:
 
 - **Draft with manual send** creates a draft so the user can review and send it manually.
-- **Draft with delayed delivery** creates and submits a delayed-delivery draft using the configured delay.
+- **Draft with delayed send** creates and submits a delayed-send draft using the configured delay.
 - **Auto send** sends the message automatically from the signed-in user's mailbox.
 
 ## Testing and Validation

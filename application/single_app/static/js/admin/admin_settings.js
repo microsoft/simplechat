@@ -32,6 +32,16 @@ let formModified = false;
 let currentCosmosContainers = [];
 let currentCosmosMetricsWindowMinutes = 0;
 let currentCosmosStatusLoaded = false;
+let currentCosmosContainerSort = { field: 'container_name', direction: 'asc' };
+
+const COSMOS_CONTAINER_SORT_FIELDS = new Set([
+    'container_name',
+    'current_ru',
+    'ru_utilization',
+    'request_units',
+    'policy'
+]);
+const COSMOS_CONTAINER_TEXT_SORT_FIELDS = new Set(['container_name', 'policy']);
 
 const enableClassificationToggle = document.getElementById('enable_document_classification');
 const classificationSettingsDiv = document.getElementById('document_classification_settings');
@@ -56,6 +66,16 @@ const adminForm = document.getElementById('admin-settings-form');
 const saveButton = document.getElementById('floating-save-btn') || (adminForm ? adminForm.querySelector('button[type="submit"]') : null);
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
+const groupWorkflowAssignmentsInput = document.getElementById('group_workflow_allowed_group_ids');
+const groupWorkflowAssignmentSummary = document.getElementById('group-workflow-assignment-summary');
+const groupWorkflowAssignmentModal = document.getElementById('groupWorkflowAssignmentModal');
+const groupWorkflowGroupSearchInput = document.getElementById('group-workflow-group-search');
+const groupWorkflowGroupSearchBtn = document.getElementById('group-workflow-group-search-btn');
+const groupWorkflowAssignmentStatus = document.getElementById('group-workflow-assignment-status');
+const groupWorkflowAssignmentError = document.getElementById('group-workflow-assignment-error');
+const groupWorkflowAssignmentGroupsBody = document.getElementById('group-workflow-assignment-groups-body');
+const groupWorkflowAssignedGroupIds = new Set();
+const groupWorkflowDiscoveredGroups = new Map();
 
 function setupAdminFormAutofillMetadata() {
     if (!adminForm) {
@@ -188,6 +208,14 @@ function formatRequestUnits(value) {
 function getNumericFieldValue(fieldId, fallbackValue) {
     const numericValue = Number(getFieldValue(fieldId));
     return Number.isNaN(numericValue) ? fallbackValue : numericValue;
+}
+
+function getNullableNumber(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+    const numericValue = Number(value);
+    return Number.isNaN(numericValue) ? null : numericValue;
 }
 
 function formatPercent(value) {
@@ -538,9 +566,14 @@ function collectCosmosContainerPolicies() {
 }
 
 function getContainerRuUtilization(container) {
-    const normalizedValue = container?.normalized_ru_percent;
-    if (normalizedValue !== null && normalizedValue !== undefined && normalizedValue !== '') {
-        return formatPercent(normalizedValue);
+    const utilizationValue = getContainerRuUtilizationValue(container);
+    return utilizationValue === null ? 'Not available' : `${utilizationValue.toFixed(1)}%${container?.normalized_ru_percent === null || container?.normalized_ru_percent === undefined || container?.normalized_ru_percent === '' ? ' est.' : ''}`;
+}
+
+function getContainerRuUtilizationValue(container) {
+    const normalizedValue = getNullableNumber(container?.normalized_ru_percent);
+    if (normalizedValue !== null) {
+        return normalizedValue;
     }
 
     const requestUnitsValue = container?.request_units;
@@ -557,11 +590,115 @@ function getContainerRuUtilization(container) {
         const currentRu = Number(currentRuValue);
         if (!Number.isNaN(requestUnits) && !Number.isNaN(currentRu) && currentRu > 0) {
             const averageRuPerSecond = requestUnits / (windowMinutes * 60);
-            return `${((averageRuPerSecond / currentRu) * 100).toFixed(1)}% est.`;
+            return (averageRuPerSecond / currentRu) * 100;
         }
     }
 
-    return 'Not available';
+    return null;
+}
+
+function getCosmosContainerPolicyLabel(container) {
+    const policy = getCosmosContainerPolicy(container);
+    if (isCosmosContainerPolicyEnforced()) {
+        return 'Global policy';
+    }
+    return policy.enabled === false ? 'Disabled' : `${policy.min_ru || 'min'}-${policy.max_ru || 'max'} RU/s`;
+}
+
+function getCosmosContainerSortValue(container, fieldName) {
+    switch (fieldName) {
+        case 'container_name':
+            return String(container?.container_name || 'database').toLowerCase();
+        case 'current_ru':
+            return getNullableNumber(container?.current_ru);
+        case 'ru_utilization':
+            return getContainerRuUtilizationValue(container);
+        case 'request_units':
+            return getNullableNumber(container?.request_units);
+        case 'policy':
+            return getCosmosContainerPolicyLabel(container).toLowerCase();
+        default:
+            return '';
+    }
+}
+
+function compareCosmosContainerValues(firstValue, secondValue, fieldName, direction) {
+    const firstMissing = firstValue === null || firstValue === undefined || firstValue === '';
+    const secondMissing = secondValue === null || secondValue === undefined || secondValue === '';
+    if (firstMissing && secondMissing) {
+        return 0;
+    }
+    if (firstMissing) {
+        return 1;
+    }
+    if (secondMissing) {
+        return -1;
+    }
+
+    const multiplier = direction === 'desc' ? -1 : 1;
+    if (COSMOS_CONTAINER_TEXT_SORT_FIELDS.has(fieldName)) {
+        return String(firstValue).localeCompare(String(secondValue), undefined, { sensitivity: 'base', numeric: true }) * multiplier;
+    }
+    return (Number(firstValue) - Number(secondValue)) * multiplier;
+}
+
+function getFilteredCosmosContainers(containers) {
+    const filterValue = String(document.getElementById('cosmos-throughput-container-filter')?.value || '').trim().toLowerCase();
+    if (!filterValue) {
+        return Array.isArray(containers) ? [...containers] : [];
+    }
+
+    return (Array.isArray(containers) ? containers : []).filter(container => (
+        String(container?.container_name || 'database').toLowerCase().includes(filterValue)
+    ));
+}
+
+function getSortedCosmosContainers(containers) {
+    const fieldName = COSMOS_CONTAINER_SORT_FIELDS.has(currentCosmosContainerSort.field)
+        ? currentCosmosContainerSort.field
+        : 'container_name';
+    const direction = currentCosmosContainerSort.direction === 'desc' ? 'desc' : 'asc';
+    return [...containers].sort((firstContainer, secondContainer) => {
+        const primaryComparison = compareCosmosContainerValues(
+            getCosmosContainerSortValue(firstContainer, fieldName),
+            getCosmosContainerSortValue(secondContainer, fieldName),
+            fieldName,
+            direction,
+        );
+        if (primaryComparison !== 0) {
+            return primaryComparison;
+        }
+
+        return compareCosmosContainerValues(
+            getCosmosContainerSortValue(firstContainer, 'container_name'),
+            getCosmosContainerSortValue(secondContainer, 'container_name'),
+            'container_name',
+            'asc',
+        );
+    });
+}
+
+function updateCosmosContainerTableControls(totalCount, visibleCount) {
+    const countElement = document.getElementById('cosmos-throughput-container-filter-count');
+    if (countElement) {
+        countElement.textContent = totalCount > 0 ? `Showing ${visibleCount} of ${totalCount} containers` : '';
+    }
+
+    document.querySelectorAll('.cosmos-throughput-container-sort').forEach(button => {
+        const fieldName = button.dataset.sortField;
+        const isActive = fieldName === currentCosmosContainerSort.field;
+        const direction = currentCosmosContainerSort.direction === 'desc' ? 'desc' : 'asc';
+        const headerCell = button.closest('th');
+        if (headerCell) {
+            headerCell.setAttribute('aria-sort', isActive ? (direction === 'desc' ? 'descending' : 'ascending') : 'none');
+        }
+        const icon = button.querySelector('i');
+        if (icon) {
+            icon.className = isActive
+                ? `bi ${direction === 'desc' ? 'bi-arrow-down-short' : 'bi-arrow-up-short'} ms-1`
+                : 'bi bi-arrow-down-up ms-1';
+        }
+    });
 }
 
 function renderCosmosContainerMetrics(containers) {
@@ -571,7 +708,11 @@ function renderCosmosContainerMetrics(containers) {
     }
 
     tableBody.replaceChildren();
-    if (!Array.isArray(containers) || containers.length === 0) {
+    const sourceContainers = Array.isArray(containers) ? containers : [];
+    const visibleContainers = getSortedCosmosContainers(getFilteredCosmosContainers(sourceContainers));
+    updateCosmosContainerTableControls(sourceContainers.length, visibleContainers.length);
+
+    if (sourceContainers.length === 0) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
         cell.colSpan = 7;
@@ -582,12 +723,20 @@ function renderCosmosContainerMetrics(containers) {
         return;
     }
 
-    containers.forEach(container => {
+    if (visibleContainers.length === 0) {
         const row = document.createElement('tr');
-        const policy = getCosmosContainerPolicy(container);
-        const policyLabel = isCosmosContainerPolicyEnforced()
-            ? 'Global policy'
-            : policy.enabled === false ? 'Disabled' : `${policy.min_ru || 'min'}-${policy.max_ru || 'max'} RU/s`;
+        const cell = document.createElement('td');
+        cell.colSpan = 7;
+        cell.className = 'text-muted';
+        cell.textContent = 'No containers match the current filter.';
+        row.appendChild(cell);
+        tableBody.appendChild(row);
+        return;
+    }
+
+    visibleContainers.forEach(container => {
+        const row = document.createElement('tr');
+        const policyLabel = getCosmosContainerPolicyLabel(container);
         const values = [
             container.container_name || 'database',
             container.mode || 'unknown',
@@ -1011,7 +1160,31 @@ function setupCosmosThroughputControls() {
         field.addEventListener('change', () => validateCosmosThroughputSettings());
     });
 
+    document.getElementById('cosmos-throughput-container-filter')?.addEventListener('input', () => {
+        renderCosmosContainerMetrics(currentCosmosContainers);
+    });
+
+    document.querySelectorAll('.cosmos-throughput-container-sort').forEach(button => {
+        button.addEventListener('click', () => {
+            const fieldName = button.dataset.sortField;
+            if (!COSMOS_CONTAINER_SORT_FIELDS.has(fieldName)) {
+                return;
+            }
+
+            if (currentCosmosContainerSort.field === fieldName) {
+                currentCosmosContainerSort.direction = currentCosmosContainerSort.direction === 'desc' ? 'asc' : 'desc';
+            } else {
+                currentCosmosContainerSort = {
+                    field: fieldName,
+                    direction: COSMOS_CONTAINER_TEXT_SORT_FIELDS.has(fieldName) ? 'asc' : 'desc'
+                };
+            }
+            renderCosmosContainerMetrics(currentCosmosContainers);
+        });
+    });
+
     document.getElementById('cosmos-throughput-refresh-btn')?.addEventListener('click', loadCosmosThroughputStatus);
+    document.getElementById('cosmos-throughput-refresh-table-btn')?.addEventListener('click', loadCosmosThroughputStatus);
     document.getElementById('cosmos-throughput-validate-access-btn')?.addEventListener('click', event => validateCosmosThroughputAccess(event.currentTarget));
     document.getElementById('cosmos-throughput-run-setup-test-btn')?.addEventListener('click', event => validateCosmosThroughputAccess(event.currentTarget));
     document.getElementById('cosmos-throughput-convert-autoscale-btn')?.addEventListener('click', event => convertCosmosThroughputToAutoscale('', event.currentTarget));
@@ -1789,6 +1962,217 @@ function isGuidLike(value) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
 }
 
+function normalizeGroupWorkflowGroupId(value) {
+    return String(value || '').trim();
+}
+
+function parseGroupWorkflowAssignmentIds(value) {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+        return [];
+    }
+
+    try {
+        const parsedValue = JSON.parse(rawValue);
+        if (Array.isArray(parsedValue)) {
+            return parsedValue.map(normalizeGroupWorkflowGroupId).filter(Boolean);
+        }
+    } catch (error) {
+        // Fall back to comma/newline parsing for older saved form values.
+    }
+
+    return rawValue
+        .split(/[\n,;]+/)
+        .map(normalizeGroupWorkflowGroupId)
+        .filter(Boolean);
+}
+
+function syncGroupWorkflowAssignmentField() {
+    if (!groupWorkflowAssignmentsInput) {
+        return;
+    }
+
+    groupWorkflowAssignmentsInput.value = JSON.stringify(Array.from(groupWorkflowAssignedGroupIds));
+}
+
+function updateGroupWorkflowAssignmentSummary() {
+    if (!groupWorkflowAssignmentSummary) {
+        return;
+    }
+
+    const assignedCount = groupWorkflowAssignedGroupIds.size;
+    groupWorkflowAssignmentSummary.textContent = assignedCount === 1
+        ? '1 group assigned.'
+        : `${assignedCount} groups assigned.`;
+}
+
+function setGroupWorkflowAssignmentError(message) {
+    if (!groupWorkflowAssignmentError) {
+        return;
+    }
+
+    groupWorkflowAssignmentError.textContent = message || '';
+    groupWorkflowAssignmentError.classList.toggle('d-none', !message);
+}
+
+function setGroupWorkflowAssignmentStatus(message) {
+    if (groupWorkflowAssignmentStatus) {
+        groupWorkflowAssignmentStatus.textContent = message || '';
+    }
+}
+
+function createGroupWorkflowAssignmentEmptyRow(message) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 3;
+    cell.className = 'text-center text-muted py-3';
+    cell.textContent = message;
+    row.appendChild(cell);
+    return row;
+}
+
+function renderGroupWorkflowAssignmentRows(groups) {
+    if (!groupWorkflowAssignmentGroupsBody) {
+        return;
+    }
+
+    groupWorkflowAssignmentGroupsBody.replaceChildren();
+
+    if (!Array.isArray(groups) || groups.length === 0) {
+        groupWorkflowAssignmentGroupsBody.appendChild(createGroupWorkflowAssignmentEmptyRow('No groups found.'));
+        return;
+    }
+
+    const rows = groups.map(group => {
+        const groupId = normalizeGroupWorkflowGroupId(group?.id);
+        const row = document.createElement('tr');
+
+        const nameCell = document.createElement('td');
+        const name = document.createElement('div');
+        name.className = 'fw-semibold';
+        name.textContent = group?.name || 'Unnamed group';
+        const meta = document.createElement('div');
+        meta.className = 'small text-muted';
+        meta.textContent = groupId;
+        nameCell.appendChild(name);
+        nameCell.appendChild(meta);
+
+        const descriptionCell = document.createElement('td');
+        descriptionCell.textContent = group?.description || '-';
+
+        const actionCell = document.createElement('td');
+        actionCell.className = 'text-end';
+        const actionButton = document.createElement('button');
+        actionButton.type = 'button';
+        actionButton.className = groupWorkflowAssignedGroupIds.has(groupId)
+            ? 'btn btn-sm btn-outline-danger'
+            : 'btn btn-sm btn-outline-primary';
+        actionButton.textContent = groupWorkflowAssignedGroupIds.has(groupId) ? 'Remove' : 'Assign';
+        actionButton.disabled = !groupId;
+        actionButton.addEventListener('click', () => {
+            if (!groupId) {
+                return;
+            }
+            if (groupWorkflowAssignedGroupIds.has(groupId)) {
+                groupWorkflowAssignedGroupIds.delete(groupId);
+            } else {
+                groupWorkflowAssignedGroupIds.add(groupId);
+                groupWorkflowDiscoveredGroups.set(groupId, group);
+            }
+            syncGroupWorkflowAssignmentField();
+            updateGroupWorkflowAssignmentSummary();
+            renderGroupWorkflowAssignmentRows(groups);
+            markFormAsModified();
+        });
+        actionCell.appendChild(actionButton);
+
+        row.appendChild(nameCell);
+        row.appendChild(descriptionCell);
+        row.appendChild(actionCell);
+        return row;
+    });
+
+    groupWorkflowAssignmentGroupsBody.replaceChildren(...rows);
+}
+
+async function searchGroupWorkflowAssignmentGroups() {
+    if (!groupWorkflowAssignmentGroupsBody) {
+        return;
+    }
+
+    const query = groupWorkflowGroupSearchInput?.value?.trim() || '';
+    const originalButtonText = groupWorkflowGroupSearchBtn?.textContent || 'Search';
+
+    setGroupWorkflowAssignmentError('');
+    setGroupWorkflowAssignmentStatus('Searching groups...');
+    if (groupWorkflowGroupSearchBtn) {
+        groupWorkflowGroupSearchBtn.disabled = true;
+        groupWorkflowGroupSearchBtn.textContent = 'Searching...';
+    }
+
+    try {
+        const url = new URL('/api/groups/discover', window.location.origin);
+        url.searchParams.set('showAll', 'true');
+        if (query) {
+            url.searchParams.set('search', query);
+        }
+
+        const response = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload?.error || 'Unable to load groups.');
+        }
+
+        const groups = Array.isArray(payload) ? payload : [];
+        groups.forEach(group => {
+            const groupId = normalizeGroupWorkflowGroupId(group?.id);
+            if (groupId) {
+                groupWorkflowDiscoveredGroups.set(groupId, group);
+            }
+        });
+        renderGroupWorkflowAssignmentRows(groups);
+        setGroupWorkflowAssignmentStatus(groups.length === 1 ? '1 group found.' : `${groups.length} groups found.`);
+    } catch (error) {
+        setGroupWorkflowAssignmentError(error.message || 'Unable to load groups.');
+        setGroupWorkflowAssignmentStatus('Search failed.');
+    } finally {
+        if (groupWorkflowGroupSearchBtn) {
+            groupWorkflowGroupSearchBtn.disabled = false;
+            groupWorkflowGroupSearchBtn.textContent = originalButtonText;
+        }
+    }
+}
+
+function setupGroupWorkflowAssignments() {
+    if (!groupWorkflowAssignmentsInput) {
+        return;
+    }
+
+    parseGroupWorkflowAssignmentIds(groupWorkflowAssignmentsInput.value).forEach(groupId => {
+        groupWorkflowAssignedGroupIds.add(groupId);
+    });
+    syncGroupWorkflowAssignmentField();
+    updateGroupWorkflowAssignmentSummary();
+
+    if (groupWorkflowAssignmentGroupsBody && groupWorkflowAssignedGroupIds.size > 0) {
+        groupWorkflowAssignmentGroupsBody.replaceChildren(createGroupWorkflowAssignmentEmptyRow('Search for groups to review current assignments.'));
+    }
+
+    groupWorkflowGroupSearchBtn?.addEventListener('click', searchGroupWorkflowAssignmentGroups);
+    groupWorkflowGroupSearchInput?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            void searchGroupWorkflowAssignmentGroups();
+        }
+    });
+    groupWorkflowAssignmentModal?.addEventListener('shown.bs.modal', () => {
+        if (groupWorkflowDiscoveredGroups.size === 0) {
+            void searchGroupWorkflowAssignmentGroups();
+        }
+    });
+    adminForm?.addEventListener('submit', syncGroupWorkflowAssignmentField);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     setupAdminFormAutofillMetadata();
 
@@ -1802,6 +2186,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateImageHiddenInput();
 
     setupToggles(); // This function will be extended below
+    setupGroupWorkflowAssignments();
     setupLandingPageLogoScaleControl();
     setupDocumentActionCapabilityControls();
     setupDeepResearchPolicyEditors();

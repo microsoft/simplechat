@@ -171,7 +171,7 @@ Text in Image: [Any visible text found]
 ## Configuration Flow
 
 ### Step 1: Configure GPT Models
-1. Admin → AI Models → GPT Configuration
+1. Admin → AI Models → Chat Model
 2. Configure endpoint, authentication, API version
 3. Fetch models and select vision-capable models (gpt-4o, gpt-4-vision)
 4. Save settings
@@ -496,7 +496,7 @@ print(doc.get('vision_analysis'))
    - Contains "gpt-4.5" (any GPT-4.5 variant)
    - Contains "gpt-5" (any GPT-5 variant)
    - Matches o-series pattern (o1, o1-preview, o1-mini, o3, o3-mini)
-2. Was model fetched and selected in GPT configuration?
+2. Was model fetched and selected in Chat Model?
 3. For APIM: Is deployment name listed in comma-separated list?
 
 **Supported Model Families**:
@@ -508,7 +508,7 @@ print(doc.get('vision_analysis'))
 
 **Solution**:
 ```
-1. Go to Admin Settings → AI Models → GPT Configuration
+1. Go to Admin Settings → AI Models → Chat Model
 2. Fetch GPT Models
 3. Select a vision-capable model from the list above
 4. Save settings

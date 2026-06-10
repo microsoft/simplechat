@@ -14,7 +14,7 @@ Voice assisted form inputs add microphone controls to speech-enabled SimpleChat 
 
 - Admin setting `enable_speech_to_text_input` must be enabled.
 - Existing `/api/speech/transcribe-chat` Azure Speech transcription endpoint is reused.
-- Existing Azure OpenAI or APIM GPT configuration is reused for agent instruction drafting.
+- Existing Azure OpenAI or APIM Chat Model is reused for agent instruction drafting.
 - Browser microphone access and `MediaRecorder` support are required for recording.
 
 ## Technical Specifications

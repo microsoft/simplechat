@@ -1,8 +1,8 @@
 # test_msgraph_auth_consent_flow.py
 """
 Functional test for Microsoft Graph incremental auth flow.
-Version: 0.239.175
-Implemented in: 0.239.175
+Version: 0.241.179
+Implemented in: 0.241.179
 
 This test ensures plugin-requested Microsoft Graph scopes survive the OAuth
 callback and that interactive reauthentication does not force consent unless
@@ -149,6 +149,9 @@ def test_plugin_auth_only_forces_consent_when_entra_requires_it() -> bool:
 
             if result.get("error") != "consent_required":
                 print(f"Expected consent_required, got: {result}")
+                return False
+            if "Microsoft 365" not in result.get("message", ""):
+                print(f"Expected user-friendly Microsoft 365 consent message, got: {result}")
                 return False
             if fake_msal_app.authorization_requests[0].get("prompt") != "consent":
                 print(f"Expected prompt=consent for explicit consent errors, got: {fake_msal_app.authorization_requests[0]}")

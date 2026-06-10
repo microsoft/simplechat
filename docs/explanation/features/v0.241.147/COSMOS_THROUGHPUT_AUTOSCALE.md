@@ -14,6 +14,10 @@ Enhanced in version: **0.241.161** with grouped scale-up and scale-down policy c
 
 Enhanced in version: **0.241.162** with a dedicated Validate Access action that tests the current form values before admins save or enable throughput automation.
 
+Enhanced in version: **0.241.180** with container table filtering and sortable columns for container name, current RU/s, RU utilization, request units, and policy.
+
+Enhanced in version: **0.241.181** with a table-local Refresh Table action for reloading container rows beside the container filter.
+
 Dependencies
 
 - Admin Settings Scale tab in `application/single_app/templates/admin_settings.html`
@@ -33,6 +37,8 @@ Architecture overview
 - Current SimpleChat Bicep deployments use database-level autoscale throughput on the `SimpleChat` database, so the preferred path scales the database autoscale max RU/s.
 - Environments without database-level throughput fall back to container-targeted management for containers with dedicated throughput.
 - Azure Monitor metrics provide recent normalized RU utilization and per-container request-unit visibility.
+- The per-container metrics table can be filtered by container name and sorted by container, current RU/s, RU utilization, request units, or policy.
+- The per-container metrics table includes a Refresh Table action so admins can reload rows directly from the table controls.
 - Manual Scale Up and Scale Down buttons call admin-only backend APIs.
 - Automatic scaling runs in the existing background task framework every five minutes.
 - A Cosmos-backed distributed lock prevents multiple app instances from scaling at the same time.
@@ -110,6 +116,8 @@ Admin workflow
 - Adjust scale-up and scale-down thresholds, step sizes, cooldown intervals, and min/max guardrails.
 - Keep the Metrics Window less than or equal to both scale intervals and keep Scale Up At higher than Scale Down At.
 - Use Containers to configure per-container policies when the environment uses dedicated container throughput.
+- Use the container table filter and sortable headers to find high-utilization or high-request-unit containers quickly.
+- Use Refresh Table to reload the container rows from the same controls after changing the filter or reviewing sorted results.
 - Save Admin Settings.
 - Use Validate Access after changing resource identity or permissions to confirm the current form values work before enabling automation.
 - Use Refresh to view current throughput and metrics.
@@ -142,4 +150,6 @@ Related config.py version update
 - Application version updated to `0.241.148` in `application/single_app/config.py` for container-targeted fallback controls.
 - Application version updated to `0.241.161` in `application/single_app/config.py` for grouped policy controls and save-blocking validation.
 - Application version updated to `0.241.162` in `application/single_app/config.py` for the Validate Access setup test action.
+- Application version updated to `0.241.180` in `application/single_app/config.py` for container table sorting and filtering.
+- Application version updated to `0.241.181` in `application/single_app/config.py` for the table-local Refresh Table action.
 - Deployer version updated to `1.0.12` in `deployers/version.txt` for Bicep app-setting and RBAC changes.

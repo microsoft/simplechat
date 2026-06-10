@@ -4,9 +4,9 @@ Implemented in version: **0.241.073**
 Azure Files source support implemented in: **0.241.127**
 OneDrive source support and selected-path workflow implemented in: **0.241.128**
 Global cloud drive connector identities implemented in: **0.241.129**
-Cloud connector admin visibility limited in: **0.241.176**
+Cloud connector admin visibility limited in: **0.241.178**
 
-Fixed/Implemented in version: **0.241.176**
+Fixed/Implemented in version: **0.241.178**
 
 ## Overview
 
@@ -19,7 +19,7 @@ File Sync source creation and editing uses a modal workflow instead of an inline
 - SMB sources require the existing `smbprotocol` dependency.
 - Azure Files sources require the `azure-storage-file-share` dependency.
 - OneDrive source code remains in place for future validation and requires a global File Sync identity with Microsoft Graph application permissions when re-enabled.
-- Version was updated in `application/single_app/config.py` to `0.241.176` for the cloud connector admin visibility pause.
+- Version was updated in `application/single_app/config.py` to `0.241.178` for the cloud connector admin visibility pause.
 
 ## Technical Specifications
 

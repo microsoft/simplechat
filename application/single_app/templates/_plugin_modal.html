@@ -325,46 +325,6 @@
               </div>
               <div id="msgraph-capabilities-list" class="d-grid gap-2"></div>
             </div>
-
-            <div class="simplechat-config-card mb-0">
-              <div class="config-section-label">
-                <i class="bi bi-envelope-paper me-2"></i>Mail Delivery
-              </div>
-              <div class="row g-3">
-                <div class="col-md-8">
-                  <label for="msgraph-mail-send-mode" class="form-label">Send Mode</label>
-                  <select class="form-select" id="msgraph-mail-send-mode">
-                    <option value="draft_manual">Draft with manual send</option>
-                    <option value="draft_delayed">Draft with delayed delivery</option>
-                    <option value="auto_send">Auto send</option>
-                  </select>
-                </div>
-                <div class="col-md-4" id="msgraph-mail-delay-group">
-                  <label for="msgraph-mail-delay-seconds" class="form-label">Delay (seconds)</label>
-                  <input type="number" class="form-control" id="msgraph-mail-delay-seconds" value="60" min="5" max="600" step="5" />
-                </div>
-              </div>
-            </div>
-
-            <div class="simplechat-config-card mb-0 mt-3">
-              <div class="config-section-label">
-                <i class="bi bi-calendar-event me-2"></i>Calendar Invite Delivery
-              </div>
-              <div class="row g-3">
-                <div class="col-md-8">
-                  <label for="msgraph-calendar-send-mode" class="form-label">Send Mode</label>
-                  <select class="form-select" id="msgraph-calendar-send-mode">
-                    <option value="auto_send">Auto send</option>
-                    <option value="draft_manual">Draft with manual send</option>
-                    <option value="draft_delayed">Draft with delayed delivery</option>
-                  </select>
-                </div>
-                <div class="col-md-4" id="msgraph-calendar-delay-group">
-                  <label for="msgraph-calendar-delay-seconds" class="form-label">Delay (seconds)</label>
-                  <input type="number" class="form-control" id="msgraph-calendar-delay-seconds" value="60" min="5" max="600" step="5" />
-                </div>
-              </div>
-            </div>
           </div>
 
           <div id="mcp-config-section" class="d-none">
@@ -1457,7 +1417,7 @@
                     <span class="fw-medium" id="summary-msgraph-disabled-list">-</span>
                   </div>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-6" id="summary-msgraph-mail-mode-row">
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Default Mail Delivery</label>
                     <span class="fw-medium" id="summary-msgraph-mail-send-mode">-</span>
@@ -1469,7 +1429,7 @@
                     <span class="fw-medium" id="summary-msgraph-mail-delay-seconds">-</span>
                   </div>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-6" id="summary-msgraph-calendar-mode-row">
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Default Calendar Invite Delivery</label>
                     <span class="fw-medium" id="summary-msgraph-calendar-send-mode">-</span>

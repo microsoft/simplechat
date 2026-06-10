@@ -106,7 +106,7 @@ Each admin tab includes organized sub-sections with proper IDs for navigation ta
   - Document intelligence and data extraction
 
 ### 🤖 **AI Models** (3 sub-sections)
-- **💬 GPT Configuration** (`gpt-configuration`)
+- **💬 Chat Model** (`gpt-configuration`)
   - OpenAI GPT model settings and parameters
 - **🔤 Embeddings** (`embeddings-configuration`)
   - Text embedding model configuration

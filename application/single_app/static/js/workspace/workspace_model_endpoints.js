@@ -14,12 +14,16 @@ const endpointIdInput = document.getElementById("model-endpoint-id");
 const endpointNameInput = document.getElementById("model-endpoint-name");
 const endpointProviderSelect = document.getElementById("model-endpoint-provider");
 const endpointUrlInput = document.getElementById("model-endpoint-endpoint");
+const endpointUrlLabel = document.getElementById("model-endpoint-endpoint-label");
+const endpointUrlHelp = document.getElementById("model-endpoint-endpoint-help");
 const endpointProjectGroup = document.getElementById("model-endpoint-project-group");
 const endpointProjectInput = document.getElementById("model-endpoint-project-name");
 const endpointProjectApiVersionGroup = document.getElementById("model-endpoint-project-api-version-group");
 const endpointProjectApiVersionInput = document.getElementById("model-endpoint-project-api-version");
+const endpointProjectApiVersionCustomInput = document.getElementById("model-endpoint-project-api-version-custom");
 const endpointOpenAiApiVersionGroup = document.getElementById("model-endpoint-openai-api-version-group");
 const endpointOpenAiApiVersionInput = document.getElementById("model-endpoint-openai-api-version");
+const endpointOpenAiApiVersionCustomInput = document.getElementById("model-endpoint-openai-api-version-custom");
 const endpointSubscriptionGroup = document.getElementById("model-endpoint-subscription-group");
 const endpointResourceGroup = document.getElementById("model-endpoint-resource-group-group");
 const endpointSubscriptionInput = document.getElementById("model-endpoint-subscription-id");
@@ -62,6 +66,11 @@ const modelsTestApi = scope === "group" ? "/api/group/models/test-model" : "/api
 let workspaceEndpoints = Array.isArray(window.workspaceModelEndpoints) ? [...window.workspaceModelEndpoints] : [];
 let modalModels = [];
 
+const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";
+const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";
+const DEFAULT_FOUNDRY_PROJECT_API_VERSION = "v1";
+const CUSTOM_VERSION_VALUE = "custom";
+
 function hasEndpointManagementUi() {
     return Boolean(endpointsWrapper && endpointsTbody);
 }
@@ -89,6 +98,137 @@ function setElementVisibility(element, isVisible) {
         return;
     }
     element.classList.toggle("d-none", !isVisible);
+}
+
+function isFoundryProvider(provider) {
+    return provider === "aifoundry" || provider === "new_foundry";
+}
+
+function endpointIncludesProject(endpoint) {
+    return String(endpoint || "").toLowerCase().includes("/api/projects/");
+}
+
+function getProjectNameFromEndpoint(endpoint) {
+    const endpointValue = String(endpoint || "").trim();
+    if (!endpointValue) {
+        return "";
+    }
+
+    try {
+        const parsedUrl = new URL(endpointValue);
+        const segments = parsedUrl.pathname.split("/").filter(Boolean);
+        const projectsIndex = segments.findIndex((segment) => segment.toLowerCase() === "projects");
+        if (projectsIndex >= 0 && segments[projectsIndex + 1]) {
+            return decodeURIComponent(segments[projectsIndex + 1]);
+        }
+    } catch (error) {
+        const marker = "/api/projects/";
+        const lowerEndpoint = endpointValue.toLowerCase();
+        const markerIndex = lowerEndpoint.indexOf(marker);
+        if (markerIndex >= 0) {
+            return endpointValue.slice(markerIndex + marker.length).split(/[/?#]/)[0];
+        }
+    }
+
+    return "";
+}
+
+function syncProjectNameFromEndpoint() {
+    if (!endpointProjectInput || !endpointUrlInput) {
+        return "";
+    }
+
+    const projectName = getProjectNameFromEndpoint(endpointUrlInput.value);
+    if (projectName) {
+        endpointProjectInput.value = projectName;
+    }
+    return projectName;
+}
+
+function syncEndpointCopyForProvider() {
+    const provider = endpointProviderSelect?.value || "aoai";
+    if (endpointUrlLabel) {
+        endpointUrlLabel.textContent = isFoundryProvider(provider)
+            ? "Project Endpoint"
+            : "Endpoint Fully Qualified Domain Name (FQDN)";
+    }
+    if (endpointUrlHelp) {
+        endpointUrlHelp.textContent = isFoundryProvider(provider)
+            ? "Paste the Project endpoint from Azure AI Foundry. It can include /api/projects/<project>; Claude deployments are detected from the model name."
+            : "For Azure OpenAI, paste the resource endpoint.";
+    }
+}
+
+function syncVersionCustomVisibility() {
+    setElementVisibility(
+        endpointProjectApiVersionCustomInput,
+        endpointProjectApiVersionInput?.value === CUSTOM_VERSION_VALUE
+    );
+    setElementVisibility(
+        endpointOpenAiApiVersionCustomInput,
+        endpointOpenAiApiVersionInput?.value === CUSTOM_VERSION_VALUE
+    );
+}
+
+function getSelectedVersionValue(versionInput, customInput, fallbackValue = "") {
+    const selectedValue = String(versionInput?.value || "").trim();
+    if (selectedValue === CUSTOM_VERSION_VALUE) {
+        return String(customInput?.value || "").trim();
+    }
+    return selectedValue || fallbackValue;
+}
+
+function setSelectedVersionValue(versionInput, customInput, value, fallbackValue = "") {
+    if (!versionInput) {
+        return;
+    }
+
+    const normalizedValue = String(value || fallbackValue || "").trim();
+    const matchingOption = Array.from(versionInput.options || []).find((option) => option.value === normalizedValue);
+    if (matchingOption && normalizedValue !== CUSTOM_VERSION_VALUE) {
+        versionInput.value = normalizedValue;
+        if (customInput) {
+            customInput.value = "";
+        }
+    } else {
+        versionInput.value = CUSTOM_VERSION_VALUE;
+        if (customInput) {
+            customInput.value = normalizedValue;
+        }
+    }
+
+    syncVersionCustomVisibility();
+}
+
+function getDefaultOpenAiApiVersion(provider) {
+    return provider === "new_foundry" ? DEFAULT_FOUNDRY_OPENAI_API_VERSION : DEFAULT_AOAI_OPENAI_API_VERSION;
+}
+
+function syncOpenAiApiVersionForProvider() {
+    if (!endpointOpenAiApiVersionInput) {
+        return;
+    }
+
+    const provider = endpointProviderSelect?.value || "aoai";
+    const currentValue = getSelectedVersionValue(endpointOpenAiApiVersionInput, endpointOpenAiApiVersionCustomInput, "");
+    if (provider === "new_foundry") {
+        if (!currentValue || currentValue === DEFAULT_AOAI_OPENAI_API_VERSION) {
+            setSelectedVersionValue(
+                endpointOpenAiApiVersionInput,
+                endpointOpenAiApiVersionCustomInput,
+                DEFAULT_FOUNDRY_OPENAI_API_VERSION
+            );
+        }
+        return;
+    }
+
+    if (!currentValue) {
+        setSelectedVersionValue(
+            endpointOpenAiApiVersionInput,
+            endpointOpenAiApiVersionCustomInput,
+            getDefaultOpenAiApiVersion(provider)
+        );
+    }
 }
 
 function formatProviderLabel(provider) {
@@ -161,8 +301,11 @@ function updateAuthVisibility() {
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
     const provider = endpointProviderSelect?.value || "aoai";
     const isApiKey = authType === "api_key";
-    const isFoundry = provider === "aifoundry" || provider === "new_foundry";
-    setElementVisibility(endpointProjectGroup, isFoundry);
+    const isFoundry = isFoundryProvider(provider);
+    const projectNameFromEndpoint = syncProjectNameFromEndpoint();
+    syncEndpointCopyForProvider();
+    syncVersionCustomVisibility();
+    setElementVisibility(endpointProjectGroup, isFoundry && !projectNameFromEndpoint);
     setElementVisibility(endpointProjectApiVersionGroup, isFoundry);
     setElementVisibility(endpointOpenAiApiVersionGroup, true);
     setElementVisibility(endpointSubscriptionGroup, provider === "aoai" && !isApiKey);
@@ -187,8 +330,16 @@ function resetModal() {
     if (endpointProviderSelect) endpointProviderSelect.value = "aoai";
     if (endpointUrlInput) endpointUrlInput.value = "";
     if (endpointProjectInput) endpointProjectInput.value = "";
-    if (endpointProjectApiVersionInput) endpointProjectApiVersionInput.value = "v1";
-    if (endpointOpenAiApiVersionInput) endpointOpenAiApiVersionInput.value = "2024-05-01-preview";
+    setSelectedVersionValue(
+        endpointProjectApiVersionInput,
+        endpointProjectApiVersionCustomInput,
+        DEFAULT_FOUNDRY_PROJECT_API_VERSION
+    );
+    setSelectedVersionValue(
+        endpointOpenAiApiVersionInput,
+        endpointOpenAiApiVersionCustomInput,
+        getDefaultOpenAiApiVersion("aoai")
+    );
     if (endpointSubscriptionInput) endpointSubscriptionInput.value = "";
     if (endpointResourceGroupInput) endpointResourceGroupInput.value = "";
     if (endpointAuthTypeSelect) endpointAuthTypeSelect.value = "managed_identity";
@@ -223,12 +374,16 @@ function openModalForEndpoint(endpoint) {
         if (endpointProviderSelect) endpointProviderSelect.value = endpoint.provider || "aoai";
         if (endpointUrlInput) endpointUrlInput.value = endpoint.connection?.endpoint || "";
         if (endpointProjectInput) endpointProjectInput.value = endpoint.connection?.project_name || "";
-        if (endpointProjectApiVersionInput) {
-            endpointProjectApiVersionInput.value = endpoint.connection?.project_api_version || endpoint.connection?.api_version || "v1";
-        }
-        if (endpointOpenAiApiVersionInput) {
-            endpointOpenAiApiVersionInput.value = endpoint.connection?.openai_api_version || endpoint.connection?.api_version || "2024-05-01-preview";
-        }
+        setSelectedVersionValue(
+            endpointProjectApiVersionInput,
+            endpointProjectApiVersionCustomInput,
+            endpoint.connection?.project_api_version || endpoint.connection?.api_version || DEFAULT_FOUNDRY_PROJECT_API_VERSION
+        );
+        setSelectedVersionValue(
+            endpointOpenAiApiVersionInput,
+            endpointOpenAiApiVersionCustomInput,
+            endpoint.connection?.openai_api_version || endpoint.connection?.api_version || getDefaultOpenAiApiVersion(endpoint.provider || "aoai")
+        );
         if (endpointSubscriptionInput) endpointSubscriptionInput.value = endpoint.management?.subscription_id || "";
         if (endpointResourceGroupInput) endpointResourceGroupInput.value = endpoint.management?.resource_group || "";
         if (endpointAuthTypeSelect) endpointAuthTypeSelect.value = endpoint.auth?.type || "managed_identity";
@@ -427,25 +582,35 @@ function buildEndpointPayload() {
     const endpointId = endpointIdInput?.value.trim() || "";
     const name = endpointNameInput.value.trim();
     const endpoint = endpointUrlInput.value.trim();
-    const projectName = endpointProjectInput?.value.trim() || "";
-    const projectApiVersion = endpointProjectApiVersionInput?.value.trim() || "v1";
-    const openAiApiVersion = endpointOpenAiApiVersionInput.value.trim();
     const provider = endpointProviderSelect?.value || "aoai";
+    const projectNameFromEndpoint = isFoundryProvider(provider) ? syncProjectNameFromEndpoint() : "";
+    const projectName = projectNameFromEndpoint || endpointProjectInput?.value.trim() || "";
+    const projectApiVersion = getSelectedVersionValue(
+        endpointProjectApiVersionInput,
+        endpointProjectApiVersionCustomInput,
+        DEFAULT_FOUNDRY_PROJECT_API_VERSION
+    );
+    const openAiApiVersion = getSelectedVersionValue(
+        endpointOpenAiApiVersionInput,
+        endpointOpenAiApiVersionCustomInput,
+        getDefaultOpenAiApiVersion(provider)
+    );
     const subscriptionId = endpointSubscriptionInput?.value.trim() || "";
     const resourceGroup = endpointResourceGroupInput?.value.trim() || "";
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
+    const existingEndpoint = workspaceEndpoints.find((savedEndpoint) => savedEndpoint.id === endpointId);
 
     if (!name || !endpoint || !openAiApiVersion) {
         showToast("Endpoint name, URL, and OpenAI API version are required.", "warning");
         return null;
     }
 
-    if ((provider === "aifoundry" || provider === "new_foundry") && !projectApiVersion) {
+    if (isFoundryProvider(provider) && !projectApiVersion) {
         showToast("Project API version is required for Foundry project discovery.", "warning");
         return null;
     }
 
-    if ((provider === "aifoundry" || provider === "new_foundry") && !endpoint.includes("/api/projects/") && !projectName) {
+    if (isFoundryProvider(provider) && !endpointIncludesProject(endpoint) && !projectName) {
         showToast("Foundry project name is required when the endpoint does not include /api/projects/.", "warning");
         return null;
     }
@@ -468,12 +633,15 @@ function buildEndpointPayload() {
         foundry_scope: endpointFoundryScopeInput?.value.trim() || ""
     };
 
-    if (authType === "service_principal" && (!auth.tenant_id || !auth.client_id || !auth.client_secret)) {
+    const hasStoredApiKey = authType === "api_key" && Boolean(existingEndpoint?.has_api_key);
+    const hasStoredClientSecret = authType === "service_principal" && Boolean(existingEndpoint?.has_client_secret);
+
+    if (authType === "service_principal" && (!auth.tenant_id || !auth.client_id || (!auth.client_secret && !hasStoredClientSecret))) {
         showToast("Tenant ID, Client ID, and Client Secret are required for service principal auth.", "warning");
         return null;
     }
 
-    if ((provider === "aifoundry" || provider === "new_foundry") && authType === "service_principal" && auth.management_cloud === "custom") {
+    if (isFoundryProvider(provider) && authType === "service_principal" && auth.management_cloud === "custom") {
         if (!auth.custom_authority) {
             showToast("Custom authority is required when Management Cloud is set to Custom.", "warning");
             return null;
@@ -484,7 +652,7 @@ function buildEndpointPayload() {
         }
     }
 
-    if (authType === "api_key" && !auth.api_key) {
+    if (authType === "api_key" && !auth.api_key && !hasStoredApiKey) {
         showToast("API key is required for API key authentication.", "warning");
         return null;
     }
@@ -499,7 +667,7 @@ function buildEndpointPayload() {
         openai_api_version: openAiApiVersion
     };
 
-    if (provider === "aifoundry" || provider === "new_foundry") {
+    if (isFoundryProvider(provider)) {
         connection.project_api_version = projectApiVersion;
         if (projectName) {
             connection.project_name = projectName;
@@ -687,7 +855,22 @@ function initialize() {
     }
 
     if (endpointProviderSelect) {
-        endpointProviderSelect.addEventListener("change", updateAuthVisibility);
+        endpointProviderSelect.addEventListener("change", () => {
+            updateAuthVisibility();
+            syncOpenAiApiVersionForProvider();
+        });
+    }
+
+    if (endpointUrlInput) {
+        endpointUrlInput.addEventListener("input", updateAuthVisibility);
+    }
+
+    if (endpointProjectApiVersionInput) {
+        endpointProjectApiVersionInput.addEventListener("change", syncVersionCustomVisibility);
+    }
+
+    if (endpointOpenAiApiVersionInput) {
+        endpointOpenAiApiVersionInput.addEventListener("change", syncVersionCustomVisibility);
     }
 
     if (endpointAuthTypeSelect) {

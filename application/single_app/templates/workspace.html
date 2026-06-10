@@ -618,6 +618,9 @@
               {% endif %}
             {% endif %}
           {% endif %}
+          {% if settings.allow_user_workflows %}
+            <option value="workflows-tab-btn">Personal Workflows</option>
+          {% endif %}
           {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
             <option value="endpoints-tab-btn">Your Endpoints</option>
           {% endif %}
@@ -734,7 +737,7 @@
             aria-controls="workflows-tab"
             aria-selected="false"
           >
-            Workflows
+            Personal Workflows
           </button>
         </li>
       {% endif %}
@@ -1269,8 +1272,8 @@
         <div class="tab-pane-inner">
           <div class="card p-3 my-3">
             <div class="d-flex justify-content-between align-items-center mb-2">
-              <button class="btn btn-success btn-sm" id="create-workflow-btn" type="button">New Workflow</button>
-              <div class="btn-group btn-group-sm" role="group" aria-label="Workflows view mode">
+              <button class="btn btn-success btn-sm" id="create-workflow-btn" type="button">New Personal Workflow</button>
+              <div class="btn-group btn-group-sm" role="group" aria-label="Personal workflows view mode">
                 <input type="radio" class="btn-check" name="workflows-view-mode" id="workflows-view-list" autocomplete="off" checked>
                 <label class="btn btn-outline-secondary" for="workflows-view-list"><i class="bi bi-list-ul"></i></label>
                 <input type="radio" class="btn-check" name="workflows-view-mode" id="workflows-view-grid" autocomplete="off">
@@ -1302,7 +1305,7 @@
                     <tr class="table-loading-row">
                       <td colspan="5">
                         <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                        Loading workflows...
+                        Loading personal workflows...
                       </td>
                     </tr>
                   </tbody>
@@ -1393,7 +1396,7 @@
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <form class="modal-content" id="workflow-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         <div class="modal-header">
-          <h5 class="modal-title" id="workflowModalLabel">Create Workflow</h5>
+          <h5 class="modal-title" id="workflowModalLabel">Create Personal Workflow</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
@@ -1638,7 +1641,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary" id="workflow-save-btn">Save Workflow</button>
+          <button type="submit" class="btn btn-primary" id="workflow-save-btn">Save Personal Workflow</button>
         </div>
       </form>
     </div>
@@ -1648,7 +1651,7 @@
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" id="workflowHistoryModalLabel">Workflow Run History</h5>
+          <h5 class="modal-title" id="workflowHistoryModalLabel">Personal Workflow Run History</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
@@ -1657,7 +1660,7 @@
               Conversation: <span id="workflow-history-conversation-id">Not created yet.</span>
             </div>
             <a id="workflow-history-open-conversation-link" class="btn btn-sm btn-outline-primary d-none" href="#">
-              Open workflow conversation
+              Open personal workflow conversation
             </a>
           </div>
           <div class="table-responsive">
@@ -1693,15 +1696,15 @@
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" id="workflowDeleteModalLabel">Delete Workflow</h5>
+          <h5 class="modal-title" id="workflowDeleteModalLabel">Delete Personal Workflow</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
-          <p class="mb-0">Delete <strong id="workflow-delete-name">this workflow</strong>? Its dedicated conversation remains in your conversations list, but this workflow definition and its run history will be removed.</p>
+          <p class="mb-0">Delete <strong id="workflow-delete-name">this personal workflow</strong>? Its dedicated conversation remains in your conversations list, but this workflow definition and its run history will be removed.</p>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="button" class="btn btn-danger" id="workflow-delete-confirm-btn">Delete Workflow</button>
+          <button type="button" class="btn btn-danger" id="workflow-delete-confirm-btn">Delete Personal Workflow</button>
         </div>
       </div>
     </div>

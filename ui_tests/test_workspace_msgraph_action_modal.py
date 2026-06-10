@@ -1,13 +1,13 @@
 # test_workspace_msgraph_action_modal.py
 """
 UI test for the workspace Microsoft Graph action modal.
-Version: 0.241.179
-Implemented in: 0.241.179
+Version: 0.241.178
+Implemented in: 0.241.178
 
 This test ensures users can select the Microsoft Graph action type,
 configure its default capabilities and mail/calendar delivery modes without
-exposing a user-editable URL, review the capability summary, and complete
-validation plus save without calling the admin-only validation endpoint.
+exposing a user-editable URL, review nested delivery-mode slider settings, and
+complete validation plus save without calling the admin-only validation endpoint.
 """
 
 import json
@@ -123,15 +123,50 @@ def test_workspace_msgraph_action_modal(playwright):
         get_profile_toggle = page.locator("#msgraph-capability-get_my_profile")
         security_alerts_toggle = page.locator("#msgraph-capability-get_my_security_alerts")
         create_invite_toggle = page.locator("#msgraph-capability-create_calendar_invite")
+        send_mail_toggle = page.locator("#msgraph-capability-send_mail")
         read_mail_toggle = page.locator("#msgraph-capability-get_my_messages")
+        mail_delivery_options = page.locator("#msgraph-delivery-send_mail-options")
+        calendar_delivery_options = page.locator("#msgraph-delivery-create_calendar_invite-options")
         get_profile_toggle.uncheck()
         security_alerts_toggle.uncheck()
         expect(create_invite_toggle).to_be_checked()
+        expect(send_mail_toggle).to_be_checked()
         expect(read_mail_toggle).to_be_checked()
+        expect(mail_delivery_options).to_be_visible()
+        expect(calendar_delivery_options).to_be_visible()
+
+        send_mail_toggle.uncheck()
+        expect(mail_delivery_options).to_be_hidden()
+        send_mail_toggle.check()
+        expect(mail_delivery_options).to_be_visible()
+
+        page.locator("#msgraph-mail-send-mode").select_option("draft_delayed")
+        expect(page.locator("#msgraph-mail-delay-group")).to_be_visible()
+        assert page.locator("#msgraph-mail-delay-seconds").get_attribute("type") == "range"
+        page.locator("#msgraph-mail-delay-seconds").evaluate(
+            """
+            element => {
+                element.value = '300';
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            """
+        )
+        expect(page.locator("#msgraph-mail-delay-seconds-value")).to_have_text("300 seconds")
 
         page.locator("#msgraph-calendar-send-mode").select_option("draft_delayed")
         expect(page.locator("#msgraph-calendar-delay-group")).to_be_visible()
-        page.locator("#msgraph-calendar-delay-seconds").fill("120")
+        assert page.locator("#msgraph-calendar-delay-seconds").get_attribute("type") == "range"
+        page.locator("#msgraph-calendar-delay-seconds").evaluate(
+            """
+            element => {
+                element.value = '120';
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            """
+        )
+        expect(page.locator("#msgraph-calendar-delay-seconds-value")).to_have_text("120 seconds")
 
         page.locator("#plugin-modal-skip").click()
 
@@ -142,7 +177,9 @@ def test_workspace_msgraph_action_modal(playwright):
         expect(page.locator("#summary-msgraph-enabled-list")).to_contain_text("Read my mail")
         expect(page.locator("#summary-msgraph-disabled-list")).to_contain_text("Read my profile")
         expect(page.locator("#summary-msgraph-disabled-list")).to_contain_text("Read my security alerts")
-        expect(page.locator("#summary-msgraph-calendar-send-mode")).to_have_text("Draft with delayed delivery")
+        expect(page.locator("#summary-msgraph-mail-send-mode")).to_have_text("Draft with delayed send")
+        expect(page.locator("#summary-msgraph-mail-delay-seconds")).to_have_text("300 seconds")
+        expect(page.locator("#summary-msgraph-calendar-send-mode")).to_have_text("Draft with delayed send")
         expect(page.locator("#summary-msgraph-calendar-delay-seconds")).to_have_text("120 seconds")
 
         modal.get_by_role("button", name="Save Action").click()
@@ -161,7 +198,10 @@ def test_workspace_msgraph_action_modal(playwright):
         assert capabilities["get_my_profile"] is False
         assert capabilities["get_my_security_alerts"] is False
         assert capabilities["create_calendar_invite"] is True
+        assert capabilities["send_mail"] is True
         assert capabilities["get_my_messages"] is True
+        assert saved_plugin["additionalFields"]["msgraph_mail_send_mode"] == "draft_delayed"
+        assert saved_plugin["additionalFields"]["msgraph_mail_delay_seconds"] == 300
         assert saved_plugin["additionalFields"]["msgraph_calendar_send_mode"] == "draft_delayed"
         assert saved_plugin["additionalFields"]["msgraph_calendar_delay_seconds"] == 120
     finally:

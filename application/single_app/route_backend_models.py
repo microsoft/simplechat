@@ -9,6 +9,14 @@ from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup
 from functions_settings import *
 from foundry_agent_runtime import list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
+from model_endpoint_clients import (
+    MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+    MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+    MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+    build_anthropic_chat_client,
+    build_openai_style_chat_client,
+    infer_model_endpoint_protocol,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
 import re
@@ -209,12 +217,17 @@ def register_route_backend_models(app):
             subscription_id=subscription_id
         )
 
-    def build_inference_client(endpoint, api_version, auth_settings, provider="aoai"):
+    def build_inference_client(endpoint, api_version, auth_settings, provider="aoai", deployment_name=""):
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
+        runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
         if auth_type == "api_key":
             api_key = auth_settings.get("api_key")
             if not api_key:
                 raise ValueError("API key is required for API key authentication.")
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+                return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+                return build_openai_style_chat_client(api_key, endpoint, api_version)
             return AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
@@ -234,9 +247,18 @@ def register_route_backend_models(app):
             credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
 
         scope = cognitive_services_scope
-        if provider in ("aifoundry", "new_foundry"):
+        if provider in ("aifoundry", "new_foundry") or runtime_protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
             scope = resolve_foundry_scope(auth_settings)
-        log_models_debug(f"Inference token scope={scope} provider={provider}")
+        log_models_debug(f"Inference token scope={scope} provider={provider} protocol={runtime_protocol}")
+
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+            token = credential.get_token(scope).token
+            return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token)
+
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+            token = credential.get_token(scope).token
+            return build_openai_style_chat_client(token, endpoint, api_version)
+
         token_provider = get_bearer_token_provider(credential, scope)
         return AzureOpenAI(
             api_version=api_version,
@@ -392,6 +414,7 @@ def register_route_backend_models(app):
             endpoint = connection.get("endpoint") or ""
             api_version = connection.get("openai_api_version") or connection.get("api_version") or ""
             deployment_name = model.get("deploymentName") or ""
+            runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
 
             auth_type = (auth_settings.get("type") or "managed_identity").lower()
             log_models_debug(
@@ -400,16 +423,25 @@ def register_route_backend_models(app):
                 f" endpoint={endpoint} deployment={deployment_name}"
             )
 
-            if not endpoint or not api_version or not deployment_name:
+            if not endpoint or not deployment_name:
+                return jsonify({"error": "Endpoint and deployment name are required."}), 400
+
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version:
                 return jsonify({"error": "Endpoint, API version, and deployment name are required."}), 400
 
             if provider not in ("aoai", "aifoundry", "new_foundry"):
                 return jsonify({"error": "Model provider not found."}), 400
 
-            gpt_client = build_inference_client(endpoint, api_version, auth_settings, provider=provider)
+            gpt_client = build_inference_client(
+                endpoint,
+                api_version,
+                auth_settings,
+                provider=provider,
+                deployment_name=deployment_name,
+            )
             response = gpt_client.chat.completions.create(
                 model=deployment_name,
-                messages=[{"role": "system", "content": "Testing access."}]
+                messages=[{"role": "user", "content": "Testing access."}]
             )
 
             if response:

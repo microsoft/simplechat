@@ -3263,13 +3263,84 @@ def get_chat_upload_workspace_documents_for_conversation(user_id, conversation_i
     query = """
         SELECT *
         FROM c
-        WHERE c.user_id = @user_id
-            AND c.conversation_id = @conversation_id
+        WHERE c.conversation_id = @conversation_id
             AND c.created_from_chat_upload = true
+            AND (
+                c.user_id = @user_id
+                OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                OR ARRAY_CONTAINS(c.shared_user_ids, @user_id_approved)
+            )
     """
     parameters = [
         {"name": "@user_id", "value": user_id},
+        {"name": "@user_id_approved", "value": f"{user_id},approved"},
         {"name": "@conversation_id", "value": normalized_conversation_id},
+    ]
+
+    personal_documents = list(
+        cosmos_user_documents_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+    for document_item in personal_documents:
+        document_item.setdefault('workspace_scope', 'personal')
+
+    group_query = """
+        SELECT *
+        FROM c
+        WHERE c.conversation_id = @conversation_id
+            AND c.created_from_chat_upload = true
+    """
+    group_documents = list(
+        cosmos_group_documents_container.query_items(
+            query=group_query,
+            parameters=[{"name": "@conversation_id", "value": normalized_conversation_id}],
+            enable_cross_partition_query=True,
+        )
+    )
+    visible_group_documents = []
+    if group_documents:
+        try:
+            from functions_group import find_group_by_id, get_user_role_in_group
+
+            group_docs_by_id = {}
+            for document_item in group_documents:
+                group_id = str(document_item.get('group_id') or '').strip()
+                if not group_id:
+                    continue
+                if group_id not in group_docs_by_id:
+                    group_docs_by_id[group_id] = find_group_by_id(group_id)
+                if get_user_role_in_group(group_docs_by_id.get(group_id), user_id):
+                    document_item['workspace_scope'] = 'group'
+                    visible_group_documents.append(document_item)
+        except Exception as group_visibility_error:
+            debug_print(f"[ChatUploadWorkspaceContext] Failed to resolve group chat uploads: {group_visibility_error}")
+
+    documents = personal_documents + visible_group_documents
+    return sort_documents(select_current_documents(documents))
+
+
+def get_chat_upload_workspace_documents_for_collaboration(conversation_doc):
+    normalized_collaboration_conversation_id = str((conversation_doc or {}).get('id') or '').strip()
+    normalized_source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or '').strip()
+    if not normalized_collaboration_conversation_id and not normalized_source_conversation_id:
+        return []
+
+    query = """
+        SELECT *
+        FROM c
+        WHERE c.created_from_chat_upload = true
+            AND (
+                c.chat_upload_collaboration_conversation_id = @collaboration_conversation_id
+                OR c.collaboration_conversation_id = @collaboration_conversation_id
+                OR c.conversation_id = @source_conversation_id
+            )
+    """
+    parameters = [
+        {"name": "@collaboration_conversation_id", "value": normalized_collaboration_conversation_id},
+        {"name": "@source_conversation_id", "value": normalized_source_conversation_id},
     ]
 
     documents = list(
@@ -3280,6 +3351,171 @@ def get_chat_upload_workspace_documents_for_conversation(user_id, conversation_i
         )
     )
     return sort_documents(select_current_documents(documents))
+
+
+def _get_shared_user_entry_user_id(shared_user_entry):
+    normalized_entry = str(shared_user_entry or '').strip()
+    if not normalized_entry:
+        return ''
+    return normalized_entry.split(',', 1)[0].strip()
+
+
+def _merge_approved_shared_user_ids(existing_shared_user_ids, target_user_ids):
+    shared_user_ids = []
+    entry_indexes_by_user_id = {}
+    changed = False
+
+    for shared_user_entry in ensure_list(existing_shared_user_ids):
+        normalized_entry = str(shared_user_entry or '').strip()
+        shared_user_id = _get_shared_user_entry_user_id(normalized_entry)
+        if not shared_user_id:
+            continue
+        if shared_user_id in entry_indexes_by_user_id:
+            changed = True
+            continue
+        entry_indexes_by_user_id[shared_user_id] = len(shared_user_ids)
+        shared_user_ids.append(normalized_entry)
+
+    for target_user_id in target_user_ids:
+        normalized_target_user_id = str(target_user_id or '').strip()
+        if not normalized_target_user_id:
+            continue
+
+        approved_entry = f"{normalized_target_user_id},approved"
+        existing_index = entry_indexes_by_user_id.get(normalized_target_user_id)
+        if existing_index is None:
+            entry_indexes_by_user_id[normalized_target_user_id] = len(shared_user_ids)
+            shared_user_ids.append(approved_entry)
+            changed = True
+            continue
+
+        if shared_user_ids[existing_index] != approved_entry:
+            shared_user_ids[existing_index] = approved_entry
+            changed = True
+
+    return shared_user_ids, changed
+
+
+def _remove_shared_user_ids(existing_shared_user_ids, target_user_ids):
+    target_user_id_set = {
+        str(target_user_id or '').strip()
+        for target_user_id in ensure_list(target_user_ids)
+        if str(target_user_id or '').strip()
+    }
+    if not target_user_id_set:
+        return ensure_list(existing_shared_user_ids), False
+
+    shared_user_ids = []
+    changed = False
+    for shared_user_entry in ensure_list(existing_shared_user_ids):
+        shared_user_id = _get_shared_user_entry_user_id(shared_user_entry)
+        if shared_user_id in target_user_id_set:
+            changed = True
+            continue
+        shared_user_ids.append(str(shared_user_entry or '').strip())
+
+    return shared_user_ids, changed
+
+
+def sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc):
+    normalized_collaboration_conversation_id = str((conversation_doc or {}).get('id') or '').strip()
+    if not normalized_collaboration_conversation_id:
+        return {
+            'updated_document_ids': [],
+            'affected_user_ids': [],
+            'shared_user_ids': [],
+            'revoked_user_ids': [],
+        }
+
+    accepted_participant_ids = [
+        str(participant_user_id or '').strip()
+        for participant_user_id in list((conversation_doc or {}).get('accepted_participant_ids', []) or [])
+        if str(participant_user_id or '').strip()
+    ]
+    accepted_participant_id_set = set(accepted_participant_ids)
+    normalized_source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or '').strip()
+    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    updated_document_ids = []
+    shared_user_ids = set()
+    revoked_user_ids = set()
+
+    for document_item in get_chat_upload_workspace_documents_for_collaboration(conversation_doc):
+        document_id = str(document_item.get('id') or '').strip()
+        owner_user_id = str(document_item.get('user_id') or '').strip()
+        if not document_id or not owner_user_id:
+            continue
+
+        target_user_ids = [
+            participant_user_id
+            for participant_user_id in accepted_participant_ids
+            if participant_user_id and participant_user_id != owner_user_id
+        ]
+        previous_auto_shared_user_ids = {
+            str(participant_user_id or '').strip()
+            for participant_user_id in ensure_list(document_item.get('chat_upload_auto_shared_user_ids'))
+            if str(participant_user_id or '').strip()
+        }
+        target_user_id_set = set(target_user_ids)
+        user_ids_to_revoke = sorted(previous_auto_shared_user_ids - target_user_id_set - {owner_user_id})
+
+        merged_shared_user_ids, share_changed = _merge_approved_shared_user_ids(
+            document_item.get('shared_user_ids', []),
+            target_user_ids,
+        )
+        merged_shared_user_ids, revoke_changed = _remove_shared_user_ids(
+            merged_shared_user_ids,
+            user_ids_to_revoke,
+        )
+
+        metadata_changed = False
+        metadata_updates = {
+            'shared_user_ids': merged_shared_user_ids,
+            'chat_upload_collaboration_conversation_id': normalized_collaboration_conversation_id,
+            'chat_upload_collaboration_source_conversation_id': normalized_source_conversation_id,
+            'chat_upload_auto_shared_user_ids': target_user_ids,
+            'chat_upload_last_share_sync_at': current_time,
+        }
+        for field_name, field_value in metadata_updates.items():
+            if document_item.get(field_name) != field_value:
+                document_item[field_name] = field_value
+                metadata_changed = True
+
+        if not (share_changed or revoke_changed or metadata_changed):
+            continue
+
+        document_item['last_updated'] = current_time
+        cosmos_user_documents_container.upsert_item(document_item)
+        try:
+            set_document_chunk_visibility(
+                document_item,
+                active=str(document_item.get('search_visibility_state') or 'active').strip().lower() != 'archived',
+            )
+        except Exception as chunk_sync_error:
+            log_event(
+                f"[ChatUploadCollaborationSharing] Failed to sync search chunks for document {document_id}: {chunk_sync_error}",
+                extra={
+                    'document_id': document_id,
+                    'collaboration_conversation_id': normalized_collaboration_conversation_id,
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+        updated_document_ids.append(document_id)
+        shared_user_ids.update(target_user_id_set - previous_auto_shared_user_ids)
+        revoked_user_ids.update(user_ids_to_revoke)
+
+    affected_user_ids = sorted(
+        accepted_participant_id_set
+        | shared_user_ids
+        | revoked_user_ids
+    )
+    return {
+        'updated_document_ids': updated_document_ids,
+        'affected_user_ids': affected_user_ids,
+        'shared_user_ids': sorted(shared_user_ids),
+        'revoked_user_ids': sorted(revoked_user_ids),
+    }
 
 
 def serialize_chat_upload_workspace_documents_for_conversation(user_id, conversation_id):
@@ -3298,6 +3534,9 @@ def serialize_chat_upload_workspace_documents_for_conversation(user_id, conversa
             'upload_date': document_item.get('upload_date'),
             'conversation_id': document_item.get('conversation_id'),
             'chat_message_id': document_item.get('chat_message_id'),
+            'workspace_scope': document_item.get('workspace_scope') or ('group' if document_item.get('group_id') else 'personal'),
+            'group_id': document_item.get('group_id'),
+            'group_name': document_item.get('chat_upload_group_name'),
             'tags': ensure_list(document_item.get('tags')),
             'can_delete_with_conversation': document_item.get('chat_upload_delete_with_conversation') is not False,
             'is_shared': len(shared_user_ids) > 0,
@@ -3347,7 +3586,13 @@ def delete_chat_upload_workspace_documents_for_conversation(user_id, conversatio
             continue
 
         try:
-            delete_result = delete_document_revision(user_id, document_id, delete_mode='all_versions')
+            delete_result = delete_document_revision(
+                user_id,
+                document_id,
+                delete_mode='all_versions',
+                group_id=document_item.get('group_id'),
+                public_workspace_id=document_item.get('public_workspace_id'),
+            )
             deleted_document_ids.extend(delete_result.get('deleted_document_ids', []))
         except Exception as delete_error:
             failed_documents.append({
@@ -4165,7 +4410,7 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             print(f"Warning: Multi-modal vision enabled but no model selected")
             return None
         
-        # Initialize client (reuse GPT configuration)
+        # Initialize client (reuse Chat Model)
         enable_gpt_apim = settings.get('enable_gpt_apim', False)
         debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
         
@@ -7188,19 +7433,19 @@ def _copy_workspace_upload_source(temp_file_path, original_filename):
     return workspace_temp_file_path
 
 
-def _personal_workspace_file_name_exists(user_id, file_name):
+def _workspace_file_name_exists(cosmos_container, scope_field, scope_id, file_name):
     query = """
         SELECT TOP 1 VALUE c.id
         FROM c
         WHERE c.file_name = @file_name
-            AND c.user_id = @user_id
-    """
+            AND c.{scope_field} = @scope_id
+    """.format(scope_field=scope_field)
     matches = list(
-        cosmos_user_documents_container.query_items(
+        cosmos_container.query_items(
             query=query,
             parameters=[
                 {"name": "@file_name", "value": file_name},
-                {"name": "@user_id", "value": user_id},
+                {"name": "@scope_id", "value": scope_id},
             ],
             enable_cross_partition_query=True,
         )
@@ -7208,7 +7453,25 @@ def _personal_workspace_file_name_exists(user_id, file_name):
     return bool(matches)
 
 
-def resolve_unique_personal_workspace_file_name(user_id, requested_file_name, identity_suffix=None):
+def _personal_workspace_file_name_exists(user_id, file_name):
+    return _workspace_file_name_exists(
+        cosmos_user_documents_container,
+        'user_id',
+        user_id,
+        file_name,
+    )
+
+
+def _group_workspace_file_name_exists(group_id, file_name):
+    return _workspace_file_name_exists(
+        cosmos_group_documents_container,
+        'group_id',
+        group_id,
+        file_name,
+    )
+
+
+def _resolve_unique_workspace_file_name(file_name_exists_callback, requested_file_name, identity_suffix=None):
     normalized_file_name = str(requested_file_name or '').strip()
     if not normalized_file_name:
         raise ValueError("requested_file_name is required")
@@ -7217,22 +7480,38 @@ def resolve_unique_personal_workspace_file_name(user_id, requested_file_name, id
     if not base_name:
         base_name = "uploaded-file"
 
-    if not _personal_workspace_file_name_exists(user_id, normalized_file_name):
+    if not file_name_exists_callback(normalized_file_name):
         return normalized_file_name
 
     normalized_identity_suffix = str(identity_suffix or '').strip()
     if normalized_identity_suffix:
         identity_candidate = f"{base_name} ({normalized_identity_suffix}){file_ext}"
-        if not _personal_workspace_file_name_exists(user_id, identity_candidate):
+        if not file_name_exists_callback(identity_candidate):
             return identity_candidate
 
     for suffix_number in range(1, 1000):
         candidate_file_name = f"{base_name} ({suffix_number}){file_ext}"
-        if not _personal_workspace_file_name_exists(user_id, candidate_file_name):
+        if not file_name_exists_callback(candidate_file_name):
             return candidate_file_name
 
     fallback_suffix = str(uuid.uuid4())[:8]
     return f"{base_name} ({fallback_suffix}){file_ext}"
+
+
+def resolve_unique_personal_workspace_file_name(user_id, requested_file_name, identity_suffix=None):
+    return _resolve_unique_workspace_file_name(
+        lambda candidate_file_name: _personal_workspace_file_name_exists(user_id, candidate_file_name),
+        requested_file_name,
+        identity_suffix=identity_suffix,
+    )
+
+
+def resolve_unique_group_workspace_file_name(group_id, requested_file_name, identity_suffix=None):
+    return _resolve_unique_workspace_file_name(
+        lambda candidate_file_name: _group_workspace_file_name_exists(group_id, candidate_file_name),
+        requested_file_name,
+        identity_suffix=identity_suffix,
+    )
 
 
 def _merge_document_tags(existing_tags, new_tags):
@@ -7435,6 +7714,156 @@ def queue_personal_workspace_upload_from_temp_file(
                 os.remove(workspace_temp_file_path)
             except Exception as cleanup_error:
                 debug_print(f"Failed to clean up queued workspace temp file: {cleanup_error}")
+        raise
+
+
+def queue_group_workspace_upload_from_temp_file(
+    *,
+    user_id,
+    group_id,
+    temp_file_path,
+    original_filename,
+    document_id=None,
+    tags=None,
+    source_metadata=None,
+    copy_source_file=False,
+    extraction_mode_override=None,
+    ensure_unique_file_name=False,
+    unique_file_name_suffix=None,
+):
+    if not user_id:
+        raise ValueError("user_id is required")
+    if not group_id:
+        raise ValueError("group_id is required")
+    if not temp_file_path or not os.path.exists(temp_file_path):
+        raise ValueError("temp_file_path must point to an existing file")
+
+    safe_original_filename = str(original_filename or '').strip()
+    if not safe_original_filename:
+        raise ValueError("original_filename is required")
+    if not allowed_file(safe_original_filename):
+        raise ValueError(f"Unsupported workspace file type for {safe_original_filename}")
+
+    workspace_document_id = document_id or str(uuid.uuid4())
+    workspace_file_name = safe_original_filename
+    if ensure_unique_file_name:
+        workspace_file_name = resolve_unique_group_workspace_file_name(
+            group_id,
+            safe_original_filename,
+            identity_suffix=unique_file_name_suffix or workspace_document_id[:8],
+        )
+
+    workspace_temp_file_path = temp_file_path
+    temp_file_queued = False
+    document_created = False
+
+    if copy_source_file:
+        workspace_temp_file_path = _copy_workspace_upload_source(temp_file_path, workspace_file_name)
+
+    try:
+        create_document(
+            workspace_file_name,
+            user_id,
+            workspace_document_id,
+            num_file_chunks=0,
+            status="Queued for processing",
+            group_id=group_id,
+        )
+        document_created = True
+
+        document_metadata = get_document_metadata(workspace_document_id, user_id, group_id=group_id) or {}
+        merged_tags = _merge_document_tags(document_metadata.get('tags', []), tags or [])
+        for tag in merged_tags:
+            get_or_create_tag_definition(
+                user_id,
+                tag,
+                workspace_type='group',
+                group_id=group_id,
+            )
+
+        update_fields = {
+            **(source_metadata or {}),
+            "tags": merged_tags,
+            "status": "Queued for processing",
+            "percentage_complete": 0,
+        }
+        if ensure_unique_file_name:
+            update_fields["source_original_file_name"] = safe_original_filename
+            update_fields["chat_upload_workspace_filename"] = workspace_file_name
+        update_document(
+            document_id=workspace_document_id,
+            user_id=user_id,
+            group_id=group_id,
+            **update_fields,
+        )
+
+        executor = current_app.extensions.get('executor')
+        if not executor:
+            executor = getattr(current_app, 'executor', None)
+        if not executor:
+            raise RuntimeError("Background executor is not configured")
+
+        task_kwargs = {
+            'document_id': workspace_document_id,
+            'user_id': user_id,
+            'group_id': group_id,
+            'temp_file_path': workspace_temp_file_path,
+            'original_filename': workspace_file_name,
+            'extraction_mode_override': extraction_mode_override,
+        }
+        if hasattr(executor, 'submit_stored'):
+            executor.submit_stored(
+                workspace_document_id,
+                process_document_upload_background,
+                **task_kwargs,
+            )
+        elif hasattr(executor, 'submit'):
+            executor.submit(
+                process_document_upload_background,
+                **task_kwargs,
+            )
+        else:
+            raise RuntimeError("Background executor does not support task submission")
+        temp_file_queued = True
+
+        try:
+            from functions_activity_logging import log_document_upload
+
+            file_size = os.path.getsize(workspace_temp_file_path)
+            file_ext = os.path.splitext(workspace_file_name)[-1].lower()
+            log_document_upload(
+                user_id=user_id,
+                document_id=workspace_document_id,
+                container_type='group',
+                file_size=file_size,
+                file_type=file_ext,
+            )
+        except Exception as log_error:
+            debug_print(f"Activity logging error for group chat workspace upload: {log_error}")
+
+        return {
+            'document_id': workspace_document_id,
+            'file_name': workspace_file_name,
+            'original_file_name': safe_original_filename,
+            'group_id': group_id,
+            'tags': merged_tags,
+            'status': 'Queued for processing',
+            'percentage_complete': 0,
+        }
+    except Exception:
+        if document_created and not temp_file_queued:
+            try:
+                cosmos_group_documents_container.delete_item(
+                    item=workspace_document_id,
+                    partition_key=workspace_document_id,
+                )
+            except Exception as cleanup_error:
+                debug_print(f"Failed to clean up queued group workspace document metadata: {cleanup_error}")
+        if workspace_temp_file_path and os.path.exists(workspace_temp_file_path) and not temp_file_queued:
+            try:
+                os.remove(workspace_temp_file_path)
+            except Exception as cleanup_error:
+                debug_print(f"Failed to clean up queued group workspace temp file: {cleanup_error}")
         raise
 
 

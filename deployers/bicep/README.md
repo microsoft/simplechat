@@ -320,7 +320,7 @@ On the completion of the deployment, a URL will be presented, the user may use t
 
 Once logged in to the newly deployed application with admin credentials, review the application configuration in the Admin Settings:
 
-1. Admin Settings > AI Models > GPT Configuration & Embeddings Configuration.  Application is pre-configured with the chosen security model (key / managed identity).  Select "Test GPT Connection" and "Test Embedding Connection" to verify connection.
+1. Admin Settings > AI Models > Chat Model & Embeddings Configuration.  Application is pre-configured with the chosen security model (key / managed identity).  Select "Test GPT Connection" and "Test Embedding Connection" to verify connection.
 
 1. Admin Settings > Scale > Redis Cache (if enabled) - Select "Test Redis Connection"
 

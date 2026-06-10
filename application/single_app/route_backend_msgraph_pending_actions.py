@@ -56,7 +56,7 @@ def _error_response(error_payload, default_status=400):
     return jsonify({
         'success': False,
         'error': error_code or 'msgraph_pending_action_failed',
-        'message': payload.get('message') or 'Unable to update the Microsoft Graph action.',
+        'message': payload.get('message') or 'Unable to update the Microsoft 365 action.',
         **{key: value for key, value in payload.items() if key not in {'error', 'message'}},
     }), status_code
 
@@ -102,13 +102,13 @@ def register_route_backend_msgraph_pending_actions(app):
         if invalid_scopes:
             return _error_response({
                 'error': 'invalid_scopes',
-                'message': 'One or more Microsoft Graph scopes are not supported for this access check.',
+                'message': 'One or more Microsoft 365 permissions are not supported for this access check.',
                 'invalid_scopes': invalid_scopes,
             }, default_status=400)
         if not scopes:
             return _error_response({
                 'error': 'invalid_parameters',
-                'message': 'At least one Microsoft Graph scope is required to test access.',
+                'message': 'At least one Microsoft 365 permission is required to test access.',
             }, default_status=400)
 
         token_result = get_valid_access_token_for_plugins(scopes=scopes)
@@ -116,19 +116,19 @@ def register_route_backend_msgraph_pending_actions(app):
             return jsonify({
                 'success': True,
                 'access_granted': True,
-                'message': 'Microsoft Graph access verified.',
+                'message': 'Microsoft 365 access verified.',
                 'scopes': scopes,
             })
 
         error_payload = token_result if isinstance(token_result, dict) else {
             'error': 'token_acquisition_failed',
-            'message': 'Microsoft Graph access could not be verified.',
+            'message': 'Microsoft 365 access could not be verified.',
         }
         error_payload.setdefault('scopes', scopes)
         error_payload.setdefault('access_granted', False)
         error_payload.setdefault(
             'message',
-            'Microsoft Graph access is not available yet. Complete the consent popup, then test access again.',
+            'Microsoft 365 access is not available yet. Grant access in the popup, then test access again.',
         )
         return _error_response(error_payload, default_status=401)
 
@@ -162,7 +162,7 @@ def register_route_backend_msgraph_pending_actions(app):
         user_id = get_current_user_id()
         action = get_msgraph_pending_action(user_id, action_id)
         if not action:
-            return _error_response({'error': 'not_found', 'message': 'Pending Microsoft Graph action was not found.'}, default_status=404)
+            return _error_response({'error': 'not_found', 'message': 'Pending Microsoft 365 action was not found.'}, default_status=404)
         return jsonify(build_pending_action_response(action))
 
 
@@ -181,7 +181,7 @@ def register_route_backend_msgraph_pending_actions(app):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return _error_response({'error': 'server_error', 'message': 'Unable to approve the Microsoft Graph action right now.'}, default_status=500)
+            return _error_response({'error': 'server_error', 'message': 'Unable to approve the Microsoft 365 action right now.'}, default_status=500)
 
         if error:
             return _error_response(error)
@@ -203,7 +203,7 @@ def register_route_backend_msgraph_pending_actions(app):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return _error_response({'error': 'server_error', 'message': 'Unable to send the Microsoft Graph action right now.'}, default_status=500)
+            return _error_response({'error': 'server_error', 'message': 'Unable to send the Microsoft 365 action right now.'}, default_status=500)
 
         if error:
             return _error_response(error)
@@ -225,7 +225,7 @@ def register_route_backend_msgraph_pending_actions(app):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return _error_response({'error': 'server_error', 'message': 'Unable to cancel the Microsoft Graph action right now.'}, default_status=500)
+            return _error_response({'error': 'server_error', 'message': 'Unable to cancel the Microsoft 365 action right now.'}, default_status=500)
 
         if error:
             return _error_response(error)

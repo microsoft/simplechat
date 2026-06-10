@@ -673,6 +673,7 @@ def build_collaboration_message_doc_from_legacy(
         collaboration_message['metadata']['legacy_filename'] = _clean_string(legacy_message.get('filename')) or None
 
     for optional_key in (
+        'role',
         'model_deployment_name',
         'augmented',
         'hybrid_citations',
@@ -683,6 +684,8 @@ def build_collaboration_message_doc_from_legacy(
         'extracted_text',
         'vision_analysis',
         'filename',
+        'file_content_source',
+        'workspace_document_id',
         'prompt',
         'is_table',
     ):

@@ -2,9 +2,9 @@
 """
 UI test for Admin Settings File Sync management.
 
-Version: 0.241.177
+Version: 0.241.178
 Implemented in: 0.241.073
-Updated in: 0.241.176
+Updated in: 0.241.178
 
 This test ensures the Admin Settings File Sync tab renders as its own section,
 uses app-role gate controls, stacks scope cards as separate rows, shows delayed
@@ -128,7 +128,7 @@ def test_admin_file_sync_tab_and_target_manager():
         expect(page.get_by_label("OneDrive")).to_be_disabled()
         expect(page.get_by_label("On-prem SharePoint")).to_be_disabled()
         expect(page.get_by_label("Google Workspace")).to_be_disabled()
-        expect(file_sync_section.get_by_text("Coming soon.")).to_have_count(3)
+        expect(file_sync_section.get_by_text("Coming Soon.")).to_have_count(3)
         expect(file_sync_section.get_by_text("Cloud drive connector identities")).to_be_visible()
         expect(file_sync_section.get_by_text("Blocked Users")).to_have_count(0)
         expect(file_sync_section.get_by_text("Allowed Users")).to_have_count(0)

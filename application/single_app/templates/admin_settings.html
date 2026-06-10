@@ -3704,13 +3704,13 @@
                                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                             </div>
                             <div class="modal-body">
-                                <!-- GPT Configuration Section -->
+                                <!-- Chat Model Section -->
                                 <div class="card p-3 mb-4" id="gpt-configuration">
                                     <h5 class="card-title">
-                                        <i class="bi bi-chat-text me-2"></i>GPT Configuration
+                                        <i class="bi bi-chat-text me-2"></i>Chat Model
                                     </h5>
                                     <p class="text-muted small">
-                                        Configure your GPT model settings. These are used for generating AI text responses.
+                                        Configure your Chat Model settings. These are used for generating AI text responses.
                                     </p>
 
                                 <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
@@ -3726,7 +3726,7 @@
                                     <div class="card p-3 mb-3">
                                         <div class="mb-3">
                                             <label for="azure_openai_gpt_endpoint" class="form-label">
-                                                Azure OpenAI GPT Endpoint
+                                                Azure OpenAI Endpoint
                                             </label>
                                             <input type="text" class="form-control" id="azure_openai_gpt_endpoint"
                                                 name="azure_openai_gpt_endpoint" value="{{ settings.azure_openai_gpt_endpoint or '' }}">
@@ -3771,7 +3771,7 @@
                                             </div>
                                         </div>
                                         <div class="mb-3">
-                                            <label for="gpt_model" class="form-label">Azure OpenAI GPT Model Selection</label>
+                                            <label for="gpt_model" class="form-label">Azure OpenAI Model Selection</label>
                                             <br><small>Each selected model will be available in the Chat UI as an option for the User. You can select multiple models.</small>
                                             <br><small>Save Pending Changes to settings before clicking Fetch Models</small>
                                             <div id="gpt_models_list" class="mt-2 mb-3">
@@ -3786,7 +3786,7 @@
                                             <input type="hidden" id="gpt_model" value="{{ settings.gpt_model.selected[0].deploymentName if settings.gpt_model.selected else '' }}" />
 
                                             <button type="button" class="btn btn-secondary" id="fetch_gpt_models_btn">
-                                                Fetch GPT Models
+                                                Fetch Models
                                             </button>
                                         </div>
                                         <a href="#" class="fw-bold text-decoration-none mb-2" data-bs-toggle="collapse"
@@ -3797,7 +3797,7 @@
                                             <div class="card card-body mt-2">
                                                 <div class="mb-3">
                                                     <label for="azure_openai_gpt_api_version" class="form-label">
-                                                        Azure OpenAI GPT API Version
+                                                        Azure OpenAI API Version
                                                     </label>
                                                     <input type="text" class="form-control" id="azure_openai_gpt_api_version"
                                                         name="azure_openai_gpt_api_version"
@@ -3841,7 +3841,7 @@
                                 </div>
 
                                 <button type="button" class="btn btn-secondary mt-3" id="test_gpt_button">
-                                    Test GPT Connection
+                                    Test Connection
                                 </button>
                                 <div id="test_gpt_result" class="mt-2"></div>
                                 </div>
@@ -4353,22 +4353,64 @@
                         </div>
                     </div>
 
-                    <div class="table-responsive mt-3">
+                    <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mt-3">
+                        <div class="flex-grow-1">
+                            <label for="cosmos-throughput-container-filter" class="form-label mb-1">Filter Containers</label>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">
+                                    <i class="bi bi-search" aria-hidden="true"></i>
+                                </span>
+                                <input
+                                    type="search"
+                                    class="form-control"
+                                    id="cosmos-throughput-container-filter"
+                                    placeholder="Filter by container name"
+                                    aria-describedby="cosmos-throughput-container-filter-count"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                >
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                            <div id="cosmos-throughput-container-filter-count" class="small text-muted" aria-live="polite"></div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-refresh-table-btn">
+                                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh Table
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive mt-2">
                         <table class="table table-sm align-middle mb-0">
                             <thead>
                                 <tr>
-                                    <th scope="col">Container</th>
+                                    <th scope="col" aria-sort="ascending">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="container_name" aria-label="Sort containers by container name">
+                                            Container <i class="bi bi-arrow-up-short ms-1" aria-hidden="true"></i>
+                                        </button>
+                                    </th>
                                     <th scope="col">Mode</th>
-                                    <th scope="col">Current RU/s</th>
-                                    <th scope="col">
-                                        RU Utilization
+                                    <th scope="col" aria-sort="none">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="current_ru" aria-label="Sort containers by current RU/s">
+                                            Current RU/s <i class="bi bi-arrow-down-up ms-1" aria-hidden="true"></i>
+                                        </button>
+                                    </th>
+                                    <th scope="col" aria-sort="none">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="ru_utilization" aria-label="Sort containers by RU utilization">
+                                            RU Utilization <i class="bi bi-arrow-down-up ms-1" aria-hidden="true"></i>
+                                        </button>
                                         <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Highest normalized RU percentage Azure Monitor reported for the selected window. If that metric is not available, SimpleChat estimates average utilization from request units divided by current RU/s."></i>
                                     </th>
-                                    <th scope="col">
-                                        Request Units
+                                    <th scope="col" aria-sort="none">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="request_units" aria-label="Sort containers by request units">
+                                            Request Units <i class="bi bi-arrow-down-up ms-1" aria-hidden="true"></i>
+                                        </button>
                                         <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Total request units consumed during the selected metrics window. This is consumption volume, not a percentage."></i>
                                     </th>
-                                    <th scope="col">Policy</th>
+                                    <th scope="col" aria-sort="none">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="policy" aria-label="Sort containers by policy">
+                                            Policy <i class="bi bi-arrow-down-up ms-1" aria-hidden="true"></i>
+                                        </button>
+                                    </th>
                                     <th scope="col">Actions</th>
                                 </tr>
                             </thead>
@@ -4612,11 +4654,11 @@
                             </div>
                         </div>
 
-                        {% set file_sync_visible_source_types = settings.file_sync_visible_source_types|default(['smb', 'azure_files', 'onedrive']) %}
+                        {% set file_sync_visible_source_types = settings.file_sync_visible_source_types|default(['smb', 'azure_files']) %}
                         <div class="border rounded p-3 mb-4">
                             <h6 class="mb-2"><i class="bi bi-sliders me-2"></i>Visible Source Types</h6>
                             <p class="text-muted small mb-3">
-                                Choose which source types appear in the Add Source workflow. Future connectors remain unavailable until their backend support is implemented.
+                                Choose which source types appear in the Add Source workflow. OneDrive, SharePoint, and Google Workspace connectors are coming soon while validation continues.
                             </p>
                             <div class="row g-3">
                                 <div class="col-md-4">
@@ -4635,23 +4677,23 @@
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-check">
-                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_onedrive" name="file_sync_visible_source_types" value="onedrive" {% if 'onedrive' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_onedrive" value="onedrive" disabled>
                                         <label class="form-check-label" for="file_sync_visible_source_type_onedrive">OneDrive</label>
-                                        <div class="form-text">Available for personal workspaces.</div>
+                                        <div class="form-text">Coming Soon.</div>
                                     </div>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-check">
-                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_sharepoint_on_prem" name="file_sync_visible_source_types" value="sharepoint_on_prem" {% if 'sharepoint_on_prem' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_sharepoint_on_prem" value="sharepoint_on_prem" disabled>
                                         <label class="form-check-label" for="file_sync_visible_source_type_sharepoint_on_prem">On-prem SharePoint</label>
-                                        <div class="form-text">Visible as coming soon.</div>
+                                        <div class="form-text">Coming Soon.</div>
                                     </div>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-check">
-                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_google_workspace" name="file_sync_visible_source_types" value="google_workspace" {% if 'google_workspace' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_google_workspace" value="google_workspace" disabled>
                                         <label class="form-check-label" for="file_sync_visible_source_type_google_workspace">Google Workspace</label>
-                                        <div class="form-text">Visible as coming soon.</div>
+                                        <div class="form-text">Coming Soon.</div>
                                     </div>
                                 </div>
                             </div>
@@ -4660,7 +4702,7 @@
                         <div class="alert alert-info mb-4" role="alert">
                             <div class="fw-semibold mb-1">Cloud drive connector identities</div>
                             <div class="small">
-                                OneDrive sync uses an admin-managed global workspace identity configured for File Sync with client-secret Microsoft Graph application permissions. Manage these identities from the Workspace Identities admin tab.
+                                OneDrive, SharePoint, and Google Workspace File Sync connectors are coming soon. Any existing global connector identities can remain configured for future use.
                             </div>
                         </div>
 
@@ -4873,7 +4915,7 @@
                         <i class="bi bi-diagram-3 me-2"></i>Workflow
                     </h5>
                     <p class="text-muted">
-                        Control personal workflow authoring and execution for users. Group workflows are not enabled in this release.
+                        Control personal and group workflow authoring and execution for users.
                     </p>
                     <div class="form-group form-check form-switch mb-3">
                         <input type="checkbox"
@@ -4900,6 +4942,89 @@
                     <p class="text-muted small mb-0">
                         Required app role value: <code>WorkflowUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement.
                     </p>
+
+                    <hr>
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_group_workflows"
+                            name="allow_group_workflows"
+                            {% if settings.allow_group_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_group_workflows">
+                            Enable Group Workflows
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow permitted group members to create, manage, and run workflows from group workspaces."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_group_assignment_for_group_workflows"
+                            name="require_group_assignment_for_group_workflows"
+                            {% if settings.require_group_assignment_for_group_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_group_assignment_for_group_workflows">
+                            Require Group Assignment to Use Workflow
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only groups selected in Manage Groups can create, manage, or run group workflows."></i>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-group-workflow-groups-btn" data-bs-toggle="modal" data-bs-target="#groupWorkflowAssignmentModal">
+                            <i class="bi bi-people me-1"></i>Manage Groups
+                        </button>
+                        <span class="text-muted small" id="group-workflow-assignment-summary">No groups assigned.</span>
+                    </div>
+                    <textarea class="d-none" id="group_workflow_allowed_group_ids" name="group_workflow_allowed_group_ids">{{ settings.group_workflow_allowed_group_ids|default([], true)|tojson }}</textarea>
+                    <p class="text-muted small mb-0">
+                        Group workflow authoring is available to group Owners and Admins by default. Enable the owner-only setting below to limit group agent, action, and workflow management to Owners.
+                    </p>
+                </div>
+
+                <div class="modal fade" id="groupWorkflowAssignmentModal" tabindex="-1" aria-labelledby="groupWorkflowAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="groupWorkflowAssignmentModalLabel">Group Workflow Assignments</h5>
+                                    <small class="text-muted">Choose which groups can use group workflows when assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="group-workflow-group-search" class="form-label">Search Groups</label>
+                                        <input type="search" class="form-control" id="group-workflow-group-search" placeholder="Search by group name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="group-workflow-group-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="group-workflow-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="group-workflow-assignment-status">No groups loaded.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Group</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="group-workflow-assignment-groups-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for groups to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                
@@ -4959,7 +5084,7 @@
 
                         <hr>
 
-                        <!-- Require Owner to Manage Group Agents and Actions -->
+                        <!-- Require Owner to Manage Group Agents, Actions and Workflows -->
                         <div class="form-group form-check form-switch mb-2">
                             <input type="checkbox"
                                 class="form-check-input"
@@ -4967,12 +5092,12 @@
                                 name="require_owner_for_group_agent_management"
                                 {% if settings.require_owner_for_group_agent_management %}checked{% endif %}>
                             <label class="form-check-label ms-2" for="require_owner_for_group_agent_management">
-                                Require Owner to Manage Group Agents and Actions
+                                Require Owner to Manage Group Agents, Actions and Workflows
                             </label>
-                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only the group Owner can create, edit, and delete group agents and actions. Group Admins will have read-only access."></i>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only the group Owner can create, edit, and delete group agents, actions, and workflows. Group Admins will have read-only access."></i>
                         </div>
                         <p class="text-muted small mb-0">
-                            If enabled, only the group Owner can create, edit, and delete group agents and group actions. Admins and other roles will only be able to view them.
+                            If enabled, only the group Owner can create, edit, and delete group agents, group actions, and group workflows. Admins and other roles will only be able to view them.
                         </p>
                     </div>
                     

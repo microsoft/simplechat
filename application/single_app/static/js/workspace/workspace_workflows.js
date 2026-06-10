@@ -3,6 +3,58 @@
 import { showToast } from "../chat/chat-toast.js";
 import { escapeHtml, truncateDescription, setupViewToggle, switchViewContainers } from "./view-utils.js";
 
+const workflowWorkspaceConfig = {
+    scope: "personal",
+    apiBase: "/api/user/workflows",
+    agentsApi: "/api/user/agents",
+    documentVersionsApi: (documentId) => `/api/documents/${encodeURIComponent(documentId)}/versions`,
+    activityScope: "personal",
+    workspaceEndpointScope: "user",
+    workspaceEndpointLabel: "Workspace",
+    documentScope: "personal",
+    selectedDocumentsLabel: "workspace",
+    getActiveGroupId: () => "",
+    getSelectedDocumentIds: () => {
+        if (window.selectedDocuments instanceof Set) {
+            return Array.from(window.selectedDocuments).map((value) => normalizeText(value)).filter(Boolean);
+        }
+
+        if (Array.isArray(window.selectedDocuments)) {
+            return window.selectedDocuments.map((value) => normalizeText(value)).filter(Boolean);
+        }
+
+        return [];
+    },
+    ...(window.workflowWorkspaceConfig && typeof window.workflowWorkspaceConfig === "object" ? window.workflowWorkspaceConfig : {}),
+};
+
+function getWorkflowApiBase() {
+    return normalizeText(workflowWorkspaceConfig.apiBase || "/api/user/workflows").replace(/\/+$/, "");
+}
+
+function buildWorkflowApiUrl(path = "") {
+    const normalizedPath = normalizeText(path);
+    return normalizedPath ? `${getWorkflowApiBase()}/${normalizedPath.replace(/^\/+/, "")}` : getWorkflowApiBase();
+}
+
+function getWorkflowActiveGroupId() {
+    if (typeof workflowWorkspaceConfig.getActiveGroupId === "function") {
+        return normalizeText(workflowWorkspaceConfig.getActiveGroupId());
+    }
+    return normalizeText(workflowWorkspaceConfig.activeGroupId);
+}
+
+function getWorkflowDocumentScope() {
+    if (workflowWorkspaceConfig.scope === "group") {
+        return "group";
+    }
+    return normalizeText(workflowWorkspaceConfig.documentScope) || "personal";
+}
+
+function getWorkflowLabel() {
+    return workflowWorkspaceConfig.scope === "group" ? "Group Workflow" : "Personal Workflow";
+}
+
 const workflowsTableBody = document.getElementById("workflows-table-body");
 const workflowsListView = document.getElementById("workflows-list-view");
 const workflowsGridView = document.getElementById("workflows-grid-view");
@@ -237,6 +289,14 @@ function buildWorkflowActivityUrl(conversationId, runId = "", workflowId = "") {
 
     const url = new URL("/workflow-activity", window.location.origin);
     url.searchParams.set("conversationId", normalizedConversationId);
+    const activityScope = normalizeText(workflowWorkspaceConfig.activityScope || workflowWorkspaceConfig.scope || "personal");
+    if (activityScope && activityScope !== "personal") {
+        url.searchParams.set("scope", activityScope);
+    }
+    const activeGroupId = getWorkflowActiveGroupId();
+    if (activityScope === "group" && activeGroupId) {
+        url.searchParams.set("groupId", activeGroupId);
+    }
 
     const normalizedRunId = normalizeText(runId);
     if (normalizedRunId) {
@@ -401,12 +461,18 @@ function populateFileSyncSourceSelect(selectedSources = []) {
 }
 
 async function loadFileSyncSourceOptions(force = false) {
+    if (workflowWorkspaceConfig.scope === "group" && !getWorkflowActiveGroupId()) {
+        fileSyncSourceOptions = [];
+        fileSyncSourcesLoaded = false;
+        return fileSyncSourceOptions;
+    }
+
     if (fileSyncSourcesLoaded && !force) {
         return fileSyncSourceOptions;
     }
 
     try {
-        const response = await fetch("/api/user/workflows/file-sync-sources", {
+        const response = await fetch(buildWorkflowApiUrl("file-sync-sources"), {
             credentials: "same-origin",
         });
         const data = await response.json().catch(() => ({}));
@@ -551,7 +617,10 @@ function setWorkflowComparisonSavedTargets(targetIds = [], preferredLeftId = "")
 }
 
 async function fetchWorkflowDocumentVersions(documentId) {
-    const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}/versions`, {
+    const documentVersionsApi = typeof workflowWorkspaceConfig.documentVersionsApi === "function"
+        ? workflowWorkspaceConfig.documentVersionsApi(documentId)
+        : `/api/documents/${encodeURIComponent(documentId)}/versions`;
+    const response = await fetch(documentVersionsApi, {
         credentials: "same-origin",
     });
     const data = await response.json().catch(() => ({}));
@@ -611,12 +680,8 @@ async function loadWorkflowComparisonVersionTargets({
 }
 
 function getSelectedWorkspaceDocumentIds() {
-    if (window.selectedDocuments instanceof Set) {
-        return Array.from(window.selectedDocuments).map((value) => normalizeText(value)).filter(Boolean);
-    }
-
-    if (Array.isArray(window.selectedDocuments)) {
-        return window.selectedDocuments.map((value) => normalizeText(value)).filter(Boolean);
+    if (typeof workflowWorkspaceConfig.getSelectedDocumentIds === "function") {
+        return workflowWorkspaceConfig.getSelectedDocumentIds().map((value) => normalizeText(value)).filter(Boolean);
     }
 
     return [];
@@ -641,7 +706,7 @@ function getDocumentActionConfig(workflow) {
                 : [],
         left_document_id: normalizeText(actionConfig.left_document_id),
         right_document_ids: Array.isArray(actionConfig.right_document_ids) ? actionConfig.right_document_ids : [],
-        doc_scope: normalizeText(actionConfig.doc_scope || legacyAnalyzeConfig.doc_scope) || "personal",
+        doc_scope: normalizeText(actionConfig.doc_scope || legacyAnalyzeConfig.doc_scope) || getWorkflowDocumentScope(),
         active_group_ids: Array.isArray(actionConfig.active_group_ids)
             ? actionConfig.active_group_ids
             : Array.isArray(legacyAnalyzeConfig.active_group_ids)
@@ -687,12 +752,13 @@ function updateSelectedDocumentsSummary() {
     }
 
     const selectedIds = getSelectedWorkspaceDocumentIds();
+    const selectedLabel = normalizeText(workflowWorkspaceConfig.selectedDocumentsLabel) || "workspace";
     if (!selectedIds.length) {
-        workflowSelectedDocumentsSummary.textContent = "No workspace documents selected right now.";
+        workflowSelectedDocumentsSummary.textContent = `No ${selectedLabel} documents selected right now.`;
         return;
     }
 
-    workflowSelectedDocumentsSummary.textContent = `${selectedIds.length} workspace ${selectedIds.length === 1 ? "document is" : "documents are"} currently selected.`;
+    workflowSelectedDocumentsSummary.textContent = `${selectedIds.length} ${selectedLabel} ${selectedIds.length === 1 ? "document is" : "documents are"} currently selected.`;
 }
 
 function updateDocumentActionFields() {
@@ -717,7 +783,8 @@ function updateDocumentActionFields() {
 async function applySelectedWorkspaceDocumentsToWorkflow() {
     const selectedIds = getSelectedWorkspaceDocumentIds();
     if (!selectedIds.length) {
-        showToast("Select one or more documents in the workspace first.", "warning");
+        const selectedLabel = normalizeText(workflowWorkspaceConfig.selectedDocumentsLabel) || "workspace";
+        showToast(`Select one or more documents in the ${selectedLabel} first.`, "warning");
         return;
     }
 
@@ -744,7 +811,7 @@ async function applySelectedWorkspaceDocumentsToWorkflow() {
         workflowAnalysisDocumentIdsInput.value = limitedSelectedIds.join(", ");
     }
     if (workflowAnalysisDocScopeSelect) {
-        workflowAnalysisDocScopeSelect.value = "personal";
+        workflowAnalysisDocScopeSelect.value = getWorkflowDocumentScope();
     }
 }
 
@@ -863,8 +930,8 @@ function getCustomEndpointOptions() {
         },
         {
             endpoints: Array.isArray(window.workspaceModelEndpoints) ? window.workspaceModelEndpoints : [],
-            scope: "user",
-            scopeLabel: "Workspace",
+            scope: normalizeText(workflowWorkspaceConfig.workspaceEndpointScope) || "user",
+            scopeLabel: normalizeText(workflowWorkspaceConfig.workspaceEndpointLabel) || "Workspace",
         },
     ];
 
@@ -1105,12 +1172,18 @@ function filterWorkflows() {
 }
 
 async function loadAgentOptions(forceRefresh = false) {
+    if (workflowWorkspaceConfig.scope === "group" && !getWorkflowActiveGroupId()) {
+        agentOptions = [];
+        agentsLoaded = false;
+        return agentOptions;
+    }
+
     if (agentsLoaded && !forceRefresh) {
         return agentOptions;
     }
 
     try {
-        const response = await fetch("/api/user/agents", {
+        const response = await fetch(normalizeText(workflowWorkspaceConfig.agentsApi) || "/api/user/agents", {
             credentials: "same-origin",
         });
         const data = await response.json().catch(() => null);
@@ -1178,7 +1251,9 @@ function populateAgentSelect(selectedAgent = null) {
     workflowAgentSelect.disabled = false;
     if (workflowAgentHelp) {
         workflowAgentHelp.textContent = options.length
-            ? "Choose a personal agent or a merged global agent."
+            ? workflowWorkspaceConfig.scope === "group"
+                ? "Choose a group agent or a merged global agent."
+                : "Choose a personal agent or a merged global agent."
             : "This workflow references an agent that is no longer available.";
     }
 }
@@ -1439,7 +1514,7 @@ function resetWorkflowForm() {
         workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_NONE;
     }
     if (workflowAnalysisDocScopeSelect) {
-        workflowAnalysisDocScopeSelect.value = "personal";
+        workflowAnalysisDocScopeSelect.value = getWorkflowDocumentScope();
     }
     if (workflowAnalysisDocumentIdsInput) {
         workflowAnalysisDocumentIdsInput.value = "";
@@ -1472,10 +1547,10 @@ function resetWorkflowForm() {
     }
     if (workflowSaveBtn) {
         workflowSaveBtn.disabled = false;
-        workflowSaveBtn.textContent = "Save Workflow";
+        workflowSaveBtn.textContent = `Save ${getWorkflowLabel()}`;
     }
     if (workflowModalLabel) {
-        workflowModalLabel.textContent = "Create Workflow";
+        workflowModalLabel.textContent = `Create ${getWorkflowLabel()}`;
     }
 
     populateAgentSelect(null);
@@ -1490,6 +1565,10 @@ function resetWorkflowForm() {
 
 async function openWorkflowModal(workflow = null) {
     if (!workflowModal) {
+        return;
+    }
+    if (workflowWorkspaceConfig.scope === "group" && !getWorkflowActiveGroupId()) {
+        showToast("Select a group before managing group workflows.", "warning");
         return;
     }
 
@@ -1575,7 +1654,7 @@ async function openWorkflowModal(workflow = null) {
             workflowScheduleUnitSelect.value = normalizeText(workflow.schedule?.unit) || "seconds";
         }
         if (workflowModalLabel) {
-            workflowModalLabel.textContent = "Edit Workflow";
+            workflowModalLabel.textContent = `Edit ${getWorkflowLabel()}`;
         }
 
         if (workflow.runner_type === "agent") {
@@ -1648,8 +1727,12 @@ function buildWorkflowPayload() {
                 : comparisonTargetDocumentIds,
             left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : "",
             right_document_ids: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonRightDocumentIds : [],
-            doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || "personal",
-            active_group_ids: documentActionType !== DOCUMENT_ACTION_NONE ? analysisGroupIds : [],
+            doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || getWorkflowDocumentScope(),
+            active_group_ids: documentActionType !== DOCUMENT_ACTION_NONE
+                ? workflowWorkspaceConfig.scope === "group" && getWorkflowActiveGroupId()
+                    ? [getWorkflowActiveGroupId()]
+                    : analysisGroupIds
+                : [],
             active_public_workspace_id: documentActionType !== DOCUMENT_ACTION_NONE ? analysisPublicWorkspaceIds : [],
             window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
             window_size: rawWindowSize ? Number(rawWindowSize) : null,
@@ -1659,8 +1742,12 @@ function buildWorkflowPayload() {
         analyze: {
             enabled: documentActionType === DOCUMENT_ACTION_ANALYZE,
             document_ids: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisDocumentIds : [],
-            doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || "personal",
-            active_group_ids: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisGroupIds : [],
+            doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || getWorkflowDocumentScope(),
+            active_group_ids: documentActionType === DOCUMENT_ACTION_ANALYZE
+                ? workflowWorkspaceConfig.scope === "group" && getWorkflowActiveGroupId()
+                    ? [getWorkflowActiveGroupId()]
+                    : analysisGroupIds
+                : [],
             active_public_workspace_id: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisPublicWorkspaceIds : [],
             window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
             window_size: rawWindowSize ? Number(rawWindowSize) : null,
@@ -1770,6 +1857,11 @@ function buildWorkflowPayload() {
 async function saveWorkflow(event) {
     event.preventDefault();
 
+    if (workflowWorkspaceConfig.scope === "group" && !getWorkflowActiveGroupId()) {
+        showToast("Select a group before saving group workflows.", "warning");
+        return;
+    }
+
     if (!workflowSaveBtn) {
         return;
     }
@@ -1786,7 +1878,7 @@ async function saveWorkflow(event) {
     workflowSaveBtn.textContent = "Saving...";
 
     try {
-        const response = await fetch("/api/user/workflows", {
+        const response = await fetch(buildWorkflowApiUrl(), {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -1801,13 +1893,13 @@ async function saveWorkflow(event) {
         }
 
         workflowModal?.hide();
-        showToast("Workflow saved.", "success");
+        showToast(`${getWorkflowLabel()} saved.`, "success");
         await fetchUserWorkflows();
     } catch (error) {
         showToast(escapeHtml(error.message || "Unable to save workflow right now."), "danger");
     } finally {
         workflowSaveBtn.disabled = false;
-        workflowSaveBtn.textContent = "Save Workflow";
+        workflowSaveBtn.textContent = `Save ${getWorkflowLabel()}`;
     }
 }
 
@@ -1887,7 +1979,7 @@ async function resumeFailedWorkflowRun(runId) {
     }
 
     try {
-        const response = await fetch(`/api/user/workflows/${encodeURIComponent(currentHistoryWorkflowId)}/runs/${encodeURIComponent(normalizedRunId)}/resume-failed`, {
+        const response = await fetch(buildWorkflowApiUrl(`${encodeURIComponent(currentHistoryWorkflowId)}/runs/${encodeURIComponent(normalizedRunId)}/resume-failed`), {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -1929,7 +2021,7 @@ async function openHistoryModalForWorkflow(workflow) {
     workflowHistoryModal.show();
 
     try {
-        const response = await fetch(`/api/user/workflows/${encodeURIComponent(currentHistoryWorkflowId)}/runs`, {
+        const response = await fetch(buildWorkflowApiUrl(`${encodeURIComponent(currentHistoryWorkflowId)}/runs`), {
             credentials: "same-origin",
         });
         const data = await response.json().catch(() => ({}));
@@ -1975,7 +2067,7 @@ async function runWorkflow(workflow) {
     filterWorkflows();
 
     try {
-        const response = await fetch(`/api/user/workflows/${encodeURIComponent(workflow.id)}/run`, {
+        const response = await fetch(buildWorkflowApiUrl(`${encodeURIComponent(workflow.id)}/run`), {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -2028,7 +2120,7 @@ async function deleteWorkflow() {
     workflowDeleteConfirmBtn.textContent = "Deleting...";
 
     try {
-        const response = await fetch(`/api/user/workflows/${encodeURIComponent(workflowPendingDelete.id)}`, {
+        const response = await fetch(buildWorkflowApiUrl(encodeURIComponent(workflowPendingDelete.id)), {
             method: "DELETE",
             credentials: "same-origin",
         });
@@ -2038,14 +2130,14 @@ async function deleteWorkflow() {
         }
 
         workflowDeleteModal?.hide();
-        showToast("Workflow deleted.", "success");
+        showToast(`${getWorkflowLabel()} deleted.`, "success");
         workflowPendingDelete = null;
         await fetchUserWorkflows();
     } catch (error) {
         showToast(escapeHtml(error.message || "Unable to delete workflow right now."), "danger");
     } finally {
         workflowDeleteConfirmBtn.disabled = false;
-        workflowDeleteConfirmBtn.textContent = "Delete Workflow";
+        workflowDeleteConfirmBtn.textContent = `Delete ${getWorkflowLabel()}`;
     }
 }
 
@@ -2128,10 +2220,17 @@ async function fetchUserWorkflows() {
         return [];
     }
 
+    if (workflowWorkspaceConfig.scope === "group" && !getWorkflowActiveGroupId()) {
+        workflows = [];
+        renderWorkflowEmptyState("Select a group to load workflows.");
+        refreshWorkflowSummary([]);
+        return [];
+    }
+
     renderWorkflowEmptyState("Loading workflows...");
 
     try {
-        const response = await fetch("/api/user/workflows", {
+        const response = await fetch(buildWorkflowApiUrl(), {
             credentials: "same-origin",
         });
         const data = await response.json().catch(() => ({}));
@@ -2201,15 +2300,26 @@ function initializeWorkflowEvents() {
         workflowPendingDelete = null;
         if (workflowDeleteConfirmBtn) {
             workflowDeleteConfirmBtn.disabled = false;
-            workflowDeleteConfirmBtn.textContent = "Delete Workflow";
+            workflowDeleteConfirmBtn.textContent = `Delete ${getWorkflowLabel()}`;
         }
     });
 
     setupViewToggle("workflows", "workflowsViewPreference", (mode) => {
         switchViewContainers(mode, workflowsListView, workflowsGridView);
     });
+
+    if (workflowWorkspaceConfig.scope === "group") {
+        window.addEventListener("groupWorkspace:context-changed", () => {
+            agentsLoaded = false;
+            fileSyncSourcesLoaded = false;
+            currentHistoryWorkflowId = "";
+            workflowPendingDelete = null;
+            void fetchUserWorkflows();
+        });
+    }
 }
 
 window.fetchUserWorkflows = fetchUserWorkflows;
 
 initializeWorkflowEvents();
+void fetchUserWorkflows();

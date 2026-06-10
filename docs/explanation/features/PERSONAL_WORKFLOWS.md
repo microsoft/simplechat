@@ -1,7 +1,7 @@
 # Personal Workflows
 
 Implemented in version: **0.241.024**
-Enhanced in versions: **0.241.029**, **0.241.033**, **0.241.034**, **0.241.035**, **0.241.036**, **0.241.106**
+Enhanced in versions: **0.241.029**, **0.241.033**, **0.241.034**, **0.241.035**, **0.241.036**, **0.241.106**, **0.241.182**
 
 Implemented in version: **0.241.106** for workflow access governance.
 
@@ -28,7 +28,7 @@ Dependencies:
 Architecture overview:
 - Workflow definitions are stored in the personal workflows Cosmos container.
 - Workflow run history is stored in a dedicated personal workflow runs Cosmos container.
-- The workspace UI exposes a new `Your Workflows` tab and a matching left-hand navigation entry.
+- The workspace UI exposes a `Personal Workflows` tab and a matching workspace section entry.
 - Scheduled workflows are processed by the background task scheduler through a dedicated polling loop.
 - Each run writes into a dedicated workflow conversation so users can review accumulated prompts and responses later.
 
@@ -72,8 +72,8 @@ How to enable/configure:
 
 User workflow:
 1. Open `Personal Workspace`.
-2. Select `Your Workflows` from the left-hand workspace menu or the tab strip.
-3. Choose `New Workflow`.
+2. Select `Personal Workflows` from the workspace section menu or the tab strip.
+3. Choose `New Personal Workflow`.
 4. Enter a name, optional description, and task prompt.
 5. Pick either an agent runner or a model runner.
 6. Choose a workflow alert priority when you want the run to generate a global pop-up alert modal.
@@ -96,7 +96,7 @@ UI coverage:
 - `ui_tests/test_workflow_priority_alert_modal.py` validates the global workflow alert modal and mark-read flow.
 
 Performance and limitations:
-- Phase 1 is limited to personal workflows only.
+- Group workflow support is available separately through the `Group Workflows` feature.
 - Scheduling currently supports interval execution only; calendar-style recurrence is not included.
-- Group workflows are intentionally deferred for a later phase.
+- Personal workflow configuration and execution remain user-scoped even when group workflows are enabled.
 - Users must sign out and back in after app role assignment changes so the `WorkflowUser` claim appears in their session.

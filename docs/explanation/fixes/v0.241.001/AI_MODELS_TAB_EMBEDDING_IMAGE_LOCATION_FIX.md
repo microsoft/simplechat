@@ -16,7 +16,7 @@ Fixed/Implemented in version: **0.236.014**
 
 ### Code Changes Summary
 - Moved the embeddings and image generation cards back to the AI Models tab.
-- Kept GPT configuration in the legacy modal.
+- Kept Chat Model in the legacy modal.
 - Incremented the application version.
 
 ### Testing Approach
@@ -25,7 +25,7 @@ Fixed/Implemented in version: **0.236.014**
 ### Impact Analysis
 - Restores expected layout for administrators.
 - Prevents settings from being hidden in the legacy modal.
-- Maintains legacy GPT configuration flow without impacting multi-endpoint UI.
+- Maintains legacy Chat Model flow without impacting multi-endpoint UI.
 
 ## Validation
 - Functional test: functional_tests/test_ai_models_tab_embedding_image_location.py

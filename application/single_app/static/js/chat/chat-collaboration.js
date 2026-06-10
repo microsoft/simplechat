@@ -813,7 +813,7 @@ function resolveMessageSenderType(message) {
         return 'image';
     }
 
-    if (message.role === 'file') {
+    if (message.role === 'file' || message.metadata?.source_role === 'file') {
         return 'File';
     }
 
@@ -915,9 +915,12 @@ function renderCollaborationMessage(message, options = {}) {
     }
 
     const senderType = resolveMessageSenderType(message);
+    const messageContent = senderType === 'File'
+        ? message
+        : message.content || '';
     appendMessage(
         senderType,
-        message.content || '',
+        messageContent,
         message.model_deployment_name || null,
         message.id,
         Boolean(message.augmented),

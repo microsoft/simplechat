@@ -12,6 +12,7 @@ import {
   hideLoadingIndicator,
 } from "./chat-loading-indicator.js";
 import { loadMessages, watchChatWorkspaceUploadDocument } from "./chat-messages.js";
+import { getEffectiveScopes } from "./chat-documents.js";
 import { loadUserSettings, saveUserSetting } from "./chat-layout.js";
 
 const imageGenBtn = document.getElementById("image-generate-btn");
@@ -446,75 +447,321 @@ function setChatDropActive(isActive) {
   chatDropZoneEl.classList.toggle("chat-input-drag-active", isActive);
 }
 
-export function uploadFileToConversation(file) {
-  const uploadingIndicatorEl = showFileUploadingMessage();
-  
-  // Update the file button to show "Uploading..." state
-  const fileBtn = document.getElementById("choose-file-btn");
-  if (fileBtn) {
-    const fileBtnText = fileBtn.querySelector(".file-btn-text");
-    if (fileBtnText) {
-      fileBtnText.textContent = "Uploading...";
-    }
+const GROUP_UPLOAD_ROLES = new Set(["Owner", "Admin", "DocumentManager"]);
+
+function appendUniqueId(values, value) {
+  const normalizedValue = String(value || "").trim();
+  if (normalizedValue && !values.includes(normalizedValue)) {
+    values.push(normalizedValue);
+  }
+}
+
+function getKnownGroup(groupId) {
+  const normalizedGroupId = String(groupId || "").trim();
+  return (window.userGroups || []).find((group) => String(group?.id || "").trim() === normalizedGroupId) || null;
+}
+
+function getCollaborationGroupId() {
+  const conversationId = window.currentConversationId || currentConversationId;
+  if (!conversationId || typeof window.chatCollaboration?.getConversationGroupId !== "function") {
+    return null;
   }
 
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("conversation_id", currentConversationId);
+  return window.chatCollaboration.getConversationGroupId(conversationId);
+}
 
-  return fetch("/upload", {
-    method: "POST",
-    body: formData,
-  })
-    .then((response) => {
-      hideFileUploadingMessage(uploadingIndicatorEl);
+function getGroupUploadScopeIds() {
+  const scopes = getEffectiveScopes();
+  const groupIds = [];
 
-      let clonedResponse = response.clone();
-      return response.json().then((data) => {
-        if (!response.ok) {
-          console.error("Upload failed:", data.error || "Unknown error");
-          showToast(
-            "Error uploading file: " + (data.error || "Unknown error"),
-            "danger"
-          );
-          throw new Error(data.error || "Upload failed");
-        }
-        return data;
-      });
-    })
-    .then((data) => {
-      if (data.conversation_id) {
-        currentConversationId = data.conversation_id;
-        window.currentConversationId = data.conversation_id;
-        
-        // If a title was returned and it's different from "New Conversation",
-        // update the conversation title in the UI
-        if (data.title && data.title !== "New Conversation") {
-          const currentConversationTitleEl = document.getElementById("current-conversation-title");
-          if (currentConversationTitleEl) {
-            currentConversationTitleEl.textContent = data.title;
-          }
-        }
-        
-        const loadMessagesPromise = loadMessages(currentConversationId);
-        if (data.workspace_document_id) {
-          Promise.resolve(loadMessagesPromise).finally(() => {
-            watchChatWorkspaceUploadDocument(data.workspace_document_id, { autoSelect: true });
-          });
-        }
-        loadConversations();
-      } else {
-        console.error("No conversation_id returned from server.");
-        showToast("Error: No conversation ID returned from server.", "danger");
+  if (window.activeChatTabType === "group" && window.activeGroupId) {
+    appendUniqueId(groupIds, window.activeGroupId);
+  }
+
+  appendUniqueId(groupIds, getCollaborationGroupId());
+
+  if (!scopes?.personal) {
+    (scopes?.groupIds || []).forEach((groupId) => appendUniqueId(groupIds, groupId));
+  }
+
+  return groupIds;
+}
+
+function buildGroupUploadTargets(groupIds) {
+  return groupIds.map((groupId) => {
+    const group = getKnownGroup(groupId);
+    const role = group?.userRole || group?.role || null;
+    const canUpload = GROUP_UPLOAD_ROLES.has(role);
+    return {
+      id: groupId,
+      name: group?.name || "Group Workspace",
+      role,
+      canUpload,
+      reason: canUpload ? null : "Your group role can chat but cannot upload documents",
+    };
+  });
+}
+
+function getOrCreateGroupUploadTargetModal() {
+  let modalEl = document.getElementById("group-upload-target-modal");
+  if (modalEl) {
+    return modalEl;
+  }
+
+  modalEl = document.createElement("div");
+  modalEl.id = "group-upload-target-modal";
+  modalEl.classList.add("modal", "fade");
+  modalEl.tabIndex = -1;
+  modalEl.setAttribute("aria-hidden", "true");
+
+  const dialog = document.createElement("div");
+  dialog.classList.add("modal-dialog", "modal-dialog-scrollable");
+
+  const content = document.createElement("div");
+  content.classList.add("modal-content");
+
+  const header = document.createElement("div");
+  header.classList.add("modal-header");
+
+  const title = document.createElement("h5");
+  title.classList.add("modal-title");
+  title.textContent = "Choose Group Workspace";
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.classList.add("btn-close");
+  closeButton.setAttribute("data-bs-dismiss", "modal");
+  closeButton.setAttribute("aria-label", "Close");
+
+  header.appendChild(title);
+  header.appendChild(closeButton);
+
+  const body = document.createElement("div");
+  body.classList.add("modal-body");
+  body.id = "group-upload-target-modal-body";
+
+  const footer = document.createElement("div");
+  footer.classList.add("modal-footer");
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.classList.add("btn", "btn-outline-secondary");
+  cancelButton.setAttribute("data-bs-dismiss", "modal");
+  cancelButton.textContent = "Cancel";
+
+  const submitButton = document.createElement("button");
+  submitButton.type = "button";
+  submitButton.classList.add("btn", "btn-primary");
+  submitButton.id = "group-upload-target-confirm";
+  submitButton.textContent = "Upload";
+
+  footer.appendChild(cancelButton);
+  footer.appendChild(submitButton);
+  content.appendChild(header);
+  content.appendChild(body);
+  content.appendChild(footer);
+  dialog.appendChild(content);
+  modalEl.appendChild(dialog);
+  document.body.appendChild(modalEl);
+  return modalEl;
+}
+
+function renderGroupUploadTargets(modalEl, targets) {
+  const body = modalEl.querySelector("#group-upload-target-modal-body");
+  if (!body) {
+    return;
+  }
+
+  body.replaceChildren();
+  const list = document.createElement("div");
+  list.classList.add("list-group");
+
+  targets.forEach((target, index) => {
+    const item = document.createElement("label");
+    item.classList.add("list-group-item", "d-flex", "gap-3", "align-items-start");
+    if (!target.canUpload) {
+      item.classList.add("text-muted");
+    }
+
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "group-upload-target";
+    input.value = target.id;
+    input.classList.add("form-check-input", "mt-1");
+    input.disabled = !target.canUpload;
+    input.checked = target.canUpload && targets.slice(0, index).every((candidate) => !candidate.canUpload);
+
+    const textWrap = document.createElement("span");
+    textWrap.classList.add("flex-grow-1");
+
+    const name = document.createElement("span");
+    name.classList.add("d-block", "fw-semibold");
+    name.textContent = target.name;
+
+    const role = document.createElement("small");
+    role.classList.add("d-block", "text-body-secondary");
+    role.textContent = target.canUpload
+      ? `Role: ${target.role}`
+      : target.reason || "Uploads are not available for this group";
+
+    textWrap.appendChild(name);
+    textWrap.appendChild(role);
+    item.appendChild(input);
+    item.appendChild(textWrap);
+    list.appendChild(item);
+  });
+
+  body.appendChild(list);
+}
+
+function selectGroupUploadTarget(targets) {
+  const eligibleTargets = targets.filter((target) => target.canUpload);
+  if (eligibleTargets.length === 0) {
+    showToast("You can chat with the selected group scope, but you cannot upload documents to it.", "warning");
+    return Promise.reject(new Error("No group workspace is available for upload."));
+  }
+
+  if (eligibleTargets.length === 1) {
+    return Promise.resolve(eligibleTargets[0]);
+  }
+
+  const modalEl = getOrCreateGroupUploadTargetModal();
+  renderGroupUploadTargets(modalEl, targets);
+  const modal = new bootstrap.Modal(modalEl);
+  const confirmButton = modalEl.querySelector("#group-upload-target-confirm");
+
+  return new Promise((resolve, reject) => {
+    let completed = false;
+
+    const cleanup = () => {
+      confirmButton?.removeEventListener("click", handleConfirm);
+      modalEl.removeEventListener("hidden.bs.modal", handleHidden);
+    };
+
+    const handleConfirm = () => {
+      const selectedInput = modalEl.querySelector("input[name='group-upload-target']:checked");
+      const selectedTarget = targets.find((target) => target.id === selectedInput?.value);
+      if (!selectedTarget?.canUpload) {
+        showToast("Select a group workspace you can upload to.", "warning");
+        return;
       }
-      resetFileButton();
-    })
-    .catch((error) => {
-      console.error("Error:", error);
-      showToast("Error uploading file: " + error.message, "danger");
-      resetFileButton();
-      hideFileUploadingMessage(uploadingIndicatorEl);
+
+      completed = true;
+      cleanup();
+      modal.hide();
+      resolve(selectedTarget);
+    };
+
+    const handleHidden = () => {
+      cleanup();
+      if (!completed) {
+        const error = new Error("Group upload target selection cancelled.");
+        error.isUploadSelectionCancelled = true;
+        reject(error);
+      }
+    };
+
+    confirmButton?.addEventListener("click", handleConfirm);
+    modalEl.addEventListener("hidden.bs.modal", handleHidden);
+    modal.show();
+  });
+}
+
+function resolveGroupUploadContext() {
+  const groupIds = getGroupUploadScopeIds();
+  if (groupIds.length === 0) {
+    return Promise.resolve(null);
+  }
+
+  const targets = buildGroupUploadTargets(groupIds);
+  return selectGroupUploadTarget(targets).then((target) => ({
+    selectedGroupId: target.id,
+    groupIds,
+  }));
+}
+
+export async function uploadFileToConversation(file) {
+  let uploadingIndicatorEl = null;
+
+  try {
+    const groupUploadContext = await resolveGroupUploadContext();
+    uploadingIndicatorEl = showFileUploadingMessage();
+
+    // Update the file button to show "Uploading..." state
+    const fileBtn = document.getElementById("choose-file-btn");
+    if (fileBtn) {
+      const fileBtnText = fileBtn.querySelector(".file-btn-text");
+      if (fileBtnText) {
+        fileBtnText.textContent = "Uploading...";
+      }
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("conversation_id", currentConversationId);
+    if (groupUploadContext) {
+      formData.append("group_upload_target_id", groupUploadContext.selectedGroupId);
+      groupUploadContext.groupIds.forEach((groupId) => {
+        formData.append("upload_scope_group_ids", groupId);
+      });
+    }
+
+    const response = await fetch("/upload", {
+      method: "POST",
+      body: formData,
     });
+
+    hideFileUploadingMessage(uploadingIndicatorEl);
+    uploadingIndicatorEl = null;
+
+    const data = await response.json();
+    if (!response.ok) {
+      console.error("Upload failed:", data.error || "Unknown error");
+      throw new Error(data.error || "Upload failed");
+    }
+
+    if (data.conversation_id) {
+      const uploadedConversationId = data.conversation_id;
+      currentConversationId = uploadedConversationId;
+      window.currentConversationId = uploadedConversationId;
+
+      // If a title was returned and it's different from "New Conversation",
+      // update the conversation title in the UI
+      if (data.title && data.title !== "New Conversation") {
+        const currentConversationTitleEl = document.getElementById("current-conversation-title");
+        if (currentConversationTitleEl) {
+          currentConversationTitleEl.textContent = data.title;
+        }
+      }
+
+      const isCollaborationUpload = Boolean(
+        data.is_collaboration_upload
+        || window.chatCollaboration?.isCollaborationConversation?.(uploadedConversationId)
+      );
+      const loadMessagesPromise = isCollaborationUpload && window.chatCollaboration?.activateConversation
+        ? window.chatCollaboration.activateConversation(uploadedConversationId)
+        : loadMessages(uploadedConversationId);
+      if (data.workspace_document_id) {
+        Promise.resolve(loadMessagesPromise).finally(() => {
+          watchChatWorkspaceUploadDocument(data.workspace_document_id, { autoSelect: true });
+        });
+      }
+      loadConversations();
+    } else {
+      console.error("No conversation_id returned from server.");
+      showToast("Error: No conversation ID returned from server.", "danger");
+    }
+    resetFileButton();
+  } catch (error) {
+    console.error("Error:", error);
+    if (!error.isUploadSelectionCancelled) {
+      showToast("Error uploading file: " + error.message, "danger");
+    }
+    resetFileButton();
+    if (uploadingIndicatorEl) {
+      hideFileUploadingMessage(uploadingIndicatorEl);
+    }
+  }
 }
 
 export function fetchFileContent(conversationId, fileId) {

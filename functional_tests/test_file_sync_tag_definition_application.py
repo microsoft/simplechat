@@ -2,7 +2,7 @@
 # test_file_sync_tag_definition_application.py
 """
 Functional test for File Sync tag definition application.
-Version: 0.241.177
+Version: 0.241.178
 Implemented in: 0.241.131
 
 This test ensures File Sync applies source-defined tags to new and unchanged
@@ -36,7 +36,7 @@ def get_function_source(relative_path, function_name):
 def test_config_version_updated():
     """Validate the fix version is tracked in config.py."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.177"' in config_text
+    assert 'VERSION = "0.241.178"' in config_text
 
 
 def test_unchanged_file_paths_reconcile_tags():

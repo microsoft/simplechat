@@ -61,7 +61,7 @@ def test_msgraph_access_test_route():
             return {"access_token": "fake-token"}
         return {
             "error": "consent_required",
-            "message": "User consent is required to access this Microsoft Graph resource.",
+            "message": "User consent is required to access Microsoft 365 resources like Outlook email, Calendar, OneDrive, or SharePoint.",
             "consent_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=test",
             "scopes": scopes,
         }
@@ -101,6 +101,9 @@ def test_msgraph_access_test_route():
         consent_payload = consent_response.get_json() or {}
         if consent_payload.get("error") != "consent_required" or not consent_payload.get("consent_url"):
             print(f"Expected consent metadata, got: {consent_payload}")
+            return False
+        if "Microsoft 365" not in consent_payload.get("message", ""):
+            print(f"Expected user-friendly Microsoft 365 consent message, got: {consent_payload}")
             return False
 
         invalid_response = client.post("/api/msgraph/test-access", json={"scopes": ["Directory.Read.All"]})

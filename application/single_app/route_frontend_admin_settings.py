@@ -308,6 +308,13 @@ def register_route_frontend_admin_settings(app):
             settings['allow_user_workflows'] = False
         if 'require_member_of_workflow_user' not in settings:
             settings['require_member_of_workflow_user'] = False
+        if 'allow_group_workflows' not in settings:
+            settings['allow_group_workflows'] = False
+        if 'require_group_assignment_for_group_workflows' not in settings:
+            settings['require_group_assignment_for_group_workflows'] = False
+        settings['group_workflow_allowed_group_ids'] = normalize_group_workflow_allowed_group_ids(
+            settings.get('group_workflow_allowed_group_ids', [])
+        )
         if 'allow_group_agents' not in settings:
             settings['allow_group_agents'] = False
         if 'allow_group_custom_endpoints' not in settings:
@@ -560,6 +567,9 @@ def register_route_frontend_admin_settings(app):
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_chat_file_upload_user = form_data.get('require_member_of_chat_file_upload_user') == 'on'
             require_member_of_workflow_user = form_data.get('require_member_of_workflow_user') == 'on'
+            group_workflow_allowed_group_ids = normalize_group_workflow_allowed_group_ids(
+                form_data.get('group_workflow_allowed_group_ids', '')
+            )
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -1559,6 +1569,9 @@ def register_route_frontend_admin_settings(app):
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,
+                'allow_group_workflows': form_data.get('allow_group_workflows') == 'on',
+                'require_group_assignment_for_group_workflows': form_data.get('require_group_assignment_for_group_workflows') == 'on',
+                'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
                 'enforce_workspace_scope_lock': form_data.get('enforce_workspace_scope_lock') == 'on',
                 'enable_file_sync': requested_enable_file_sync,
                 'enable_file_sync_personal': file_sync_settings['enable_file_sync_personal'],

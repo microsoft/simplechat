@@ -1,6 +1,6 @@
 # File Sync Cloud Connector Visibility Fix
 
-Fixed/Implemented in version: **0.241.176**
+Fixed/Implemented in version: **0.241.178**
 
 ## Issue Description
 
@@ -12,8 +12,8 @@ The admin-visible source type list used the same setting path as fully available
 
 ## Version Implemented
 
-- Fixed in version: **0.241.176**
-- Related config version update: `application/single_app/config.py` uses `VERSION = "0.241.176"`.
+- Fixed in version: **0.241.178**
+- Related config version update: `application/single_app/config.py` uses `VERSION = "0.241.178"`.
 
 ## Technical Details
 

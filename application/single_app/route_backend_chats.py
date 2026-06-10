@@ -15,6 +15,14 @@ from semantic_kernel_plugins.plugin_invocation_thoughts import (
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent, resolve_authority, resolve_authority
+from model_endpoint_clients import (
+    MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+    MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+    MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+    build_anthropic_chat_client,
+    build_openai_style_chat_client,
+    infer_model_endpoint_protocol,
+)
 import builtins
 import asyncio, types
 import ast
@@ -380,10 +388,12 @@ def _merge_chat_upload_workspace_context(
         return effective_document_scope, list(effective_selected_document_ids or []), []
 
     linked_document_ids = []
+    linked_document_scopes = set()
     for document_item in linked_documents:
         document_id = str(document_item.get('id') or '').strip() if isinstance(document_item, dict) else ''
         if document_id and _is_search_ready_chat_upload_workspace_document(document_item):
             linked_document_ids.append(document_id)
+            linked_document_scopes.add('group' if document_item.get('group_id') else 'personal')
 
     if not linked_document_ids:
         return effective_document_scope, list(effective_selected_document_ids or []), []
@@ -411,7 +421,9 @@ def _merge_chat_upload_workspace_context(
         return effective_document_scope, merged_document_ids, []
 
     normalized_scope = str(effective_document_scope or '').strip().lower()
-    if normalized_scope in ('', 'none', 'null', 'personal'):
+    if normalized_scope == 'group' or linked_document_scopes == {'group'}:
+        merged_scope = 'group'
+    elif normalized_scope in ('', 'none', 'null', 'personal'):
         merged_scope = 'personal'
     elif normalized_scope == 'all':
         merged_scope = 'all'
@@ -9928,16 +9940,21 @@ def get_foundry_api_version_candidates(primary_version, settings):
     return unique_candidates
 
 
-def build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version):
+def build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version, deployment_name=''):
     """Create an inference client for a resolved streaming model endpoint."""
     auth_settings = auth_settings or {}
     auth_type = str(auth_settings.get('type') or 'managed_identity').lower()
     normalized_provider = str(provider or 'aoai').lower()
+    runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, deployment_name)
 
     if auth_type in ('api_key', 'key'):
         api_key = auth_settings.get('api_key')
         if not api_key:
             raise ValueError('Selected model endpoint is missing an API key.')
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+            return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+            return build_openai_style_chat_client(api_key, endpoint, api_version)
         return AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
@@ -9956,16 +9973,24 @@ def build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api
         credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
 
     scope = cognitive_services_scope
-    if normalized_provider in ('aifoundry', 'new_foundry'):
+    if normalized_provider in ('aifoundry', 'new_foundry') or runtime_protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
         scope = resolve_foundry_scope_for_auth(auth_settings, endpoint=endpoint)
         if auth_type == 'service_principal':
             debug_print(
-                f"[Streaming][Model Resolution] Multi-endpoint SP scope={scope} provider={normalized_provider}"
+                f"[Streaming][Model Resolution] Multi-endpoint SP scope={scope} provider={normalized_provider} protocol={runtime_protocol}"
             )
         else:
             debug_print(
-                f"[Streaming][Model Resolution] Multi-endpoint MI scope={scope} provider={normalized_provider}"
+                f"[Streaming][Model Resolution] Multi-endpoint MI scope={scope} provider={normalized_provider} protocol={runtime_protocol}"
             )
+
+    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+        token = credential.get_token(scope).token
+        return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token)
+
+    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+        token = credential.get_token(scope).token
+        return build_openai_style_chat_client(token, endpoint, api_version)
 
     token_provider = get_bearer_token_provider(credential, scope)
     return AzureOpenAI(
@@ -10132,25 +10157,37 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     deployment = str(model_cfg.get('deploymentName') or model_cfg.get('deployment') or '').strip()
     endpoint = str(connection.get('endpoint') or '').strip()
     api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
+    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
 
     if requested_provider and requested_provider != provider:
         debug_print(
             f"[Streaming][Model Resolution] Request provider '{requested_provider}' did not match saved provider '{provider}' for endpoint_id={requested_endpoint_id}."
         )
 
-    if not endpoint or not api_version or not deployment:
+    missing_required_config = not endpoint or not deployment or (
+        runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
+    )
+    if missing_required_config:
         if selection_source == 'request':
-            raise ValueError('Selected model endpoint is missing endpoint, API version, or deployment configuration.')
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
+                raise ValueError('Selected model endpoint is missing endpoint, API version, or deployment configuration.')
+            raise ValueError('Selected model endpoint is missing endpoint or deployment configuration.')
         debug_print(
             f"[Streaming][Model Resolution] Default selection for endpoint_id={requested_endpoint_id} is incomplete. Falling back to legacy streaming config."
         )
         return None
 
-    gpt_client = build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version)
+    gpt_client = build_streaming_multi_endpoint_client(
+        auth_settings,
+        provider,
+        endpoint,
+        api_version,
+        deployment_name=deployment,
+    )
     debug_print(
         f"[Streaming][Model Resolution] Resolved {selection_source} multi-endpoint model | "
         f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
-        f"deployment={deployment} | api_version={api_version}"
+        f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol}"
     )
     return gpt_client, deployment, provider, endpoint, auth_settings, api_version
 
@@ -14531,7 +14568,11 @@ def register_route_backend_chats(app):
                         debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
                         api_params.pop('reasoning_effort', None)
                         response = gpt_client.chat.completions.create(**api_params)
-                    elif gpt_provider in ('aifoundry', 'new_foundry') and 'api version not supported' in error_str:
+                    elif (
+                        gpt_provider in ('aifoundry', 'new_foundry')
+                        and 'api version not supported' in error_str
+                        and infer_model_endpoint_protocol(gpt_provider, gpt_endpoint, gpt_model) == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
+                    ):
                         debug_print("Foundry API version not supported. Retrying with fallback versions...")
                         api_params.pop('reasoning_effort', None)
                         fallback_versions = get_foundry_api_version_candidates(gpt_api_version, settings)
@@ -14547,6 +14588,7 @@ def register_route_backend_chats(app):
                                     gpt_provider,
                                     gpt_endpoint,
                                     candidate,
+                                    deployment_name=gpt_model,
                                 )
                                 response = retry_client.chat.completions.create(**api_params)
                                 break

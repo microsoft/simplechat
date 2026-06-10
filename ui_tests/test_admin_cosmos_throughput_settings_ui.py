@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Cosmos throughput controls.
 
-Version: 0.241.162
+Version: 0.241.181
 Implemented in: 0.241.147
 
 This test ensures the Scale tab exposes Cosmos throughput monitoring and
@@ -16,6 +16,8 @@ adds Metrics Window cadence copy coverage. Version 0.241.159 adds native
 Cosmos manual-to-autoscale conversion coverage. Version 0.241.161 adds
 grouped scale-up/scale-down policy UI and save-blocking validation coverage.
 Version 0.241.162 adds Validate Access setup testing coverage.
+Version 0.241.180 adds container table sorting and filtering coverage.
+Version 0.241.181 adds container table refresh button coverage.
 """
 
 import re
@@ -69,6 +71,9 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         "cosmos-throughput-convert-autoscale-btn",
         "cosmos-throughput-scale-up-btn",
         "cosmos-throughput-scale-down-btn",
+        "cosmos-throughput-container-filter",
+        "cosmos-throughput-container-filter-count",
+        "cosmos-throughput-refresh-table-btn",
         "cosmos_throughput_container_policies_json",
         "cosmos-throughput-container-policies-body",
         "cosmos-throughput-apply-global-policy-btn",
@@ -90,6 +95,11 @@ def test_admin_cosmos_throughput_controls_render_from_template():
     assert 'Scale Up Policy' in template
     assert 'Scale Down Policy' in template
     assert 'Validate Access runs the same read checks automation depends on using the current form values' in template
+    assert 'data-sort-field="container_name"' in template
+    assert 'data-sort-field="current_ru"' in template
+    assert 'data-sort-field="ru_utilization"' in template
+    assert 'data-sort-field="request_units"' in template
+    assert 'data-sort-field="policy"' in template
     assert 'Apply Global Policy' in template
 
     card_match = re.search(
@@ -147,6 +157,13 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         expect(page.get_by_role("button", name="Convert")).to_be_visible()
         expect(page.get_by_role("button", name="Scale Up")).to_be_visible()
         expect(page.get_by_role("button", name="Scale Down")).to_be_visible()
+        expect(page.get_by_label("Filter Containers")).to_be_visible()
+        expect(page.get_by_role("button", name="Refresh Table")).to_be_visible()
+        expect(page.get_by_role("button", name="Sort containers by container name")).to_be_visible()
+        expect(page.get_by_role("button", name="Sort containers by current RU/s")).to_be_visible()
+        expect(page.get_by_role("button", name="Sort containers by RU utilization")).to_be_visible()
+        expect(page.get_by_role("button", name="Sort containers by request units")).to_be_visible()
+        expect(page.get_by_role("button", name="Sort containers by policy")).to_be_visible()
         expect(page.locator("#cosmos-throughput-run-setup-test-btn")).to_be_attached()
         expect(page.locator("#cosmos-throughput-apply-global-policy-btn")).to_be_attached()
         expect(page.locator("#cosmosThroughputSetupModal")).to_be_attached()
@@ -169,6 +186,22 @@ def test_container_metrics_table_uses_clarity_renderer():
     assert "formatRequestUnits(container.request_units)" in source
     assert "createCosmosAutoscaleConversionButton" in source
     assert "/api/admin/settings/cosmos-throughput/convert-autoscale" in source
+
+
+def test_container_metrics_table_supports_sorting_and_filtering():
+    """Container metric rows should support client-side sort and container-name filtering."""
+    source = ADMIN_JS.read_text(encoding="utf-8")
+
+    assert "currentCosmosContainerSort" in source
+    assert "COSMOS_CONTAINER_SORT_FIELDS" in source
+    assert "function getFilteredCosmosContainers" in source
+    assert "function getSortedCosmosContainers" in source
+    assert "function updateCosmosContainerTableControls" in source
+    assert "cosmos-throughput-container-filter" in source
+    assert "cosmos-throughput-container-filter-count" in source
+    assert "cosmos-throughput-refresh-table-btn" in source
+    assert "No containers match the current filter." in source
+    assert "data-sort-field" in ADMIN_TEMPLATE.read_text(encoding="utf-8")
 
 
 def test_cached_cosmos_status_renders_before_refresh():

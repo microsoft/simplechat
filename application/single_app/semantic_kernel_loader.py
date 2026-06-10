@@ -8,6 +8,7 @@ Loader for Semantic Kernel plugins/actions from app settings.
 import logging
 import builtins
 import os
+from openai import AsyncOpenAI
 from azure.identity import AzureAuthorityHosts, ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from agent_orchestrator_groupchat import OrchestratorAgent, SCGroupChatManager
 from semantic_kernel import Kernel
@@ -30,6 +31,14 @@ from foundry_agent_runtime import (
     AzureAIFoundryChatCompletionAgent,
     AzureAIFoundryNewChatCompletionAgent,
     AzureAIFoundryWorkflowAgent,
+)
+from model_endpoint_clients import (
+    MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+    MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+    AnthropicSemanticKernelChatCompletion,
+    infer_model_endpoint_protocol,
+    normalize_openai_style_base_url,
+    resolve_openai_style_request_api_version,
 )
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
@@ -100,16 +109,111 @@ log_event("[SK Loader] Starting loader imports")
 try:
     from semantic_kernel.agents import ChatCompletionAgent
     from agent_logging_chat_completion import LoggingChatCompletionAgent
-    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAIChatCompletion
 except ImportError:
     ChatCompletionAgent = None
     AzureChatCompletion = None
+    OpenAIChatCompletion = None
     log_event(
         "[SK Loader] ChatCompletionAgent or AzureChatCompletion not available. Ensure you have the correct Semantic Kernel version.",
         level=logging.ERROR,
         exceptionTraceback=True
     )
 log_event("[SK Loader] Completed imports")
+
+
+def resolve_agent_endpoint_protocol(agent_config):
+    """Infer the protocol needed for an endpoint-bound Semantic Kernel agent."""
+    return infer_model_endpoint_protocol(
+        agent_config.get("model_provider") or agent_config.get("provider") or "aoai",
+        agent_config.get("endpoint"),
+        agent_config.get("deployment"),
+    )
+
+
+def resolve_agent_endpoint_token(agent_config):
+    """Return a saved API key or current bearer token for endpoint-bound agent services."""
+    api_key = agent_config.get("key") or ""
+    if api_key:
+        return api_key
+    token_provider = agent_config.get("token_provider")
+    if token_provider:
+        return token_provider()
+    return ""
+
+
+def create_model_endpoint_chat_completion_service(agent_config, service_id):
+    """Create the correct Semantic Kernel chat service for an endpoint-bound agent."""
+    if not agent_config.get("endpoint") or not agent_config.get("deployment"):
+        return None
+
+    runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
+    token_or_key = resolve_agent_endpoint_token(agent_config)
+    if not token_or_key:
+        return None
+
+    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+        if agent_config.get("key"):
+            return AnthropicSemanticKernelChatCompletion(
+                service_id=service_id,
+                deployment_name=agent_config["deployment"],
+                endpoint=agent_config["endpoint"],
+                api_key=token_or_key,
+            )
+        return AnthropicSemanticKernelChatCompletion(
+            service_id=service_id,
+            deployment_name=agent_config["deployment"],
+            endpoint=agent_config["endpoint"],
+            bearer_token=token_or_key,
+        )
+
+    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+        if not OpenAIChatCompletion:
+            return None
+        request_api_version = resolve_openai_style_request_api_version(agent_config.get("api_version"))
+        client_kwargs = {
+            "api_key": token_or_key,
+            "base_url": normalize_openai_style_base_url(agent_config["endpoint"]),
+        }
+        if request_api_version:
+            client_kwargs["default_query"] = {"api-version": request_api_version}
+        return OpenAIChatCompletion(
+            service_id=service_id,
+            ai_model_id=agent_config["deployment"],
+            async_client=AsyncOpenAI(**client_kwargs),
+        )
+
+    if not AzureChatCompletion:
+        return None
+
+    token_provider = agent_config.get("token_provider")
+    if token_provider:
+        try:
+            return AzureChatCompletion(
+                service_id=service_id,
+                deployment_name=agent_config["deployment"],
+                endpoint=agent_config["endpoint"],
+                api_key=agent_config.get("key") or "",
+                api_version=agent_config["api_version"],
+                azure_ad_token_provider=token_provider,
+            )
+        except TypeError:
+            return AzureChatCompletion(
+                service_id=service_id,
+                deployment_name=agent_config["deployment"],
+                endpoint=agent_config["endpoint"],
+                api_key=agent_config.get("key") or "",
+                api_version=agent_config["api_version"],
+                ad_token_provider=token_provider,
+            )
+
+    return AzureChatCompletion(
+        service_id=service_id,
+        deployment_name=agent_config["deployment"],
+        endpoint=agent_config["endpoint"],
+        api_key=agent_config.get("key") or "",
+        api_version=agent_config["api_version"],
+    )
 
 
 # Define supported chat types in a single place
@@ -1579,42 +1683,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     apim_enabled = settings.get("enable_gpt_apim", False)
 
     def create_chat_completion_service():
-        token_provider = agent_config.get("token_provider")
-        resolved_api_key = agent_config.get("key") or ""
-        if token_provider:
-            try:
-                return AzureChatCompletion(
-                    service_id=service_id,
-                    deployment_name=agent_config["deployment"],
-                    endpoint=agent_config["endpoint"],
-                    api_key=resolved_api_key,
-                    api_version=agent_config["api_version"],
-                    azure_ad_token_provider=token_provider,
-                )
-            except TypeError:
-                try:
-                    return AzureChatCompletion(
-                        service_id=service_id,
-                        deployment_name=agent_config["deployment"],
-                        endpoint=agent_config["endpoint"],
-                        api_key=resolved_api_key,
-                        api_version=agent_config["api_version"],
-                        ad_token_provider=token_provider,
-                    )
-                except TypeError as exc:
-                    log_event(
-                        f"[SK Loader] Token provider not supported by AzureChatCompletion: {exc}",
-                        level=logging.ERROR,
-                        exceptionTraceback=True,
-                    )
-                    return None
-        return AzureChatCompletion(
-            service_id=service_id,
-            deployment_name=agent_config["deployment"],
-            endpoint=agent_config["endpoint"],
-            api_key=resolved_api_key,
-            api_version=agent_config["api_version"],
-        )
+        return create_model_endpoint_chat_completion_service(agent_config, service_id)
 
     if agent_type in {"aifoundry", "new_foundry", "foundry_workflow"}:
         if agent_type == "foundry_workflow":
@@ -1661,35 +1730,37 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     token_provider_present = bool(agent_config.get("token_provider"))
     has_auth = bool(agent_config.get("key")) or token_provider_present
 
-    if AzureChatCompletion and agent_config["endpoint"] and has_auth and agent_config["deployment"]:
-        print(f"[SK Loader] Azure config valid for {agent_config['name']}, creating chat service...")
+    if agent_config["endpoint"] and has_auth and agent_config["deployment"]:
+        print(f"[SK Loader] Model endpoint config valid for {agent_config['name']}, creating chat service...")
         if apim_enabled:
             log_event(
-                f"[SK Loader] Initializing APIM AzureChatCompletion for agent: {agent_config['name']} ({mode_label})",
+                f"[SK Loader] Initializing APIM chat completion for agent: {agent_config['name']} ({mode_label})",
                 {
                     "aoai_endpoint": agent_config["endpoint"],
                     "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
                     "aoai_deployment": agent_config["deployment"],
-                    "agent_name": agent_config["name"]
+                    "agent_name": agent_config["name"],
+                    "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
                 },
                 level=logging.INFO
             )
             chat_service = create_chat_completion_service()
         else:
             log_event(
-                f"[SK Loader] Initializing GPT Direct AzureChatCompletion for agent: {agent_config['name']} ({mode_label})",
+                f"[SK Loader] Initializing GPT Direct chat completion for agent: {agent_config['name']} ({mode_label})",
                 {
                     "aoai_endpoint": agent_config["endpoint"],
                     "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
                     "aoai_deployment": agent_config["deployment"],
-                    "agent_name": agent_config["name"]
+                    "agent_name": agent_config["name"],
+                    "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
                 },
                 level=logging.INFO
             )
             chat_service = create_chat_completion_service()
         if not chat_service:
             log_event(
-                f"[SK Loader] AzureChatCompletion could not be created for agent: {agent_config['name']} ({mode_label})",
+                f"[SK Loader] Chat completion service could not be created for agent: {agent_config['name']} ({mode_label})",
                 {
                     "agent_name": agent_config["name"],
                     "aoai_endpoint": agent_config.get("endpoint"),
@@ -1704,19 +1775,21 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
         kernel.add_service(chat_service)
         log_event(
-            f"[SK Loader] AOAI chat completion service registered for agent: {agent_config['name']} ({mode_label})",
+            f"[SK Loader] Chat completion service registered for agent: {agent_config['name']} ({mode_label})",
             {
                 "aoai_endpoint": agent_config["endpoint"],
                 "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
                 "aoai_deployment": agent_config["deployment"],
                 "agent_name": agent_config["name"],
-                "apim_enabled": agent_config.get("enable_agent_gpt_apim", False)
+                "apim_enabled": agent_config.get("enable_agent_gpt_apim", False),
+                "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
             },
             level=logging.INFO
         )
     else:
-        print(f"[SK Loader] Azure config INVALID for {agent_config['name']}:")
+        print(f"[SK Loader] Model endpoint config INVALID for {agent_config['name']}:")
         print(f"  - AzureChatCompletion available: {bool(AzureChatCompletion)}")
+        print(f"  - OpenAIChatCompletion available: {bool(OpenAIChatCompletion)}")
         print(f"  - endpoint: {bool(agent_config.get('endpoint'))}")
         print(f"  - key: {bool(agent_config.get('key'))}")
         print(f"  - token_provider: {token_provider_present}")
@@ -2704,46 +2777,31 @@ def load_semantic_kernel(kernel: Kernel, settings):
             agent_config = resolve_agent_config(agent_cfg, settings)
             chat_service = None
             service_id = f"aoai-chat-{agent_config['name'].replace(' ', '').lower()}"
-            if AzureChatCompletion and agent_config["endpoint"] and agent_config["key"] and agent_config["deployment"]:
+            agent_has_auth = bool(agent_config.get("key")) or bool(agent_config.get("token_provider"))
+            if agent_config["endpoint"] and agent_has_auth and agent_config["deployment"]:
                 try:
                     try:
                         chat_service = kernel.get_service(service_id=service_id)
                     except Exception:
                         log_event(
-                            f"[SK Loader] Creating AzureChatCompletion service {service_id} for agent: {agent_config['name']}",
+                            f"[SK Loader] Creating chat completion service {service_id} for agent: {agent_config['name']}",
                             {
                                 "aoai_endpoint": agent_config["endpoint"],
                                 "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
                                 "aoai_deployment": agent_config["deployment"],
                                 "agent_name": agent_config["name"],
                                 "actions_to_load": agent_config.get("actions_to_load", []),
-                                "apim_enabled": settings.get("enable_gpt_apim", False)
+                                "apim_enabled": settings.get("enable_gpt_apim", False),
+                                "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
                             },
                             level=logging.INFO
                         )
-                        apim_enabled = settings.get("enable_gpt_apim", False)
-                        if apim_enabled:
-                            chat_service = AzureChatCompletion(
-                                service_id=service_id,
-                                deployment_name=agent_config["deployment"],
-                                endpoint=agent_config["endpoint"],
-                                api_key=agent_config["key"],
-                                api_version=agent_config["api_version"],
-                                # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
-                            )
-                        else:
-                            chat_service = AzureChatCompletion(
-                                service_id=service_id,
-                                deployment_name=agent_config["deployment"],
-                                endpoint=agent_config["endpoint"],
-                                api_key=agent_config["key"],
-                                api_version=agent_config["api_version"],
-                                # default_headers={"Ocp-Apim-Subscription-Key": key}
-                            )
-                        if agent_config.get('max_completion_tokens', -1) > 0:
-                            print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
-                            chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
-                        kernel.add_service(chat_service)
+                        chat_service = create_model_endpoint_chat_completion_service(agent_config, service_id)
+                        if orchestrator_config.get('max_completion_tokens', -1) > 0:
+                            print(f"[SK Loader] Using {orchestrator_config['max_completion_tokens']} max_completion_tokens for {orchestrator_config['name']}")
+                            chat_service = set_prompt_settings_for_agent(chat_service, orchestrator_config)
+                        if chat_service:
+                            kernel.add_service(chat_service)
                 except Exception as e:
                     log_event(f"[SK Loader] Failed to create or get AzureChatCompletion for agent: {agent_config['name']}: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
             if LoggingChatCompletionAgent and chat_service:
@@ -2814,45 +2872,30 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 orchestrator_config = resolve_agent_config(orchestrator_cfg, settings)
                 service_id = f"aoai-chat-{orchestrator_config['name']}"
                 chat_service = None
-                if AzureChatCompletion and orchestrator_config["endpoint"] and orchestrator_config["key"] and orchestrator_config["deployment"]:
+                orchestrator_has_auth = bool(orchestrator_config.get("key")) or bool(orchestrator_config.get("token_provider"))
+                if orchestrator_config["endpoint"] and orchestrator_has_auth and orchestrator_config["deployment"]:
                     try:
                         chat_service = kernel.get_service(service_id=service_id)
                     except Exception:
                         log_event(
-                            f"[SK Loader] Creating AzureChatCompletion service {service_id} for orchestrator agent: {orchestrator_config['name']}",
+                            f"[SK Loader] Creating chat completion service {service_id} for orchestrator agent: {orchestrator_config['name']}",
                             {
                                 "aoai_endpoint": orchestrator_config["endpoint"],
                                 "aoai_key": f"{orchestrator_config['key'][:3]}..." if orchestrator_config["key"] else None,
                                 "aoai_deployment": orchestrator_config["deployment"],
                                 "agent_name": orchestrator_config["name"],
                                 "service_id": service_id or None,
-                                "apim_enabled": settings.get("enable_gpt_apim", False)
+                                "apim_enabled": settings.get("enable_gpt_apim", False),
+                                "endpoint_protocol": resolve_agent_endpoint_protocol(orchestrator_config),
                             },
                             level=logging.INFO
                         )
-                        apim_enabled = settings.get("enable_gpt_apim", False)
-                        if apim_enabled:
-                            chat_service = AzureChatCompletion(
-                                service_id=service_id,
-                                deployment_name=orchestrator_config["deployment"],
-                                endpoint=orchestrator_config["endpoint"],
-                                api_key=orchestrator_config["key"],
-                                api_version=orchestrator_config["api_version"],
-                                # default_headers={"Ocp-Apim-Subscription-Key": orchestrator_config["key"]}
-                            )
-                        else:
-                            chat_service = AzureChatCompletion(
-                                service_id=service_id,
-                                deployment_name=orchestrator_config["deployment"],
-                                endpoint=orchestrator_config["endpoint"],
-                                api_key=orchestrator_config["key"],
-                                api_version=orchestrator_config["api_version"],
-                                # default_headers={"Ocp-Apim-Subscription-Key": orchestrator_config["key"]}
-                            )
+                        chat_service = create_model_endpoint_chat_completion_service(orchestrator_config, service_id)
                         if agent_config.get('max_completion_tokens', -1) > 0:
                             print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
                             chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
-                        kernel.add_service(chat_service)
+                        if chat_service:
+                            kernel.add_service(chat_service)
                 if not chat_service:
                     raise RuntimeError(f"[SK Loader] No AzureChatCompletion service available for orchestrator agent '{orchestrator_config['name']}'")
 

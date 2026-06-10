@@ -95,6 +95,51 @@ def has_workflow_user_app_role(user_roles):
     return WORKFLOW_USER_APP_ROLE.lower() in normalized_roles
 
 
+def normalize_group_workflow_allowed_group_ids(value):
+    """Normalize group workflow assignment settings into unique group ids."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = value.replace('\r', '\n').replace(',', '\n').split('\n')
+    elif isinstance(value, (list, tuple, set)):
+        candidates = value
+    else:
+        candidates = [value]
+
+    normalized_ids = []
+    seen_ids = set()
+    for candidate in candidates:
+        group_id = str(candidate or '').strip()
+        if not group_id or group_id in seen_ids:
+            continue
+        normalized_ids.append(group_id)
+        seen_ids.add(group_id)
+    return normalized_ids
+
+
+def is_group_workflows_enabled_for_group(settings, group_id):
+    """Return True when group workflows are enabled and this group is allowed."""
+    source_settings = settings or {}
+    normalized_group_id = str(group_id or '').strip()
+    if not source_settings.get('allow_group_workflows', False):
+        return False
+    if not normalized_group_id:
+        return False
+    if source_settings.get('require_group_assignment_for_group_workflows', False):
+        allowed_group_ids = normalize_group_workflow_allowed_group_ids(
+            source_settings.get('group_workflow_allowed_group_ids')
+        )
+        return normalized_group_id in allowed_group_ids
+    return True
+
+
+def get_group_workflow_management_roles(settings):
+    """Return group roles allowed to create, update, and delete group workflows."""
+    if (settings or {}).get('require_owner_for_group_agent_management', False):
+        return ("Owner",)
+    return ("Owner", "Admin")
+
+
 def is_chat_file_upload_enabled_for_user(settings, user_roles=None, authorization_prechecked=False):
     """Return True when app settings and optional app role policy allow chat file uploads."""
     source_settings = settings or {}
@@ -208,6 +253,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_plugins': False,
         'allow_user_workflows': False,
         'require_member_of_workflow_user': False,
+        'allow_group_workflows': False,
+        'require_group_assignment_for_group_workflows': False,
+        'group_workflow_allowed_group_ids': [],
         'allow_group_agents': False,
         'allow_group_custom_endpoints': False,
         'allow_group_custom_agent_endpoints': False,
@@ -352,7 +400,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'file_sync_personal_admin_only': False,
         'file_sync_group_admin_only': False,
         'file_sync_public_admin_only': False,
-        'file_sync_visible_source_types': ['smb', 'azure_files', 'onedrive'],
+        'file_sync_visible_source_types': ['smb', 'azure_files'],
         'file_sync_max_sources_per_scope': 10,
         'file_sync_min_schedule_interval_minutes': 15,
         'file_sync_max_files_per_run': 1000,

@@ -101,6 +101,121 @@ app_settings.app_title }} {% endblock %} {% block head %}
   #group-documents-table td {
     vertical-align: middle;
   }
+
+  #workflows-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  #workflows-table th,
+  #workflows-table td {
+    vertical-align: top;
+  }
+
+  #workflows-table th:nth-child(1),
+  #workflows-table td:nth-child(1) {
+    width: 22%;
+  }
+  #workflows-table th:nth-child(2),
+  #workflows-table td:nth-child(2) {
+    width: 21%;
+  }
+  #workflows-table th:nth-child(3),
+  #workflows-table td:nth-child(3) {
+    width: 13%;
+  }
+  #workflows-table th:nth-child(4),
+  #workflows-table td:nth-child(4) {
+    width: 20%;
+  }
+  #workflows-table th:nth-child(5),
+  #workflows-table td:nth-child(5) {
+    width: 24%;
+    white-space: normal;
+  }
+
+  #workflows-table td:nth-child(1),
+  #workflows-table td:nth-child(2),
+  #workflows-table td:nth-child(3),
+  #workflows-table td:nth-child(4) {
+    overflow-wrap: anywhere;
+  }
+
+  .workflow-action-buttons {
+    row-gap: 0.35rem;
+  }
+
+  .workflow-meta {
+    color: #6c757d;
+    font-size: 0.85rem;
+  }
+
+  .workflow-item-card {
+    cursor: pointer;
+  }
+
+  .workflow-item-card .card-title {
+    word-break: break-word;
+  }
+
+  .workflow-grid-meta {
+    display: grid;
+    gap: 0.45rem;
+    font-size: 0.82rem;
+    color: var(--bs-secondary-color);
+  }
+
+  .workflow-grid-meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .workflow-grid-meta-row span:last-child {
+    text-align: right;
+    color: var(--bs-body-color);
+    font-weight: 500;
+  }
+
+  .workflow-grid-preview {
+    min-height: 2.75rem;
+  }
+
+  .workflow-grid-actions {
+    align-items: center;
+    border-top: 1px solid var(--bs-border-color-translucent);
+    display: flex;
+    gap: 0.5rem;
+    justify-content: space-between;
+    padding-top: 0.85rem;
+  }
+
+  .workflow-grid-actions .workflow-card-primary-actions {
+    min-width: 0;
+  }
+
+  .workflow-grid-actions .workflow-card-menu {
+    flex: 0 0 auto;
+  }
+
+  .workflow-grid-actions,
+  .workflow-grid-actions .btn,
+  .workflow-grid-actions .dropdown-menu {
+    cursor: auto;
+  }
+
+  @media (max-width: 991.98px) {
+    #workflows-table {
+      table-layout: auto;
+    }
+  }
+
+  .workflow-response-preview {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
   .table-loading-row td {
     text-align: center;
     padding: 1.5rem;
@@ -381,6 +496,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <option value="identities-tab-btn" data-group-identities-section-option hidden disabled>Identities</option>
         {% endif %}
         <option value="prompts-tab-btn">Group Prompts</option>
+        {% if settings.allow_group_workflows %}
+          <option value="workflows-tab-btn">Group Workflows</option>
+        {% endif %}
         {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
           {% if settings.allow_group_agents %}
             <option value="group-agents-tab-btn">Group Agents</option>
@@ -458,6 +576,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Prompts
       </button>
     </li>
+    {% if settings.allow_group_workflows %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="workflows-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#workflows-tab"
+        type="button"
+        role="tab"
+        aria-controls="workflows-tab"
+        aria-selected="false"
+      >
+        Group Workflows
+      </button>
+    </li>
+    {% endif %}
     {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
       {% if settings.allow_group_agents %}
         <li class="nav-item" role="presentation">
@@ -1015,6 +1149,63 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </div>
     </div>
     <!-- End GROUP PROMPTS TAB -->
+
+    {% if settings.allow_group_workflows %}
+    <!-- ============= GROUP WORKFLOWS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="workflows-tab"
+      role="tabpanel"
+      aria-labelledby="workflows-tab-btn"
+    >
+      <div class="card p-3 my-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <button class="btn btn-success btn-sm" id="create-workflow-btn" type="button">New Group Workflow</button>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Group workflows view mode">
+            <input type="radio" class="btn-check" name="workflows-view-mode" id="workflows-view-list" autocomplete="off" checked>
+            <label class="btn btn-outline-secondary" for="workflows-view-list" title="List view"><i class="bi bi-list-ul"></i></label>
+            <input type="radio" class="btn-check" name="workflows-view-mode" id="workflows-view-grid" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="workflows-view-grid" title="Grid view"><i class="bi bi-grid-3x3-gap"></i></label>
+          </div>
+        </div>
+        <p class="text-muted small mb-3">Create group workflows that run a selected group agent or model manually, on a schedule, or after group File Sync changes.</p>
+        <div class="row g-2 mb-3 align-items-center">
+          <div class="col-lg-7">
+            <input type="search" class="form-control" id="workflows-search" placeholder="Search workflows by name, runner, or task prompt..." />
+          </div>
+          <div class="col-lg-5 text-lg-end">
+            <div class="text-muted small" id="workflows-summary"></div>
+          </div>
+        </div>
+        <div id="workflows-list-view">
+          <div class="table-responsive">
+            <table class="table table-striped item-list-table" id="workflows-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Runner</th>
+                  <th>Trigger</th>
+                  <th>Last Run</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="workflows-table-body">
+                <tr class="table-loading-row">
+                  <td colspan="5">
+                    <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                    Select a group to load workflows.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div id="workflows-grid-view" class="row g-3 d-none"></div>
+      </div>
+      <div id="workspace-workflows-error"></div>
+    </div>
+    <!-- End GROUP WORKFLOWS TAB -->
+    {% endif %}
 
     <!-- ============= GROUP AGENTS TAB ============= -->
     <div
@@ -1791,6 +1982,315 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 
+{% if settings.allow_group_workflows %}
+<div class="modal fade" id="workflowModal" tabindex="-1" aria-labelledby="workflowModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <form class="modal-content" id="workflow-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+      <div class="modal-header">
+        <h5 class="modal-title" id="workflowModalLabel">Create Group Workflow</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="workflow-id" />
+        <div class="row g-3 mb-3">
+          <div class="col-md-7">
+            <label for="workflow-name" class="form-label">Workflow Name</label>
+            <input type="text" class="form-control" id="workflow-name" maxlength="120" required />
+          </div>
+          <div class="col-md-5">
+            <label for="workflow-runner-type" class="form-label">Runner</label>
+            <select class="form-select" id="workflow-runner-type">
+              <option value="model">Direct Model</option>
+              <option value="agent">Agent</option>
+            </select>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label for="workflow-description" class="form-label">Description</label>
+          <input type="text" class="form-control" id="workflow-description" maxlength="240" placeholder="Optional summary for the workflow list." />
+        </div>
+        <div class="mb-3">
+          <label for="workflow-task-prompt" class="form-label">Task Prompt</label>
+          <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this workflow should do each time it runs." required></textarea>
+          <div class="form-text">Each run appends this prompt to the workflow conversation as a new user message.</div>
+        </div>
+        {% if settings.enable_url_access %}
+        <div class="form-check form-switch mb-3" id="workflow-url-access-group">
+          <input class="form-check-input" type="checkbox" id="workflow-url-access-enabled" />
+          <label class="form-check-label ms-2" for="workflow-url-access-enabled">Allow URL Access for this workflow</label>
+          <div class="form-text">Workflow runs can review up to {{ settings.url_access_max_workflow_urls_per_run|default(50, true) }} HTTP(S) URLs from the task prompt using the shared admin domain policy.</div>
+        </div>
+        {% endif %}
+
+        <div class="card p-3 mb-3">
+          <div class="row g-3 mb-2">
+            <div class="col-md-6">
+              <label for="workflow-document-action-type" class="form-label">Action Type</label>
+              <select class="form-select" id="workflow-document-action-type" title="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.">
+                <option value="none" data-action-description="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets." title="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.">Search</option>
+                {% if settings.document_action_capabilities.analyze.enabled %}
+                <option value="analyze" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Analyze</option>
+                {% endif %}
+                {% if settings.document_action_capabilities.comparison.enabled %}
+                <option value="comparison" data-action-description="Compare one source document against the selected target documents to explain differences, relationships, or downstream impact." title="Compare one source document against the selected target documents to explain differences, relationships, or downstream impact.">Compare</option>
+                {% endif %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label for="workflow-analysis-retries" class="form-label">Retries Per Window</label>
+              <input type="number" class="form-control" id="workflow-analysis-retries" min="0" max="5" value="1" />
+            </div>
+          </div>
+          <div class="form-text mt-2" id="workflow-document-action-help">Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.</div>
+
+          <div id="workflow-document-targets-fields" class="mt-3 d-none">
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label for="workflow-analysis-doc-scope" class="form-label">Document Scope</label>
+                <select class="form-select" id="workflow-analysis-doc-scope">
+                  <option value="group">Active Group Workspace</option>
+                </select>
+              </div>
+              <div class="col-md-6 d-flex align-items-end">
+                <div class="form-text mb-0">Document actions use fixed ordered targets from the active group workspace.</div>
+              </div>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
+              <div class="form-text mb-0" id="workflow-selected-documents-summary">No group documents selected right now.</div>
+              <button type="button" class="btn btn-sm btn-outline-primary" id="workflow-use-selected-documents-btn">Use selected group documents</button>
+            </div>
+
+            <div id="workflow-analysis-target-fields" class="mb-3 d-none">
+              <label for="workflow-analysis-document-ids" class="form-label mb-2">Document IDs</label>
+              <textarea class="form-control" id="workflow-analysis-document-ids" rows="3" placeholder="Enter one or more document ids separated by commas."></textarea>
+            </div>
+
+            <div id="workflow-comparison-target-fields" class="d-none">
+              <div class="mb-3">
+                <label for="workflow-comparison-target-document-ids" class="form-label">Target Versions</label>
+                <select class="form-select" id="workflow-comparison-target-document-ids" multiple size="8"></select>
+                <div class="form-text">Use selected group documents to load available versions. Pick the versions you want available for this comparison run.</div>
+              </div>
+
+              <div class="mb-3">
+                <label for="workflow-comparison-left-document-id" class="form-label mb-2">Source Version</label>
+                <select class="form-select" id="workflow-comparison-left-document-id"></select>
+                <div class="form-text">Every other selected version becomes a Target document for the comparison.</div>
+              </div>
+            </div>
+
+            <input type="hidden" id="workflow-analysis-group-ids" />
+            <input type="hidden" id="workflow-analysis-public-workspace-ids" />
+
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label for="workflow-analysis-window-unit" class="form-label">Window Unit</label>
+                <select class="form-select" id="workflow-analysis-window-unit">
+                  <option value="pages">Pages</option>
+                  <option value="chunks">Chunks</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label for="workflow-analysis-window-size" class="form-label">Window Size</label>
+                <input type="number" class="form-control" id="workflow-analysis-window-size" min="1" max="100" placeholder="Optional fixed size" />
+              </div>
+              <div class="col-md-4">
+                <label for="workflow-analysis-window-percent" class="form-label">Window Percent</label>
+                <input type="number" class="form-control" id="workflow-analysis-window-percent" min="1" max="100" placeholder="Optional percent" />
+              </div>
+            </div>
+            <div class="form-text mt-2">Set either a fixed window size or a percentage. Leave both blank to use the ordered retrieval defaults.</div>
+          </div>
+        </div>
+
+        <div class="card p-3 mb-3" id="workflow-file-sync-card">
+          <div class="d-flex flex-wrap gap-2 justify-content-between align-items-start mb-3">
+            <div>
+              <label class="form-label mb-0" for="workflow-file-sync-enabled">File Sync Before Run</label>
+              <div class="form-text mt-1" id="workflow-file-sync-help">Trigger selected group sync sources before this workflow runs.</div>
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="workflow-file-sync-enabled" />
+              <label class="form-check-label ms-2" for="workflow-file-sync-enabled">Enabled</label>
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label for="workflow-file-sync-sources" class="form-label">Sync Sources</label>
+              <select class="form-select" id="workflow-file-sync-sources" multiple size="5"></select>
+            </div>
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label for="workflow-file-sync-wait-mode" class="form-label">Wait</label>
+                <select class="form-select" id="workflow-file-sync-wait-mode">
+                  <option value="complete">Until sync completes</option>
+                  <option value="queued">Queue only</option>
+                </select>
+              </div>
+              <div class="mb-3">
+                <label for="workflow-file-sync-continue-mode" class="form-label">Continue</label>
+                <select class="form-select" id="workflow-file-sync-continue-mode">
+                  <option value="always">Always continue</option>
+                  <option value="changed">Only when files changed</option>
+                </select>
+              </div>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="workflow-file-sync-use-changed-documents" checked />
+                <label class="form-check-label ms-2" for="workflow-file-sync-use-changed-documents">Use changed files as Analyze targets</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="workflow-agent-fields" class="card p-3 mb-3 d-none">
+          <div class="mb-0">
+            <label for="workflow-agent-select" class="form-label">Selected Agent</label>
+            <select class="form-select" id="workflow-agent-select"></select>
+            <div class="form-text" id="workflow-agent-help">Choose a group agent or a merged global agent.</div>
+          </div>
+        </div>
+
+        <div id="workflow-model-fields" class="card p-3 mb-3">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label for="workflow-model-source" class="form-label">Model Source</label>
+              <select class="form-select" id="workflow-model-source">
+                <option value="default">Default App Model</option>
+                <option value="custom">Specific Endpoint + Model</option>
+              </select>
+            </div>
+            <div class="col-md-4 d-none" id="workflow-model-endpoint-group">
+              <label for="workflow-model-endpoint-select" class="form-label">Endpoint</label>
+              <select class="form-select" id="workflow-model-endpoint-select"></select>
+            </div>
+            <div class="col-md-4 d-none" id="workflow-model-group">
+              <label for="workflow-model-select" class="form-label">Model</label>
+              <select class="form-select" id="workflow-model-select"></select>
+            </div>
+          </div>
+          <div class="form-text mt-2" id="workflow-model-help">The default app model follows your admin-configured default selection or legacy GPT settings.</div>
+        </div>
+
+        <div class="card p-3 mb-3">
+          <div class="row g-3 align-items-end">
+            <div class="col-md-5">
+              <label for="workflow-alert-priority" class="form-label">Pop-up Alert Priority</label>
+              <select class="form-select" id="workflow-alert-priority">
+                <option value="none">No notification</option>
+                <option value="low">Low priority</option>
+                <option value="medium">Medium priority</option>
+                <option value="high">High priority</option>
+              </select>
+            </div>
+            <div class="col-md-7">
+              <div class="form-text mt-0">When enabled, workflow runs create a pop-up alert modal with direct links to the workflow conversation and any conversation the agent created during the run.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card p-3">
+          <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+              <label for="workflow-trigger-type" class="form-label">Trigger</label>
+              <select class="form-select" id="workflow-trigger-type">
+                <option value="manual">Manual</option>
+                <option value="interval">Interval Schedule</option>
+                <option value="file_sync">Monitor File Sync Changes</option>
+              </select>
+            </div>
+            <div class="col-md-4 d-none" id="workflow-schedule-value-group">
+              <label for="workflow-schedule-value" class="form-label">Every</label>
+              <input type="number" class="form-control" id="workflow-schedule-value" min="1" max="59" value="10" />
+            </div>
+            <div class="col-md-4 d-none" id="workflow-schedule-unit-group">
+              <label for="workflow-schedule-unit" class="form-label">Unit</label>
+              <select class="form-select" id="workflow-schedule-unit">
+                <option value="seconds">Seconds</option>
+                <option value="minutes">Minutes</option>
+                <option value="hours">Hours</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-check form-switch mt-3 d-none" id="workflow-enabled-group">
+            <input class="form-check-input" type="checkbox" id="workflow-enabled" checked />
+            <label class="form-check-label ms-2" for="workflow-enabled">Enable scheduled runs</label>
+          </div>
+          <div class="form-text mt-2" id="workflow-trigger-help">Manual workflows run only when you trigger them from the group workspace.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="workflow-save-btn">Save Workflow</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="workflowHistoryModal" tabindex="-1" aria-labelledby="workflowHistoryModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="workflowHistoryModalLabel">Group Workflow Run History</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+          <div class="small text-muted">
+            Conversation: <span id="workflow-history-conversation-id">Not created yet.</span>
+          </div>
+          <a id="workflow-history-open-conversation-link" class="btn btn-sm btn-outline-primary d-none" href="#">
+            Open workflow conversation
+          </a>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-striped" id="workflow-history-table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Trigger</th>
+                <th>Details</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="workflow-history-body">
+              <tr class="table-loading-row">
+                <td colspan="5">
+                  <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                  Loading run history...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="workflowDeleteModal" tabindex="-1" aria-labelledby="workflowDeleteModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="workflowDeleteModalLabel">Delete Group Workflow</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-0">Delete <strong id="workflow-delete-name">this workflow</strong>? Its dedicated conversation remains hidden from normal chat lists, but this workflow definition and its run history will be removed.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="workflow-delete-confirm-btn">Delete Workflow</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %} 
 
 {% block scripts %}
@@ -2057,6 +2557,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // Document selection state for group documents
   let groupSelectedDocuments = new Set();
+  window.groupSelectedDocuments = groupSelectedDocuments;
   let groupSelectionMode = false;
   let groupLastCardSelectionAnchorId = null;
 
@@ -7852,6 +8353,38 @@ app_settings.app_title }} {% endblock %} {% block head %}
   })();
 
 </script>
+{% if settings.allow_group_workflows %}
+<script>
+  window.documentActionCapabilities = {{ settings.document_action_capabilities|default({}, true)|tojson|safe }};
+  window.urlAccessSettings = {
+    enable_url_access: {{ settings.enable_url_access|default(false, true)|tojson }},
+    url_access_max_workflow_urls_per_run: {{ settings.url_access_max_workflow_urls_per_run|default(50, true)|tojson }}
+  };
+  window.workflowWorkspaceConfig = {
+    scope: 'group',
+    apiBase: '/api/group/workflows',
+    agentsApi: '/api/group/workflows/agents',
+    activityScope: 'group',
+    workspaceEndpointScope: 'group',
+    workspaceEndpointLabel: 'Group',
+    documentScope: 'group',
+    selectedDocumentsLabel: 'group',
+    documentVersionsApi: function (documentId) {
+      return '/api/group_documents/' + encodeURIComponent(documentId) + '/versions';
+    },
+    getActiveGroupId: function () {
+      return window.groupWorkspaceContext?.activeGroupId || '';
+    },
+    getSelectedDocumentIds: function () {
+      if (window.groupSelectedDocuments instanceof Set) {
+        return Array.from(window.groupSelectedDocuments);
+      }
+      return [];
+    }
+  };
+</script>
+<script type="module" src="{{ url_for('static', filename='js/workspace/workspace_workflows.js') }}"></script>
+{% endif %}
 {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
 <script type="module" src="/static/js/agents_common.js"></script>
 <script type="module" src="/static/js/workspace/group_agents.js"></script>

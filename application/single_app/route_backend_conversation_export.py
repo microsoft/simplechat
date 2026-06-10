@@ -32,6 +32,7 @@ from functions_collaboration import (
 )
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
+from functions_group import get_group_model_endpoints, get_user_groups
 from functions_image_generation import INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE
 from functions_image_messages import (
     decode_image_content,
@@ -45,8 +46,18 @@ from functions_message_artifacts import (
     is_assistant_artifact_role,
 )
 from functions_settings import *
+from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_simplechat_operations import download_blob_content
 from functions_thoughts import get_thoughts_for_conversation
+from foundry_agent_runtime import resolve_authority
+from model_endpoint_clients import (
+    MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+    MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+    MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+    build_anthropic_chat_client,
+    build_openai_style_chat_client,
+    infer_model_endpoint_protocol,
+)
 from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -117,6 +128,9 @@ def register_route_backend_conversation_export(app):
             packaging (str): Output packaging — "single" or "zip".
             include_summary_intro (bool): Whether to generate a per-conversation intro.
             summary_model_deployment (str): Optional model deployment for summary generation.
+            summary_model_endpoint_id (str): Optional configured endpoint id for summary generation.
+            summary_model_id (str): Optional configured endpoint model id for summary generation.
+            summary_model_provider (str): Optional configured endpoint provider for summary generation.
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -131,6 +145,9 @@ def register_route_backend_conversation_export(app):
         packaging = str(data.get('packaging', 'single')).lower()
         include_summary_intro = bool(data.get('include_summary_intro', False))
         summary_model_deployment = str(data.get('summary_model_deployment', '') or '').strip()
+        summary_model_endpoint_id = str(data.get('summary_model_endpoint_id', '') or '').strip()
+        summary_model_id = str(data.get('summary_model_id', '') or '').strip()
+        summary_model_provider = str(data.get('summary_model_provider', '') or '').strip()
 
         if not conversation_ids or not isinstance(conversation_ids, list):
             return jsonify({'error': 'At least one conversation_id is required'}), 400
@@ -190,7 +207,10 @@ def register_route_backend_conversation_export(app):
                         user_id=user_id,
                         settings=settings,
                         include_summary_intro=include_summary_intro,
-                        summary_model_deployment=summary_model_deployment
+                        summary_model_deployment=summary_model_deployment,
+                        summary_model_endpoint_id=summary_model_endpoint_id,
+                        summary_model_id=summary_model_id,
+                        summary_model_provider=summary_model_provider,
                     )
                 )
 
@@ -403,7 +423,10 @@ def _build_export_entry(
     user_id: str,
     settings: Dict[str, Any],
     include_summary_intro: bool = False,
-    summary_model_deployment: str = ''
+    summary_model_deployment: str = '',
+    summary_model_endpoint_id: str = '',
+    summary_model_id: str = '',
+    summary_model_provider: str = ''
 ) -> Dict[str, Any]:
     artifact_payload_map = build_message_artifact_payload_map(raw_messages)
     filtered_messages = _filter_messages_for_export(raw_messages)
@@ -472,6 +495,10 @@ def _build_export_entry(
         settings=settings,
         enabled=include_summary_intro,
         summary_model_deployment=summary_model_deployment,
+        summary_model_endpoint_id=summary_model_endpoint_id,
+        summary_model_id=summary_model_id,
+        summary_model_provider=summary_model_provider,
+        user_id=user_id,
         message_time_start=message_time_start,
         message_time_end=message_time_end
     )
@@ -823,7 +850,11 @@ def generate_conversation_summary(
     model_deployment: str,
     message_time_start: str = None,
     message_time_end: str = None,
-    conversation_id: str = None
+    conversation_id: str = None,
+    user_id: str = None,
+    model_endpoint_id: str = '',
+    model_id: str = '',
+    model_provider: str = ''
 ) -> Dict[str, Any]:
     """Generate a conversation summary using the LLM and optionally persist it.
 
@@ -849,7 +880,14 @@ def generate_conversation_summary(
 
     transcript_text = _truncate_for_summary(transcript_text)
 
-    gpt_client, gpt_model = _initialize_gpt_client(settings, model_deployment)
+    gpt_client, gpt_model = _initialize_gpt_client(
+        settings,
+        model_deployment,
+        user_id=user_id,
+        requested_endpoint_id=model_endpoint_id,
+        requested_model_id=model_id,
+        requested_provider=model_provider,
+    )
     summary_prompt = (
         "You are summarizing a conversation for an export document. "
         "Read the full conversation below and write a concise summary. "
@@ -931,6 +969,10 @@ def _build_summary_intro(
     settings: Dict[str, Any],
     enabled: bool,
     summary_model_deployment: str,
+    summary_model_endpoint_id: str = '',
+    summary_model_id: str = '',
+    summary_model_provider: str = '',
+    user_id: str = None,
     message_time_start: str = None,
     message_time_end: str = None
 ) -> Dict[str, Any]:
@@ -979,7 +1021,11 @@ def _build_summary_intro(
             model_deployment=summary_model_deployment,
             message_time_start=message_time_start,
             message_time_end=message_time_end,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            user_id=user_id,
+            model_endpoint_id=summary_model_endpoint_id,
+            model_id=summary_model_id,
+            model_provider=summary_model_provider,
         )
 
         summary_intro.update({
@@ -1018,7 +1064,294 @@ def _truncate_for_summary(transcript_text: str) -> str:
     )
 
 
-def _initialize_gpt_client(settings: Dict[str, Any], requested_model: str = ''):
+def _normalize_summary_model_value(value: Any) -> str:
+    return str(value or '').strip()
+
+
+def _append_summary_endpoint_candidates(
+    candidates: List[Dict[str, Any]],
+    endpoints: List[Dict[str, Any]],
+    endpoint_scope: str,
+) -> None:
+    normalized_endpoints, _ = normalize_model_endpoints(endpoints or [])
+    for endpoint in normalized_endpoints:
+        if isinstance(endpoint, dict):
+            candidates.append({**endpoint, '_endpoint_scope': endpoint_scope})
+
+
+def _get_summary_model_endpoint_candidates(settings: Dict[str, Any], user_id: str = None) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    settings = settings or {}
+
+    _append_summary_endpoint_candidates(candidates, settings.get('model_endpoints', []) or [], 'global')
+
+    if not user_id:
+        return candidates
+
+    if settings.get('allow_user_custom_endpoints', False):
+        try:
+            user_settings_doc = get_user_settings(user_id)
+            user_settings = user_settings_doc.get('settings', {}) if isinstance(user_settings_doc, dict) else {}
+            _append_summary_endpoint_candidates(
+                candidates,
+                user_settings.get('personal_model_endpoints', []) or [],
+                'user',
+            )
+        except Exception as exc:
+            debug_print(f"[Summary][Model Resolution] Failed to load personal endpoints: {exc}")
+
+    if settings.get('enable_group_workspaces', False) and settings.get('allow_group_custom_endpoints', False):
+        try:
+            user_groups = get_user_groups(user_id)
+        except Exception as exc:
+            user_groups = []
+            debug_print(f"[Summary][Model Resolution] Failed to load user groups: {exc}")
+
+        for group_doc in user_groups:
+            group_id = _normalize_summary_model_value(group_doc.get('id') if isinstance(group_doc, dict) else '')
+            if not group_id:
+                continue
+            try:
+                _append_summary_endpoint_candidates(
+                    candidates,
+                    get_group_model_endpoints(group_id) or [],
+                    'group',
+                )
+            except Exception as exc:
+                debug_print(
+                    f"[Summary][Model Resolution] Failed to load group endpoints for group_id={group_id}: {exc}"
+                )
+
+    return candidates
+
+
+def _summary_model_matches(model_cfg: Dict[str, Any], requested_model: str, requested_model_id: str) -> bool:
+    model_values = {
+        _normalize_summary_model_value(model_cfg.get('id')),
+        _normalize_summary_model_value(model_cfg.get('deploymentName')),
+        _normalize_summary_model_value(model_cfg.get('deployment')),
+        _normalize_summary_model_value(model_cfg.get('modelName')),
+        _normalize_summary_model_value(model_cfg.get('name')),
+    }
+    model_values.discard('')
+
+    if requested_model_id and requested_model_id in model_values:
+        return True
+    return bool(requested_model and requested_model in model_values)
+
+
+def _find_summary_endpoint_model(
+    endpoint_cfg: Dict[str, Any],
+    requested_model: str,
+    requested_model_id: str,
+) -> Optional[Dict[str, Any]]:
+    models = endpoint_cfg.get('models', []) or []
+    for model_cfg in models:
+        if not isinstance(model_cfg, dict) or not model_cfg.get('enabled', True):
+            continue
+        if _summary_model_matches(model_cfg, requested_model, requested_model_id):
+            return model_cfg
+    return None
+
+
+def _resolve_summary_foundry_scope_for_auth(auth_settings: Dict[str, Any], endpoint: str = None) -> str:
+    auth_settings = auth_settings or {}
+    custom_scope = _normalize_summary_model_value(auth_settings.get('foundry_scope'))
+    if custom_scope:
+        return custom_scope
+
+    management_cloud = _normalize_summary_model_value(auth_settings.get('management_cloud') or 'public').lower()
+    if management_cloud in ('government', 'usgovernment', 'usgov'):
+        return 'https://ai.azure.us/.default'
+    if management_cloud == 'china':
+        return 'https://ai.azure.cn/.default'
+    if management_cloud == 'germany':
+        return 'https://ai.azure.de/.default'
+
+    endpoint_value = _normalize_summary_model_value(endpoint).lower()
+    if 'azure.us' in endpoint_value:
+        return 'https://ai.azure.us/.default'
+    if 'azure.cn' in endpoint_value:
+        return 'https://ai.azure.cn/.default'
+    if 'azure.de' in endpoint_value:
+        return 'https://ai.azure.de/.default'
+
+    return 'https://ai.azure.com/.default'
+
+
+def _build_summary_model_endpoint_client(
+    auth_settings: Dict[str, Any],
+    provider: str,
+    endpoint: str,
+    api_version: str,
+    deployment_name: str,
+):
+    auth_settings = auth_settings or {}
+    auth_type = _normalize_summary_model_value(auth_settings.get('type') or 'managed_identity').lower()
+    normalized_provider = _normalize_summary_model_value(provider or 'aoai').lower()
+    runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, deployment_name)
+
+    if auth_type in ('api_key', 'key'):
+        api_key = auth_settings.get('api_key')
+        if not api_key:
+            raise ValueError('Selected summary model endpoint is missing an API key.')
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+            return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+            return build_openai_style_chat_client(api_key, endpoint, api_version)
+        return AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            api_key=api_key,
+        )
+
+    if auth_type == 'service_principal':
+        credential = ClientSecretCredential(
+            tenant_id=auth_settings.get('tenant_id'),
+            client_id=auth_settings.get('client_id'),
+            client_secret=auth_settings.get('client_secret'),
+            authority=resolve_authority(auth_settings),
+        )
+    else:
+        managed_identity_client_id = auth_settings.get('managed_identity_client_id') or None
+        credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
+
+    scope = cognitive_services_scope
+    if normalized_provider in ('aifoundry', 'new_foundry') or runtime_protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
+        scope = _resolve_summary_foundry_scope_for_auth(auth_settings, endpoint=endpoint)
+
+    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+        token = credential.get_token(scope).token
+        return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token)
+
+    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+        token = credential.get_token(scope).token
+        return build_openai_style_chat_client(token, endpoint, api_version)
+
+    token_provider = get_bearer_token_provider(credential, scope)
+    return AzureOpenAI(
+        api_version=api_version,
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+    )
+
+
+def _resolve_summary_multi_endpoint_client(
+    settings: Dict[str, Any],
+    requested_model: str = '',
+    user_id: str = None,
+    requested_endpoint_id: str = '',
+    requested_model_id: str = '',
+    requested_provider: str = '',
+):
+    settings = settings or {}
+    if not settings.get('enable_multi_model_endpoints', False):
+        return None
+
+    requested_model = _normalize_summary_model_value(requested_model)
+    requested_endpoint_id = _normalize_summary_model_value(requested_endpoint_id)
+    requested_model_id = _normalize_summary_model_value(requested_model_id)
+    requested_provider = _normalize_summary_model_value(requested_provider).lower()
+    selection_source = 'request' if (requested_model or requested_endpoint_id or requested_model_id) else ''
+
+    if not selection_source:
+        default_selection = settings.get('default_model_selection', {}) or {}
+        requested_endpoint_id = _normalize_summary_model_value(default_selection.get('endpoint_id'))
+        requested_model_id = _normalize_summary_model_value(default_selection.get('model_id'))
+        requested_provider = requested_provider or _normalize_summary_model_value(default_selection.get('provider')).lower()
+        selection_source = 'default' if (requested_endpoint_id or requested_model_id) else ''
+
+    if not selection_source:
+        return None
+
+    endpoint_candidates = _get_summary_model_endpoint_candidates(settings, user_id=user_id)
+    if requested_endpoint_id:
+        endpoint_candidates = [
+            endpoint for endpoint in endpoint_candidates
+            if _normalize_summary_model_value(endpoint.get('id')) == requested_endpoint_id
+        ]
+        if not endpoint_candidates:
+            if selection_source == 'request':
+                raise ValueError('Selected summary model endpoint could not be found.')
+            return None
+
+    for endpoint_cfg in endpoint_candidates:
+        if not isinstance(endpoint_cfg, dict) or not endpoint_cfg.get('enabled', True):
+            continue
+
+        model_cfg = _find_summary_endpoint_model(endpoint_cfg, requested_model, requested_model_id)
+        if not model_cfg:
+            continue
+
+        endpoint_scope = endpoint_cfg.get('_endpoint_scope', 'global')
+        resolved_endpoint_cfg = dict(endpoint_cfg)
+        resolved_endpoint_cfg.pop('_endpoint_scope', None)
+        endpoint_id = _normalize_summary_model_value(resolved_endpoint_cfg.get('id'))
+        resolved_endpoint_cfg = keyvault_model_endpoint_get_helper(
+            resolved_endpoint_cfg,
+            endpoint_id,
+            scope=endpoint_scope,
+            return_type=SecretReturnType.VALUE,
+        )
+
+        provider = _normalize_summary_model_value(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
+        connection = resolved_endpoint_cfg.get('connection', {}) or {}
+        auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
+        deployment = _normalize_summary_model_value(
+            model_cfg.get('deploymentName') or model_cfg.get('deployment') or model_cfg.get('id')
+        )
+        endpoint = _normalize_summary_model_value(connection.get('endpoint'))
+        api_version = _normalize_summary_model_value(connection.get('openai_api_version') or connection.get('api_version'))
+        runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
+
+        missing_required_config = not endpoint or not deployment or (
+            runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
+        )
+        if missing_required_config:
+            if selection_source == 'request' and requested_endpoint_id:
+                raise ValueError('Selected summary model endpoint is missing endpoint or deployment configuration.')
+            continue
+
+        gpt_client = _build_summary_model_endpoint_client(
+            auth_settings,
+            provider,
+            endpoint,
+            api_version,
+            deployment,
+        )
+        debug_print(
+            f"[Summary][Model Resolution] Resolved {selection_source} multi-endpoint model | "
+            f"provider={provider} | endpoint_id={endpoint_id} | model_id={model_cfg.get('id')} | "
+            f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol}"
+        )
+        return gpt_client, deployment
+
+    if selection_source == 'request' and requested_endpoint_id:
+        raise ValueError('Selected summary model could not be found on the configured endpoint.')
+
+    return None
+
+
+def _initialize_gpt_client(
+    settings: Dict[str, Any],
+    requested_model: str = '',
+    user_id: str = None,
+    requested_endpoint_id: str = '',
+    requested_model_id: str = '',
+    requested_provider: str = '',
+):
+    settings = settings or {}
+    multi_endpoint_client = _resolve_summary_multi_endpoint_client(
+        settings,
+        requested_model=requested_model,
+        user_id=user_id,
+        requested_endpoint_id=requested_endpoint_id,
+        requested_model_id=requested_model_id,
+        requested_provider=requested_provider,
+    )
+    if multi_endpoint_client:
+        return multi_endpoint_client
+
     enable_gpt_apim = settings.get('enable_gpt_apim', False)
 
     if enable_gpt_apim:
