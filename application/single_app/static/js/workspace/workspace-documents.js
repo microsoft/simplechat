@@ -29,6 +29,7 @@ const docMetadataModalEl = document.getElementById("docMetadataModal") ? new boo
 const docMetadataForm = document.getElementById("doc-metadata-form");
 const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
+const chatSelectedBtn = document.getElementById("chat-selected-btn");
 const clearSelectionBtn = document.getElementById("clear-selection-btn");
 const documentDeleteModalElement = document.getElementById("documentDeleteModal");
 const documentDeleteModal = documentDeleteModalElement ? new bootstrap.Modal(documentDeleteModalElement) : null;
@@ -2060,6 +2061,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Delete selected button
     if (deleteSelectedBtn) {
         deleteSelectedBtn.addEventListener('click', window.deleteSelectedDocuments);
+    }
+
+    if (chatSelectedBtn) {
+        chatSelectedBtn.addEventListener('click', window.chatWithSelected);
     }
     
     // Clear selection button

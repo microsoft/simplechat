@@ -715,7 +715,7 @@
                 <button type="button" class="btn btn-sm btn-primary" id="manage-tags-btn">
                   <i class="bi bi-tags me-1"></i>Tag Assignment
                 </button>
-                <button type="button" class="btn btn-sm btn-primary ms-2" id="chat-selected-btn" onclick="window.chatWithSelected()">
+                <button type="button" class="btn btn-sm btn-primary ms-2" id="chat-selected-btn">
                   <i class="bi bi-chat-dots-fill me-1"></i>Chat with Selected
                 </button>
                 <button type="button" class="btn btn-sm btn-danger ms-2" id="delete-selected-btn">
@@ -1643,8 +1643,8 @@
   <script>
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpointScope = 'user';
-      window.workspaceModelEndpoints = {{ personal_model_endpoints|default([], true)|tojson|safe }};
-      window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson|safe }};
+      window.workspaceModelEndpoints = {{ personal_model_endpoints|default([], true)|tojson }};
+      window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson }};
   </script>
   {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints and workspace_governance.user_endpoints %}
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
@@ -1655,7 +1655,7 @@
 
   <script>
     // Pass settings/flags needed by JS
-    window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
+    window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None) }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }
