@@ -8317,6 +8317,50 @@ function validateAndMoveToNextStep(currentStep) {
     }
 }
 
+function initializeDlpSettings() {
+    const togglePanel = (toggle, panel) => {
+        if (!toggle || !panel) {
+            return;
+        }
+        panel.classList.toggle('d-none', !toggle.checked);
+        toggle.addEventListener('change', function () {
+            panel.classList.toggle('d-none', !this.checked);
+            if (typeof markFormAsModified === 'function') {
+                markFormAsModified();
+            }
+        });
+    };
+
+    const enableDlpControlPlane = document.getElementById('enable_dlp_control_plane');
+    const dlpControlPlaneSettings = document.getElementById('dlp_control_plane_settings');
+    const enableWebSearchDlp = document.getElementById('enable_web_search_dlp');
+    const webSearchDlpSettings = document.getElementById('web_search_dlp_settings');
+    const webSearchDlpModeSettings = document.getElementById('web_search_dlp_mode_settings');
+    const enableUploadDlp = document.getElementById('enable_upload_dlp');
+    const uploadDlpSettings = document.getElementById('upload_dlp_settings');
+    const uploadDlpModeSettings = document.getElementById('upload_dlp_mode_settings');
+
+    togglePanel(enableDlpControlPlane, dlpControlPlaneSettings);
+    togglePanel(enableWebSearchDlp, webSearchDlpModeSettings);
+    togglePanel(enableUploadDlp, uploadDlpModeSettings);
+
+    if (webSearchDlpSettings && enableDlpControlPlane) {
+        webSearchDlpSettings.classList.toggle('d-none', !enableDlpControlPlane.checked);
+        enableDlpControlPlane.addEventListener('change', function () {
+            webSearchDlpSettings.classList.toggle('d-none', !this.checked);
+        });
+    }
+
+    if (uploadDlpSettings && enableDlpControlPlane) {
+        uploadDlpSettings.classList.toggle('d-none', !enableDlpControlPlane.checked);
+        enableDlpControlPlane.addEventListener('change', function () {
+            uploadDlpSettings.classList.toggle('d-none', !this.checked);
+        });
+    }
+}
+
+document.addEventListener('DOMContentLoaded', initializeDlpSettings);
+
 /**
  * Navigate to the previous step in the walkthrough
  */

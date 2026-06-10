@@ -1,5 +1,6 @@
 # functions_documents.py that has some changes I need to merge into Development
 
+import logging
 import re
 import shutil
 import traceback
@@ -7,7 +8,11 @@ import zipfile
 from io import BytesIO
 from flask import make_response
 from config import *
-from functions_appinsights import log_event
+try:
+    from functions_appinsights import log_event
+except Exception:
+    def log_event(message, extra=None, level=None, exceptionTraceback=False):
+        return None
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
 from functions_settings import *
@@ -16,6 +21,12 @@ from functions_logging import *
 from functions_authentication import *
 from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_dlp import (
+    build_dlp_telemetry_properties,
+    build_upload_dlp_file_log_summary,
+    evaluate_upload_content,
+    should_emit_dlp_telemetry,
+)
 import azure.cognitiveservices.speech as speechsdk
 
 def allowed_file(filename, allowed_extensions=None):
@@ -196,6 +207,271 @@ DI_SELECTION_MARK_PATTERNS = (
 )
 DI_MARKDOWN_TABLE_SEPARATOR_PATTERN = re.compile(r'(?m)^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
 DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
+
+
+def _sanitize_video_indexer_log_value(value):
+    text = str(value)
+    text = re.sub(
+        r'([?&]accessToken=)[^&\s\'"<>]+',
+        r'\1[REDACTED]',
+        text,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r'([\'"]?accessToken[\'"]?\s*[:=]\s*[\'"]?)[^,\'"\s}&]+',
+        r'\1[REDACTED]',
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def _get_upload_workspace_scope(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return "public"
+    if group_id is not None:
+        return "group"
+    return "personal"
+
+
+def _build_upload_dlp_context(document_id, page_number=None, group_id=None, public_workspace_id=None, text=None):
+    workspace_scope = _get_upload_workspace_scope(group_id=group_id, public_workspace_id=public_workspace_id)
+    context = {
+        "document_id": document_id,
+        "workspace_scope": workspace_scope,
+    }
+    if page_number is not None:
+        context["page_number"] = page_number
+    if text is not None:
+        context["text_length"] = len(text)
+    return context
+
+
+def _should_disable_enhanced_citations_for_upload_dlp(settings):
+    if not settings.get("enable_dlp_control_plane", False):
+        return False
+    if not settings.get("enable_upload_dlp", False):
+        return False
+    if settings.get("dlp_fail_closed_on_scanner_error", True):
+        return True
+    if settings.get("upload_dlp_fail_upload_on_match", False):
+        return True
+    return str(settings.get("upload_dlp_mode", "monitor") or "monitor").lower() in {"redact", "block"}
+
+
+UPLOAD_DLP_METADATA_FIELDS = ("title", "authors", "organization", "keywords", "abstract")
+UPLOAD_DLP_STATUS_RANK = {
+    "accepted": 0,
+    "accepted_with_dlp_monitoring": 1,
+    "accepted_with_redactions": 2,
+    "scanner_failed": 3,
+    "blocked": 4,
+}
+
+
+def _metadata_value_to_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "\n".join("" if item is None else str(item) for item in value)
+    return str(value)
+
+
+def _metadata_text_to_value(original_value, sanitized_text):
+    text = "" if sanitized_text is None else str(sanitized_text)
+    if isinstance(original_value, list):
+        return [line for line in text.splitlines() if line.strip()]
+    return text
+
+
+def _merge_upload_dlp_document_summary(existing=None, incoming=None):
+    existing = existing or {}
+    incoming = incoming or {}
+    if incoming.get("dlp_metadata"):
+        incoming = incoming.get("dlp_metadata") or {}
+    if existing.get("dlp_metadata"):
+        existing = existing.get("dlp_metadata") or {}
+
+    existing_status = str(existing.get("status") or existing.get("dlp_status") or "accepted")
+    incoming_status = str(incoming.get("status") or incoming.get("dlp_status") or "accepted")
+    aggregate_status = existing_status
+    if UPLOAD_DLP_STATUS_RANK.get(incoming_status, 0) > UPLOAD_DLP_STATUS_RANK.get(existing_status, 0):
+        aggregate_status = incoming_status
+
+    aggregate = {
+        "status": aggregate_status,
+        "entity_counts": {},
+        "total_replacements": int(existing.get("total_replacements") or 0) + int(incoming.get("total_replacements") or 0),
+        "scanner_status": incoming.get("scanner_status") or existing.get("scanner_status") or "ok",
+    }
+    for source in (existing.get("entity_counts") or {}, incoming.get("entity_counts") or {}):
+        for entity_type, count in source.items():
+            aggregate["entity_counts"][str(entity_type)] = aggregate["entity_counts"].get(str(entity_type), 0) + int(count or 0)
+    for key in ("dlp_surface", "dlp_action", "dlp_engine", "dlp_mode", "scanner_status", "workspace_scope", "document_id"):
+        value = incoming.get(key) if incoming.get(key) is not None else existing.get(key)
+        if value is not None:
+            aggregate[key] = value
+    return aggregate
+
+
+def _upload_metadata_log_summary(metadata, dlp_summary=None):
+    metadata = metadata or {}
+    fields = [field for field in UPLOAD_DLP_METADATA_FIELDS if field in metadata]
+    field_lengths = {
+        field: len(_metadata_value_to_text(metadata.get(field)))
+        for field in fields
+    }
+    populated_fields = [
+        field
+        for field in fields
+        if field_lengths.get(field, 0) > 0
+    ]
+    return {
+        "fields": fields,
+        "field_count": len(fields),
+        "field_lengths": field_lengths,
+        "populated_fields": populated_fields,
+        "populated_field_count": len(populated_fields),
+        "dlp_summary": dlp_summary or {
+            "status": "accepted",
+            "entity_counts": {},
+            "total_replacements": 0,
+        },
+    }
+
+
+def _sanitize_upload_metadata_for_dlp(metadata, user_id, document_id, group_id=None, public_workspace_id=None):
+    sanitized = dict(metadata or {})
+    aggregate = {
+        "status": "accepted",
+        "entity_counts": {},
+        "total_replacements": 0,
+        "scanner_status": "ok",
+    }
+
+    for field_name in UPLOAD_DLP_METADATA_FIELDS:
+        if field_name not in sanitized:
+            continue
+        original_value = sanitized.get(field_name)
+        metadata_text = _metadata_value_to_text(original_value)
+        if not metadata_text.strip():
+            continue
+
+        result = _evaluate_upload_dlp_text(
+            metadata_text,
+            user_id=user_id,
+            document_id=document_id,
+            page_number=f"metadata:{field_name}",
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        sanitized[field_name] = _metadata_text_to_value(
+            original_value,
+            result.get("sanitized_text", metadata_text),
+        )
+        incoming_summary = dict(result.get("dlp_metadata") or {})
+        incoming_summary["status"] = result.get("status", incoming_summary.get("status", "accepted"))
+        aggregate = _merge_upload_dlp_document_summary(aggregate, incoming_summary)
+
+    return sanitized, aggregate
+
+
+def _get_current_document_dlp_metadata(document_id, user_id, group_id=None, public_workspace_id=None):
+    try:
+        document_metadata = get_document_metadata(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+    except Exception as exc:
+        log_event(
+            f"[DLP] Failed to retrieve existing upload DLP metadata for document {document_id}: {exc}",
+            level=logging.WARNING,
+        )
+        return {}
+
+    if not document_metadata:
+        return {}
+
+    current_metadata = dict(document_metadata.get("dlp_metadata") or {})
+    if document_metadata.get("dlp_status") and not current_metadata.get("status"):
+        current_metadata["status"] = document_metadata.get("dlp_status")
+    return current_metadata
+
+
+def _record_upload_dlp_result(result, user_id, document_id, group_id=None, public_workspace_id=None, page_number=None):
+    settings = get_settings()
+    context = _build_upload_dlp_context(
+        document_id=document_id,
+        page_number=page_number,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        text=result.get("sanitized_text", ""),
+    )
+    safe_summary = build_upload_dlp_file_log_summary(result, context=context)
+    add_file_task_to_file_processing_log(
+        document_id=document_id,
+        user_id=public_workspace_id if public_workspace_id is not None else (group_id if group_id is not None else user_id),
+        content=f"Upload DLP summary: {safe_summary}"
+    )
+
+    if should_emit_dlp_telemetry(result, settings):
+        log_event(
+            "[DLP] Upload decision",
+            extra=build_dlp_telemetry_properties(result, surface="upload", context=context),
+        )
+
+    incoming_metadata = dict(result.get("dlp_metadata") or {})
+    incoming_metadata["status"] = result.get("status", incoming_metadata.get("status", "accepted"))
+    existing_metadata = _get_current_document_dlp_metadata(
+        document_id=document_id,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    merged_metadata = _merge_upload_dlp_document_summary(existing_metadata, incoming_metadata)
+
+    update_args = {
+        "document_id": document_id,
+        "user_id": user_id,
+        "dlp_status": merged_metadata.get("status"),
+        "dlp_metadata": merged_metadata,
+    }
+    if group_id is not None:
+        update_args["group_id"] = group_id
+    if public_workspace_id is not None:
+        update_args["public_workspace_id"] = public_workspace_id
+
+    try:
+        update_document(**update_args)
+    except Exception as exc:
+        log_event(
+            f"[DLP] Failed to update upload DLP document metadata for document {document_id}: {exc}",
+            level=logging.WARNING,
+        )
+
+
+def _evaluate_upload_dlp_text(text, user_id, document_id, page_number=None, group_id=None, public_workspace_id=None):
+    settings = get_settings()
+    context = _build_upload_dlp_context(
+        document_id=document_id,
+        page_number=page_number,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        text=text,
+    )
+    result = evaluate_upload_content(text, settings=settings, context=context)
+    _record_upload_dlp_result(
+        result,
+        user_id=user_id,
+        document_id=document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        page_number=page_number,
+    )
+    if not result.get("upload_allowed", True):
+        raise ValueError("Upload content blocked by DLP policy.")
+    return result
 
 
 def is_pdf_file_name(file_name):
@@ -1191,7 +1467,7 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
-            content=f"Document metadata lookup returned {len(document_items)} item(s)."
+            content=f"Document metadata retrieved for document {document_id}, item_count: {len(document_items)}."
         )
         return _normalize_document_enhanced_citations(document_items[0]) if document_items else None
 
@@ -1231,10 +1507,30 @@ def save_video_chunk(
 
         debug_print(f"[VIDEO CHUNK] Converted start_time {start_time} to {seconds} seconds")
 
-        # 1) generate embedding on the transcript text
+        transcript_dlp_result = _evaluate_upload_dlp_text(
+            page_text_content,
+            user_id=user_id,
+            document_id=document_id,
+            page_number=seconds,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        sanitized_transcript_text = transcript_dlp_result.get("sanitized_text", page_text_content)
+        ocr_dlp_result = _evaluate_upload_dlp_text(
+            ocr_chunk_text,
+            user_id=user_id,
+            document_id=document_id,
+            page_number=f"{seconds}:ocr",
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        sanitized_ocr_text = ocr_dlp_result.get("sanitized_text", ocr_chunk_text)
+        dlp_metadata = transcript_dlp_result.get("dlp_metadata")
+
+        # 1) generate embedding on the sanitized transcript text
         try:
             debug_print(f"[VIDEO CHUNK] Generating embedding for transcript text")
-            result = generate_embedding(page_text_content)
+            result = generate_embedding(sanitized_transcript_text)
 
             # Handle both tuple (new) and single value (backward compatibility)
             if isinstance(result, tuple):
@@ -1279,15 +1575,16 @@ def save_video_chunk(
             chunk = {
                 "id":                   chunk_id,
                 "document_id":          document_id,
-                "chunk_text":           page_text_content,
-                "video_ocr_chunk_text": ocr_chunk_text,
+                "chunk_text":           sanitized_transcript_text,
+                "video_ocr_chunk_text": sanitized_ocr_text,
                 "embedding":            embedding,
                 "file_name":            file_name,
                 "start_time":           start_time,
                 "chunk_sequence":       seconds,
                 "upload_date":          current_time,
                 "version":              version,
-                "document_tags":        meta.get('tags', []) if meta else []
+                "document_tags":        meta.get('tags', []) if meta else [],
+                "dlp_metadata":         dlp_metadata
             }
 
             if is_public_workspace:
@@ -1325,6 +1622,8 @@ def save_video_chunk(
             print(f"[VideoChunk] UPLOAD ERROR for {chunk_id}: {e}", flush=True)
 
     except Exception as e:
+        if str(e) == "Upload content blocked by DLP policy.":
+            raise
         debug_print(f"[VIDEO CHUNK] Unexpected error processing chunk: {str(e)}")
         print(f"[VideoChunk] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
 
@@ -1336,7 +1635,8 @@ def process_video_document(
     update_callback,
     group_id,
     public_workspace_id=None,
-    auto_extract_metadata=True
+    auto_extract_metadata=True,
+    enable_enhanced_citations=False
 ):
     """
     Processes a video by dividing transcript into 30-second chunks,
@@ -1367,7 +1667,7 @@ def process_video_document(
 
     debug_print("[VIDEO INDEXER] Video file support is enabled, proceeding with indexing")
 
-    if settings.get("enable_enhanced_citations", False):
+    if enable_enhanced_citations:
         debug_print("[VIDEO INDEXER] Enhanced citations enabled, uploading to blob storage")
         update_callback(status="Uploading video for enhanced citations...")
         try:
@@ -1422,9 +1722,9 @@ def process_video_document(
         token = get_video_indexer_account_token(settings)
         debug_print(f"[VIDEO INDEXER] Authentication successful, token length: {len(token) if token else 0}")
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER] Authentication failed: {str(e)}")
-        print(f"[VIDEO] AUTH ERROR: {e}", flush=True)
-        update_callback(status=f"VIDEO: auth failed → {e}")
+        debug_print(f"[VIDEO INDEXER] Authentication failed: {_sanitize_video_indexer_log_value(e)}")
+        print("[VIDEO] AUTH ERROR", flush=True)
+        update_callback(status="VIDEO: auth failed")
         return 0
 
     # 2) Upload video to Indexer
@@ -1443,8 +1743,8 @@ def process_video_document(
         debug_print(f"[VIDEO INDEXER] Using managed identity access token authentication")
 
         debug_print(f"[VIDEO INDEXER] Upload URL: {url}")
-        debug_print(f"[VIDEO INDEXER] Upload params: {params}")
-        debug_print(f"[VIDEO INDEXER] Starting file upload for: {original_filename}")
+        debug_print(f"[VIDEO INDEXER] Upload params keys: {list(params.keys())}, accessToken_present={bool(token)}, name_length={len(original_filename or '')}")
+        debug_print(f"[VIDEO INDEXER] Starting file upload for name_length={len(original_filename or '')}")
 
         with open(temp_file_path, "rb") as f:
             resp = requests.post(url, params=params, headers=headers, files={"file": f})
@@ -1452,7 +1752,7 @@ def process_video_document(
         debug_print(f"[VIDEO INDEXER] Upload response status: {resp.status_code}")
 
         if resp.status_code != 200:
-            debug_print(f"[VIDEO INDEXER] Upload response text: {resp.text}")
+            debug_print(f"[VIDEO INDEXER] Upload response text: {_sanitize_video_indexer_log_value(resp.text)}")
 
         resp.raise_for_status()
         response_data = resp.json()
@@ -1460,7 +1760,7 @@ def process_video_document(
 
         vid = response_data.get("id")
         if not vid:
-            debug_print(f"[VIDEO INDEXER] ERROR: No video ID in response: {response_data}")
+            debug_print(f"[VIDEO INDEXER] ERROR: No video ID in response; response keys: {list(response_data.keys())}")
             raise ValueError("no video ID returned")
 
         debug_print(f"[VIDEO INDEXER] Upload successful, video ID: {vid}")
@@ -1483,17 +1783,17 @@ def process_video_document(
             print(f"[VIDEO] Failed to update document metadata with video_indexer_id: {e}", flush=True)
 
     except requests.exceptions.RequestException as e:
-        debug_print(f"[VIDEO INDEXER] Upload request failed: {str(e)}")
+        debug_print(f"[VIDEO INDEXER] Upload request failed: {_sanitize_video_indexer_log_value(e)}")
         if hasattr(e, 'response') and e.response is not None:
             debug_print(f"[VIDEO INDEXER] Upload error response status: {e.response.status_code}")
-            debug_print(f"[VIDEO INDEXER] Upload error response text: {e.response.text}")
+            debug_print(f"[VIDEO INDEXER] Upload error response text: {_sanitize_video_indexer_log_value(e.response.text)}")
         print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
-        update_callback(status=f"VIDEO: upload failed → {e}")
+        update_callback(status="VIDEO: upload failed")
         return 0
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER] Upload unexpected error: {str(e)}")
+        debug_print(f"[VIDEO INDEXER] Upload unexpected error: {_sanitize_video_indexer_log_value(e)}")
         print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
-        update_callback(status=f"VIDEO: upload failed → {e}")
+        update_callback(status="VIDEO: upload failed")
         return 0
 
     # 3) Poll until ready
@@ -1506,8 +1806,8 @@ def process_video_document(
     debug_print(f"[VIDEO INDEXER] Using managed identity access token for polling")
     debug_print(f"[VIDEO INDEXER] Requesting full insights (no filtering)")
 
-    debug_print(f"[VIDEO INDEXER] Index polling URL: {index_url}")
-    debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID: {vid}")
+    debug_print(f"[VIDEO INDEXER] Index polling request prepared, video_id_length={len(str(vid or ''))}")
+    debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID length: {len(str(vid or ''))}")
 
     poll_count = 0
     max_polls = 180  # 90 minutes maximum (30 second intervals)
@@ -1539,10 +1839,10 @@ def process_video_document(
             debug_print(f"[VIDEO INDEXER] Poll response keys: {list(data.keys())}")
 
         except requests.exceptions.RequestException as e:
-            debug_print(f"[VIDEO INDEXER] Poll request failed: {str(e)}")
+            debug_print(f"[VIDEO INDEXER] Poll request failed: {_sanitize_video_indexer_log_value(e)}")
             if hasattr(e, 'response') and e.response is not None:
                 debug_print(f"[VIDEO INDEXER] Poll error response status: {e.response.status_code}")
-                debug_print(f"[VIDEO INDEXER] Poll error response text: {e.response.text}")
+                debug_print(f"[VIDEO INDEXER] Poll error response text: {_sanitize_video_indexer_log_value(e.response.text)}")
             if poll_count >= max_polls:
                 update_callback(status="VIDEO: polling timeout")
                 return 0
@@ -1593,91 +1893,16 @@ def process_video_document(
     video_duration_seconds = to_seconds(video_duration) if video_duration else 0
     debug_print(f"[VIDEO INDEXER] Video duration: {video_duration} ({video_duration_seconds} seconds)")
 
-    # Log raw insights JSON for complete visibility (debug only)
-    import json
-    print(f"\n[VIDEO] ===== RAW INSIGHTS JSON =====", flush=True)
-    try:
-        insights_json = json.dumps(insights, indent=2, ensure_ascii=False)
-        # Truncate if too long (show first 10000 chars)
-        if len(insights_json) > 10000:
-            print(f"{insights_json[:10000]}\n... (truncated, total length: {len(insights_json)} chars)", flush=True)
-        else:
-            print(insights_json, flush=True)
-    except Exception as e:
-        print(f"[VIDEO] Could not serialize insights to JSON: {e}", flush=True)
-    print(f"[VIDEO] ===== END RAW INSIGHTS =====\n", flush=True)
-
     debug_print(f"[VIDEO INDEXER] Insights keys available: {list(insights.keys())}")
     print(f"[VIDEO] Available insight types: {', '.join(list(insights.keys())[:15])}...", flush=True)
 
-    # Debug: Show sample structures for all insight types
-    print(f"\n[VIDEO] ===== SAMPLE DATA STRUCTURES =====", flush=True)
-
-    transcript_data = insights.get("transcript", [])
-    if transcript_data:
-        print(f"[VIDEO] TRANSCRIPT sample: {transcript_data[0]}", flush=True)
-
-    ocr_data = insights.get("ocr", [])
-    if ocr_data:
-        print(f"[VIDEO] OCR sample: {ocr_data[0]}", flush=True)
-
-    keywords_data_debug = insights.get("keywords", [])
-    if keywords_data_debug:
-        print(f"[VIDEO] KEYWORDS sample: {keywords_data_debug[0]}", flush=True)
-
-    labels_data_debug = insights.get("labels", [])
-    if labels_data_debug:
-        debug_print(f"[VIDEO INDEXER] LABELS sample: {labels_data_debug[0]}")
-
-    topics_data_debug = insights.get("topics", [])
-    if topics_data_debug:
-        debug_print(f"[VIDEO INDEXER] TOPICS sample: {topics_data_debug[0]}")
-
-    audio_effects_data_debug = insights.get("audioEffects", [])
-    if audio_effects_data_debug:
-        debug_print(f"[VIDEO INDEXER] AUDIO_EFFECTS sample: {audio_effects_data_debug[0]}")
-
-    emotions_data_debug = insights.get("emotions", [])
-    if emotions_data_debug:
-        debug_print(f"[VIDEO INDEXER] EMOTIONS sample: {emotions_data_debug[0]}")
-
-    sentiments_data_debug = insights.get("sentiments", [])
-    if sentiments_data_debug:
-        debug_print(f"[VIDEO INDEXER] SENTIMENTS sample: {sentiments_data_debug[0]}")
-
-    scenes_data_debug = insights.get("scenes", [])
-    if scenes_data_debug:
-        debug_print(f"[VIDEO INDEXER] SCENES sample: {scenes_data_debug[0]}")
-
-    shots_data_debug = insights.get("shots", [])
-    if shots_data_debug:
-        debug_print(f"[VIDEO INDEXER] SHOTS sample: {shots_data_debug[0]}")
-
-    faces_data_debug = insights.get("faces", [])
-    if faces_data_debug:
-        debug_print(f"[VIDEO INDEXER] FACES sample: {faces_data_debug[0]}")
-
-    namedLocations_data_debug = insights.get("namedLocations", [])
-    if namedLocations_data_debug:
-        debug_print(f"[VIDEO INDEXER] NAMED_LOCATIONS sample: {namedLocations_data_debug[0]}")
-
-    # Check for other potential label sources
-    brands_data_debug = insights.get("brands", [])
-    if brands_data_debug:
-        debug_print(f"[VIDEO INDEXER] BRANDS sample: {brands_data_debug[0]}")
-
-    visualContentModeration_debug = insights.get("visualContentModeration", [])
-    if visualContentModeration_debug:
-        debug_print(f"[VIDEO INDEXER] VISUAL_MODERATION sample: {visualContentModeration_debug[0]}")
-
-    # Show total counts for all available insights
-    print(f"[VIDEO] COUNTS:", flush=True)
+    print(f"[VIDEO] Insight counts:", flush=True)
     for key in insights.keys():
         value = insights.get(key, [])
         if isinstance(value, list):
             print(f"  {key}: {len(value)} items", flush=True)
 
-    print(f"[VIDEO] ===== END SAMPLE DATA =====\n", flush=True)
+    print("[VIDEO] Insight count logging complete", flush=True)
 
     transcript = insights.get("transcript", [])
     ocr_blocks = insights.get("ocr", [])
@@ -1783,7 +2008,7 @@ def process_video_document(
     debug_print(f"[VIDEO INDEXER] Context built - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}, People: {len(named_people_context)}, Locations: {len(named_locations_context)}, Objects: {len(detected_objects_context)}")
 
     if len(speech_context) > 0:
-        debug_print(f"[VIDEO INDEXER] First speech item: {speech_context[0]}")
+        debug_print("[VIDEO INDEXER] First speech item timing metadata available")
 
     # Sort all contexts by timestamp
     speech_context.sort(key=lambda x: to_seconds(x["start"]))
@@ -2067,7 +2292,7 @@ def process_video_document(
                 insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
 
             chunk_text = ". ".join(insight_parts) if insight_parts else "[No content detected]"
-            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
+            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} has no speech, using insight summary length: {len(chunk_text)}")
 
         debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
         debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
@@ -2096,6 +2321,8 @@ def process_video_document(
             debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} saved successfully")
             total += 1
         except Exception as e:
+            if str(e) == "Upload content blocked by DLP policy.":
+                raise
             debug_print(f"[VIDEO INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
             debug_print(f"[VIDEO INDEXER] Chunk save traceback: {traceback.format_exc()}")
 
@@ -2512,21 +2739,19 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         if not metadata:
             raise ValueError(f"No metadata found for document {document_id} (group: {is_group})")
 
+        metadata, _metadata_dlp_summary = _sanitize_upload_metadata_for_dlp(
+            metadata,
+            user_id=user_id,
+            document_id=document_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
         version = metadata.get("version") if metadata.get("version") else 1
         if version is None:
             raise ValueError(f"Metadata for document {document_id} missing 'version' field")
 
     except Exception as e:
         print(f"Error updating document status or retrieving metadata for document {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
-        raise
-
-    # Generate embedding
-    try:
-        #status = f"Generating embedding for page {page_number}"
-        #update_document(document_id=document_id, user_id=user_id, status=status)
-        embedding, token_usage = generate_embedding(page_text_content)
-    except Exception as e:
-        print(f"Error generating embedding for page {page_number} of document {document_id}: {e}")
         raise
 
     # Build chunk document
@@ -2572,12 +2797,32 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         else:
             debug_print(f"[SAVE_CHUNKS] No vision analysis found for document {document_id}")
 
+        upload_dlp_result = _evaluate_upload_dlp_text(
+            enhanced_chunk_text,
+            user_id=user_id,
+            document_id=document_id,
+            page_number=page_number,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        sanitized_chunk_text = upload_dlp_result.get("sanitized_text", enhanced_chunk_text)
+        dlp_metadata = upload_dlp_result.get("dlp_metadata")
+
+        # Generate embedding after upload DLP so embeddings never receive blocked or unredacted enforced content.
+        try:
+            #status = f"Generating embedding for page {page_number}"
+            #update_document(document_id=document_id, user_id=user_id, status=status)
+            embedding, token_usage = generate_embedding(sanitized_chunk_text)
+        except Exception as e:
+            print(f"Error generating embedding for page {page_number} of document {document_id}: {e}")
+            raise
+
         if is_public_workspace:
             chunk_document = {
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": enhanced_chunk_text,
+                "chunk_text": sanitized_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -2590,7 +2835,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
-                "public_workspace_id": public_workspace_id
+                "public_workspace_id": public_workspace_id,
+                "dlp_metadata": dlp_metadata
             }
         elif is_group:
             # Get shared_group_ids from document metadata for group documents
@@ -2599,7 +2845,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": enhanced_chunk_text,
+                "chunk_text": sanitized_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -2613,7 +2859,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "upload_date": current_time,
                 "version": version,
                 "group_id": group_id,
-                "shared_group_ids": shared_group_ids
+                "shared_group_ids": shared_group_ids,
+                "dlp_metadata": dlp_metadata
             }
         else:
             # Get shared_user_ids from document metadata for personal documents
@@ -2623,7 +2870,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": enhanced_chunk_text,
+                "chunk_text": sanitized_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -2637,7 +2884,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "upload_date": current_time,
                 "version": version,
                 "user_id": user_id,
-                "shared_user_ids": shared_user_ids
+                "shared_user_ids": shared_user_ids,
+                "dlp_metadata": dlp_metadata
             }
     except Exception as e:
         print(f"Error creating chunk document for page {page_number} of document {document_id}: {e}")
@@ -2708,17 +2956,19 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
         if not metadata:
             raise ValueError(f"No metadata found for document {document_id}")
 
+        metadata, _metadata_dlp_summary = _sanitize_upload_metadata_for_dlp(
+            metadata,
+            user_id=user_id,
+            document_id=document_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
         version = metadata.get("version") if metadata.get("version") else 1
+        author = ensure_list(metadata.get('authors')) if metadata else []
+        title = metadata.get('title', '') if metadata else ''
+        document_classification = metadata.get('document_classification', 'None') if metadata else 'None'
     except Exception as e:
         log_event(f"[save_chunks_batch] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
-        raise
-
-    # Generate all embeddings in batches
-    texts = [c['page_text_content'] for c in chunks_data]
-    try:
-        embedding_results = generate_embeddings_batch(texts)
-    except Exception as e:
-        log_event(f"[save_chunks_batch] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
         raise
 
     # Check for vision analysis once
@@ -2742,15 +2992,42 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
             vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
         vision_text = "\n".join(vision_text_parts)
 
+    sanitized_chunks_data = []
+    for chunk_info in chunks_data:
+        sanitized_chunk_info = dict(chunk_info)
+        page_number = chunk_info['page_number']
+        page_text_content = chunk_info['page_text_content']
+        enhanced_chunk_text = page_text_content + vision_text if vision_text else page_text_content
+        upload_dlp_result = _evaluate_upload_dlp_text(
+            enhanced_chunk_text,
+            user_id=user_id,
+            document_id=document_id,
+            page_number=page_number,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        sanitized_chunk_info['page_text_content'] = upload_dlp_result.get("sanitized_text", enhanced_chunk_text)
+        sanitized_chunk_info['dlp_metadata'] = upload_dlp_result.get("dlp_metadata")
+        sanitized_chunks_data.append(sanitized_chunk_info)
+
+    # Generate all embeddings in batches after DLP redaction
+    texts = [c['page_text_content'] for c in sanitized_chunks_data]
+    try:
+        embedding_results = generate_embeddings_batch(texts)
+    except Exception as e:
+        log_event(f"[save_chunks_batch] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
+        raise
+
     # Build all chunk documents
     chunk_documents = []
     total_token_usage = {'total_tokens': 0, 'prompt_tokens': 0, 'model_deployment_name': None}
 
-    for idx, chunk_info in enumerate(chunks_data):
+    for idx, chunk_info in enumerate(sanitized_chunks_data):
         embedding, token_usage = embedding_results[idx]
         page_number = chunk_info['page_number']
         file_name = chunk_info['file_name']
         page_text_content = chunk_info['page_text_content']
+        dlp_metadata = chunk_info.get('dlp_metadata')
 
         if token_usage:
             total_token_usage['total_tokens'] += token_usage.get('total_tokens', 0)
@@ -2772,14 +3049,15 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 "chunk_keywords": [],
                 "chunk_summary": "",
                 "page_number": page_number,
-                "author": [],
-                "title": "",
-                "document_classification": "None",
+                "author": author,
+                "title": title,
+                "document_classification": document_classification,
                 "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,
                 "upload_date": current_time,
                 "version": version,
-                "public_workspace_id": public_workspace_id
+                "public_workspace_id": public_workspace_id,
+                "dlp_metadata": dlp_metadata
             }
         elif is_group:
             shared_group_ids = metadata.get('shared_group_ids', []) if metadata else []
@@ -2793,15 +3071,16 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 "chunk_keywords": [],
                 "chunk_summary": "",
                 "page_number": page_number,
-                "author": [],
-                "title": "",
-                "document_classification": "None",
+                "author": author,
+                "title": title,
+                "document_classification": document_classification,
                 "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,
                 "upload_date": current_time,
                 "version": version,
                 "group_id": group_id,
-                "shared_group_ids": shared_group_ids
+                "shared_group_ids": shared_group_ids,
+                "dlp_metadata": dlp_metadata
             }
         else:
             shared_user_ids = metadata.get('shared_user_ids', []) if metadata else []
@@ -2815,15 +3094,16 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 "chunk_keywords": [],
                 "chunk_summary": "",
                 "page_number": page_number,
-                "author": [],
-                "title": "",
-                "document_classification": "None",
+                "author": author,
+                "title": title,
+                "document_classification": document_classification,
                 "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,
                 "upload_date": current_time,
                 "version": version,
                 "user_id": user_id,
-                "shared_user_ids": shared_user_ids
+                "shared_user_ids": shared_user_ids,
+                "dlp_metadata": dlp_metadata
             }
 
         chunk_documents.append(chunk_document)
@@ -4201,7 +4481,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Retrieved document items for document {document_id}: {document_items}"
+            content=f"Retrieved document items for document {document_id}, item_count: {len(document_items)}."
         )
     except Exception as e:
         add_file_task_to_file_processing_log(
@@ -4231,10 +4511,19 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     if "abstract" in document_metadata:
         meta_data["abstract"] = document_metadata["abstract"]
 
+    meta_data, metadata_dlp_summary = _sanitize_upload_metadata_for_dlp(
+        meta_data,
+        user_id=user_id,
+        document_id=document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    metadata_summary = _upload_metadata_log_summary(meta_data, metadata_dlp_summary)
+
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"Extracted metadata for document {document_id}, metadata: {meta_data}"
+        content=f"Extracted metadata for document {document_id}, summary: {metadata_summary}"
     )
 
     args = {
@@ -4288,12 +4577,13 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                 block_reasons.append("Blocklist match")
 
             if blocked:
+                blocked_metadata_summary = _upload_metadata_log_summary(meta_data, metadata_dlp_summary)
                 add_file_task_to_file_processing_log(
                     document_id=document_id,
                     user_id=group_id if is_group else user_id,
-                    content=f"Blocked document metadata: {document_metadata}, reasons: {block_reasons}"
+                    content=f"Blocked document metadata for document {document_id}, summary: {blocked_metadata_summary}, reasons: {block_reasons}"
                 )
-                print(f"Blocked document metadata: {document_metadata}\nReasons: {block_reasons}")
+                print(f"Blocked document metadata for document {document_id}. Reasons: {block_reasons}")
                 return None
 
         except Exception as e:
@@ -4310,7 +4600,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
             add_file_task_to_file_processing_log(
                 document_id=document_id,
                 user_id=group_id if is_group else user_id,
-                content=f"Processing Hybrid search for document {document_id} using {len(meta_data or {})} metadata fields."
+                content=f"Processing Hybrid search for document {document_id} using metadata fields: {metadata_summary['populated_fields']}"
             )
 
             args = {
@@ -4442,7 +4732,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"GPT response for document {document_id}: {response_content}"
+        content=f"GPT response for document {document_id}, response_length: {len(response_content or '')}"
     )
 
     # --- Step 7: Clean and parse the GPT JSON output ---
@@ -4458,7 +4748,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Cleaned JSON from GPT response for document {document_id}: {cleaned_str}"
+            content=f"Cleaned JSON from GPT response for document {document_id}, json_length: {len(cleaned_str or '')}"
         )
 
         gpt_output = json.loads(cleaned_str)
@@ -4466,12 +4756,24 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Decoded JSON from GPT response for document {document_id}: {gpt_output}"
+            content=f"Decoded JSON from GPT response for document {document_id}, keys: {list(gpt_output.keys()) if isinstance(gpt_output, dict) else []}"
         )
 
         # Ensure authors and keywords are always lists
         gpt_output["authors"] = ensure_list(gpt_output.get("authors", []))
         gpt_output["keywords"] = ensure_list(gpt_output.get("keywords", []))
+        gpt_output, gpt_metadata_dlp_summary = _sanitize_upload_metadata_for_dlp(
+            gpt_output,
+            user_id=user_id,
+            document_id=document_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        add_file_task_to_file_processing_log(
+            document_id=document_id,
+            user_id=group_id if is_group else user_id,
+            content=f"Sanitized GPT metadata for document {document_id}, summary: {_upload_metadata_log_summary(gpt_output, gpt_metadata_dlp_summary)}"
+        )
 
     except (json.JSONDecodeError, TypeError) as e:
         add_file_task_to_file_processing_log(
@@ -4514,10 +4816,18 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     if is_effectively_empty(meta_data["abstract"]):
         meta_data["abstract"] = gpt_output.get("abstract", meta_data["abstract"])
 
+    meta_data, final_metadata_dlp_summary = _sanitize_upload_metadata_for_dlp(
+        meta_data,
+        user_id=user_id,
+        document_id=document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"Final metadata for document {document_id}: {meta_data}"
+        content=f"Final metadata for document {document_id}, summary: {_upload_metadata_log_summary(meta_data, final_metadata_dlp_summary)}"
     )
 
     args = {
@@ -6833,9 +7143,25 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         elif doc_author: update_fields['authors'] = [doc_author]
         if doc_subject: update_fields['abstract'] = doc_subject
         if doc_keywords: update_fields['keywords'] = doc_keywords
+        metadata_update_fields = {
+            key: value
+            for key, value in update_fields.items()
+            if key in UPLOAD_DLP_METADATA_FIELDS
+        }
+        if metadata_update_fields:
+            sanitized_metadata_fields, _ = _sanitize_upload_metadata_for_dlp(
+                metadata_update_fields,
+                user_id=user_id,
+                document_id=document_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            update_fields.update(sanitized_metadata_fields)
         update_callback(**update_fields)
 
     except Exception as e:
+        if str(e) == "Upload content blocked by DLP policy.":
+            raise
         print(f"Warning: Failed to extract initial metadata for {original_filename}: {e}")
         # Continue processing even if metadata fails
 
@@ -7451,12 +7777,13 @@ def process_audio_document(
     update_callback,
     group_id=None,
     public_workspace_id=None,
-    auto_extract_metadata=True
+    auto_extract_metadata=True,
+    enable_enhanced_citations=False
 ) -> int:
     """Transcribe an audio file via Azure Speech, splitting >10 min into WAV chunks."""
 
     settings = get_settings()
-    if settings.get("enable_enhanced_citations", False):
+    if enable_enhanced_citations:
         update_callback(status="Uploading audio for enhanced citations…")
         blob_path = upload_to_blob(
             temp_file_path,
@@ -7529,7 +7856,7 @@ def process_audio_document(
                 try:
                     if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
                         all_results.append(evt.result.text)
-                        print(f"[Debug] Recognized: {evt.result.text}")
+                        print(f"[Debug] Recognized text length: {len(evt.result.text or '')}")
                     elif evt.result.reason == speechsdk.ResultReason.NoMatch:
                         print(f"[Debug] No speech recognized in segment")
                 except Exception as e:
@@ -7618,7 +7945,7 @@ def process_audio_document(
 
             # result = speech_recognizer.recognize_once()
             # if result.reason == speechsdk.ResultReason.RecognizedSpeech:
-            #     print(f"[Debug] Recognized: {result.text}")
+            #     print(f"[Debug] Recognized text length: {len(result.text or '')}")
             #     all_phrases.append(result.text)
             # elif result.reason == speechsdk.ResultReason.NoMatch:
             #     print(f"[Warning] No speech in {chunk_path}")
@@ -8260,6 +8587,11 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
     is_public_workspace = public_workspace_id is not None
     settings = get_settings()
     enable_enhanced_citations = settings.get('enable_enhanced_citations', False) # Default to False if missing
+    disabled_enhanced_citations_for_upload_dlp = (
+        enable_enhanced_citations and _should_disable_enhanced_citations_for_upload_dlp(settings)
+    )
+    if disabled_enhanced_citations_for_upload_dlp:
+        enable_enhanced_citations = False
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False) # Used by DI flow
     max_file_size_bytes = settings.get('max_file_size_mb', 16) * 1024 * 1024
 
@@ -8288,6 +8620,12 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
 
         update_document(**args)
 
+
+    if disabled_enhanced_citations_for_upload_dlp:
+        update_doc_callback(
+            enhanced_citations=False,
+            status="Enhanced citations disabled because upload DLP enforcement is active"
+        )
 
     total_chunks_saved = 0
     total_embedding_tokens = 0
@@ -8413,7 +8751,8 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 update_callback=update_doc_callback,
                 group_id=group_id,
                 public_workspace_id=public_workspace_id,
-                auto_extract_metadata=False
+                auto_extract_metadata=False,
+                enable_enhanced_citations=enable_enhanced_citations
             )
         elif file_ext in audio_extensions:
             total_chunks_saved = process_audio_document(
@@ -8424,7 +8763,8 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 update_callback=update_doc_callback,
                 group_id=group_id,
                 public_workspace_id=public_workspace_id,
-                auto_extract_metadata=False
+                auto_extract_metadata=False,
+                enable_enhanced_citations=enable_enhanced_citations
             )
         elif file_ext in di_supported_extensions or file_ext == '.doc':
             result = process_di_document(
@@ -8499,6 +8839,14 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 group_id=group_id,
                 public_workspace_id=public_workspace_id
             )
+            if doc_metadata:
+                doc_metadata, _ = _sanitize_upload_metadata_for_dlp(
+                    doc_metadata,
+                    user_id=user_id,
+                    document_id=document_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                )
 
             # Determine workspace type
             if public_workspace_id:

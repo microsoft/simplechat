@@ -2,9 +2,14 @@
 
 import base64
 import json
+import re
 
 from config import *
-from functions_appinsights import log_event
+try:
+    from functions_appinsights import log_event
+except Exception:
+    def log_event(message, extra=None, level=None, exceptionTraceback=False):
+        return None
 from functions_settings import *
 from functions_debug import debug_print
 
@@ -331,7 +336,23 @@ def get_valid_access_token_for_plugins(scopes=None):
             "error_code": error_code,
             "error_description": error_desc
         }
-    
+
+
+def _sanitize_video_indexer_auth_log_value(value):
+    text = str(value)
+    text = re.sub(
+        r'([?&]accessToken=)[^&\s\'"<>]+',
+        r'\1[REDACTED]',
+        text,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r'([\'"]?accessToken[\'"]?\s*[:=]\s*[\'"]?)[^,\'"\s}&]+',
+        r'\1[REDACTED]',
+        text,
+        flags=re.IGNORECASE,
+    )
+
 def get_video_indexer_account_token(settings, video_id=None):
     """
     Get Video Indexer access token using managed identity authentication.
@@ -435,7 +456,7 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
         debug_print(f"[VIDEO INDEXER AUTH] ARM API response status: {resp.status_code}")
         
         if resp.status_code != 200:
-            debug_print(f"[VIDEO INDEXER AUTH] ARM API response text: {resp.text}")
+            debug_print(f"[VIDEO INDEXER AUTH] ARM API response text: {_sanitize_video_indexer_auth_log_value(resp.text)}")
             
         resp.raise_for_status()
         response_data = resp.json()
@@ -443,20 +464,21 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
         
         ai = response_data.get("accessToken")
         if not ai:
-            debug_print(f"[VIDEO INDEXER AUTH] ERROR: No accessToken in response: {response_data}")
+            debug_print(f"[VIDEO INDEXER AUTH] ERROR: No accessToken in response; response keys: {list(response_data.keys())}")
             raise ValueError("No accessToken found in ARM API response")
             
         debug_print(f"[VIDEO INDEXER AUTH] Account token acquired successfully (length: {len(ai)})")
         debug_print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
         return ai
     except requests.exceptions.RequestException as e:
-        debug_print(f"[VIDEO INDEXER AUTH] ERROR in ARM API request: {str(e)}")
+        sanitized_error = _sanitize_video_indexer_auth_log_value(e)
+        debug_print(f"[VIDEO INDEXER AUTH] ERROR in ARM API request: {sanitized_error}")
         if hasattr(e, 'response') and e.response is not None:
             debug_print(f"[VIDEO INDEXER AUTH] Error response status: {e.response.status_code}")
-            debug_print(f"[VIDEO INDEXER AUTH] Error response text: {e.response.text}")
+            debug_print(f"[VIDEO INDEXER AUTH] Error response text: {_sanitize_video_indexer_auth_log_value(e.response.text)}")
         raise
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER AUTH] Unexpected error: {str(e)}")
+        debug_print(f"[VIDEO INDEXER AUTH] Unexpected error: {_sanitize_video_indexer_auth_log_value(e)}")
         raise
 
 

@@ -1,8 +1,25 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.071, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.073, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.242.073)**
+
+#### New Features
+
+*   **Configurable DLP Control Plane**
+    *   Added admin-configurable regex DLP rules with bounded regex execution, optional Luhn validation, and keyword-proximity confidence shaping.
+    *   Added web-search egress enforcement and upload-ingestion enforcement so administrators can monitor, redact, or block configured sensitive content before it leaves SimpleChat or enters embeddings/search indexing.
+    *   Kept default rules intentionally narrow with U.S. SSN and Luhn-valid credit-card detection only.
+    *   (Ref: configurable DLP rules, web-search DLP egress, upload DLP ingestion, Admin Settings DLP controls)
+
+#### Bug Fixes
+
+*   **Upload DLP Enforcement Edge Cases**
+    *   Treats fail-on-match, fail-closed scanner errors, and truncated scans as enforced upload DLP paths when deciding whether content may be indexed or retained for enhanced citations.
+    *   Sanitizes selected upload metadata before prompts, Search payloads, Cosmos updates, and logs while preserving counts-only DLP telemetry summaries.
+    *   (Ref: upload DLP redaction, scanner failure handling, enhanced-citation safety)
 
 ### **(v0.242.071)**
 

@@ -7,6 +7,7 @@ from flask import g, has_request_context, jsonify, request, session
 from config import *
 from functions_appinsights import log_event
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
+from functions_dlp_rules import get_default_dlp_regex_rules
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_service_health import get_default_service_health
@@ -1060,6 +1061,22 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_content_safety_apim': False,
         'azure_apim_content_safety_endpoint': '',
         'azure_apim_content_safety_subscription_key': '',
+
+        # Data Loss Prevention (DLP) Settings
+        'enable_dlp_control_plane': False,
+        'dlp_default_engine': 'regex',
+        'dlp_regex_rules': get_default_dlp_regex_rules(),
+        'dlp_max_scan_chars': 200000,
+        'dlp_fail_closed_on_scanner_error': True,
+        'dlp_audit_level': 'counts_only',
+        'dlp_enable_structured_telemetry': True,
+        'dlp_telemetry_sample_allow_events': False,
+        'dlp_review_destination': 'none',
+        'enable_web_search_dlp': False,
+        'web_search_dlp_mode': 'monitor',
+        'enable_upload_dlp': False,
+        'upload_dlp_mode': 'monitor',
+        'upload_dlp_fail_upload_on_match': False,
 
         # User Feedback / Conversation Archiving
         'enable_user_feedback': True,
