@@ -1,7 +1,7 @@
 # test_chat_upload_personal_workspace_handoff.py
 """
 Functional test for chat upload personal workspace handoff.
-Version: 0.241.176
+Version: 0.241.192
 Implemented in: 0.241.174
 
 This test ensures chat uploads are wired to queue personal workspace documents,
@@ -10,6 +10,7 @@ automatically search ready linked workspace documents, display processing
 progress, auto-select the completed workspace document, and warn on
 conversation-linked workspace document deletion. It also
 validates selectable linked-document deletion from the conversation delete modal,
+including when conversation archiving is enabled,
 duplicate workspace filename isolation for repeated chat uploads, and clean
 workspace tagging that keeps conversation IDs in metadata instead of tags. It
 also validates that chat upload progress can refresh from the workspace document.
@@ -42,6 +43,17 @@ def assert_occurs_at_least(content, expected, count, description):
         raise AssertionError(
             f"Expected at least {count} occurrences of {description}, found {actual_count}: {expected}"
         )
+
+
+def assert_order(content, earlier, later, description):
+    earlier_index = content.find(earlier)
+    later_index = content.find(later)
+    if earlier_index == -1:
+        raise AssertionError(f"Missing earlier marker for {description}: {earlier}")
+    if later_index == -1:
+        raise AssertionError(f"Missing later marker for {description}: {later}")
+    if earlier_index >= later_index:
+        raise AssertionError(f"Expected {description}: {earlier} before {later}")
 
 
 def test_backend_handoff_contract():
@@ -160,6 +172,12 @@ def test_conversation_delete_selectable_workspace_document_contract():
     assert_contains(route_backend_conversations, "delete_workspace_document_ids = _get_requested_workspace_document_delete_ids_for_conversation", "selected document payload parsing")
     assert_contains(route_backend_conversations, "if delete_workspace_document_ids:", "selected document deletion guard")
     assert_contains(route_backend_conversations, "selected_document_ids=delete_workspace_document_ids", "selected document IDs passed to cleanup helper")
+    assert_order(
+        route_backend_conversations,
+        "if delete_workspace_document_ids:",
+        "if not archiving_enabled:\n            delete_blob_backed_chat_message_files(results)",
+        "selected workspace document deletion before archive-mode chat blob cleanup guard",
+    )
     assert_not_contains(route_backend_conversations, "[ConversationBulkDelete] Failed to delete linked workspace documents", "bulk automatic linked document cleanup")
     assert_contains(chat_conversations, "getSelectedDeleteConversationLinkedDocumentIds", "conversation delete selected document collector")
     assert_contains(chat_conversations, "delete_workspace_document_ids: getSelectedDeleteConversationLinkedDocumentIds()", "delete payload selected document IDs")

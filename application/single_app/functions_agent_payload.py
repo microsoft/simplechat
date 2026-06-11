@@ -92,6 +92,7 @@ _FOUNDRY_FIELD_LENGTHS = {
     "tenant_id": 64,
     "client_id": 64,
     "client_secret": 1024,
+    "api_key": 2048,
     "managed_identity_client_id": 64,
 }
 _NEW_FOUNDRY_FIELD_LENGTHS = {
@@ -106,11 +107,15 @@ _NEW_FOUNDRY_FIELD_LENGTHS = {
     "tenant_id": 64,
     "client_id": 64,
     "client_secret": 1024,
+    "api_key": 2048,
     "managed_identity_client_id": 64,
     "notes": 2000,
 }
 _FOUNDRY_WORKFLOW_FIELD_LENGTHS = {
     "workflow_name": 200,
+    "workflow_agent_id": 256,
+    "application_id": 256,
+    "application_version": 64,
     "endpoint": 2048,
     "project_name": 256,
     "responses_api_version": 64,
@@ -435,6 +440,19 @@ def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
                 "Foundry workflow agents require other_settings.foundry_workflow.workflow_name."
             )
         workflow_settings["workflow_name"] = workflow_name
+
+        agent_reference = workflow_settings.get("agent_reference")
+        if agent_reference is not None and not isinstance(agent_reference, dict):
+            raise AgentPayloadError("foundry_workflow.agent_reference must be an object when provided.")
+        if isinstance(agent_reference, dict):
+            normalized_reference = {
+                str(key): value
+                for key, value in agent_reference.items()
+                if value not in (None, "")
+            }
+            normalized_reference["type"] = str(normalized_reference.get("type") or "agent_reference").strip() or "agent_reference"
+            normalized_reference.setdefault("name", workflow_name)
+            workflow_settings["agent_reference"] = normalized_reference
 
         response_version = str(
             workflow_settings.get("responses_api_version")

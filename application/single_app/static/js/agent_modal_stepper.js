@@ -1698,6 +1698,7 @@ export class AgentModalStepper {
     const classicOnly = document.getElementById('agent-classic-foundry-only');
     const classicOnlyFields = document.getElementById('agent-classic-foundry-fields');
     const classicApiVersionGroup = document.getElementById('agent-classic-foundry-api-version-group');
+    const foundryApiKeyGroup = document.getElementById('agent-foundry-api-key-group');
     const newFoundryOnly = document.getElementById('agent-new-foundry-only');
     const foundryWorkflowOnly = document.getElementById('agent-foundry-workflow-only');
     const foundryWorkflowResponsesApiVersionInput = document.getElementById('agent-foundry-workflow-responses-api-version');
@@ -1709,6 +1710,7 @@ export class AgentModalStepper {
     if (classicOnly) classicOnly.classList.toggle('d-none', !isClassicFoundry);
     if (classicOnlyFields) classicOnlyFields.classList.toggle('d-none', !isClassicFoundry);
     if (classicApiVersionGroup) classicApiVersionGroup.classList.toggle('d-none', !isClassicFoundry);
+    if (foundryApiKeyGroup) foundryApiKeyGroup.classList.toggle('d-none', !(isNewFoundry || isFoundryWorkflow));
     if (newFoundryOnly) newFoundryOnly.classList.toggle('d-none', !isNewFoundry);
     if (foundryWorkflowOnly) foundryWorkflowOnly.classList.toggle('d-none', !isFoundryWorkflow);
     if (isFoundryWorkflow && foundryWorkflowResponsesApiVersionInput && !foundryWorkflowResponsesApiVersionInput.value.trim()) {
@@ -1750,9 +1752,9 @@ export class AgentModalStepper {
     const helper = document.getElementById('agent-type-helper');
     if (helper) {
       if (isNewFoundry) {
-        helper.textContent = 'New Foundry applications use the signed-in user\'s Foundry access. Actions are disabled.';
+        helper.textContent = 'New Foundry applications can use the signed-in user or a project API key. Actions are disabled.';
       } else if (isFoundryWorkflow) {
-        helper.textContent = 'Foundry workflows use the signed-in user\'s Foundry access. Actions are disabled.';
+        helper.textContent = 'Foundry workflows can use the signed-in user or a project API key. Actions are disabled.';
       } else if (isClassicFoundry) {
         helper.textContent = 'Classic Foundry agents use the signed-in user\'s Foundry access. Actions are disabled.';
       } else {
@@ -1780,9 +1782,9 @@ export class AgentModalStepper {
 
     if (foundryModeNote) {
       if (isFoundryWorkflow) {
-        foundryModeNote.textContent = 'Foundry workflows run as the signed-in user. Select a saved connection for project details, or fill them in manually.';
+        foundryModeNote.textContent = 'Foundry workflows can use the signed-in user or a project API key. Select a saved connection for project details, or fill them in manually.';
       } else if (isNewFoundry) {
-        foundryModeNote.textContent = 'New Foundry applications run as the signed-in user through the Responses endpoint.';
+        foundryModeNote.textContent = 'New Foundry applications can use the signed-in user or a project API key through the Responses endpoint.';
       } else if (isClassicFoundry) {
         foundryModeNote.textContent = 'Classic Foundry agents run as the signed-in user through the SDK-backed invocation path.';
       }
@@ -2005,6 +2007,7 @@ export class AgentModalStepper {
     const foundryApiVersionInput = document.getElementById('agent-foundry-api-version');
     const foundryDeploymentInput = document.getElementById('agent-foundry-deployment');
     const foundryAgentIdInput = document.getElementById('agent-foundry-agent-id');
+    const foundryApiKeyInput = document.getElementById('agent-foundry-api-key');
     const foundryResponsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
     const foundryApplicationIdInput = document.getElementById('agent-new-foundry-application-id');
     const foundryApplicationNameInput = document.getElementById('agent-new-foundry-application-name');
@@ -2031,10 +2034,12 @@ export class AgentModalStepper {
     if (modelProvider) modelProvider.value = '';
     if (foundryEndpointSelect) foundryEndpointSelect.selectedIndex = 0;
     if (foundryAgentSelect) foundryAgentSelect.selectedIndex = 0;
+    this.selectedFoundryWorkflowAgent = null;
     if (foundryEndpointInput) foundryEndpointInput.value = '';
     if (foundryApiVersionInput) foundryApiVersionInput.value = '';
     if (foundryDeploymentInput) foundryDeploymentInput.value = '';
     if (foundryAgentIdInput) foundryAgentIdInput.value = '';
+    if (foundryApiKeyInput) foundryApiKeyInput.value = '';
     if (foundryResponsesApiVersionInput) foundryResponsesApiVersionInput.value = '';
     if (foundryApplicationIdInput) foundryApplicationIdInput.value = '';
     if (foundryApplicationNameInput) foundryApplicationNameInput.value = '';
@@ -2144,6 +2149,7 @@ export class AgentModalStepper {
     const applicationNameInput = document.getElementById('agent-new-foundry-application-name');
     const workflowResponsesApiVersionInput = document.getElementById('agent-foundry-workflow-responses-api-version');
     const workflowNameInput = document.getElementById('agent-foundry-workflow-name');
+    const foundryApiKeyInput = document.getElementById('agent-foundry-api-key');
 
     if (!endpointSelect) {
       return;
@@ -2152,6 +2158,12 @@ export class AgentModalStepper {
     const endpointId = endpointSelect.value || '';
     if (endpointIdInput) endpointIdInput.value = endpointId;
     if (providerInput) providerInput.value = endpointId ? this.getCurrentFoundryProvider() : '';
+    if (foundryApiKeyInput) {
+      foundryApiKeyInput.disabled = Boolean(endpointId);
+      if (endpointId) {
+        foundryApiKeyInput.value = '';
+      }
+    }
 
     const selected = this.foundryEndpoints.find(endpoint => endpoint.id === endpointId);
     if (selected) {
@@ -2196,6 +2208,9 @@ export class AgentModalStepper {
       }
       if (workflowNameInput) {
         workflowNameInput.value = preserveCurrentSelection ? (currentFoundrySettings.workflow_name || workflowNameInput.value || '') : '';
+      }
+      if (!preserveCurrentSelection) {
+        this.selectedFoundryWorkflowAgent = null;
       }
       this.foundryAgents = [];
       if (statusEl) {
@@ -2316,6 +2331,9 @@ export class AgentModalStepper {
       return (agent.id || '') === selectedId;
     });
     if (!selected) {
+      if (this.isFoundryWorkflowType()) {
+        this.selectedFoundryWorkflowAgent = null;
+      }
       return;
     }
 
@@ -2344,6 +2362,7 @@ export class AgentModalStepper {
       if (workflowNameInput) {
         workflowNameInput.value = selected.workflow_name || selected.application_name || selected.name || selectedId || '';
       }
+      this.selectedFoundryWorkflowAgent = selected;
       if (workflowResponsesApiVersionInput && selected.responses_api_version) {
         workflowResponsesApiVersionInput.value = selected.responses_api_version;
       }
@@ -2433,6 +2452,7 @@ export class AgentModalStepper {
       const apiEl = document.getElementById('agent-foundry-api-version');
       const depEl = document.getElementById('agent-foundry-deployment');
       const idEl = document.getElementById('agent-foundry-agent-id');
+      const foundryApiKeyEl = document.getElementById('agent-foundry-api-key');
       const notesEl = document.getElementById('agent-foundry-notes');
       const responsesApiEl = document.getElementById('agent-new-foundry-responses-api-version');
       const applicationIdEl = document.getElementById('agent-new-foundry-application-id');
@@ -2447,12 +2467,20 @@ export class AgentModalStepper {
       if (apiEl) apiEl.value = foundry.api_version || agent.azure_openai_gpt_api_version || '';
       if (depEl) depEl.value = agent.azure_openai_gpt_deployment || '';
       if (idEl) idEl.value = foundry.agent_id || '';
+      if (foundryApiKeyEl) foundryApiKeyEl.value = foundry.api_key || '';
       if (responsesApiEl) responsesApiEl.value = foundry.responses_api_version || agent.azure_openai_gpt_api_version || '';
       if (applicationIdEl) applicationIdEl.value = foundry.application_id || '';
       if (applicationNameEl) applicationNameEl.value = foundry.application_name || '';
       if (applicationVersionEl) applicationVersionEl.value = foundry.application_version || '';
       if (activityVersionEl) activityVersionEl.value = foundry.activity_api_version || '';
       if (workflowNameEl) workflowNameEl.value = foundry.workflow_name || '';
+      this.selectedFoundryWorkflowAgent = foundry.agent_reference ? {
+        ...foundry.agent_reference,
+        workflow_name: foundry.workflow_name || foundry.agent_reference.name || '',
+        workflow_agent_id: foundry.workflow_agent_id || foundry.agent_reference.id || '',
+        application_id: foundry.application_id || foundry.agent_reference.application_id || '',
+        application_version: foundry.application_version || foundry.agent_reference.application_version || ''
+      } : null;
       if (workflowResponsesApiEl) workflowResponsesApiEl.value = foundry.responses_api_version || agent.azure_openai_gpt_api_version || '';
       if (workflowIncludeContextEl) workflowIncludeContextEl.checked = foundry.include_document_context !== false;
       if (workflowMaxContextCharsEl) workflowMaxContextCharsEl.value = foundry.max_context_chars || '';
@@ -2741,7 +2769,7 @@ export class AgentModalStepper {
             const responsesApiVersion = document.getElementById('agent-new-foundry-responses-api-version');
             const applicationName = document.getElementById('agent-new-foundry-application-name');
             if (!responsesApiVersion || !responsesApiVersion.value.trim()) {
-              this.showError('Select a New Foundry endpoint that provides an OpenAI API version before continuing.');
+              this.showError('Provide a New Foundry Responses API version before continuing.');
               return false;
             }
             if (!applicationName || !applicationName.value.trim()) {
@@ -2753,7 +2781,7 @@ export class AgentModalStepper {
             const responsesApiVersion = document.getElementById('agent-foundry-workflow-responses-api-version');
             const workflowName = document.getElementById('agent-foundry-workflow-name');
             if (!responsesApiVersion || !responsesApiVersion.value.trim()) {
-              this.showError('Select a Foundry workflow endpoint that provides a Responses API version before continuing.');
+              this.showError('Provide a Foundry workflow Responses API version before continuing.');
               responsesApiVersion?.focus();
               return false;
             }
@@ -4145,7 +4173,8 @@ export class AgentModalStepper {
     const selectedFoundryEndpoint = this.foundryEndpoints.find(endpoint => endpoint.id === modelEndpointId);
     const selectedFoundryAuthType = (selectedFoundryEndpoint?.auth?.type || '').toLowerCase();
     const supportsFoundryApiKey = ['new_foundry', 'foundry_workflow'].includes(selectedAgentType);
-    const foundryAuthenticationType = supportsFoundryApiKey && ['api_key', 'key'].includes(selectedFoundryAuthType)
+    const manualFoundryApiKey = document.getElementById('agent-foundry-api-key')?.value?.trim() || '';
+    const foundryAuthenticationType = supportsFoundryApiKey && (manualFoundryApiKey || ['api_key', 'key'].includes(selectedFoundryAuthType))
       ? 'api_key'
       : 'delegated_user';
 
@@ -4227,6 +4256,7 @@ export class AgentModalStepper {
         application_version: applicationVersion,
         endpoint_id: modelEndpointId || '',
         authentication_type: foundryAuthenticationType,
+        ...(manualFoundryApiKey && !modelEndpointId ? { api_key: manualFoundryApiKey } : {}),
         responses_api_version: formData.azure_openai_gpt_api_version,
         ...(activityApiVersion ? { activity_api_version: activityApiVersion } : {}),
         ...(notesVal ? { notes: notesVal } : {}),
@@ -4259,12 +4289,36 @@ export class AgentModalStepper {
       const workflowName = document.getElementById('agent-foundry-workflow-name')?.value?.trim() || '';
       const includeDocumentContext = document.getElementById('agent-foundry-workflow-include-document-context')?.checked !== false;
       const maxContextChars = document.getElementById('agent-foundry-workflow-max-context-chars')?.value?.trim() || '';
+      const selectedWorkflowAgent = this.selectedFoundryWorkflowAgent || {};
+      const workflowAgentReference = selectedWorkflowAgent.agent_reference || selectedWorkflowAgent;
+      const workflowAgentId = selectedWorkflowAgent.workflow_agent_id || workflowAgentReference.id || selectedWorkflowAgent.id || '';
+      const workflowApplicationId = selectedWorkflowAgent.application_id || workflowAgentReference.application_id || '';
+      const workflowApplicationVersion = selectedWorkflowAgent.application_version || workflowAgentReference.application_version || '';
+      const normalizedAgentReference = {
+        ...workflowAgentReference,
+        type: workflowAgentReference.type || 'agent_reference',
+        name: workflowName || workflowAgentReference.name || selectedWorkflowAgent.workflow_name || selectedWorkflowAgent.name || ''
+      };
+      if (workflowAgentId) {
+        normalizedAgentReference.id = workflowAgentId;
+      }
+      if (workflowApplicationId) {
+        normalizedAgentReference.application_id = workflowApplicationId;
+      }
+      if (workflowApplicationVersion) {
+        normalizedAgentReference.application_version = workflowApplicationVersion;
+      }
 
       otherSettingsObj.foundry_workflow = {
         ...(otherSettingsObj.foundry_workflow || {}),
         workflow_name: workflowName,
+        ...(workflowAgentId ? { workflow_agent_id: workflowAgentId } : {}),
+        ...(workflowApplicationId ? { application_id: workflowApplicationId } : {}),
+        ...(workflowApplicationVersion ? { application_version: workflowApplicationVersion } : {}),
+        ...(normalizedAgentReference.name ? { agent_reference: normalizedAgentReference } : {}),
         endpoint_id: modelEndpointId || '',
         authentication_type: foundryAuthenticationType,
+        ...(manualFoundryApiKey && !modelEndpointId ? { api_key: manualFoundryApiKey } : {}),
         responses_api_version: formData.azure_openai_gpt_api_version,
         include_document_context: includeDocumentContext,
         ...(maxContextChars ? { max_context_chars: Number.parseInt(maxContextChars, 10) } : {}),

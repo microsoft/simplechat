@@ -237,7 +237,7 @@ def save_global_agent(agent_data, user_id=None):
         print(f"Saving global agent: {cleaned_agent.get('name', 'Unknown')}")
         
         # Use the new helper to store sensitive agent keys in Key Vault
-        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent['id'], scope="global")
+        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent['id'], scope="global", existing_agent=existing_agent)
         if cleaned_agent.get('max_completion_tokens') is None:
             cleaned_agent['max_completion_tokens'] = -1  # Default value
         

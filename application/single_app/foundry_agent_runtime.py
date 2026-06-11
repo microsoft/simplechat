@@ -798,6 +798,7 @@ async def execute_foundry_workflow_agent_stream(
     payload = _build_foundry_workflow_request_payload(
         message_history,
         metadata,
+        workflow_settings=workflow_settings,
         workflow_name=resolved_workflow_name,
         stream=True,
         max_output_tokens=_normalize_max_completion_tokens(max_completion_tokens),
@@ -990,6 +991,58 @@ def _resolve_foundry_workflow_name(
             "Foundry workflow agents require workflow_name in other_settings.foundry_workflow."
         )
     return workflow_name
+
+
+def _build_foundry_workflow_agent_reference(
+    workflow_settings: Dict[str, Any],
+    workflow_name: str,
+) -> Dict[str, Any]:
+    allowed_reference_fields = {
+        "type",
+        "name",
+        "id",
+        "application_id",
+        "application_version",
+    }
+    configured_reference = workflow_settings.get("agent_reference")
+    if isinstance(configured_reference, dict):
+        reference = {
+            key: value
+            for key, value in configured_reference.items()
+            if key in allowed_reference_fields and value not in (None, "")
+        }
+    else:
+        reference = {}
+
+    reference["type"] = str(reference.get("type") or "agent_reference").strip() or "agent_reference"
+    reference.setdefault("name", workflow_name)
+
+    agent_id = str(
+        workflow_settings.get("workflow_agent_id")
+        or workflow_settings.get("agent_id")
+        or reference.get("id")
+        or ""
+    ).strip()
+    if agent_id:
+        reference["id"] = agent_id
+
+    application_id = str(
+        workflow_settings.get("application_id")
+        or reference.get("application_id")
+        or ""
+    ).strip()
+    if application_id:
+        reference["application_id"] = application_id
+
+    application_version = str(
+        workflow_settings.get("application_version")
+        or reference.get("application_version")
+        or ""
+    ).strip()
+    if application_version:
+        reference["application_version"] = application_version
+
+    return reference
 
 
 def _normalize_max_context_chars(value: Any) -> Optional[int]:
@@ -1419,6 +1472,7 @@ def _build_foundry_workflow_request_payload(
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
     *,
+    workflow_settings: Optional[Dict[str, Any]] = None,
     workflow_name: str,
     stream: bool = True,
     max_output_tokens: Optional[int] = None,
@@ -1463,10 +1517,10 @@ def _build_foundry_workflow_request_payload(
     payload: Dict[str, Any] = {
         "input": input_payload,
         "stream": stream,
-        "agent_reference": {
-            "name": workflow_name,
-            "type": "agent_reference",
-        },
+        "agent_reference": _build_foundry_workflow_agent_reference(
+            workflow_settings or {},
+            workflow_name,
+        ),
         "metadata": normalized_metadata,
     }
 
@@ -1905,7 +1959,6 @@ async def _build_foundry_rest_headers(
 ) -> Dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if isinstance(credential, FoundryApiKeyCredential):
-        headers["Authorization"] = f"Bearer {credential.api_key}"
         headers["api-key"] = credential.api_key
         return headers
 
@@ -2634,6 +2687,7 @@ async def _list_new_foundry_agents_async(
             if not name:
                 continue
 
+            agent_id = str(item.get("id") or properties.get("id") or "").strip()
             application_id = f"{name}:{version}" if version else name
             display_name = str(
                 item.get("display_name")
@@ -2652,6 +2706,7 @@ async def _list_new_foundry_agents_async(
             normalized.append(
                 {
                     "id": application_id,
+                    "agent_id": agent_id,
                     "name": name,
                     "display_name": display_name,
                     "description": description,
@@ -2685,12 +2740,34 @@ def list_foundry_workflows_from_endpoint(foundry_settings: Dict[str, Any], globa
         if not isinstance(item, dict):
             continue
         workflow_item = dict(item)
-        workflow_item["resource_type"] = workflow_item.get("resource_type") or "workflow"
-        workflow_item["workflow_name"] = (
+        agent_id = str(
+            workflow_item.get("workflow_agent_id")
+            or workflow_item.get("agent_id")
+            or workflow_item.get("id")
+            or ""
+        ).strip()
+        application_id = str(workflow_item.get("application_id") or agent_id).strip()
+        application_name = str(workflow_item.get("application_name") or workflow_item.get("name") or "").strip()
+        application_version = str(workflow_item.get("application_version") or "").strip()
+        workflow_name = str(
             workflow_item.get("workflow_name")
-            or workflow_item.get("application_name")
-            or workflow_item.get("name")
-        )
+            or application_name
+            or agent_id
+        ).strip()
+        workflow_item["resource_type"] = workflow_item.get("resource_type") or "workflow"
+        workflow_item["workflow_name"] = workflow_name
+        workflow_item["workflow_agent_id"] = workflow_item.get("workflow_agent_id") or agent_id
+        workflow_item["agent_reference"] = {
+            key: value
+            for key, value in {
+                "type": "agent_reference",
+                "name": workflow_name,
+                "id": agent_id,
+                "application_id": application_id,
+                "application_version": application_version,
+            }.items()
+            if value
+        }
         normalized.append(workflow_item)
     return normalized
 

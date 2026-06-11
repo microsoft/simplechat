@@ -195,7 +195,7 @@ def save_personal_agent(user_id, agent_data, actor_user_id=None):
         cleaned_agent.setdefault('agent_type', 'local')
 
         # Store sensitive keys in Key Vault if enabled
-        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user")
+        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user", existing_agent=existing_agent)
         if cleaned_agent.get('max_completion_tokens') is None:
             cleaned_agent['max_completion_tokens'] = -1
         result = cosmos_personal_agents_container.upsert_item(body=cleaned_agent)

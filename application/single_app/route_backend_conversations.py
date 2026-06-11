@@ -1123,32 +1123,32 @@ def register_route_backend_conversations(app):
             partition_key=conversation_id
         ))
 
-        if not archiving_enabled:
-            if delete_workspace_document_ids:
-                try:
-                    workspace_delete_result = delete_chat_upload_workspace_documents_for_conversation(
-                        conversation_item.get('user_id'),
-                        conversation_id,
-                        selected_document_ids=delete_workspace_document_ids,
-                    )
-                    if workspace_delete_result.get('deleted_document_ids'):
-                        invalidate_personal_search_cache(conversation_item.get('user_id'))
-                    if workspace_delete_result.get('failed_documents'):
-                        log_event(
-                            f"[ConversationDelete] Failed to delete some selected linked workspace documents for {conversation_id}",
-                            workspace_delete_result,
-                            level=logging.WARNING,
-                        )
-                except Exception as workspace_delete_error:
+        if delete_workspace_document_ids:
+            try:
+                workspace_delete_result = delete_chat_upload_workspace_documents_for_conversation(
+                    conversation_item.get('user_id'),
+                    conversation_id,
+                    selected_document_ids=delete_workspace_document_ids,
+                )
+                if workspace_delete_result.get('deleted_document_ids'):
+                    invalidate_personal_search_cache(conversation_item.get('user_id'))
+                if workspace_delete_result.get('failed_documents'):
                     log_event(
-                        f"[ConversationDelete] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
+                        f"[ConversationDelete] Failed to delete some selected linked workspace documents for {conversation_id}",
+                        workspace_delete_result,
                         level=logging.WARNING,
-                        exceptionTraceback=True,
                     )
-                    return jsonify({
-                        'error': 'Failed to delete selected workspace documents'
-                    }), 500
+            except Exception as workspace_delete_error:
+                log_event(
+                    f"[ConversationDelete] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+                return jsonify({
+                    'error': 'Failed to delete selected workspace documents'
+                }), 500
 
+        if not archiving_enabled:
             delete_blob_backed_chat_message_files(results)
 
         for doc in results:

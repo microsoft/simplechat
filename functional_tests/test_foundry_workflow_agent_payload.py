@@ -1,20 +1,43 @@
 # test_foundry_workflow_agent_payload.py
 """
 Functional test for Foundry workflow agent payload support.
-Version: 0.241.130
+Version: 0.241.192
 Implemented in: 0.241.127
 
 This test ensures that generic Foundry workflow agents can be validated,
-normalized, and stored without hardcoded workflow names.
+normalized, and stored without hardcoded workflow names. It also verifies
+that Foundry agents discovered from the project agents API can be invoked
+through the workflow agent_reference path.
 """
 
 import os
 import sys
+import types
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ROOT = os.path.join(REPO_ROOT, "application", "single_app")
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
+
+sys.modules.setdefault(
+    "olefile",
+    types.SimpleNamespace(isOleFile=lambda *_args, **_kwargs: False, OleFileIO=None),
+)
+
+
+class _DummyMcpConnector:
+    """Minimal stand-in for optional Semantic Kernel MCP connectors."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+semantic_kernel_mcp = types.ModuleType("semantic_kernel.connectors.mcp")
+semantic_kernel_mcp.MCPSsePlugin = _DummyMcpConnector
+semantic_kernel_mcp.MCPStdioPlugin = _DummyMcpConnector
+semantic_kernel_mcp.MCPStreamableHttpPlugin = _DummyMcpConnector
+semantic_kernel_mcp.MCPWebsocketPlugin = _DummyMcpConnector
+sys.modules.setdefault("semantic_kernel.connectors.mcp", semantic_kernel_mcp)
 
 from functions_agent_payload import (  # noqa: E402
     AgentPayloadError,
@@ -32,10 +55,12 @@ from foundry_agent_runtime import (  # noqa: E402
     _build_foundry_workflow_request_payload,
     _build_foundry_workflow_request_params,
     _build_foundry_workflow_response_urls,
+    _build_foundry_workflow_agent_reference,
     _normalize_foundry_workflow_rest_protocol,
     _extract_new_foundry_event_error,
     _extract_new_foundry_stream_text,
     _update_new_foundry_stream_state,
+    list_foundry_workflows_from_endpoint,
     NewFoundryStreamState,
 )
 from semantic_kernel.contents.chat_message_content import ChatMessageContent  # noqa: E402
@@ -61,6 +86,14 @@ VALID_WORKFLOW_PAYLOAD = {
         "new_foundry": {"application_id": "stale-app", "responses_api_version": "v1"},
         "foundry_workflow": {
             "workflow_name": "ExampleWorkflow",
+            "workflow_agent_id": "agent-123",
+            "application_id": "ExampleWorkflow:2026-06-01",
+            "application_version": "2026-06-01",
+            "agent_reference": {
+                "type": "agent_reference",
+                "name": "ExampleWorkflow",
+                "id": "agent-123",
+            },
             "include_document_context": True,
             "max_context_chars": "24000",
             "responses_path": "/openai/responses",
@@ -81,6 +114,14 @@ def test_foundry_workflow_agent_payload_normalizes_and_validates():
 
     workflow_settings = cleaned["other_settings"]["foundry_workflow"]
     assert workflow_settings["workflow_name"] == "ExampleWorkflow"
+    assert workflow_settings["workflow_agent_id"] == "agent-123"
+    assert workflow_settings["application_id"] == "ExampleWorkflow:2026-06-01"
+    assert workflow_settings["application_version"] == "2026-06-01"
+    assert workflow_settings["agent_reference"] == {
+        "type": "agent_reference",
+        "name": "ExampleWorkflow",
+        "id": "agent-123",
+    }
     assert workflow_settings["endpoint"] == VALID_WORKFLOW_PAYLOAD["azure_openai_gpt_endpoint"]
     assert workflow_settings["project_name"] == "example-project"
     assert workflow_settings["responses_api_version"] == "v1"
@@ -205,6 +246,86 @@ def test_foundry_workflow_payload_keeps_simplechat_conversation_in_metadata_only
         "name": "ExampleWorkflow",
         "type": "agent_reference",
     }
+
+
+def test_foundry_workflow_payload_uses_discovered_agent_reference():
+    """Validate discovered Foundry agents can be invoked as workflow references."""
+    workflow_settings = {
+        "workflow_name": "ExampleWorkflow",
+        "workflow_agent_id": "agent-123",
+        "application_id": "ExampleWorkflow:2026-06-01",
+        "application_version": "2026-06-01",
+        "agent_reference": {
+            "type": "agent_reference",
+            "name": "ExampleWorkflow",
+            "id": "agent-123",
+            "application_id": "ExampleWorkflow:2026-06-01",
+        },
+    }
+
+    payload = _build_foundry_workflow_request_payload(
+        [ChatMessageContent(role="user", content="Hello workflow")],
+        {},
+        workflow_settings=workflow_settings,
+        workflow_name="ExampleWorkflow",
+        stream=True,
+    )
+
+    assert payload["agent_reference"] == {
+        "type": "agent_reference",
+        "name": "ExampleWorkflow",
+        "id": "agent-123",
+        "application_id": "ExampleWorkflow:2026-06-01",
+        "application_version": "2026-06-01",
+    }
+    assert _build_foundry_workflow_agent_reference(workflow_settings, "ExampleWorkflow") == payload["agent_reference"]
+
+
+def test_foundry_workflow_listing_normalizes_agents_as_workflows(monkeypatch):
+    """Validate project agent list entries can populate workflow selection."""
+    import foundry_agent_runtime
+
+    def fake_list_new_foundry_agents_from_endpoint(foundry_settings, global_settings):
+        return [
+            {
+                "id": "agent-123",
+                "agent_id": "raw-agent-123",
+                "name": "ExampleWorkflow",
+                "display_name": "Example Workflow",
+                "application_id": "ExampleWorkflow:2026-06-01",
+                "application_name": "ExampleWorkflow",
+                "application_version": "2026-06-01",
+            }
+        ]
+
+    monkeypatch.setattr(
+        foundry_agent_runtime,
+        "list_new_foundry_agents_from_endpoint",
+        fake_list_new_foundry_agents_from_endpoint,
+    )
+    workflows = list_foundry_workflows_from_endpoint({}, {})
+
+    assert workflows == [
+        {
+            "id": "agent-123",
+            "agent_id": "raw-agent-123",
+            "name": "ExampleWorkflow",
+            "display_name": "Example Workflow",
+            "application_id": "ExampleWorkflow:2026-06-01",
+            "application_name": "ExampleWorkflow",
+            "application_version": "2026-06-01",
+            "resource_type": "workflow",
+            "workflow_name": "ExampleWorkflow",
+            "workflow_agent_id": "raw-agent-123",
+            "agent_reference": {
+                "type": "agent_reference",
+                "name": "ExampleWorkflow",
+                "id": "raw-agent-123",
+                "application_id": "ExampleWorkflow:2026-06-01",
+                "application_version": "2026-06-01",
+            },
+        }
+    ]
 
 
 def test_foundry_payload_metadata_omits_internal_scope_lists_and_caps_values():
@@ -438,6 +559,15 @@ if __name__ == "__main__":
     test_foundry_workflow_rest_protocol_normalizes_saved_v2_to_v1()
     test_foundry_workflow_builds_matching_conversation_endpoints()
     test_foundry_workflow_payload_keeps_simplechat_conversation_in_metadata_only()
+    test_foundry_workflow_payload_uses_discovered_agent_reference()
+    try:
+        import pytest
+        from _pytest.monkeypatch import MonkeyPatch
+        monkeypatch = MonkeyPatch()
+        test_foundry_workflow_listing_normalizes_agents_as_workflows(monkeypatch)
+        monkeypatch.undo()
+    except ImportError:
+        print("Skipping monkeypatch-based workflow listing test because pytest is unavailable.")
     test_foundry_payload_metadata_omits_internal_scope_lists_and_caps_values()
     test_foundry_workflow_file_part_uses_data_uri_input_file()
     test_foundry_workflow_payload_embeds_file_inputs_as_message_content()

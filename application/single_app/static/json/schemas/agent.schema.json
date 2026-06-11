@@ -311,6 +311,22 @@
           "type": "string",
           "description": "Name of the published Foundry workflow agent to invoke through agent_reference."
         },
+        "workflow_agent_id": {
+          "type": "string",
+          "description": "Optional discovered Foundry agent id used when invoking a workflow through agent_reference."
+        },
+        "application_id": {
+          "type": "string",
+          "description": "Optional discovered Foundry application id for the workflow-capable agent."
+        },
+        "application_version": {
+          "type": "string",
+          "description": "Optional discovered Foundry application version for the workflow-capable agent."
+        },
+        "agent_reference": {
+          "type": "object",
+          "description": "Optional full Foundry agent_reference payload discovered from the project agents API."
+        },
         "endpoint": {
           "type": "string",
           "description": "Foundry project endpoint root or full /api/projects/... endpoint."

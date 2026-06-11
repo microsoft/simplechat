@@ -2,11 +2,11 @@
 
 Implementation status: **Implemented**
 
-Documented against version: **0.241.174**
+Documented against version: **0.241.192**
 
 Fixed/Implemented in version: **0.241.174**
 
-Related config.py version update: `application/single_app/config.py` is **0.241.174** for this implementation.
+Related config.py version update: `application/single_app/config.py` is **0.241.192** for the latest lifecycle fix.
 
 Implemented in version: **0.241.174**
 
@@ -257,7 +257,7 @@ Implemented policy:
 - If one or more workspace documents are selected, the backend validates them against the current user and conversation before calling `delete_document_revision(..., delete_mode="all_versions")`.
 - Single hard delete still removes chat-scoped blob-backed attachment files and chat messages.
 - Bulk conversation delete retains linked workspace documents because there is no per-document selection dialog in the bulk flow.
-- Archive-enabled conversation delete retains linked workspace documents by default, preserving archived conversation attachments.
+- Archive-enabled conversation delete retains linked workspace documents by default, but still deletes workspace documents that the user explicitly selects in the delete dialog.
 - Lifecycle decisions use explicit metadata fields, not tags.
 
 ### Workspace Document Deleted First

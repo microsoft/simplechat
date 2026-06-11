@@ -131,7 +131,7 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any], user_id: Optiona
         payload["max_completion_tokens"] = -1
 
     # Store sensitive values in Key Vault before persistence
-    payload = keyvault_agent_save_helper(payload, payload["id"], scope="group")
+    payload = keyvault_agent_save_helper(payload, payload["id"], scope="group", existing_agent=existing_agent)
 
     try:
         stored = cosmos_group_agents_container.upsert_item(body=payload)

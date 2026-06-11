@@ -54,6 +54,7 @@ from functions_keyvault import (
     SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
     SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
     SecretReturnType,
+    keyvault_agent_get_helper,
     keyvault_model_endpoint_get_helper,
     resolve_secret_reference_for_context,
     retrieve_secret_from_key_vault,
@@ -652,6 +653,16 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         )
         return endpoint_cfg
 
+    def hydrate_agent_foundry_secret_values(foundry_settings):
+        hydrated_agent = keyvault_agent_get_helper(
+            agent,
+            agent.get("id", ""),
+            scope="group" if is_group_agent else "global" if is_global_agent else "user",
+            return_type=SecretReturnType.VALUE,
+        )
+        hydrated_other_settings = hydrated_agent.get("other_settings", {}) or {}
+        return hydrated_other_settings.get(foundry_settings_key, {}) or foundry_settings
+
     def enrich_foundry_settings(foundry_settings, endpoint_cfg):
         provider = (endpoint_cfg.get("provider") or "aoai").lower() if endpoint_cfg else "aoai"
         if provider not in {"aifoundry", "new_foundry", "foundry_workflow"}:
@@ -737,6 +748,22 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         endpoint_cfg = resolve_foundry_endpoint_config()
         if endpoint_cfg:
             foundry_settings = enrich_foundry_settings(foundry_settings, endpoint_cfg)
+        elif agent_type in {"new_foundry", "foundry_workflow"}:
+            foundry_settings = hydrate_agent_foundry_secret_values(foundry_settings)
+            foundry_settings["endpoint"] = foundry_settings.get("endpoint") or agent.get("azure_openai_gpt_endpoint", "")
+            foundry_settings["project_name"] = foundry_settings.get("project_name") or agent.get("azure_openai_gpt_deployment", "")
+            if foundry_settings.get("api_key"):
+                foundry_settings["authentication_type"] = "api_key"
+                foundry_settings.pop("managed_identity_type", None)
+                foundry_settings.pop("managed_identity_client_id", None)
+                foundry_settings.pop("tenant_id", None)
+                foundry_settings.pop("client_id", None)
+                foundry_settings.pop("client_secret", None)
+                foundry_settings.pop("foundry_scope", None)
+            if foundry_settings.get("responses_api_version") or agent.get("azure_openai_gpt_api_version"):
+                foundry_settings["responses_api_version"] = foundry_settings.get("responses_api_version") or agent.get("azure_openai_gpt_api_version")
+            other_settings[foundry_settings_key] = foundry_settings
+        if endpoint_cfg:
             other_settings[foundry_settings_key] = foundry_settings
             agent["azure_openai_gpt_endpoint"] = foundry_settings.get("endpoint", "")
             agent["azure_openai_gpt_api_version"] = foundry_settings.get(

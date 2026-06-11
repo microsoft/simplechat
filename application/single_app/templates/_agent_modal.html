@@ -135,6 +135,11 @@
               <label for="agent-foundry-api-version" class="form-label">Classic Foundry API Version <span class="text-danger" title="Required">*</span></label>
               <input type="text" class="form-control" id="agent-foundry-api-version" placeholder="v1" />
             </div>
+            <div class="mb-3 d-none" id="agent-foundry-api-key-group">
+              <label for="agent-foundry-api-key" class="form-label">Foundry Project API Key</label>
+              <input type="password" class="form-control" id="agent-foundry-api-key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" placeholder="Optional for key-backed Foundry projects" />
+              <div class="form-text">Use this only when entering project details manually. Saved connections use their stored key automatically.</div>
+            </div>
             <div id="agent-classic-foundry-fields">
               <div class="mb-3">
                 <label for="agent-foundry-agent-id" class="form-label">Foundry Agent ID <span class="text-danger" title="Required">*</span></label>
