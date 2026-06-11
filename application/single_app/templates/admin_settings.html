@@ -7383,9 +7383,10 @@
                             <div class="col-md-4">
                                 <label for="dlp_default_engine" class="form-label">Default Engine</label>
                                 <select class="form-select" id="dlp_default_engine" name="dlp_default_engine">
-                                    <option value="regex" selected>Regex structured identifier scan</option>
+                                    <option value="regex" {% if settings.dlp_default_engine == 'regex' %}selected{% endif %}>Regex structured identifier scan</option>
+                                    <option value="presidio_endpoint" {% if settings.dlp_default_engine == 'presidio_endpoint' %}selected{% endif %}>External Presidio Analyzer endpoint</option>
                                 </select>
-                                <div class="form-text">Regex scanning is the only implemented engine in this release.</div>
+                                <div class="form-text">Use regex for lightweight built-in scanning or Presidio for an admin-managed external analyzer.</div>
                             </div>
                             <div class="col-md-4">
                                 <label for="dlp_max_scan_chars" class="form-label">Maximum Scan Characters</label>
@@ -7396,6 +7397,44 @@
                                 <select class="form-select" id="dlp_review_destination" name="dlp_review_destination">
                                     <option value="none" {% if settings.dlp_review_destination == 'none' %}selected{% endif %}>Do not write review records</option>
                                 </select>
+                            </div>
+                        </div>
+
+                        <div class="border-top pt-3 mt-3 {% if settings.dlp_default_engine != 'presidio_endpoint' %}d-none{% endif %}" id="dlp_presidio_endpoint_settings">
+                            <h6 class="mb-2">Presidio Analyzer Endpoint</h6>
+                            <div class="alert alert-warning py-2 mb-3" role="alert">
+                                Production endpoints should be private, authenticated, and HTTPS. HTTP is allowed only for localhost smoke tests.
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="dlp_presidio_analyzer_endpoint" class="form-label">Analyzer Endpoint</label>
+                                    <input type="url" class="form-control" id="dlp_presidio_analyzer_endpoint" name="dlp_presidio_analyzer_endpoint" value="{{ settings.dlp_presidio_analyzer_endpoint or '' }}" placeholder="https://presidio.internal/analyze">
+                                    <div class="form-text">Use the Presidio Analyzer REST URL that SimpleChat can reach server-side.</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="dlp_presidio_auth_header_name" class="form-label">Auth Header</label>
+                                    <input type="text" class="form-control" id="dlp_presidio_auth_header_name" name="dlp_presidio_auth_header_name" value="{{ settings.dlp_presidio_auth_header_name or 'X-DLP-API-Key' }}">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="dlp_presidio_auth_secret_env_var" class="form-label">Secret Env Var</label>
+                                    <input type="text" class="form-control" id="dlp_presidio_auth_secret_env_var" name="dlp_presidio_auth_secret_env_var" value="{{ settings.dlp_presidio_auth_secret_env_var or 'PRESIDIO_DLP_API_KEY' }}">
+                                    <div class="form-text">Store the secret value in App Service settings or a Key Vault reference, not in SimpleChat settings.</div>
+                                </div>
+                            </div>
+                            <div class="row g-3 mt-1">
+                                <div class="col-md-3">
+                                    <label for="dlp_presidio_timeout_seconds" class="form-label">Timeout Seconds</label>
+                                    <input type="number" min="1" max="30" class="form-control" id="dlp_presidio_timeout_seconds" name="dlp_presidio_timeout_seconds" value="{{ settings.dlp_presidio_timeout_seconds or 5 }}">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="dlp_presidio_score_threshold" class="form-label">Score Threshold</label>
+                                    <input type="number" min="0" max="1" step="0.05" class="form-control" id="dlp_presidio_score_threshold" name="dlp_presidio_score_threshold" value="{{ settings.dlp_presidio_score_threshold or 0.5 }}">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="dlp_presidio_entities" class="form-label">Entities</label>
+                                    <input type="text" class="form-control" id="dlp_presidio_entities" name="dlp_presidio_entities" value="{{ (settings.dlp_presidio_entities or ['CREDIT_CARD', 'EMAIL_ADDRESS', 'PHONE_NUMBER', 'US_SSN']) | join(', ') }}">
+                                    <div class="form-text">Comma-separated Presidio entity names such as CREDIT_CARD, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN, PERSON, LOCATION.</div>
+                                </div>
                             </div>
                         </div>
 

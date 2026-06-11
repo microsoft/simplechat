@@ -8333,6 +8333,8 @@ function initializeDlpSettings() {
 
     const enableDlpControlPlane = document.getElementById('enable_dlp_control_plane');
     const dlpControlPlaneSettings = document.getElementById('dlp_control_plane_settings');
+    const dlpDefaultEngine = document.getElementById('dlp_default_engine');
+    const dlpPresidioEndpointSettings = document.getElementById('dlp_presidio_endpoint_settings');
     const enableWebSearchDlp = document.getElementById('enable_web_search_dlp');
     const webSearchDlpSettings = document.getElementById('web_search_dlp_settings');
     const webSearchDlpModeSettings = document.getElementById('web_search_dlp_mode_settings');
@@ -8343,6 +8345,19 @@ function initializeDlpSettings() {
     togglePanel(enableDlpControlPlane, dlpControlPlaneSettings);
     togglePanel(enableWebSearchDlp, webSearchDlpModeSettings);
     togglePanel(enableUploadDlp, uploadDlpModeSettings);
+
+    if (dlpDefaultEngine && dlpPresidioEndpointSettings) {
+        const updateDlpEngineVisibility = () => {
+            dlpPresidioEndpointSettings.classList.toggle('d-none', dlpDefaultEngine.value !== 'presidio_endpoint');
+        };
+        dlpDefaultEngine.addEventListener('change', function () {
+            updateDlpEngineVisibility();
+            if (typeof markFormAsModified === 'function') {
+                markFormAsModified();
+            }
+        });
+        updateDlpEngineVisibility();
+    }
 
     if (webSearchDlpSettings && enableDlpControlPlane) {
         webSearchDlpSettings.classList.toggle('d-none', !enableDlpControlPlane.checked);

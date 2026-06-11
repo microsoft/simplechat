@@ -40,14 +40,28 @@ REQUIRED_KEYS = [
 
 
 UNSUPPORTED_ADMIN_CONTROL_IDS = [
+    "dlp_presidio_use_service",
+    "dlp_presidio_service_settings",
     "dlp_scanner_timeout_seconds",
     "dlp_review_include_redacted_preview",
     "web_search_dlp_track_review_events",
     "upload_dlp_track_review_events",
 ]
 
+PRESIDIO_ENDPOINT_CONTROL_IDS = [
+    "dlp_presidio_endpoint_settings",
+    "dlp_presidio_analyzer_endpoint",
+    "dlp_presidio_auth_header_name",
+    "dlp_presidio_auth_secret_env_var",
+    "dlp_presidio_timeout_seconds",
+    "dlp_presidio_score_threshold",
+    "dlp_presidio_entities",
+]
+
 
 RETIRED_DLP_SETTING_KEYS = [
+    "dlp_presidio_use_service",
+    "dlp_presidio_endpoint",
     "dlp_scanner_timeout_seconds",
     "dlp_review_include_redacted_preview",
     "web_search_dlp_track_review_events",
@@ -117,8 +131,11 @@ def test_admin_template_exposes_dlp_controls():
     assert 'value="safety_violations"' not in source, (
         "Safety Violations destination should stay hidden unless PR1 implements reachable review integration"
     )
-    assert '<option value="regex" selected>Regex structured identifier scan</option>' in source
-    assert "Regex scanning is the only implemented engine in this release." in source
+    assert 'value="regex"' in source
+    assert 'value="presidio_endpoint"' in source
+    assert "Regex structured identifier scan" in source
+    assert "External Presidio Analyzer endpoint" in source
+    assert "Use regex for lightweight built-in scanning" in source
     assert "Custom Regex Rules" in source
     assert "{{ dlp_regex_rules_json }}" in source
     assert "web_search_dlp_block_on_internal_phrases" not in source
@@ -130,6 +147,24 @@ def test_admin_template_exposes_dlp_controls():
     assert_no_retired_structured_redaction_control(source, ADMIN_TEMPLATE_FILE)
 
 
+def test_presidio_endpoint_controls_are_rendered_without_secret_value_field():
+    """DLP admin UI should configure endpoint metadata but not store raw API keys."""
+    print("Testing Presidio endpoint admin controls...")
+    source = read_file_text(ADMIN_TEMPLATE_FILE)
+
+    for control_id in PRESIDIO_ENDPOINT_CONTROL_IDS:
+        assert f'id="{control_id}"' in source, f"Missing Presidio endpoint control: {control_id}"
+
+    assert 'name="dlp_presidio_analyzer_endpoint"' in source
+    assert 'name="dlp_presidio_auth_header_name"' in source
+    assert 'name="dlp_presidio_auth_secret_env_var"' in source
+    assert 'name="dlp_presidio_timeout_seconds"' in source
+    assert 'name="dlp_presidio_score_threshold"' in source
+    assert 'name="dlp_presidio_entities"' in source
+    assert 'name="dlp_presidio_auth_secret"' not in source
+    assert "production endpoints should be private, authenticated, and https" in source.lower()
+
+
 def test_admin_js_uses_d_none_for_dlp_toggles():
     """New DLP JS should use Bootstrap d-none, not style.display."""
     print("Testing DLP admin JavaScript visibility handling...")
@@ -138,6 +173,8 @@ def test_admin_js_uses_d_none_for_dlp_toggles():
     assert "initializeDlpSettings" in source
     assert "dlp_control_plane_settings" in source
     assert "web_search_dlp_settings" in source
+    assert "dlp_presidio_endpoint_settings" in source
+    assert "presidio_endpoint" in source
     assert "classList.toggle('d-none'" in source or 'classList.toggle("d-none"' in source
 
     dlp_section = source[source.find("initializeDlpSettings"):]
@@ -180,6 +217,7 @@ if __name__ == "__main__":
         test_dlp_defaults_exist_and_are_safe,
         test_admin_route_persists_dlp_settings,
         test_admin_template_exposes_dlp_controls,
+        test_presidio_endpoint_controls_are_rendered_without_secret_value_field,
         test_admin_js_uses_d_none_for_dlp_toggles,
         test_admin_settings_form_contains_csrf_token,
         test_admin_template_exposes_regex_rule_editor_without_internal_phrase_toggle,

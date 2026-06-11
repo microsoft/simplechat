@@ -24,6 +24,13 @@ PREVIEW_SCRIPT = ROOT_DIR / "tools" / "local_dev" / "render_dlp_admin_preview.py
 REQUIRED_CONTROLS = [
     "enable_dlp_control_plane",
     "dlp_default_engine",
+    "dlp_presidio_endpoint_settings",
+    "dlp_presidio_analyzer_endpoint",
+    "dlp_presidio_auth_header_name",
+    "dlp_presidio_auth_secret_env_var",
+    "dlp_presidio_timeout_seconds",
+    "dlp_presidio_score_threshold",
+    "dlp_presidio_entities",
     "dlp_regex_rules_json",
     "dlp_max_scan_chars",
     "enable_web_search_dlp",
@@ -110,6 +117,7 @@ def test_dlp_admin_preview_does_not_expose_raw_sensitive_values():
     forbidden = [
         "123-45-6789",
         "4111 1111 1111 1111",
+        "dlp_presidio_auth_secret\"",
         "raw_matches",
     ]
     for value in forbidden:
