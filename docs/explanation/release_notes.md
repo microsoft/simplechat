@@ -1,8 +1,19 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.073, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.074, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.242.074)**
+
+#### New Features
+
+*   **External Presidio DLP Endpoint**
+    *   Added optional support for a Presidio Analyzer-compatible endpoint as an advanced DLP engine without embedding Presidio packages in the SimpleChat app image.
+    *   Added server-side endpoint calls with configurable timeout, score threshold, entity allowlist, and API-key header name sourced from an environment variable.
+    *   Reused existing DLP monitor, redact, block, counts-only telemetry, upload, and web-search enforcement behavior.
+    *   Documented local Docker smoke testing and production private-network plus API-key deployment patterns.
+    *   (Ref: external Presidio DLP endpoint, Admin Settings DLP controls, Presidio deployment how-to)
 
 ### **(v0.242.073)**
 

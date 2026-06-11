@@ -55,7 +55,6 @@ PERSISTED_DLP_FIELDS = {
 
 UNSUPPORTED_DLP_FORM_FIELDS = [
     "dlp_presidio_use_service",
-    "dlp_presidio_endpoint",
     "dlp_scanner_timeout_seconds",
     "dlp_review_include_redacted_preview",
     "web_search_dlp_track_review_events",
@@ -126,6 +125,8 @@ def test_dlp_admin_template_roundtrips_persisted_values():
 
     for field_name in UNSUPPORTED_DLP_FORM_FIELDS:
         assert field_name not in template_source, f"Unsupported DLP control still rendered: {field_name}"
+    assert 'id="dlp_presidio_endpoint"' not in template_source
+    assert 'name="dlp_presidio_endpoint"' not in template_source
     assert_no_retired_structured_redaction_control(template_source, ADMIN_TEMPLATE_FILE)
 
 
