@@ -141,6 +141,7 @@ const workflowAnalysisTargetModeSelect = document.getElementById("workflow-analy
 const workflowAnalysisRecentMinutesInput = document.getElementById("workflow-analysis-recent-minutes");
 const workflowAnalysisRecentWindowGroup = document.getElementById("workflow-analysis-recent-window-group");
 const workflowAnalysisDocumentIdsInput = document.getElementById("workflow-analysis-document-ids");
+const workflowAnalysisPerDocumentGroup = document.getElementById("workflow-analysis-per-document-group");
 const workflowAnalysisPerDocumentToggle = document.getElementById("workflow-analysis-per-document");
 const workflowComparisonLeftDocumentIdInput = document.getElementById("workflow-comparison-left-document-id");
 const workflowComparisonRightDocumentIdsInput = document.getElementById("workflow-comparison-target-document-ids");
@@ -1525,10 +1526,15 @@ function updateDocumentActionFields() {
     const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;
     setElementVisibility(workflowDocumentTargetsFields, hasDocumentAction);
     setElementVisibility(workflowAnalysisTargetFields, hasDocumentAction);
+    setElementVisibility(workflowAnalysisPerDocumentGroup, actionType === DOCUMENT_ACTION_ANALYZE);
     setElementVisibility(workflowComparisonTargetFields, actionType === DOCUMENT_ACTION_COMPARISON && !isRecentMode);
     syncWorkflowPickerActionType();
     syncWorkflowDocumentActionTooltip();
     updateWorkflowAnalysisTargetModeFields();
+
+    if (workflowAnalysisPerDocumentToggle && actionType !== DOCUMENT_ACTION_ANALYZE) {
+        workflowAnalysisPerDocumentToggle.checked = false;
+    }
 
     if (workflowDocumentActionHelp) {
         workflowDocumentActionHelp.textContent = getDocumentActionDescription(actionType);
@@ -2859,9 +2865,12 @@ function openWorkflowActivity(workflow) {
         return;
     }
 
-    const activityWindow = window.open(activityState.url, "_blank", "noopener");
-    if (!activityWindow) {
-        window.location.href = activityState.url;
+    const activityWindow = window.open("about:blank", "_blank");
+    if (activityWindow) {
+        activityWindow.opener = null;
+        activityWindow.location.href = activityState.url;
+    } else {
+        showToast("Allow pop-ups to open the workflow activity view.", "warning");
     }
 }
 

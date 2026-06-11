@@ -106,6 +106,21 @@ class DelegatedUserAccessTokenCredential:
         return None
 
 
+class FoundryApiKeyCredential:
+    """Small auth adapter for Foundry OpenAI-compatible REST calls."""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    async def get_token(self, *scopes, **kwargs):
+        raise FoundryAgentInvocationError(
+            "API key auth is only supported for OpenAI-compatible Foundry applications and workflows."
+        )
+
+    async def close(self):
+        return None
+
+
 def _resolve_jwt_expires_on(token: str) -> int:
     token_parts = str(token or "").split(".")
     if len(token_parts) >= 2:
@@ -504,8 +519,6 @@ async def execute_new_foundry_agent(
         )
 
     credential = _build_async_credential(foundry_settings, global_settings)
-    scope = _resolve_foundry_scope(foundry_settings, global_settings)
-    token = await credential.get_token(scope)
     url = (
         f"{endpoint.rstrip('/')}/applications/{quote(application_name, safe='')}/"
         "protocols/openai/responses"
@@ -523,10 +536,11 @@ async def execute_new_foundry_agent(
     )
     if file_input_metadata:
         payload.setdefault("metadata", {})["attached_file_count"] = str(len(file_input_metadata))
-    headers = {
-        "Authorization": f"Bearer {token.token}",
-        "Content-Type": "application/json",
-    }
+    headers = await _build_foundry_rest_headers(
+        foundry_settings,
+        global_settings,
+        credential,
+    )
 
     try:
         response = await asyncio.to_thread(
@@ -587,8 +601,6 @@ async def execute_new_foundry_agent_stream(
         )
 
     credential = _build_async_credential(foundry_settings, global_settings)
-    scope = _resolve_foundry_scope(foundry_settings, global_settings)
-    token = await credential.get_token(scope)
     url = (
         f"{endpoint.rstrip('/')}/applications/{quote(application_name, safe='')}/"
         "protocols/openai/responses"
@@ -607,10 +619,11 @@ async def execute_new_foundry_agent_stream(
     )
     if file_input_metadata:
         payload.setdefault("metadata", {})["attached_file_count"] = str(len(file_input_metadata))
-    headers = {
-        "Authorization": f"Bearer {token.token}",
-        "Content-Type": "application/json",
-    }
+    headers = await _build_foundry_rest_headers(
+        foundry_settings,
+        global_settings,
+        credential,
+    )
     response_params: Dict[str, str] = {}
     conversation_params: Dict[str, str] = {}
     response: Optional[requests.Response] = None
@@ -765,8 +778,6 @@ async def execute_foundry_workflow_agent_stream(
         )
 
     credential = _build_async_credential(workflow_settings, global_settings)
-    scope = _resolve_foundry_scope(workflow_settings, global_settings)
-    token = await credential.get_token(scope)
     configured_responses_api_version = str(responses_api_version).strip()
     responses_api_version = _normalize_foundry_workflow_rest_protocol(
         configured_responses_api_version
@@ -798,10 +809,11 @@ async def execute_foundry_workflow_agent_stream(
     )
     if file_input_metadata:
         payload.setdefault("metadata", {})["attached_file_count"] = str(len(file_input_metadata))
-    headers = {
-        "Authorization": f"Bearer {token.token}",
-        "Content-Type": "application/json",
-    }
+    headers = await _build_foundry_rest_headers(
+        workflow_settings,
+        global_settings,
+        credential,
+    )
     response: Optional[requests.Response] = None
     foundry_conversation_id: Optional[str] = None
     foundry_conversation_url: Optional[str] = None
@@ -1788,6 +1800,8 @@ def _build_async_credential(
     global_settings: Dict[str, Any],
 ):
     auth_type = _resolve_foundry_authentication_type(foundry_settings, global_settings)
+    if auth_type == "api_key":
+        return FoundryApiKeyCredential(_resolve_foundry_api_key(foundry_settings, global_settings))
     if auth_type == "delegated_user":
         scope = _resolve_foundry_scope(foundry_settings, global_settings)
         token = _get_delegated_foundry_user_token(scope)
@@ -1860,9 +1874,45 @@ def _resolve_foundry_authentication_type(
     auth_type = str(auth_type or "delegated_user").strip().lower()
     if auth_type in {"user", "delegated", "user_delegated", "signed_in_user"}:
         return "delegated_user"
+    if auth_type in {"key", "api_key", "apikey"}:
+        return "api_key"
     if auth_type in {"managed_identity", "service_principal"}:
         return auth_type
     return "delegated_user"
+
+
+def _resolve_foundry_api_key(
+    foundry_settings: Dict[str, Any],
+    global_settings: Dict[str, Any],
+) -> str:
+    api_key = str(
+        foundry_settings.get("api_key")
+        or foundry_settings.get("key")
+        or global_settings.get("azure_ai_foundry_api_key")
+        or ""
+    ).strip()
+    if not api_key:
+        raise FoundryAgentInvocationError(
+            "Foundry API key authentication requires an api_key value."
+        )
+    return _resolve_secret_value(api_key)
+
+
+async def _build_foundry_rest_headers(
+    foundry_settings: Dict[str, Any],
+    global_settings: Dict[str, Any],
+    credential,
+) -> Dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if isinstance(credential, FoundryApiKeyCredential):
+        headers["Authorization"] = f"Bearer {credential.api_key}"
+        headers["api-key"] = credential.api_key
+        return headers
+
+    scope = _resolve_foundry_scope(foundry_settings, global_settings)
+    token = await credential.get_token(scope)
+    headers["Authorization"] = f"Bearer {token.token}"
+    return headers
 
 
 def _get_delegated_foundry_user_token(scope: str) -> str:
@@ -2529,13 +2579,12 @@ async def _list_new_foundry_agents_async(
         or "2025-11-15-preview"
     )
     credential = _build_async_credential(foundry_settings, global_settings)
-    scope = _resolve_foundry_scope(foundry_settings, global_settings)
-    token = await credential.get_token(scope)
     url = f"{endpoint.rstrip('/')}/agents"
-    headers = {
-        "Authorization": f"Bearer {token.token}",
-        "Content-Type": "application/json",
-    }
+    headers = await _build_foundry_rest_headers(
+        foundry_settings,
+        global_settings,
+        credential,
+    )
 
     try:
         response = await asyncio.to_thread(

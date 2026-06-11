@@ -4,6 +4,15 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.189)**
+
+#### Bug Fixes
+
+*   **Workflow Activity New-Tab Navigation**
+    *   Fixed workflow `Activity` actions so they no longer navigate the current workspace tab after opening the activity view in a new tab.
+    *   Blocked pop-ups now show a warning toast instead of replacing the workflow list page.
+    *   (Ref: `workspace_workflows.js`, workflow Activity button, `WORKFLOW_ACTIVITY_CURRENT_TAB_NAVIGATION_FIX.md`)
+
 ### **(v0.241.182)**
 
 #### New Features

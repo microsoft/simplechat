@@ -1,13 +1,14 @@
 # test_workspace_workflows_tab.py
 """
 UI test for personal workflows workspace tab.
-Version: 0.241.036
+Version: 0.241.189
 Implemented in: 0.241.029
 
 This test ensures the personal workspace workflows tab renders the left-hand
 menu entry, shows workflow rows, opens run history with direct workflow
 conversation links, and submits new agent-based interval workflows with alert
-priorities from the modal on desktop and mobile viewports.
+priorities from the modal on desktop and mobile viewports. It also verifies the
+Activity action opens only in a new tab.
 """
 
 import json
@@ -15,11 +16,14 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
+
+
+def _get_playwright_sync():
+    return pytest.importorskip("playwright.sync_api", reason="Install Playwright to run this UI test.")
 
 
 def _require_ui_env():
@@ -160,7 +164,7 @@ def _route_agent_api(page):
     page.route("**/api/user/agents", handler)
 
 
-def _open_workflows_tab(page):
+def _open_workflows_tab(page, expect):
     if page.locator("#workflows-tab-btn").count() == 0:
         pytest.skip("Personal workflows are disabled or unavailable for this authenticated user.")
     expect(page.locator("#personal-workspace-submenu [data-tab='workflows-tab']")).to_have_count(1)
@@ -169,9 +173,13 @@ def _open_workflows_tab(page):
 
 
 @pytest.mark.ui
-def test_workspace_workflows_tab_desktop(playwright):
+def test_workspace_workflows_tab_desktop():
     """Validate workflow listing, history, and modal submission on desktop."""
     _require_ui_env()
+    playwright_sync = _get_playwright_sync()
+    expect = playwright_sync.expect
+    playwright_manager = playwright_sync.sync_playwright()
+    playwright = playwright_manager.start()
 
     browser = playwright.chromium.launch()
     context = browser.new_context(
@@ -190,7 +198,7 @@ def test_workspace_workflows_tab_desktop(playwright):
         assert response is not None, "Expected a navigation response when loading /workspace."
         assert response.ok, f"Expected /workspace to load successfully, got HTTP {response.status}."
 
-        _open_workflows_tab(page)
+        _open_workflows_tab(page, expect)
 
         summary_row = page.locator("#workflows-table-body tr").filter(has_text="Daily Summary")
         expect(summary_row).to_be_visible()
@@ -198,6 +206,16 @@ def test_workspace_workflows_tab_desktop(playwright):
         expect(summary_row).to_contain_text("Every 10 seconds")
         expect(summary_row).to_contain_text("Alert: Low priority")
         expect(summary_row).to_contain_text("Digest completed.")
+
+        current_url = page.url
+        with context.expect_page() as activity_page_info:
+            summary_row.get_by_role("button", name="Activity").click()
+        activity_page = activity_page_info.value
+        activity_page.wait_for_load_state("domcontentloaded")
+        assert "/workflow-activity" in activity_page.url
+        assert "conversationId=conv-123" in activity_page.url
+        assert page.url == current_url
+        activity_page.close()
 
         summary_row.get_by_role("button", name="History").click()
         expect(page.locator("#workflowHistoryModal")).to_be_visible()
@@ -231,12 +249,17 @@ def test_workspace_workflows_tab_desktop(playwright):
     finally:
         context.close()
         browser.close()
+        playwright_manager.stop()
 
 
 @pytest.mark.ui
-def test_workspace_workflows_tab_mobile(playwright):
+def test_workspace_workflows_tab_mobile():
     """Validate the workflows tab still renders at a mobile viewport."""
     _require_ui_env()
+    playwright_sync = _get_playwright_sync()
+    expect = playwright_sync.expect
+    playwright_manager = playwright_sync.sync_playwright()
+    playwright = playwright_manager.start()
 
     browser = playwright.chromium.launch()
     context = browser.new_context(
@@ -256,7 +279,7 @@ def test_workspace_workflows_tab_mobile(playwright):
         assert response is not None, "Expected a navigation response when loading /workspace."
         assert response.ok, f"Expected /workspace to load successfully, got HTTP {response.status}."
 
-        _open_workflows_tab(page)
+        _open_workflows_tab(page, expect)
 
         expect(page.locator("#create-workflow-btn")).to_be_visible()
         expect(page.locator("#workflows-search")).to_be_visible()
@@ -264,3 +287,4 @@ def test_workspace_workflows_tab_mobile(playwright):
     finally:
         context.close()
         browser.close()
+        playwright_manager.stop()

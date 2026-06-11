@@ -4142,6 +4142,12 @@ export class AgentModalStepper {
     const modelEndpointId = modelEndpointInput?.value || selectedModelOption?.dataset?.endpointId || '';
     const modelId = modelIdInput?.value || selectedModelOption?.value || '';
     const modelProvider = modelProviderInput?.value || selectedModelOption?.dataset?.provider || '';
+    const selectedFoundryEndpoint = this.foundryEndpoints.find(endpoint => endpoint.id === modelEndpointId);
+    const selectedFoundryAuthType = (selectedFoundryEndpoint?.auth?.type || '').toLowerCase();
+    const supportsFoundryApiKey = ['new_foundry', 'foundry_workflow'].includes(selectedAgentType);
+    const foundryAuthenticationType = supportsFoundryApiKey && ['api_key', 'key'].includes(selectedFoundryAuthType)
+      ? 'api_key'
+      : 'delegated_user';
 
     const formData = {
       display_name: document.getElementById('agent-display-name')?.value || '',
@@ -4220,7 +4226,7 @@ export class AgentModalStepper {
         application_name: applicationName,
         application_version: applicationVersion,
         endpoint_id: modelEndpointId || '',
-        authentication_type: 'delegated_user',
+        authentication_type: foundryAuthenticationType,
         responses_api_version: formData.azure_openai_gpt_api_version,
         ...(activityApiVersion ? { activity_api_version: activityApiVersion } : {}),
         ...(notesVal ? { notes: notesVal } : {}),
@@ -4258,7 +4264,7 @@ export class AgentModalStepper {
         ...(otherSettingsObj.foundry_workflow || {}),
         workflow_name: workflowName,
         endpoint_id: modelEndpointId || '',
-        authentication_type: 'delegated_user',
+        authentication_type: foundryAuthenticationType,
         responses_api_version: formData.azure_openai_gpt_api_version,
         include_document_context: includeDocumentContext,
         ...(maxContextChars ? { max_context_chars: Number.parseInt(maxContextChars, 10) } : {}),

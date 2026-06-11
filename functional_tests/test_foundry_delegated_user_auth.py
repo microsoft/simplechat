@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Foundry delegated user authentication.
-Version: 0.241.186
+Version: 0.241.188
 Implemented in: 0.241.185
 
 This test ensures that Foundry agents and workflows default to signed-in user
@@ -11,6 +11,7 @@ not inherit saved model endpoint managed identity or service principal secrets
 unless an agent explicitly opts into those advanced modes.
 
 The Foundry auth-required stream rendering regression was added in 0.241.186.
+Foundry application/workflow API-key endpoint support was added in 0.241.188.
 """
 
 from pathlib import Path
@@ -26,6 +27,7 @@ MODAL_JS_FILE = ROOT / "application" / "single_app" / "static" / "js" / "agent_m
 MODAL_HTML_FILE = ROOT / "application" / "single_app" / "templates" / "_agent_modal.html"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
 FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "FOUNDRY_AUTH_REQUIRED_STREAM_MESSAGE_FIX.md"
+API_KEY_FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "FOUNDRY_AGENT_WORKFLOW_API_KEY_AUTH_FIX.md"
 
 
 def read_text(path: Path) -> str:
@@ -53,8 +55,14 @@ def test_runtime_defaults_to_delegated_user_auth() -> None:
         "auth_type = str(auth_type or \"delegated_user\").strip().lower()",
         "if auth_type in {\"user\", \"delegated\", \"user_delegated\", \"signed_in_user\"}:",
         "return \"delegated_user\"",
+        "if auth_type in {\"key\", \"api_key\", \"apikey\"}:",
+        "return \"api_key\"",
         "if auth_type in {\"managed_identity\", \"service_principal\"}:",
         "FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE = (",
+        "class FoundryApiKeyCredential:",
+        "return FoundryApiKeyCredential(_resolve_foundry_api_key(foundry_settings, global_settings))",
+        "async def _build_foundry_rest_headers(",
+        "headers[\"api-key\"] = credential.api_key",
         "token_result = get_valid_access_token_for_plugins(scopes=[scope])",
         "error_message = FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE",
         "auth_response[\"message\"] = error_message",
@@ -105,12 +113,62 @@ def test_endpoint_enrichment_keeps_model_auth_separate() -> None:
     print("✅ Endpoint auth separation verified.")
 
 
+def test_api_key_endpoint_auth_for_foundry_applications_and_workflows() -> None:
+    """Validate saved API-key Foundry endpoints can back app/workflow agents."""
+    print("Testing Foundry application/workflow API-key endpoint auth...")
+
+    runtime_snippets = [
+        "class FoundryApiKeyCredential:",
+        "return FoundryApiKeyCredential(_resolve_foundry_api_key(foundry_settings, global_settings))",
+        "async def _build_foundry_rest_headers(",
+        "headers[\"Authorization\"] = f\"Bearer {credential.api_key}\"",
+        "headers[\"api-key\"] = credential.api_key",
+        "headers[\"Authorization\"] = f\"Bearer {token.token}\"",
+        "headers = await _build_foundry_rest_headers(",
+        "API key auth is only supported for OpenAI-compatible Foundry applications and workflows.",
+    ]
+    for snippet in runtime_snippets:
+        assert_contains(RUNTIME_FILE, snippet)
+
+    loader_snippets = [
+        'supports_foundry_api_key = agent_type in {"new_foundry", "foundry_workflow"}',
+        'elif saved_agent_auth_type in {"api_key", "key"} and supports_foundry_api_key:',
+        'elif endpoint_auth_type in {"api_key", "key"} and supports_foundry_api_key:',
+        'foundry_settings["authentication_type"] = "api_key"',
+        'foundry_settings.pop("foundry_scope", None)',
+        'foundry_settings["api_key"] = auth.get("api_key")',
+        'foundry_settings.pop("api_key", None)',
+    ]
+    for snippet in loader_snippets:
+        assert_contains(LOADER_FILE, snippet)
+
+    route_snippets = [
+        'supports_api_key = provider in {"new_foundry", "foundry_workflow"}',
+        'authentication_type = "api_key" if supports_api_key and endpoint_auth_type in {"api_key", "key"} else "delegated_user"',
+        '"api_key": auth.get("api_key") or "",',
+    ]
+    for snippet in route_snippets:
+        assert_contains(MODELS_ROUTE_FILE, snippet)
+
+    modal_snippets = [
+        "const supportsFoundryApiKey = ['new_foundry', 'foundry_workflow'].includes(selectedAgentType);",
+        "const foundryAuthenticationType = supportsFoundryApiKey && ['api_key', 'key'].includes(selectedFoundryAuthType)",
+        "authentication_type: foundryAuthenticationType",
+        "authentication_type: 'delegated_user'",
+    ]
+    for snippet in modal_snippets:
+        assert_contains(MODAL_JS_FILE, snippet)
+
+    print("✅ Foundry application/workflow API-key endpoint auth verified.")
+
+
 def test_discovery_and_streaming_return_auth_required_contract() -> None:
     """Validate backend routes expose actionable delegated auth failures."""
     print("Testing delegated auth-required API contract...")
 
     model_route_snippets = [
-        '"authentication_type": "delegated_user"',
+        'authentication_type = "api_key" if supports_api_key and endpoint_auth_type in {"api_key", "key"} else "delegated_user"',
+        '"authentication_type": authentication_type',
         "except FoundryAgentUserAuthenticationRequired as exc:",
         '"auth_required": True',
         '"scopes": auth_response.get("scopes") or []',
@@ -194,14 +252,16 @@ def test_modal_uses_delegated_user_auth_and_safe_consent_link() -> None:
 
 def test_version_bumped_for_delegated_foundry_auth() -> None:
     """Validate version traceability for this auth model change."""
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.186"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.241.188"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.186**")
+    assert_contains(API_KEY_FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.188**")
 
 
 def run_tests() -> bool:
     tests = [
         test_runtime_defaults_to_delegated_user_auth,
         test_endpoint_enrichment_keeps_model_auth_separate,
+        test_api_key_endpoint_auth_for_foundry_applications_and_workflows,
         test_discovery_and_streaming_return_auth_required_contract,
         test_streaming_client_renders_foundry_auth_required_link_safely,
         test_modal_uses_delegated_user_auth_and_safe_consent_link,

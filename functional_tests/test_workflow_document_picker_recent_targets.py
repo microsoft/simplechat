@@ -2,8 +2,8 @@
 # test_workflow_document_picker_recent_targets.py
 """
 Functional test for workflow document picker and recent workflow document targets.
-Version: 0.241.187
-Implemented in: 0.241.187
+Version: 0.241.188
+Implemented in: 0.241.188
 
 This test ensures workflow Search, Analyze, and Compare configuration uses the
 shared chat document picker instead of visible raw ID fields, and recent
@@ -118,6 +118,7 @@ def test_workflow_modals_use_picker_contracts() -> None:
         assert '<option value="recent">Recent documents</option>' in template_content
         assert 'id="workflow-analysis-recent-minutes"' in template_content
         assert 'type="hidden" id="workflow-analysis-document-ids"' in template_content
+        assert 'id="workflow-analysis-per-document-group"' in template_content
         assert 'id="workflow-comparison-inline-source-tags"' in template_content
         assert 'id="workflow-comparison-inline-target-tags"' in template_content
         assert 'id="workflow-comparison-edit-btn"' in template_content
@@ -152,6 +153,9 @@ def test_workflow_picker_javascript_contracts() -> None:
     assert 'setEffectiveScopes' in workflow_js
     assert 'workflowPickerDocumentIds' in workflow_js
     assert 'workflowSavedComparisonTargetIds' in workflow_js
+    assert 'const workflowAnalysisPerDocumentGroup = document.getElementById("workflow-analysis-per-document-group");' in workflow_js
+    assert 'setElementVisibility(workflowAnalysisPerDocumentGroup, actionType === DOCUMENT_ACTION_ANALYZE);' in workflow_js
+    assert 'workflowAnalysisPerDocumentToggle.checked = false;' in workflow_js
     assert 'const workflowComparisonModalEl = document.getElementById("workflow-comparison-modal");' in workflow_js
     assert 'function renderWorkflowComparisonUi()' in workflow_js
     assert 'function assignWorkflowComparisonSource(versionId)' in workflow_js
@@ -279,7 +283,7 @@ def test_recent_target_runner_hooks() -> None:
     document_actions = read_text(DOCUMENT_ACTIONS_PY)
     config = read_text(CONFIG_PY)
 
-    assert 'VERSION = "0.241.187"' in config
+    assert 'VERSION = "0.241.188"' in config
     assert "DOCUMENT_ACTION_TYPE_SEARCH = 'search'" in document_actions
     assert "DOCUMENT_ACTION_TYPE_SEARCH: get_document_action_max_documents(" in document_actions
     assert 'DOCUMENT_ACTION_TARGET_MODE_RECENT' in document_actions

@@ -683,8 +683,13 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             or "delegated_user"
         ).strip().lower()
         endpoint_auth_type = str(auth.get("type") or "").strip().lower()
+        supports_foundry_api_key = agent_type in {"new_foundry", "foundry_workflow"}
         if saved_agent_auth_type in {"managed_identity", "service_principal"}:
             foundry_settings["authentication_type"] = saved_agent_auth_type
+        elif saved_agent_auth_type in {"api_key", "key"} and supports_foundry_api_key:
+            foundry_settings["authentication_type"] = "api_key"
+        elif endpoint_auth_type in {"api_key", "key"} and supports_foundry_api_key:
+            foundry_settings["authentication_type"] = "api_key"
         elif endpoint_auth_type in {"delegated_user", "user", "user_delegated", "signed_in_user"}:
             foundry_settings["authentication_type"] = "delegated_user"
         elif not foundry_settings.get("authentication_type"):
@@ -699,12 +704,24 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 foundry_settings["client_secret"] = auth.get("client_secret")
             foundry_settings["cloud"] = auth.get("management_cloud") or foundry_settings.get("cloud")
             foundry_settings["authority"] = auth.get("custom_authority") or foundry_settings.get("authority")
+        elif foundry_settings.get("authentication_type") == "api_key":
+            foundry_settings.pop("managed_identity_type", None)
+            foundry_settings.pop("managed_identity_client_id", None)
+            foundry_settings.pop("tenant_id", None)
+            foundry_settings.pop("client_id", None)
+            foundry_settings.pop("client_secret", None)
+            foundry_settings.pop("foundry_scope", None)
+            if auth.get("api_key"):
+                foundry_settings["api_key"] = auth.get("api_key")
+            foundry_settings["cloud"] = foundry_settings.get("cloud") or auth.get("management_cloud") or ""
+            foundry_settings["authority"] = foundry_settings.get("authority") or auth.get("custom_authority") or ""
         else:
             foundry_settings.pop("managed_identity_type", None)
             foundry_settings.pop("managed_identity_client_id", None)
             foundry_settings.pop("tenant_id", None)
             foundry_settings.pop("client_id", None)
             foundry_settings.pop("client_secret", None)
+            foundry_settings.pop("api_key", None)
             foundry_settings["cloud"] = foundry_settings.get("cloud") or auth.get("management_cloud") or ""
             foundry_settings["authority"] = foundry_settings.get("authority") or auth.get("custom_authority") or ""
             foundry_settings["foundry_scope"] = foundry_settings.get("foundry_scope") or auth.get("foundry_scope") or ""

@@ -1,8 +1,8 @@
 # test_workflow_document_picker_recent_targets.py
 """
 UI test for workflow document picker and recent workflow document targets.
-Version: 0.241.187
-Implemented in: 0.241.187
+Version: 0.241.188
+Implemented in: 0.241.188
 
 This test ensures the workflow modal exposes the shared document picker, hides
 raw document ID entry, and saves Recent documents Search, Analyze, and Compare
@@ -206,6 +206,7 @@ def test_workflow_modal_recent_document_targets_use_picker_contract():
 
         expect(page.locator("#workflow-document-picker-card")).to_be_visible()
         expect(page.locator("#document-select")).to_have_count(1)
+        expect(page.locator("#workflow-analysis-per-document-group")).to_be_hidden()
         expect(page.locator("label[for='workflow-analysis-document-ids']")).to_have_count(0)
         expect(page.locator("#workflow-analysis-document-ids")).to_have_attribute("type", "hidden")
 
@@ -229,6 +230,7 @@ def test_workflow_modal_recent_document_targets_use_picker_contract():
         page.fill("#workflow-name", "Analyze Recent Uploads")
         page.fill("#workflow-task-prompt", "Summarize documents uploaded during the recent window.")
         page.select_option("#workflow-document-action-type", "analyze")
+        expect(page.locator("#workflow-analysis-per-document-group")).to_be_visible()
         page.select_option("#workflow-analysis-target-mode", "recent")
         expect(page.locator("#workflow-document-picker-card")).to_be_hidden()
         page.fill("#workflow-analysis-recent-minutes", "9")
@@ -248,6 +250,7 @@ def test_workflow_modal_recent_document_targets_use_picker_contract():
         page.fill("#workflow-name", "Compare Recent Uploads")
         page.fill("#workflow-task-prompt", "Compare the documents uploaded during the recent window.")
         page.select_option("#workflow-document-action-type", "comparison")
+        expect(page.locator("#workflow-analysis-per-document-group")).to_be_hidden()
         page.select_option("#workflow-analysis-target-mode", "recent")
         expect(page.locator("#workflow-document-picker-card")).to_be_hidden()
         expect(page.locator("#workflow-comparison-target-fields")).to_be_hidden()
@@ -268,6 +271,7 @@ def test_workflow_modal_recent_document_targets_use_picker_contract():
         page.fill("#workflow-name", "Compare Selected Uploads")
         page.fill("#workflow-task-prompt", "Compare the selected source and target versions.")
         page.select_option("#workflow-document-action-type", "comparison")
+        expect(page.locator("#workflow-analysis-per-document-group")).to_be_hidden()
         expect(page.locator("#workflow-document-picker-card")).to_be_visible()
         expect(page.locator("#workflow-comparison-target-fields")).to_be_visible()
         expect(page.locator("#workflow-comparison-target-document-ids")).to_have_class(r".*d-none.*")
