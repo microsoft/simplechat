@@ -18,11 +18,16 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_DIR = os.path.join(ROOT_DIR, "application", "single_app")
 ADMIN_ROUTE_FILE = os.path.join(APP_DIR, "route_frontend_admin_settings.py")
 ADMIN_TEMPLATE_FILE = os.path.join(APP_DIR, "templates", "admin_settings.html")
+FUNCTIONS_SETTINGS_FILE = os.path.join(APP_DIR, "functions_settings.py")
 ADMIN_TEMPLATE = Path(ADMIN_TEMPLATE_FILE)
 
 
 NORMALIZED_ASSIGNMENTS = [
     "dlp_max_scan_chars = max(1000, dlp_max_scan_chars)",
+    "if dlp_default_engine not in ('regex', 'presidio_endpoint'):",
+    "dlp_default_engine = 'regex'",
+    "dlp_presidio_timeout_seconds = max(1, min(30, dlp_presidio_timeout_seconds))",
+    "dlp_presidio_score_threshold = max(0.0, min(1.0, dlp_presidio_score_threshold))",
     "if web_search_dlp_mode not in ('monitor', 'redact', 'block'):",
     "web_search_dlp_mode = 'monitor'",
     "if dlp_review_destination not in ('none',):",
@@ -32,7 +37,7 @@ NORMALIZED_ASSIGNMENTS = [
 
 PERSISTED_DLP_FIELDS = {
     "enable_dlp_control_plane": "form_data.get('enable_dlp_control_plane') == 'on'",
-    "dlp_default_engine": "'regex'",
+    "dlp_default_engine": "dlp_default_engine",
     "dlp_regex_rules": "normalized_dlp_regex_rules",
     "dlp_max_scan_chars": "dlp_max_scan_chars",
     "dlp_fail_closed_on_scanner_error": "form_data.get('dlp_fail_closed_on_scanner_error') == 'on'",
@@ -49,6 +54,8 @@ PERSISTED_DLP_FIELDS = {
 
 
 UNSUPPORTED_DLP_FORM_FIELDS = [
+    "dlp_presidio_use_service",
+    "dlp_presidio_endpoint",
     "dlp_scanner_timeout_seconds",
     "dlp_review_include_redacted_preview",
     "web_search_dlp_track_review_events",
@@ -133,12 +140,12 @@ def test_dlp_review_destination_stays_unreachable_until_review_flow_exists():
     assert 'value="safety_violations"' not in template_source
 
 
-def test_admin_dlp_controls_only_expose_supported_regex_engine():
+def test_admin_dlp_controls_expose_supported_dlp_engines():
     template = ADMIN_TEMPLATE.read_text(encoding="utf-8")
     route_source = read_file_text(ADMIN_ROUTE_FILE)
 
-    assert '<option value="regex" selected>Regex structured identifier scan</option>' in template
-    assert "Regex scanning is the only implemented engine in this release." in template
+    assert 'value="regex"' in template
+    assert "if dlp_default_engine not in ('regex', 'presidio_endpoint'):" in route_source
     assert 'name="dlp_regex_rules_json"' in template
     assert "web_search_dlp_block_on_internal_phrases" not in template
     assert "Detect internal phrases" not in template
@@ -192,16 +199,55 @@ def test_admin_settings_rejects_invalid_dlp_regex_rules_before_update():
     assert "return redirect(url_for('admin_settings'))" in source[validate_index:update_index]
 
 
+def test_presidio_endpoint_settings_are_normalized_without_secret_persistence():
+    """Admin POST should persist endpoint metadata but not raw API key values."""
+    print("Testing Presidio endpoint metadata persistence...")
+    route_source = read_file_text(ADMIN_ROUTE_FILE)
+
+    assert "'dlp_default_engine': dlp_default_engine" in route_source
+    assert "'dlp_presidio_analyzer_endpoint': dlp_presidio_analyzer_endpoint" in route_source
+    assert "'dlp_presidio_auth_header_name': dlp_presidio_auth_header_name" in route_source
+    assert "'dlp_presidio_auth_secret_env_var': dlp_presidio_auth_secret_env_var" in route_source
+    assert "'dlp_presidio_timeout_seconds': dlp_presidio_timeout_seconds" in route_source
+    assert "'dlp_presidio_score_threshold': dlp_presidio_score_threshold" in route_source
+    assert "'dlp_presidio_language': dlp_presidio_language" in route_source
+    assert "'dlp_presidio_entities': dlp_presidio_entities" in route_source
+    assert "for item in dlp_presidio_entities_raw.split(',')" in route_source
+    assert "item.strip().upper()" in route_source
+    assert "if not dlp_presidio_entities:" in route_source
+    assert "dlp_presidio_entities = ['CREDIT_CARD', 'EMAIL_ADDRESS', 'PHONE_NUMBER', 'US_SSN']" in route_source
+    assert "'dlp_presidio_auth_secret'" not in route_source
+    assert "form_data.get('dlp_presidio_auth_secret'" not in route_source
+
+
+def test_default_settings_include_presidio_endpoint_controls():
+    """Default settings should include safe Presidio endpoint defaults."""
+    print("Testing Presidio endpoint default settings...")
+    settings_source = read_file_text(FUNCTIONS_SETTINGS_FILE)
+
+    assert "'dlp_default_engine': 'regex'" in settings_source
+    assert "'dlp_presidio_analyzer_endpoint': ''" in settings_source
+    assert "'dlp_presidio_auth_header_name': 'X-DLP-API-Key'" in settings_source
+    assert "'dlp_presidio_auth_secret_env_var': 'PRESIDIO_DLP_API_KEY'" in settings_source
+    assert "'dlp_presidio_timeout_seconds': 5" in settings_source
+    assert "'dlp_presidio_score_threshold': 0.5" in settings_source
+    assert "'dlp_presidio_language': 'en'" in settings_source
+    assert "'dlp_presidio_entities': [" in settings_source
+    assert "'dlp_presidio_auth_secret'" not in settings_source
+
+
 if __name__ == "__main__":
     tests = [
         test_dlp_admin_post_normalizes_untrusted_form_values,
         test_dlp_admin_post_persists_normalized_dlp_payload,
         test_dlp_admin_template_roundtrips_persisted_values,
         test_dlp_review_destination_stays_unreachable_until_review_flow_exists,
-        test_admin_dlp_controls_only_expose_supported_regex_engine,
+        test_admin_dlp_controls_expose_supported_dlp_engines,
         test_admin_settings_post_validates_csrf_before_dlp_persistence,
         test_admin_settings_persists_valid_dlp_regex_rules,
         test_admin_settings_rejects_invalid_dlp_regex_rules_before_update,
+        test_presidio_endpoint_settings_are_normalized_without_secret_persistence,
+        test_default_settings_include_presidio_endpoint_controls,
     ]
 
     try:

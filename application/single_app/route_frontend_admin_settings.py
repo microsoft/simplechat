@@ -783,6 +783,58 @@ def register_route_frontend_admin_settings(app):
             dlp_review_destination = form_data.get('dlp_review_destination', 'none')
             if dlp_review_destination not in ('none',):
                 dlp_review_destination = 'none'
+            dlp_default_engine = form_data.get('dlp_default_engine', settings.get('dlp_default_engine', 'regex'))
+            if dlp_default_engine not in ('regex', 'presidio_endpoint'):
+                dlp_default_engine = 'regex'
+            dlp_presidio_analyzer_endpoint = form_data.get(
+                'dlp_presidio_analyzer_endpoint',
+                settings.get('dlp_presidio_analyzer_endpoint', '')
+            ).strip()
+            dlp_presidio_auth_header_name = form_data.get(
+                'dlp_presidio_auth_header_name',
+                settings.get('dlp_presidio_auth_header_name', 'X-DLP-API-Key')
+            ).strip() or 'X-DLP-API-Key'
+            dlp_presidio_auth_secret_env_var = form_data.get(
+                'dlp_presidio_auth_secret_env_var',
+                settings.get('dlp_presidio_auth_secret_env_var', 'PRESIDIO_DLP_API_KEY')
+            ).strip() or 'PRESIDIO_DLP_API_KEY'
+            dlp_presidio_timeout_seconds, _ = safe_int_with_source(
+                form_data.get('dlp_presidio_timeout_seconds'),
+                settings.get('dlp_presidio_timeout_seconds', 5),
+                5
+            )
+            dlp_presidio_timeout_seconds = max(1, min(30, dlp_presidio_timeout_seconds))
+            try:
+                dlp_presidio_score_threshold = float(
+                    form_data.get(
+                        'dlp_presidio_score_threshold',
+                        settings.get('dlp_presidio_score_threshold', 0.5)
+                    )
+                )
+            except (TypeError, ValueError):
+                dlp_presidio_score_threshold = 0.5
+            dlp_presidio_score_threshold = max(0.0, min(1.0, dlp_presidio_score_threshold))
+            dlp_presidio_language = form_data.get(
+                'dlp_presidio_language',
+                settings.get('dlp_presidio_language', 'en')
+            ).strip() or 'en'
+            existing_dlp_presidio_entities = settings.get('dlp_presidio_entities') or [
+                'CREDIT_CARD',
+                'EMAIL_ADDRESS',
+                'PHONE_NUMBER',
+                'US_SSN',
+            ]
+            dlp_presidio_entities_raw = form_data.get(
+                'dlp_presidio_entities',
+                ','.join(existing_dlp_presidio_entities)
+            )
+            dlp_presidio_entities = [
+                item.strip().upper()
+                for item in dlp_presidio_entities_raw.split(',')
+                if item.strip()
+            ]
+            if not dlp_presidio_entities:
+                dlp_presidio_entities = ['CREDIT_CARD', 'EMAIL_ADDRESS', 'PHONE_NUMBER', 'US_SSN']
             web_search_dlp_mode = form_data.get('web_search_dlp_mode', 'monitor')
             if web_search_dlp_mode not in ('monitor', 'redact', 'block'):
                 web_search_dlp_mode = 'monitor'
@@ -2022,7 +2074,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_web_search_user_notice': form_data.get('enable_web_search_user_notice') == 'on',
                 'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.').strip(),
                 'enable_dlp_control_plane': form_data.get('enable_dlp_control_plane') == 'on',
-                'dlp_default_engine': 'regex',
+                'dlp_default_engine': dlp_default_engine,
                 'dlp_regex_rules': normalized_dlp_regex_rules,
                 'dlp_max_scan_chars': dlp_max_scan_chars,
                 'dlp_fail_closed_on_scanner_error': form_data.get('dlp_fail_closed_on_scanner_error') == 'on',
@@ -2030,6 +2082,13 @@ def register_route_frontend_admin_settings(app):
                 'dlp_enable_structured_telemetry': form_data.get('dlp_enable_structured_telemetry') == 'on',
                 'dlp_telemetry_sample_allow_events': form_data.get('dlp_telemetry_sample_allow_events') == 'on',
                 'dlp_review_destination': dlp_review_destination,
+                'dlp_presidio_analyzer_endpoint': dlp_presidio_analyzer_endpoint,
+                'dlp_presidio_auth_header_name': dlp_presidio_auth_header_name,
+                'dlp_presidio_auth_secret_env_var': dlp_presidio_auth_secret_env_var,
+                'dlp_presidio_timeout_seconds': dlp_presidio_timeout_seconds,
+                'dlp_presidio_score_threshold': dlp_presidio_score_threshold,
+                'dlp_presidio_language': dlp_presidio_language,
+                'dlp_presidio_entities': dlp_presidio_entities,
                 'enable_web_search_dlp': form_data.get('enable_web_search_dlp') == 'on',
                 'web_search_dlp_mode': web_search_dlp_mode,
                 'enable_upload_dlp': form_data.get('enable_upload_dlp') == 'on',
