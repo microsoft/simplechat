@@ -4,7 +4,7 @@
 
 Version: 0.242.073
 
-Dependencies: Flask chat routes, configurable regex DLP rules, and Azure AI Foundry web-search agent configuration.
+Dependencies: Flask chat routes, configurable regex DLP rules, optional external Presidio Analyzer-compatible endpoint, and Azure AI Foundry web-search agent configuration.
 
 SimpleChat now includes an application-level Data Loss Prevention control before web-search grounding. The app evaluates the current user message after `build_web_search_query_text(...)` and before the configured Azure AI Foundry web-search agent is invoked.
 
@@ -16,12 +16,15 @@ The shared DLP core lives in `application/single_app/functions_dlp.py`. Configur
 
 Implemented behavior:
 
-- Regex DLP is the only implemented engine in this release.
+- Regex DLP remains the lightweight default engine.
+- Administrators can optionally select `presidio_endpoint` to call an external Presidio Analyzer-compatible endpoint from the server side.
 - Regex rules are admin-configurable through the `dlp_regex_rules` settings payload.
 - Default rules detect U.S. SSNs and Luhn-valid credit card numbers.
 - Rules can target web search, upload, or both.
 - Rules can use keyword proximity confidence shaping. A regex match can require nearby terms such as `ssn`, `social security`, `card`, or `billing` before it reaches the configured minimum confidence.
 - Generic internal phrase matching is not hardcoded. Administrators can add organization-specific phrases or identifiers as explicit custom rules.
+- The external Presidio Analyzer endpoint path returns spans that SimpleChat normalizes into the same counts-only DLP result shape used by regex scanning.
+- SimpleChat does not embed Presidio packages or run an in-process analyzer.
 - DLP metadata stores entity types and counts only. Raw matched values are not stored in telemetry or review summaries.
 - Structured DLP telemetry uses `log_event(...)` and reaches Application Insights when `APPLICATIONINSIGHTS_CONNECTION_STRING` is configured.
 - Scanner errors fail closed by default when `dlp_fail_closed_on_scanner_error` is enabled.
@@ -30,7 +33,7 @@ Implemented behavior:
 
 Admin settings are added in Admin Settings under Data Loss Prevention:
 
-- Shared DLP enablement, regex engine selection, configurable regex rules, maximum scan characters, scanner fail-closed behavior, telemetry, and review destination.
+- Shared DLP enablement, engine selection, configurable regex rules, optional Presidio Analyzer endpoint settings, maximum scan characters, scanner fail-closed behavior, telemetry, and review destination.
 - Web-search DLP enablement and mode: `monitor`, `redact`, or `block`.
 - Review destination defaults to `none`. Safety Violations review routing is documented as a future integration unless the review surface is expanded with distinct DLP labeling and access rules.
 
@@ -66,7 +69,17 @@ Each rule can define:
 
 Confidence shaping lets a regex match become stronger when nearby terms are present. For example, an employee identifier rule can require `EID-123456` plus `employee` within 32 characters before it redacts.
 
-Regex DLP remains deterministic and dependency-light. Richer contextual PII detection for names, addresses, and natural-language identifiers remains future work.
+Regex DLP remains deterministic and dependency-light, but it is not equivalent to Presidio. Use the external Presidio Analyzer endpoint when contextual PII detection, such as names, addresses, and natural-language identifiers, is required.
+
+## External Presidio Analyzer Endpoint
+
+Administrators can select an external Presidio Analyzer-compatible endpoint as the DLP engine by setting the engine to `presidio_endpoint`. SimpleChat sends the web-search query text to the endpoint from the server side, receives entity spans, and performs redaction or blocking locally using the existing counts-only DLP result shape.
+
+This is Option C for Presidio integration: the analyzer is external to SimpleChat. SimpleChat keeps no embedded Presidio dependency, model package, or analyzer runtime in the app image. Regex DLP remains available as the default and fallback path.
+
+Production deployments should keep the analyzer endpoint private and authenticated. Use a private network path plus an API key header or equivalent service boundary, and never expose a public unauthenticated Presidio Analyzer endpoint. SimpleChat stores only the configured secret environment variable name, such as `PRESIDIO_DLP_API_KEY`; the API key value belongs in App Service settings or a Key Vault reference.
+
+Because the analyzer receives raw text before redaction, SimpleChat, proxies, wrappers, and analyzer infrastructure must not log raw request bodies, response bodies, snippets, matched values, or analyzer explanations. Safe telemetry remains limited to entity types, counts, actions, engines, modes, and scanner status.
 
 ## Telemetry
 
@@ -109,7 +122,7 @@ Telemetry retention follows the configured Application Insights workspace. This 
 
 ## Limitations
 
-Regex DLP is intentionally lightweight. It is useful for structured identifiers such as SSNs, Luhn-valid credit card numbers, and administrator-defined exact-format identifiers, but it is weaker for names, addresses, contextual PII, international identifiers, credential strings, and noisy prose.
+Regex DLP is intentionally lightweight. It is useful for structured identifiers such as SSNs, Luhn-valid credit card numbers, and administrator-defined exact-format identifiers, but it is weaker for names, addresses, contextual PII, international identifiers, secrets, and noisy prose. Use the external Presidio Analyzer endpoint when richer recognizers are needed and the production analyzer can be kept private, authenticated, and free of raw text logging.
 
 The app-level control cannot inspect Bing's internal grounding query after Foundry receives the request. It reduces egress risk by preventing or redacting sensitive text before the app sends the web-search message to the Foundry agent.
 
@@ -122,6 +135,8 @@ Functional coverage:
 - `functional_tests/test_dlp_telemetry.py`
 - `functional_tests/test_dlp_admin_settings_ui.py`
 - `functional_tests/test_dlp_admin_settings_roundtrip.py`
+- `functional_tests/test_dlp_presidio_endpoint.py`
+- `functional_tests/test_dlp_presidio_engine_integration.py`
 - `functional_tests/test_dlp_review_events.py`
 - `functional_tests/test_web_search_dlp_egress.py`
 - `functional_tests/test_web_search_dlp_route_integration.py`
